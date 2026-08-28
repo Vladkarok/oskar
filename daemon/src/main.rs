@@ -26,6 +26,8 @@
 //!   ping              replies `pong`
 //! Replies are `ok`, `ready <n>`, `pong`, or `err <reason>`.
 
+use std::collections::HashSet;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -56,6 +58,12 @@ fn read_keymap(file: &std::fs::File, size: u32) -> Option<String> {
         buffer.pop();
     }
     String::from_utf8(buffer).ok()
+}
+
+fn keymap_fingerprint(file: &std::fs::File, size: u32) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    read_keymap(file, size).hash(&mut hasher);
+    hasher.finish()
 }
 
 /// A key is named the way xkb names it (`AD01`) or given as a raw evdev code.
@@ -151,10 +159,83 @@ struct State {
     /// The seat keymap, forwarded verbatim from the compositor. Kept so a
     /// keyboard created after the keymap arrived can still be initialised.
     keymap: Option<(u32, std::fs::File, u32)>,
-    /// Circuit breaker for compositor/keymap feedback.
-    keymap_window_started: Instant,
-    keymap_events_in_window: u32,
+    keymap_rate: KeymapRateLimiter,
+    keymap_tracker: KeymapTracker,
     shared: SharedRef,
+}
+
+/// Allows short legitimate bursts while stopping sustained keymap churn.
+///
+/// A layout hotkey can produce many events in quick succession. A feedback
+/// loop keeps producing them, so a token bucket distinguishes the two without
+/// waiting for a large fixed time window. Capacity 32 passed a 20-switch stress
+/// test; four tokens per second still allows active manual switching.
+struct KeymapRateLimiter {
+    tokens: f64,
+    last_refill: Instant,
+}
+
+impl KeymapRateLimiter {
+    const CAPACITY: f64 = 32.0;
+    const REFILL_PER_SECOND: f64 = 4.0;
+
+    fn new(now: Instant) -> Self {
+        Self {
+            tokens: Self::CAPACITY,
+            last_refill: now,
+        }
+    }
+
+    fn accept(&mut self, now: Instant) -> bool {
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * Self::REFILL_PER_SECOND).min(Self::CAPACITY);
+        self.last_refill = now;
+
+        if self.tokens < 1.0 {
+            return false;
+        }
+        self.tokens -= 1.0;
+        true
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum KeymapAction {
+    Capture,
+    Ignore,
+    Reload,
+}
+
+/// Learns the physical and virtual seat maps produced during startup. Group
+/// switches alternate between those known maps. A new map after startup means
+/// layout configuration changed and requires rebuilding from a fresh map.
+struct KeymapTracker {
+    known: HashSet<u64>,
+    settle_until: Instant,
+}
+
+impl KeymapTracker {
+    fn new(now: Instant) -> Self {
+        Self {
+            known: HashSet::new(),
+            settle_until: now + Duration::from_secs(1),
+        }
+    }
+
+    fn observe(&mut self, fingerprint: u64, now: Instant) -> KeymapAction {
+        if self.known.is_empty() {
+            self.known.insert(fingerprint);
+            return KeymapAction::Capture;
+        }
+        if self.known.contains(&fingerprint) {
+            return KeymapAction::Ignore;
+        }
+        if now <= self.settle_until {
+            self.known.insert(fingerprint);
+            return KeymapAction::Ignore;
+        }
+        KeymapAction::Reload
+    }
 }
 
 impl State {
@@ -193,18 +274,6 @@ impl State {
         if let Some(text) = read_keymap(file, *size) {
             shared.codes = parse_keycodes(&text);
         }
-    }
-
-    fn keymap_event_is_storm(&mut self, now: Instant) -> bool {
-        const WINDOW: Duration = Duration::from_secs(2);
-        const MAX_EVENTS: u32 = 100;
-
-        if now.duration_since(self.keymap_window_started) > WINDOW {
-            self.keymap_window_started = now;
-            self.keymap_events_in_window = 0;
-        }
-        self.keymap_events_in_window += 1;
-        self.keymap_events_in_window > MAX_EVENTS
     }
 }
 
@@ -253,7 +322,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
             }
             _ => {}
         }
-        state.ensure_keyboard(qh);
+        // Creating the virtual keyboard before wl_keyboard delivers its first
+        // keymap can make Hyprland select the just-created device as the seat's
+        // active keyboard. Wait until the physical-seat map is captured.
+        if state.keymap.is_some() {
+            state.ensure_keyboard(qh);
+        }
     }
 }
 
@@ -287,33 +361,39 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
         event: wl_keyboard::Event,
         _: &(),
         _: &Connection,
-        _: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         if let wl_keyboard::Event::Modifiers { group, .. } = event {
             state.set_group(group);
             return;
         }
         if let wl_keyboard::Event::Keymap { format, fd, size } = event {
-            if state.keymap_event_is_storm(Instant::now()) {
-                eprintln!("safety stop: more than 100 keymap events in 2s");
+            let now = Instant::now();
+            if !state.keymap_rate.accept(now) {
+                eprintln!("safety stop: sustained keymap event storm");
                 // EX_CONFIG. systemd is configured not to restart this status.
                 std::process::exit(78);
             }
 
-            // Only the keymap captured before our virtual device joined the
-            // seat is safe to mirror. Later events may be consequences of our
-            // own device and do not need uploading; group selection handles
-            // normal language changes.
-            if state.keymap.is_some() {
-                return;
+            let file = std::fs::File::from(fd);
+            let fingerprint = keymap_fingerprint(&file, size);
+            match state.keymap_tracker.observe(fingerprint, now) {
+                KeymapAction::Ignore => return,
+                KeymapAction::Reload => {
+                    eprintln!("keymap configuration changed; rebuilding helper");
+                    // EX_TEMPFAIL: systemd creates a fresh pre-device capture.
+                    std::process::exit(75);
+                }
+                KeymapAction::Capture => {}
             }
+
             let format = match format {
                 WEnum::Value(value) => value as u32,
                 WEnum::Unknown(raw) => raw,
             };
-            state.keymap = Some((format, std::fs::File::from(fd), size));
-            state.push_keymap();
-            eprintln!("keymap loaded ({size} bytes)");
+            state.keymap = Some((format, file, size));
+            state.ensure_keyboard(qh);
+            eprintln!("keymap loaded ({size} bytes, {fingerprint:016x})");
         }
     }
 }
@@ -353,6 +433,37 @@ fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let dir = PathBuf::from(dir).join("omarchy-osk");
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("control.sock"))
+}
+
+fn hyprland_event_socket() -> Result<UnixStream, Box<dyn std::error::Error>> {
+    let runtime = std::env::var("XDG_RUNTIME_DIR")
+        .map_err(|_| "XDG_RUNTIME_DIR is unset; cannot monitor compositor reloads")?;
+    let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+        .map_err(|_| "HYPRLAND_INSTANCE_SIGNATURE is unset; cannot monitor compositor reloads")?;
+    let path = PathBuf::from(runtime)
+        .join("hypr")
+        .join(signature)
+        .join(".socket2.sock");
+    Ok(UnixStream::connect(path)?)
+}
+
+fn is_config_reload_event(line: &str) -> bool {
+    line.starts_with("configreloaded>>")
+}
+
+fn monitor_hyprland_reload(stream: UnixStream) {
+    for line in BufReader::new(stream).lines().map_while(Result::ok) {
+        if is_config_reload_event(&line) {
+            eprintln!("Hyprland configuration reloaded; rebuilding helper");
+            // EX_TEMPFAIL. systemd restarts with the compositor's new keymap.
+            std::process::exit(75);
+        }
+    }
+
+    // Losing the event socket means the compositor/session is no longer the
+    // one whose keymap we captured. Let systemd rebuild the entire connection.
+    eprintln!("Hyprland event socket closed; rebuilding helper");
+    std::process::exit(75);
 }
 
 fn parse(line: &str) -> Option<Command> {
@@ -539,22 +650,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seat: None,
         manager: None,
         keymap: None,
-        keymap_window_started: Instant::now(),
-        keymap_events_in_window: 0,
+        keymap_rate: KeymapRateLimiter::new(Instant::now()),
+        keymap_tracker: KeymapTracker::new(Instant::now()),
         shared: Arc::clone(&shared),
     };
 
-    // Two roundtrips: the first surfaces the globals, the second delivers the
-    // seat capabilities and the keymap that follows from binding the keyboard.
-    queue.roundtrip(&mut state)?;
-    state.ensure_keyboard(&qh);
-    queue.roundtrip(&mut state)?;
+    // Registry globals, seat capabilities and the wl_keyboard keymap are
+    // causally ordered but need not all arrive within two sync boundaries,
+    // especially while Hyprland is itself reloading. Bound the wait so startup
+    // remains deterministic without assuming a particular event batching.
+    for _ in 0..8 {
+        queue.roundtrip(&mut state)?;
+        if shared.lock().unwrap().is_ready() {
+            break;
+        }
+    }
 
-    if shared.lock().unwrap().keyboard.is_none() {
-        return Err("compositor does not offer zwp_virtual_keyboard_manager_v1".into());
+    if !shared.lock().unwrap().is_ready() {
+        let reason = if state.manager.is_none() {
+            "compositor does not offer zwp_virtual_keyboard_manager_v1"
+        } else if state.seat.is_none() {
+            "compositor did not advertise a seat"
+        } else if state.keymap.is_none() {
+            "compositor did not provide an initial seat keymap"
+        } else {
+            "virtual keyboard did not become ready"
+        };
+        return Err(reason.into());
     }
 
     let path = socket_path()?;
+    let hyprland_events = hyprland_event_socket()?;
     // Refuse to be the second instance. Two daemons on one seat feed each other
     // keymaps forever: every virtual keyboard added changes the seat keymap,
     // the other one observes that change and re-uploads its own, and round it
@@ -574,6 +700,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket_shared = Arc::clone(&shared);
     let socket_connection = connection.clone();
     thread::spawn(move || serve(listener, socket_shared, socket_connection));
+    thread::spawn(move || monitor_hyprland_reload(hyprland_events));
     run(queue, state)
 }
 
@@ -581,36 +708,86 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
 
-    fn state_at(start: Instant) -> State {
-        State {
-            seat: None,
-            manager: None,
-            keymap: None,
-            keymap_window_started: start,
-            keymap_events_in_window: 0,
-            shared: Arc::new(Mutex::new(Shared::default())),
+    #[test]
+    fn keymap_limiter_allows_a_legitimate_burst() {
+        let start = Instant::now();
+        let mut limiter = KeymapRateLimiter::new(start);
+
+        for _ in 0..32 {
+            assert!(limiter.accept(start));
+        }
+        assert!(!limiter.accept(start));
+    }
+
+    #[test]
+    fn keymap_limiter_stops_a_forty_per_second_storm_within_one_second() {
+        let start = Instant::now();
+        let mut limiter = KeymapRateLimiter::new(start);
+        let mut stopped_at = None;
+
+        for event in 0..40 {
+            let at = start + Duration::from_millis(event * 25);
+            if !limiter.accept(at) {
+                stopped_at = Some(at);
+                break;
+            }
+        }
+        assert!(stopped_at.is_some_and(|at| at < start + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn keymap_limiter_allows_four_events_per_second_sustained() {
+        let start = Instant::now();
+        let mut limiter = KeymapRateLimiter::new(start);
+
+        for event in 0..100 {
+            let at = start + Duration::from_millis(event * 250);
+            assert!(limiter.accept(at));
         }
     }
 
     #[test]
-    fn keymap_circuit_breaker_trips_after_one_hundred_events() {
+    fn keymap_tracker_learns_startup_pair_and_ignores_group_switches() {
         let start = Instant::now();
-        let mut state = state_at(start);
+        let mut tracker = KeymapTracker::new(start);
 
-        for _ in 0..100 {
-            assert!(!state.keymap_event_is_storm(start + Duration::from_secs(1)));
-        }
-        assert!(state.keymap_event_is_storm(start + Duration::from_secs(1)));
+        assert_eq!(tracker.observe(10, start), KeymapAction::Capture);
+        assert_eq!(
+            tracker.observe(20, start + Duration::from_millis(10)),
+            KeymapAction::Ignore
+        );
+        assert_eq!(
+            tracker.observe(10, start + Duration::from_secs(2)),
+            KeymapAction::Ignore
+        );
+        assert_eq!(
+            tracker.observe(20, start + Duration::from_secs(2)),
+            KeymapAction::Ignore
+        );
     }
 
     #[test]
-    fn keymap_circuit_breaker_resets_after_quiet_window() {
+    fn keymap_tracker_requests_reload_for_new_map_after_startup() {
         let start = Instant::now();
-        let mut state = state_at(start);
+        let mut tracker = KeymapTracker::new(start);
 
-        for _ in 0..100 {
-            assert!(!state.keymap_event_is_storm(start + Duration::from_secs(1)));
-        }
-        assert!(!state.keymap_event_is_storm(start + Duration::from_secs(3)));
+        assert_eq!(tracker.observe(10, start), KeymapAction::Capture);
+        assert_eq!(
+            tracker.observe(20, start + Duration::from_millis(10)),
+            KeymapAction::Ignore
+        );
+        assert_eq!(
+            tracker.observe(30, start + Duration::from_secs(2)),
+            KeymapAction::Reload
+        );
+    }
+
+    #[test]
+    fn only_config_reload_events_restart_the_helper() {
+        assert!(is_config_reload_event("configreloaded>>"));
+        assert!(!is_config_reload_event(
+            "activelayout>>keyboard,English (US)"
+        ));
+        assert!(!is_config_reload_event("configerror>>something"));
     }
 }
