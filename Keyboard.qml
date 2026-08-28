@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import qs.Commons
 import "KeyboardLayout.js" as Layout
 
@@ -73,11 +74,6 @@ Item {
         updateLayoutRows()
     }
 
-    // Called on startup only — reads the system's current layout and populates
-    // languageCycle. After the user manually cycles, we stop syncing currentLayout
-    // from the system (the virtual keyboard always reports index 0, so syncing
-    // would constantly fight the user's choice).
-    property bool initialSyncDone: false
 
     function parseHyprLayoutOutput(text) {
         var lines = String(text || "").split("\n")
@@ -112,32 +108,31 @@ Item {
         for (var k in names) merged[k] = names[k]
         layoutNameMap = merged
 
-        // Only sync currentLayout from system on first load, not on periodic polls.
-        // The virtual keyboard (.main == true) always stays at index 0, so subsequent
-        // syncs would permanently fight any manual language switch by the user.
-        if (!initialSyncDone) {
-            initialSyncDone = true
-            var selected = active
-            if (!selected && detected.length > 0) selected = detected[0]
-            if (selected && selected !== currentLayout) {
-                layoutCycleIndex = Math.max(0, detected.indexOf(selected))
-                loadLanguageLayout(selected)
-            } else {
-                layoutCycleIndex = Math.max(0, detected.indexOf(currentLayout))
-            }
+        // Always follow the system. The old code adopted the layout once and
+        // then froze, so a switch made with Caps Lock or the bar indicator left
+        // the caps showing the previous alphabet while the compositor produced
+        // the new one — the two looked swapped.
+        var selected = active
+        if (!selected && detected.length > 0) selected = detected[0]
+        if (selected) {
+            layoutCycleIndex = Math.max(0, detected.indexOf(selected))
+            if (selected !== currentLayout) loadLanguageLayout(selected)
         }
     }
 
     function refreshLayoutsFromHypr() {
         layoutDetectProcess.running = false
-        // Use the physical keyboard (not virtual) to detect active layout.
-        // Filter out virtual keyboards (hl-virtual-*, keyd-virtual-*) which
-        // always report index 0 and would make active detection unreliable.
-        // Also emit NAME\t<code>\t<fullname> lines for the lang button label.
+        // Emits ACTIVE/LAYOUT/NAME: the active layout code, the codes available
+        // to cycle through, and their human names for the language button.
         layoutDetectProcess.command = ["bash", "-lc",
-            "active_keymap=$(hyprctl devices -j | jq -r '.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not) | .active_keymap' 2>/dev/null | head -n1); "
+            // Every keyboard on the seat carries the same layout list, but only the
+            // one being typed on advances through it, so the furthest-advanced is
+            // the one worth reading. Taking the first non-virtual device instead
+            // lands on pseudo-keyboards like video-bus or power-button, which sit
+            // at index 0 forever and never reflect a switch.
+            "active_keymap=$(hyprctl devices -j | jq -r '[.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not)] | max_by(.active_layout_index // 0) | .active_keymap' 2>/dev/null); "
             + "active=$(awk -v target=\"$active_keymap\" 'BEGIN{s=0} /^! layout/{s=1;next} /^!/{if(s) exit} s && NF>=2 { code=$1; $1=\"\"; sub(/^ +/, \"\", $0); if ($0 == target) { print code; exit } }' /usr/share/X11/xkb/rules/base.lst 2>/dev/null); "
-            + "if [[ -z \"$active\" ]]; then active=$(hyprctl devices -j | jq -r '.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not) as $k | ($k.layout | split(\",\")[($k.active_layout_index // 0)])' 2>/dev/null | head -n1); fi; "
+            + "if [[ -z \"$active\" ]]; then active=$(hyprctl devices -j | jq -r '[.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not)] | max_by(.active_layout_index // 0) as $k | ($k.layout | split(\",\")[($k.active_layout_index // 0)])' 2>/dev/null); fi; "
             + "printf 'ACTIVE\\t%s\\n' \"$active\"; "
             + "layouts=$(hyprctl devices -j | jq -r '(.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not) | .layout)' | head -n1 | tr ',' '\\n' | sed '/^$/d'); "
             + "echo \"$layouts\" | awk '{print \"LAYOUT\\t\" $0}'; "
@@ -204,10 +199,10 @@ Item {
         if (languageCycle.length < 2) return
         // Advance our local index so we know exactly what layout is next,
         // independent of the system's virtual keyboard reporting wrong index.
-        layoutCycleIndex = (layoutCycleIndex + 1) % languageCycle.length
-        var nextLayout = languageCycle[layoutCycleIndex]
-        Quickshell.execDetached(["hyprctl", "switchxkblayout", "all", "next"])
-        loadLanguageLayout(nextLayout)
+        // Ask and wait. Guessing the next layout locally is what let the panel
+        // drift out of step with the compositor; the activelayout event brings
+        // back what actually happened.
+        Hyprland.dispatch("switchxkblayout all next")
     }
 
     Component.onCompleted: refreshLayoutsFromHypr()
@@ -250,11 +245,33 @@ Item {
         }
     }
 
-    // Periodic sync: only updates languageCycle (available layouts), never
-    // overrides currentLayout after the user has manually cycled (initialSyncDone=true).
+    // The compositor is the single source of truth for which layout is active.
+    //
+    // It has to be, now that keys are sent as positions: the character produced
+    // is whatever the compositor's layout says, so if the panel believed
+    // something else the caps would show one alphabet while another came out.
+    // Switching outside the panel — Caps Lock, the bar indicator, a keybind —
+    // is the same event as switching inside it, and both are picked up here
+    // rather than by a timer, which is how the built-in layout widget does it.
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            if (!event || !event.name) return
+            var name = String(event.name)
+            // A reload can add or remove layouts without moving anything, so it
+            // changes what the panel may cycle through even with no switch.
+            if (name.indexOf("activelayout") !== -1 || name === "configreloaded") {
+                root.refreshLayoutsFromHypr()
+            }
+        }
+    }
+
+    // A device appearing or leaving raises no event of its own, and a query
+    // that failed at login would otherwise never be retried. Slow on purpose:
+    // the events above carry the switches, this only repairs.
     Timer {
         id: layoutSyncTimer
-        interval: 5000
+        interval: 30000
         repeat: true
         running: true
         onTriggered: root.refreshLayoutsFromHypr()
@@ -608,11 +625,21 @@ Item {
                                     }
                                 }
 
+                                // Ordinary keys fire on press, not on click. A
+                                // click only completes when the button comes
+                                // back up, so waiting for it charges every
+                                // keystroke the length of the press — which
+                                // reads as lag even though nothing is slow.
+                                // Real keyboards act on the way down.
+                                onPressed: {
+                                    if (!keyData.key) root.pressChar(keyData)
+                                }
+
+                                // Keys with a double-press meaning still need
+                                // the click, since a press alone cannot tell a
+                                // tap from the first half of a double.
                                 onClicked: {
-                                    if (!keyData.key) {
-                                        root.pressChar(keyData)
-                                        return
-                                    }
+                                    if (!keyData.key) return
                                     if (!root.isHoldableModifierKey(keyData.key)) {
                                         root.pressSpecial(keyData, false)
                                         return

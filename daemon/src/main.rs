@@ -111,6 +111,14 @@ struct Shared {
     ready: bool,
     /// xkb key name -> evdev code, taken from the keymap in use.
     codes: std::collections::HashMap<String, u32>,
+    /// Active layout group, mirrored from the seat.
+    ///
+    /// The compositor resolves our keycodes through *our* virtual keyboard's
+    /// group, and a freshly created device starts at group 0. On a us,ua seat
+    /// with the physical keyboard switched to Ukrainian that means the panel
+    /// draws Cyrillic caps while the keystrokes come out Latin — the layouts
+    /// look swapped. Following the seat's group keeps the two in step.
+    group: u32,
 }
 
 impl Shared {
@@ -162,10 +170,30 @@ impl State {
             return;
         };
         keyboard.keymap(*format, file.as_fd(), *size);
+        // A new keymap resets the device's group, so re-assert it.
+        keyboard.modifiers(0, 0, 0, shared.group);
         shared.ready = true;
         if let Some(text) = read_keymap(file, *size) {
             shared.codes = parse_keycodes(&text);
         }
+    }
+}
+
+impl State {
+    /// Applies the seat's layout group to our own virtual keyboard. Only the
+    /// group is mirrored: the physical keyboard's held modifiers are its own
+    /// business, and copying them would make a physically held Shift leak into
+    /// keys pressed on screen.
+    fn set_group(&mut self, group: u32) {
+        let mut shared = self.shared.lock().unwrap();
+        if shared.group == group {
+            return;
+        }
+        shared.group = group;
+        if let Some(keyboard) = shared.keyboard.as_ref() {
+            keyboard.modifiers(0, 0, 0, group);
+        }
+        eprintln!("layout group -> {group}");
     }
 }
 
@@ -225,6 +253,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wl_keyboard::Event::Modifiers { group, .. } = event {
+            state.set_group(group);
+            return;
+        }
         if let wl_keyboard::Event::Keymap { format, fd, size } = event {
             let format = match format {
                 WEnum::Value(value) => value as u32,
@@ -406,7 +438,9 @@ fn apply(
             }
             None => return "err unknown key",
         },
-        Command::Mods(mask) => keyboard.modifiers(mask, 0, 0, 0),
+        // The group rides along with every modifier update: dropping it here
+        // would silently reset the device to the first layout.
+        Command::Mods(mask) => keyboard.modifiers(mask, 0, 0, shared.group),
     }
 
     // Requests sit in the connection buffer until flushed, and the event loop
