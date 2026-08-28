@@ -21,8 +21,9 @@
 //!   down <key>        press
 //!   up <key>          release
 //!   mods <mask>       set the modifier mask (depressed group)
+//!   hello <version>   readiness gate, replies `ready <version>`
 //!   ping              replies `pong`
-//! Replies are `ok`, `pong`, or `err <reason>`.
+//! Replies are `ok`, `ready <n>`, `pong`, or `err <reason>`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
@@ -112,7 +113,18 @@ struct Shared {
     codes: std::collections::HashMap<String, u32>,
 }
 
+impl Shared {
+    /// Everything that must be true before a key can actually land.
+    fn is_ready(&self) -> bool {
+        self.keyboard.is_some() && self.ready && !self.codes.is_empty()
+    }
+}
+
 type SharedRef = Arc<Mutex<Shared>>;
+
+/// Bumped whenever the command set changes, so a plugin updated without
+/// reinstalling the helper says so instead of failing silently.
+const PROTOCOL_VERSION: u32 = 1;
 
 struct State {
     seat: Option<wl_seat::WlSeat>,
@@ -249,10 +261,17 @@ impl Dispatch<ZwpVirtualKeyboardV1, ()> for State {
     }
 }
 
-fn socket_path() -> PathBuf {
-    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    let display = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".to_string());
-    PathBuf::from(dir).join(format!("omarchy-osk.{display}.sock"))
+/// Fixed path under the runtime directory the service unit declares.
+///
+/// No fallback to /tmp and no guessing at WAYLAND_DISPLAY: running without a
+/// graphical session is a startup failure worth seeing, and a socket in the
+/// wrong place would leave a keyboard that connects fine and types nothing.
+fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let dir = std::env::var("XDG_RUNTIME_DIR")
+        .map_err(|_| "XDG_RUNTIME_DIR is unset; this must run inside a user session")?;
+    let dir = PathBuf::from(dir).join("omarchy-osk");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("control.sock"))
 }
 
 fn parse(line: &str) -> Option<Command> {
@@ -282,9 +301,32 @@ fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
 
 fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) {
     let Ok(mut out) = stream.try_clone() else { return };
+    // Keys this connection pressed and has not released. If the shell restarts
+    // mid-chord the compositor would otherwise keep Ctrl logically down for the
+    // rest of the session, which looks like a broken machine rather than a
+    // broken plugin.
+    let mut held: Vec<u32> = Vec::new();
+
     for line in BufReader::new(stream).lines().map_while(Result::ok) {
         let line = line.trim();
         if line.is_empty() {
+            continue;
+        }
+        // `hello` is the readiness gate. It deliberately reports more than "the
+        // process is up": the client must not enable keys until a virtual
+        // keyboard exists AND the compositor keymap has been forwarded to it,
+        // because a keyboard without a keymap accepts commands and drops every
+        // key. `ping` stays as a plain liveness check.
+        if let Some(version) = line.strip_prefix("hello") {
+            let wanted: u32 = version.trim().parse().unwrap_or(PROTOCOL_VERSION);
+            let reply = if wanted != PROTOCOL_VERSION {
+                format!("err protocol {PROTOCOL_VERSION} required, helper needs reinstall")
+            } else if shared.lock().unwrap().is_ready() {
+                format!("ready {PROTOCOL_VERSION}")
+            } else {
+                "err not ready".to_string()
+            };
+            let _ = writeln!(out, "{reply}");
             continue;
         }
         if line == "ping" {
@@ -292,14 +334,30 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             continue;
         }
         let reply = match parse(line) {
-            Some(command) => apply(&shared, &connection, command),
+            Some(command) => apply(&shared, &connection, command, Some(&mut held)),
             None => "err unknown command",
         };
         let _ = writeln!(out, "{reply}");
     }
+
+    release_all(&shared, &connection, held);
 }
 
-fn apply(shared: &SharedRef, connection: &Connection, command: Command) -> &'static str {
+/// Releases whatever a departing client left pressed and zeroes the modifier
+/// mask, so a dropped connection cannot strand the session with a stuck key.
+fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>) {
+    for code in held {
+        apply(shared, connection, Command::Up(Key::Code(code)), None);
+    }
+    apply(shared, connection, Command::Mods(0), None);
+}
+
+fn apply(
+    shared: &SharedRef,
+    connection: &Connection,
+    command: Command,
+    mut held: Option<&mut Vec<u32>>,
+) -> &'static str {
     let shared = shared.lock().unwrap();
     let Some(keyboard) = shared.keyboard.as_ref() else {
         return "err no virtual keyboard";
@@ -329,11 +387,23 @@ fn apply(shared: &SharedRef, connection: &Connection, command: Command) -> &'sta
             None => return "err unknown key",
         },
         Command::Down(ref key) => match resolve(key) {
-            Some(code) => keyboard.key(stamp(), code, 1),
+            Some(code) => {
+                keyboard.key(stamp(), code, 1);
+                if let Some(held) = held.as_deref_mut() {
+                    if !held.contains(&code) {
+                        held.push(code);
+                    }
+                }
+            }
             None => return "err unknown key",
         },
         Command::Up(ref key) => match resolve(key) {
-            Some(code) => keyboard.key(stamp(), code, 0),
+            Some(code) => {
+                keyboard.key(stamp(), code, 0);
+                if let Some(held) = held.as_deref_mut() {
+                    held.retain(|entry| *entry != code);
+                }
+            }
             None => return "err unknown key",
         },
         Command::Mods(mask) => keyboard.modifiers(mask, 0, 0, 0),
@@ -349,8 +419,13 @@ fn apply(shared: &SharedRef, connection: &Connection, command: Command) -> &'sta
 /// Blocks on compositor events for the life of the process. The only events
 /// that matter are keymap updates after a layout switch; the rest of the time
 /// this thread is asleep in poll, which is the point.
-fn run(mut queue: EventQueue<State>, mut state: State) {
-    while queue.blocking_dispatch(&mut state).is_ok() {}
+fn run(mut queue: EventQueue<State>, mut state: State) -> Result<(), Box<dyn std::error::Error>> {
+    loop {
+        // Exit rather than trying to reconnect: the session environment this
+        // process was started with is stale once the compositor is gone, and
+        // systemd rebuilds connection, registry, keyboard and keymap cleanly.
+        queue.blocking_dispatch(&mut state)?;
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -377,7 +452,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("compositor does not offer zwp_virtual_keyboard_manager_v1".into());
     }
 
-    let path = socket_path();
+    let path = socket_path()?;
     // A stale socket from a killed daemon would make bind fail; nothing else
     // owns this name, so removing it is safe.
     let _ = std::fs::remove_file(&path);
@@ -387,6 +462,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket_shared = Arc::clone(&shared);
     let socket_connection = connection.clone();
     thread::spawn(move || serve(listener, socket_shared, socket_connection));
-    run(queue, state);
-    Ok(())
+    run(queue, state)
 }

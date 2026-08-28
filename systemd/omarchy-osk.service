@@ -1,0 +1,44 @@
+[Unit]
+Description=Omarchy on-screen keyboard input service
+Documentation=https://github.com/Vladkarok/omarchy-osk
+
+# Tied to the compositor, not to the shell. omarchy-shell restarts often; the
+# daemon's Wayland connection only dies with the session, and PartOf= stops it
+# when Hyprland goes away so the next session starts a fresh instance with the
+# environment uwsm imported for it.
+Requisite=graphical-session.target
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+StartLimitIntervalSec=30
+StartLimitBurst=5
+
+[Service]
+Type=exec
+ExecStart=%h/.local/libexec/omarchy-osk-daemon
+
+# Any exit while the graphical session is still up is abnormal: the daemon
+# leaves on compositor loss and expects to be rebuilt from scratch rather than
+# reconnecting with stale session environment. An explicit stop, including one
+# propagated by PartOf=, does not restart.
+Restart=always
+RestartSec=1
+
+# Owns the socket directory, which also clears a stale socket after a crash.
+RuntimeDirectory=omarchy-osk
+RuntimeDirectoryMode=0700
+UMask=0077
+
+Slice=session-graphical.slice
+
+# This process can synthesise keystrokes into any window, so give it nothing it
+# does not need.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=graphical-session.target
