@@ -694,7 +694,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("another daemon already owns {}", path.display()).into());
     }
     let _ = std::fs::remove_file(&path);
-    let listener = UnixListener::bind(&path)?;
+    let listener = UnixListener::bind(&path)
+        .map_err(|error| format!("cannot bind {}: {error}", path.display()))?;
     eprintln!("listening on {}", path.display());
 
     let socket_shared = Arc::clone(&shared);

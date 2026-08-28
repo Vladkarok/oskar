@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+#
+# Runs a command against a throwaway nested Hyprland instead of the session you
+# are sitting in.
+#
+# This exists because of a real incident: a keymap feedback loop between the
+# helper and the compositor produced 56,547 keymap rebuilds in five minutes,
+# pegged xkbcomp, and froze the desktop badly enough to need a switch to a TTY.
+# The daemon now has guards against that specific loop, but anything that drives
+# a virtual keyboard can wedge a seat in a new way, so exercise it somewhere
+# disposable first.
+#
+# Both the compositor and XDG_RUNTIME_DIR are private to the run, so the test
+# daemon binds its own control socket and cannot collide with the live one.
+#
+#   tools/nested-session.sh daemon/target/release/omarchy-osk-daemon
+#   tools/nested-session.sh foot   # sanity-check the nested session itself
+#
+set -uo pipefail
+
+if ! command -v Hyprland >/dev/null; then
+    echo "Hyprland is not installed" >&2
+    exit 1
+fi
+
+# Short path on purpose: Hyprland refuses its IPC socket when the directory
+# name is long ("Socket2 path is too long"), and mktemp's default is already
+# too long once the instance signature is appended.
+workdir="/tmp/osk-nest.$$"
+runtime="$workdir/rt"
+mkdir -p "$runtime"
+chmod 700 "$runtime"
+
+cleanup() {
+    local pids
+    pids=$(jobs -p)
+    [[ -n "$pids" ]] && kill $pids 2>/dev/null
+    rm -rf "$workdir"
+}
+trap cleanup EXIT
+
+cat > "$workdir/hypr.conf" <<'CONF'
+monitor = WL-1, 1280x800@60, 0x0, 1
+input {
+    kb_layout = us,ua
+    kb_options = grp:caps_toggle
+}
+misc {
+    disable_hyprland_logo = true
+    disable_splash_rendering = true
+}
+animations { enabled = false }
+CONF
+
+# The signature has to be unset, or the nested compositor is taken for a
+# duplicate of the running one. XDG_RUNTIME_DIR stays as it is: the nested
+# instance is a Wayland client of the session and needs the host's socket to
+# attach to. Overriding it here makes the backend fail to create.
+env -u HYPRLAND_INSTANCE_SIGNATURE \
+    Hyprland -c "$workdir/hypr.conf" > "$workdir/hypr.log" 2>&1 &
+
+host_runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+before=$(ls "$host_runtime"/wayland-* 2>/dev/null | grep -v '\.lock$' | sort)
+
+for _ in $(seq 1 40); do
+    after=$(ls "$host_runtime"/wayland-* 2>/dev/null | grep -v '\.lock$' | sort)
+    display=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
+    [[ -n "$display" ]] && break
+    sleep 0.5
+done
+display=$(basename "${display:-}")
+
+if [[ -z "${display:-}" ]]; then
+    echo "nested compositor did not come up; log follows" >&2
+    tail -n 20 "$workdir/hypr.log" >&2
+    exit 1
+fi
+
+# The command under test gets a private XDG_RUNTIME_DIR so its control socket
+# cannot collide with the one the installed service already owns. The nested
+# display and the nested Hyprland instance directory are linked in, so it can
+# still reach the compositor and its event socket.
+ln -sf "$host_runtime/$display" "$runtime/$display"
+
+signature=""
+for _ in $(seq 1 20); do
+    signature=$(ls -t "$host_runtime/hypr" 2>/dev/null | head -1)
+    [[ -n "$signature" && "$signature" != "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] && break
+    sleep 0.5
+done
+
+if [[ -n "$signature" ]]; then
+    mkdir -p "$runtime/hypr"
+    ln -sfn "$host_runtime/hypr/$signature" "$runtime/hypr/$signature"
+fi
+
+echo "nested compositor: $display  (private runtime $runtime)"
+echo "--- running: $* ---"
+
+WAYLAND_DISPLAY="$display" XDG_RUNTIME_DIR="$runtime" \
+    HYPRLAND_INSTANCE_SIGNATURE="$signature" "$@"
+status=$?
+echo "--- exited with $status ---"
+exit $status
