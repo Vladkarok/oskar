@@ -370,24 +370,111 @@ Item {
     // moved focus away and wtype typed into the wrong one. The panel is
     // `keyboardFocus: None`, so the target never loses focus and there is
     // nothing to reclaim.
-    function sendKeys(argv) {
-        Quickshell.execDetached(argv)
+    // Input goes to the helper daemon over a unix socket. Nothing here spawns a
+    // process: the plugin runs inside the long-lived shell, and the Omarchy
+    // guide asks plugins not to launch shell processes. It also could not work
+    // if it did — a fresh `wtype` per keystroke uploads a synthetic keymap that
+    // XWayland ignores, so keys never reached Proton games or Electron apps.
+    property bool inputReady: false
+    property string inputStatus: "connecting"
+
+    Socket {
+        id: daemon
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"
+        connected: true
+
+        onConnectionStateChanged: {
+            if (connected) {
+                // Readiness is not the same as "the socket answered": the
+                // daemon accepts commands before the compositor keymap has been
+                // forwarded to its virtual keyboard, and would drop every key.
+                write("hello 1\n")
+                flush()
+            } else {
+                root.inputReady = false
+                root.inputStatus = "reconnecting"
+                reconnectTimer.restart()
+            }
+        }
+
+        parser: SplitParser {
+            onRead: function (line) {
+                var reply = String(line).trim()
+                if (reply.indexOf("ready") === 0) {
+                    root.inputReady = true
+                    root.inputStatus = "ready"
+                    // A reconnect can land with the daemon still holding
+                    // modifiers this panel no longer thinks are down.
+                    root.clearComboMods()
+                    daemon.write("mods 0\n")
+                    daemon.flush()
+                } else if (reply.indexOf("err") === 0) {
+                    root.inputReady = false
+                    root.inputStatus = reply
+                }
+            }
+        }
+    }
+
+    Timer {
+        id: reconnectTimer
+        // Capped so a missing helper costs a connect attempt every couple of
+        // seconds rather than a busy loop.
+        interval: 2000
+        repeat: false
+        onTriggered: daemon.connected = true
+    }
+
+    function sendCommand(text) {
+        if (!inputReady) return false
+        daemon.write(text + "\n")
+        daemon.flush()
+        return true
+    }
+
+    /// Taps a key position with modifier positions held around it. Modifiers go
+    /// as real key presses rather than a modifier mask so the compositor derives
+    /// the state exactly as it would from a physical keyboard.
+    function tapPosition(position, modifierPositions) {
+        if (!position) return
+        for (var i = 0; i < modifierPositions.length; i++) {
+            sendCommand("down " + modifierPositions[i])
+        }
+        sendCommand("tap " + position)
+        for (var j = modifierPositions.length - 1; j >= 0; j--) {
+            sendCommand("up " + modifierPositions[j])
+        }
+    }
+
+    function heldModifierPositions() {
+        var positions = []
+        var names = activeModifiers()
+        for (var i = 0; i < names.length; i++) {
+            var position = Layout.positionForModifier(names[i])
+            if (position) positions.push(position)
+        }
+        return positions
     }
 
     function pressChar(keyData) {
-        var mods = activeModifiers()
-        
-        if (mods.length === 1 && mods[0] === "shift") {
-            mods = []
-        }
+        if (!keyData.k) return
 
-        if (mods.length > 0) {
-            sendKeys(Layout.buildModCharCommand(mods, keyData.t))
+        // Shift is applied as a real Shift press rather than by picking the
+        // shifted character, because the compositor resolves the position
+        // through its own layout. Which of Caps or Shift is doing the work
+        // follows the same rule the key caps are drawn with, so what is shown
+        // is what is typed.
+        var positions = heldModifierPositions().filter(function (position) {
+            return position !== "LFSH"
+        })
+        var wantsShift = isLetterKey(keyData) ? isUpper() : shiftOn
+        if (wantsShift) positions.push("LFSH")
+
+        tapPosition(keyData.k, positions)
+
+        if (activeModifiers().length > 0) {
             clearComboMods()
-            return
         }
-        var text = resolvedTypedChar(keyData)
-        sendKeys(Layout.buildTypeCommand(text))
         shiftOn = shiftHeld
     }
 
@@ -403,12 +490,9 @@ Item {
         case "logo": toggleModifier("logo", doubleClick); return
         case "altgr": toggleModifier("altgr", doubleClick); return
         }
-        var mods = activeModifiers()
-        if (mods.length > 0) {
-            sendKeys(Layout.buildModKeyCommand(mods, keyData.key))
-        } else {
-            sendKeys(Layout.buildKeyCommand(keyData.key))
-        }
+        var position = Layout.positionForKeysym(keyData.key)
+        if (!position) return
+        tapPosition(position, heldModifierPositions())
         clearComboMods()
     }
 

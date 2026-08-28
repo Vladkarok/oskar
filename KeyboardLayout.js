@@ -332,6 +332,53 @@ function buildKeyCommand(keysym) {
     return ["wtype", "-k", keysym]
 }
 
+// The rows label special keys by keysym ("Return", "BackSpace") because that is
+// what wtype wanted. The daemon speaks key positions instead, so the compositor
+// decides what a position means — which is what lets one keystroke work on any
+// layout and reach XWayland clients. This maps the keysyms already present in
+// the layout table onto xkb positions.
+var keysymPositions = {
+    Escape: "ESC",
+    Tab: "TAB",
+    Return: "RTRN",
+    BackSpace: "BKSP",
+    Delete: "DELE",
+    Left: "LEFT",
+    Right: "RGHT",
+    Up: "UP",
+    Down: "DOWN",
+    Home: "HOME",
+    End: "END",
+    Prior: "PGUP",
+    Next: "PGDN",
+    Insert: "INS"
+}
+
+// Modifier names the panel uses, mapped to the positions that carry them.
+var modifierPositions = {
+    shift: "LFSH",
+    ctrl: "LCTL",
+    alt: "LALT",
+    logo: "LWIN",
+    altgr: "RALT"
+}
+
+function positionForKeysym(keysym) {
+    var name = String(keysym || "")
+    if (keysymPositions.hasOwnProperty(name)) return keysymPositions[name]
+    // F1..F12 sit at FK01..FK12.
+    var fkey = /^F([1-9]|1[0-2])$/.exec(name)
+    if (fkey) {
+        var index = fkey[1]
+        return "FK" + (index.length < 2 ? "0" + index : index)
+    }
+    return ""
+}
+
+function positionForModifier(modifier) {
+    return modifierPositions[String(modifier || "")] || ""
+}
+
 // Held-modifier combo, e.g. Ctrl+C: wtype -M ctrl -p c -m ctrl
 function normalizedModifiers(modifiers) {
     if (!Array.isArray(modifiers)) return [modifiers]

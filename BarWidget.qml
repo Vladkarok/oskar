@@ -4,7 +4,7 @@ import qs.Ui
 
 BarWidget {
     id: root
-    moduleName: "io.github.abdxdev.onscreen-keyboard"
+    moduleName: "io.github.vladkarok.osk"
 
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
@@ -17,7 +17,7 @@ BarWidget {
         tooltipText: "Toggle On-Screen Keyboard"
         onPressed: function(buttonCode) {
             if (!root.bar) return
-            root.bar.run("omarchy-shell shell toggle io.github.abdxdev.onscreen-keyboard")
+            root.bar.run("omarchy-shell shell toggle io.github.vladkarok.osk")
         }
     }
 }

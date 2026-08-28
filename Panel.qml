@@ -73,7 +73,7 @@ Item {
         // you're typing into keeps it, and wtype has something to type
         // into. Clicks on the keys still work fine with keyboardFocus: None
         // — only keyboard input routing is refused at the compositor level.
-        WlrLayershell.namespace: "io.github.abdxdev.onscreen-keyboard"
+        WlrLayershell.namespace: "io.github.vladkarok.osk"
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         exclusionMode: ExclusionMode.Ignore
