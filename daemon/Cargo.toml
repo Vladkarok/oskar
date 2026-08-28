@@ -6,8 +6,10 @@ description = "Persistent Wayland virtual keyboard driven over a unix socket"
 license = "MIT"
 
 [dependencies]
+tempfile = "3.27.0"
 wayland-client = "0.31"
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
+xkbcommon = "0.9.0"
 
 [profile.release]
 opt-level = "s"

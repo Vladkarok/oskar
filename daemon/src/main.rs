@@ -1,33 +1,38 @@
 //! Persistent virtual keyboard for the on-screen keyboard plugin.
 //!
-//! Why this exists at all, in two parts.
+//! Why this exists. The plugin used to spawn a `wtype` process per keystroke,
+//! which cost 30-80ms a key and, worse, never reached XWayland clients at all:
+//! wtype builds a small synthetic keymap holding just the character it needs,
+//! and XWayland ignores that, so keys vanished into Proton games and Electron
+//! apps. One long-lived helper with a real, complete keymap fixes both. Measured
+//! at 0.4ms average per keystroke against 37.8ms for a wtype spawn.
 //!
-//! Speed: the plugin used to spawn a `wtype` process per keystroke. A fork and
-//! exec per key is tens of milliseconds and shows up as a laggy keyboard, and
-//! the Omarchy plugin guide asks plugins not to launch shell processes. One
-//! long-lived helper replaces all of them.
+//! Why it compiles its own keymap. An earlier version subscribed to the seat's
+//! keymap and mirrored it into its virtual keyboard. That coupling was a
+//! mistake and produced two separate failures: uploading changed the seat, the
+//! compositor rebuilt its keymap and sent it back, and the cycle drove xkbcomp
+//! 56,547 times in five minutes until the desktop froze; and holding a layout
+//! group in step with the seat disturbed layout switching for unrelated
+//! applications. There is no subscription now, so neither is possible. wvkbd
+//! has worked this way for years without upsetting a session.
 //!
-//! XWayland: `wtype` builds a small synthetic keymap holding just the character
-//! it needs, uploads it, types, and exits. Native Wayland clients re-read that
-//! keymap and cope; XWayland does not, so keystrokes vanish into Proton games
-//! and Electron apps running on XWayland. This daemon never invents a keymap —
-//! it takes the seat's own keymap from the compositor and hands that same
-//! keymap to its virtual keyboard, so a keycode means exactly what it means on
-//! the physical keyboard, everywhere.
+//! One compiled keymap carries every configured layout as a group, so switching
+//! language selects a group rather than compiling again. The panel tells the
+//! helper which layouts to compile and which group is active; it is the only
+//! thing that talks to the compositor about layouts.
 //!
 //! Protocol, one command per line on a unix socket:
+//!   hello <version>   readiness gate, replies `ready <version>`
+//!   ping              replies `pong`
 //!   tap <key>         press and release; <key> is an xkb name (AD01) or an
 //!                     evdev code (16)
 //!   down <key>        press
 //!   up <key>          release
 //!   mods <mask>       set the modifier mask
-//!   group <n>         select the layout index this device types in
-//!   hello <version>   readiness gate, replies `ready <version>`
-//!   ping              replies `pong`
+//!   group <n>         select which compiled layout to type in
+//!   layout <codes>    recompile for a layout list, e.g. `layout us,ua`
 //! Replies are `ok`, `ready <n>`, `pong`, or `err <reason>`.
 
-use std::collections::HashSet;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -35,61 +40,58 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
 
-use wayland_client::protocol::{wl_keyboard, wl_registry, wl_seat};
-use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
+use wayland_client::protocol::{wl_registry, wl_seat};
+use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
 use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
     zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
     zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
 };
 
-/// Reads the keymap the compositor shared. It arrives as a file descriptor the
-/// client is expected to map, and a fresh handle is used so the daemon never
-/// disturbs the offset of the one being forwarded to the virtual keyboard.
-fn read_keymap(file: &std::fs::File, size: u32) -> Option<String> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut handle = file.try_clone().ok()?;
-    handle.seek(SeekFrom::Start(0)).ok()?;
-    let mut buffer = vec![0u8; size as usize];
-    handle.read_exact(&mut buffer).ok()?;
-    // The text is NUL terminated; trim so the parser is not handed a stray byte.
-    while buffer.last() == Some(&0) {
-        buffer.pop();
-    }
-    String::from_utf8(buffer).ok()
+/// Bumped whenever the command set changes, so a plugin updated without
+/// reinstalling the helper says so instead of failing silently.
+const PROTOCOL_VERSION: u32 = 1;
+
+/// Until the panel reports the real list. Any layout compiles; this one just
+/// gives the helper a valid keymap to be ready with.
+const DEFAULT_LAYOUTS: &str = "us";
+
+/// Builds a keymap for an RMLVO layout list such as "us,ua".
+fn compile_keymap(layouts: &str) -> Option<String> {
+    use xkbcommon::xkb;
+    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+    // Rules and model are named explicitly. Left empty, libxkbcommon resolves
+    // the first layout but leaves later groups without their own symbols, so a
+    // "us,ua" keymap came out with a second group full of Latin.
+    let keymap = xkb::Keymap::new_from_names(
+        &context,
+        "evdev",
+        "pc105",
+        layouts,
+        "",
+        None,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    )?;
+    Some(keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1))
 }
 
-fn keymap_fingerprint(file: &std::fs::File, size: u32) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    read_keymap(file, size).hash(&mut hasher);
-    hasher.finish()
-}
-
-/// A key is named the way xkb names it (`AD01`) or given as a raw evdev code.
-/// Names are preferred: the QML side already labels keys by xkb position, and
-/// resolving them here keeps the numbering in one place.
-enum Key {
-    Code(u32),
-    Name(String),
-}
-
-enum Command {
-    Tap(Key),
-    Down(Key),
-    Up(Key),
-    Mods(u32),
-    /// Selects the layout our own device types in. Ours is a separate keyboard
-    /// on the seat with its own group, so it does not follow the physical one.
-    Group(u32),
+/// Hands a compiled keymap to the virtual keyboard through a file descriptor,
+/// which is how the protocol expects to receive one.
+fn upload_keymap(keyboard: &ZwpVirtualKeyboardV1, text: &str) -> std::io::Result<()> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = tempfile::tempfile()?;
+    file.write_all(text.as_bytes())?;
+    file.write_all(&[0])?;
+    file.seek(SeekFrom::Start(0))?;
+    keyboard.keymap(1, file.as_fd(), text.len() as u32 + 1);
+    Ok(())
 }
 
 /// Pulls `<AD01> = 24;` pairs out of the keymap's xkb_keycodes section.
 ///
 /// Callers name keys the way xkb does, and the numbers are resolved here rather
-/// than in the QML client: the keymap in hand is the authority, so a layout that
-/// numbers keys unusually still works and there is no second table to keep in
-/// step. Names map to evdev codes, which are the xkb codes minus 8.
+/// than in the QML client: the keymap in hand is the authority, and there is no
+/// second table to keep in step. Names map to evdev codes, the xkb codes minus 8.
 fn parse_keycodes(keymap: &str) -> std::collections::HashMap<String, u32> {
     let mut codes = std::collections::HashMap::new();
     let Some(section) = keymap.split("xkb_keycodes").nth(1) else {
@@ -118,11 +120,26 @@ fn parse_keycodes(keymap: &str) -> std::collections::HashMap<String, u32> {
     codes
 }
 
+/// A key is named the way xkb names it (`AD01`) or given as a raw evdev code.
+enum Key {
+    Code(u32),
+    Name(String),
+}
+
+enum Command {
+    Tap(Key),
+    Down(Key),
+    Up(Key),
+    Mods(u32),
+    /// Selects which compiled layout this device types in.
+    Group(u32),
+    /// Recompiles for a new layout list.
+    Layout(String),
+}
+
 /// What the socket threads need. Wayland proxies are Send + Sync and the
-/// connection serialises requests internally, so client threads can drive the
-/// keyboard directly instead of handing work to the event loop. That keeps the
-/// main thread free to block on compositor events, which is where it should
-/// spend its time: idle, waiting, costing nothing.
+/// connection serialises requests internally, so client threads drive the
+/// keyboard directly. That leaves the main thread free to sit in poll.
 #[derive(Default)]
 struct Shared {
     keyboard: Option<ZwpVirtualKeyboardV1>,
@@ -130,14 +147,10 @@ struct Shared {
     ready: bool,
     /// xkb key name -> evdev code, taken from the keymap in use.
     codes: std::collections::HashMap<String, u32>,
-    /// Active layout group, mirrored from the seat.
-    ///
-    /// The compositor resolves our keycodes through *our* virtual keyboard's
-    /// group, and a freshly created device starts at group 0. On a us,ua seat
-    /// with the physical keyboard switched to Ukrainian that means the panel
-    /// draws Cyrillic caps while the keystrokes come out Latin — the layouts
-    /// look swapped. Following the seat's group keeps the two in step.
+    /// Which compiled layout is active.
     group: u32,
+    /// The layout list currently compiled, e.g. "us,ua".
+    layouts: String,
 }
 
 impl Shared {
@@ -145,97 +158,38 @@ impl Shared {
     fn is_ready(&self) -> bool {
         self.keyboard.is_some() && self.ready && !self.codes.is_empty()
     }
+
+    /// Compiles `layouts` and installs the result. Held by the caller's lock so
+    /// a keystroke can never observe a half-swapped keymap.
+    fn install_layouts(&mut self, layouts: &str) -> bool {
+        let Some(text) = compile_keymap(layouts) else {
+            eprintln!("cannot compile keymap for '{layouts}'");
+            return false;
+        };
+        let Some(keyboard) = self.keyboard.as_ref() else {
+            return false;
+        };
+        if let Err(error) = upload_keymap(keyboard, &text) {
+            eprintln!("cannot upload keymap for '{layouts}': {error}");
+            return false;
+        }
+
+        // A new keymap resets the device's group, so re-assert it.
+        keyboard.modifiers(0, 0, 0, self.group);
+        self.codes = parse_keycodes(&text);
+        self.ready = !self.codes.is_empty();
+        self.layouts = layouts.to_string();
+        eprintln!("keymap compiled for '{layouts}' ({} bytes)", text.len());
+        self.ready
+    }
 }
 
 type SharedRef = Arc<Mutex<Shared>>;
 
-/// Bumped whenever the command set changes, so a plugin updated without
-/// reinstalling the helper says so instead of failing silently.
-const PROTOCOL_VERSION: u32 = 1;
-
 struct State {
     seat: Option<wl_seat::WlSeat>,
     manager: Option<ZwpVirtualKeyboardManagerV1>,
-    /// The seat keymap, forwarded verbatim from the compositor. Kept so a
-    /// keyboard created after the keymap arrived can still be initialised.
-    keymap: Option<(u32, std::fs::File, u32)>,
-    keymap_rate: KeymapRateLimiter,
-    keymap_tracker: KeymapTracker,
     shared: SharedRef,
-}
-
-/// Allows short legitimate bursts while stopping sustained keymap churn.
-///
-/// A layout hotkey can produce many events in quick succession. A feedback
-/// loop keeps producing them, so a token bucket distinguishes the two without
-/// waiting for a large fixed time window. Capacity 32 passed a 20-switch stress
-/// test; four tokens per second still allows active manual switching.
-struct KeymapRateLimiter {
-    tokens: f64,
-    last_refill: Instant,
-}
-
-impl KeymapRateLimiter {
-    const CAPACITY: f64 = 32.0;
-    const REFILL_PER_SECOND: f64 = 4.0;
-
-    fn new(now: Instant) -> Self {
-        Self {
-            tokens: Self::CAPACITY,
-            last_refill: now,
-        }
-    }
-
-    fn accept(&mut self, now: Instant) -> bool {
-        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
-        self.tokens = (self.tokens + elapsed * Self::REFILL_PER_SECOND).min(Self::CAPACITY);
-        self.last_refill = now;
-
-        if self.tokens < 1.0 {
-            return false;
-        }
-        self.tokens -= 1.0;
-        true
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-enum KeymapAction {
-    Capture,
-    Ignore,
-    Reload,
-}
-
-/// Learns the physical and virtual seat maps produced during startup. Group
-/// switches alternate between those known maps. A new map after startup means
-/// layout configuration changed and requires rebuilding from a fresh map.
-struct KeymapTracker {
-    known: HashSet<u64>,
-    settle_until: Instant,
-}
-
-impl KeymapTracker {
-    fn new(now: Instant) -> Self {
-        Self {
-            known: HashSet::new(),
-            settle_until: now + Duration::from_secs(1),
-        }
-    }
-
-    fn observe(&mut self, fingerprint: u64, now: Instant) -> KeymapAction {
-        if self.known.is_empty() {
-            self.known.insert(fingerprint);
-            return KeymapAction::Capture;
-        }
-        if self.known.contains(&fingerprint) {
-            return KeymapAction::Ignore;
-        }
-        if now <= self.settle_until {
-            self.known.insert(fingerprint);
-            return KeymapAction::Ignore;
-        }
-        KeymapAction::Reload
-    }
 }
 
 impl State {
@@ -248,50 +202,7 @@ impl State {
             return;
         }
         shared.keyboard = Some(manager.create_virtual_keyboard(seat, qh, ()));
-        drop(shared);
-        self.push_keymap();
-    }
-
-    /// Initialises the virtual keyboard from the seat keymap captured before the
-    /// virtual device was created. It already contains every configured layout;
-    /// changing language only selects another group.
-    ///
-    /// Re-uploading later keymap events creates a feedback loop: our upload
-    /// changes the seat, Hyprland rebuilds its keymap and sends it back, and the
-    /// cycle can invoke xkbcomp hundreds of times per second.
-    fn push_keymap(&mut self) {
-        let Some((format, file, size)) = self.keymap.as_ref() else {
-            return;
-        };
-        let mut shared = self.shared.lock().unwrap();
-        let Some(keyboard) = shared.keyboard.as_ref() else {
-            return;
-        };
-        keyboard.keymap(*format, file.as_fd(), *size);
-        // A new keymap resets the device's group, so re-assert it.
-        keyboard.modifiers(0, 0, 0, shared.group);
-        shared.ready = true;
-        if let Some(text) = read_keymap(file, *size) {
-            shared.codes = parse_keycodes(&text);
-        }
-    }
-}
-
-impl State {
-    /// Applies the seat's layout group to our own virtual keyboard. Only the
-    /// group is mirrored: the physical keyboard's held modifiers are its own
-    /// business, and copying them would make a physically held Shift leak into
-    /// keys pressed on screen.
-    fn set_group(&mut self, group: u32) {
-        let mut shared = self.shared.lock().unwrap();
-        if shared.group == group {
-            return;
-        }
-        shared.group = group;
-        if let Some(keyboard) = shared.keyboard.as_ref() {
-            keyboard.modifiers(0, 0, 0, group);
-        }
-        eprintln!("layout group -> {group}");
+        shared.install_layouts(DEFAULT_LAYOUTS);
     }
 }
 
@@ -313,88 +224,28 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
             return;
         };
         match interface.as_str() {
-            "wl_seat" => {
-                let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), qh, ());
-                state.seat = Some(seat);
-            }
+            "wl_seat" => state.seat = Some(registry.bind(name, version.min(7), qh, ())),
             "zwp_virtual_keyboard_manager_v1" => {
-                state.manager = Some(registry.bind(name, 1, qh, ()));
+                state.manager = Some(registry.bind(name, 1, qh, ()))
             }
             _ => {}
         }
-        // Creating the virtual keyboard before wl_keyboard delivers its first
-        // keymap can make Hyprland select the just-created device as the seat's
-        // active keyboard. Wait until the physical-seat map is captured.
-        if state.keymap.is_some() {
-            state.ensure_keyboard(qh);
-        }
+        state.ensure_keyboard(qh);
     }
 }
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
         _: &mut Self,
-        seat: &wl_seat::WlSeat,
-        event: wl_seat::Event,
+        _: &wl_seat::WlSeat,
+        _: wl_seat::Event,
         _: &(),
         _: &Connection,
-        qh: &QueueHandle<Self>,
+        _: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities {
-            capabilities: WEnum::Value(caps),
-        } = event
-        {
-            if caps.contains(wl_seat::Capability::Keyboard) {
-                // Taking the seat keyboard is the whole point: its keymap event
-                // is the compositor's own keymap, which is what makes typed
-                // keycodes land correctly in XWayland clients too.
-                seat.get_keyboard(qh, ());
-            }
-        }
-    }
-}
-
-impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
-    fn event(
-        state: &mut Self,
-        _: &wl_keyboard::WlKeyboard,
-        event: wl_keyboard::Event,
-        _: &(),
-        _: &Connection,
-        qh: &QueueHandle<Self>,
-    ) {
-        if let wl_keyboard::Event::Modifiers { group, .. } = event {
-            state.set_group(group);
-            return;
-        }
-        if let wl_keyboard::Event::Keymap { format, fd, size } = event {
-            let now = Instant::now();
-            if !state.keymap_rate.accept(now) {
-                eprintln!("safety stop: sustained keymap event storm");
-                // EX_CONFIG. systemd is configured not to restart this status.
-                std::process::exit(78);
-            }
-
-            let file = std::fs::File::from(fd);
-            let fingerprint = keymap_fingerprint(&file, size);
-            match state.keymap_tracker.observe(fingerprint, now) {
-                KeymapAction::Ignore => return,
-                KeymapAction::Reload => {
-                    eprintln!("keymap configuration changed; rebuilding helper");
-                    // EX_TEMPFAIL: systemd creates a fresh pre-device capture.
-                    std::process::exit(75);
-                }
-                KeymapAction::Capture => {}
-            }
-
-            let format = match format {
-                WEnum::Value(value) => value as u32,
-                WEnum::Unknown(raw) => raw,
-            };
-            state.keymap = Some((format, file, size));
-            state.ensure_keyboard(qh);
-            eprintln!("keymap loaded ({size} bytes, {fingerprint:016x})");
-        }
+        // The seat keyboard is deliberately not bound. Reading its keymap is
+        // what coupled this helper to the seat, and that coupling caused both
+        // the rebuild storm and the layout-switching interference.
     }
 }
 
@@ -422,48 +273,12 @@ impl Dispatch<ZwpVirtualKeyboardV1, ()> for State {
     }
 }
 
-/// Fixed path under the runtime directory the service unit declares.
-///
-/// No fallback to /tmp and no guessing at WAYLAND_DISPLAY: running without a
-/// graphical session is a startup failure worth seeing, and a socket in the
-/// wrong place would leave a keyboard that connects fine and types nothing.
 fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let dir = std::env::var("XDG_RUNTIME_DIR")
         .map_err(|_| "XDG_RUNTIME_DIR is unset; this must run inside a user session")?;
     let dir = PathBuf::from(dir).join("omarchy-osk");
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("control.sock"))
-}
-
-fn hyprland_event_socket() -> Result<UnixStream, Box<dyn std::error::Error>> {
-    let runtime = std::env::var("XDG_RUNTIME_DIR")
-        .map_err(|_| "XDG_RUNTIME_DIR is unset; cannot monitor compositor reloads")?;
-    let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
-        .map_err(|_| "HYPRLAND_INSTANCE_SIGNATURE is unset; cannot monitor compositor reloads")?;
-    let path = PathBuf::from(runtime)
-        .join("hypr")
-        .join(signature)
-        .join(".socket2.sock");
-    Ok(UnixStream::connect(path)?)
-}
-
-fn is_config_reload_event(line: &str) -> bool {
-    line.starts_with("configreloaded>>")
-}
-
-fn monitor_hyprland_reload(stream: UnixStream) {
-    for line in BufReader::new(stream).lines().map_while(Result::ok) {
-        if is_config_reload_event(&line) {
-            eprintln!("Hyprland configuration reloaded; rebuilding helper");
-            // EX_TEMPFAIL. systemd restarts with the compositor's new keymap.
-            std::process::exit(75);
-        }
-    }
-
-    // Losing the event socket means the compositor/session is no longer the
-    // one whose keymap we captured. Let systemd rebuild the entire connection.
-    eprintln!("Hyprland event socket closed; rebuilding helper");
-    std::process::exit(75);
 }
 
 fn parse(line: &str) -> Option<Command> {
@@ -480,6 +295,7 @@ fn parse(line: &str) -> Option<Command> {
         "up" => Some(Command::Up(key())),
         "mods" => raw.parse::<u32>().ok().map(Command::Mods),
         "group" => raw.parse::<u32>().ok().map(Command::Group),
+        "layout" => Some(Command::Layout(raw.to_string())),
         _ => None,
     }
 }
@@ -507,11 +323,9 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         if line.is_empty() {
             continue;
         }
-        // `hello` is the readiness gate. It deliberately reports more than "the
-        // process is up": the client must not enable keys until a virtual
-        // keyboard exists AND the compositor keymap has been forwarded to it,
-        // because a keyboard without a keymap accepts commands and drops every
-        // key. `ping` stays as a plain liveness check.
+        // `hello` reports more than "the process is up": a keyboard without a
+        // keymap accepts commands and drops every key, so the client must not
+        // enable keys until one is loaded. `ping` stays a plain liveness check.
         if let Some(version) = line.strip_prefix("hello") {
             let wanted: u32 = version.trim().parse().unwrap_or(PROTOCOL_VERSION);
             let reply = if wanted != PROTOCOL_VERSION {
@@ -553,19 +367,23 @@ fn apply(
     command: Command,
     mut held: Option<&mut Vec<u32>>,
 ) -> &'static str {
-    // Needs a write lock, so it is dealt with before the read path below.
-    if let Command::Group(group) = command {
-        let mut state = shared.lock().unwrap();
-        state.group = group;
-        let Some(keyboard) = state.keyboard.as_ref() else {
-            return "err no virtual keyboard";
-        };
-        keyboard.modifiers(0, 0, 0, group);
+    let mut shared = shared.lock().unwrap();
+
+    // Recompiling is rare and only happens when the configured layouts change,
+    // so it is worth doing nothing when they have not.
+    if let Command::Layout(ref layouts) = command {
+        if shared.layouts == *layouts {
+            return "ok";
+        }
+        let installed = shared.install_layouts(layouts);
         let _ = connection.flush();
-        return "ok";
+        return if installed {
+            "ok"
+        } else {
+            "err cannot compile layout"
+        };
     }
 
-    let shared = shared.lock().unwrap();
     let Some(keyboard) = shared.keyboard.as_ref() else {
         return "err no virtual keyboard";
     };
@@ -578,12 +396,14 @@ fn apply(
     static COUNTER: AtomicU32 = AtomicU32::new(1);
     let stamp = || COUNTER.fetch_add(1, Ordering::Relaxed);
 
-    // Codes go out as evdev numbers, the same numbering wl_keyboard reports,
-    // which is the xkb keycode minus 8.
+    // Codes go out as evdev numbers, the xkb keycode minus 8.
     let resolve = |key: &Key| match key {
         Key::Code(code) => Some(*code),
         Key::Name(name) => shared.codes.get(name).copied(),
     };
+
+    let mut pressed = None;
+    let mut released = None;
 
     match command {
         Command::Tap(ref key) => match resolve(key) {
@@ -596,28 +416,37 @@ fn apply(
         Command::Down(ref key) => match resolve(key) {
             Some(code) => {
                 keyboard.key(stamp(), code, 1);
-                if let Some(held) = held.as_deref_mut() {
-                    if !held.contains(&code) {
-                        held.push(code);
-                    }
-                }
+                pressed = Some(code);
             }
             None => return "err unknown key",
         },
         Command::Up(ref key) => match resolve(key) {
             Some(code) => {
                 keyboard.key(stamp(), code, 0);
-                if let Some(held) = held.as_deref_mut() {
-                    held.retain(|entry| *entry != code);
-                }
+                released = Some(code);
             }
             None => return "err unknown key",
         },
-        // The group rides along with every modifier update: dropping it here
-        // would silently reset the device to the first layout.
+        // The group rides along with every modifier update: dropping it would
+        // silently reset the device to the first layout.
         Command::Mods(mask) => keyboard.modifiers(mask, 0, 0, shared.group),
-        // Handled before the lock below; unreachable here.
-        Command::Group(_) => {}
+        Command::Group(group) => {
+            let keyboard = keyboard.clone();
+            shared.group = group;
+            keyboard.modifiers(0, 0, 0, group);
+        }
+        Command::Layout(_) => unreachable!("handled above"),
+    }
+
+    if let Some(held) = held.as_deref_mut() {
+        if let Some(code) = pressed {
+            if !held.contains(&code) {
+                held.push(code);
+            }
+        }
+        if let Some(code) = released {
+            held.retain(|entry| *entry != code);
+        }
     }
 
     // Requests sit in the connection buffer until flushed, and the event loop
@@ -627,14 +456,14 @@ fn apply(
     "ok"
 }
 
-/// Blocks on compositor events for the life of the process. The only events
-/// that matter are keymap updates after a layout switch; the rest of the time
-/// this thread is asleep in poll, which is the point.
+/// Blocks on compositor events for the life of the process. With no keymap
+/// subscription there is almost nothing to receive, so this thread sits in
+/// poll, which is the point.
 fn run(mut queue: EventQueue<State>, mut state: State) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         // Exit rather than trying to reconnect: the session environment this
-        // process was started with is stale once the compositor is gone, and
-        // systemd rebuilds connection, registry, keyboard and keymap cleanly.
+        // process started with is stale once the compositor is gone, and
+        // systemd rebuilds the connection, registry and keyboard cleanly.
         queue.blocking_dispatch(&mut state)?;
     }
 }
@@ -649,16 +478,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = State {
         seat: None,
         manager: None,
-        keymap: None,
-        keymap_rate: KeymapRateLimiter::new(Instant::now()),
-        keymap_tracker: KeymapTracker::new(Instant::now()),
         shared: Arc::clone(&shared),
     };
 
-    // Registry globals, seat capabilities and the wl_keyboard keymap are
-    // causally ordered but need not all arrive within two sync boundaries,
-    // especially while Hyprland is itself reloading. Bound the wait so startup
-    // remains deterministic without assuming a particular event batching.
+    // Globals and seat capabilities are causally ordered but need not arrive
+    // within one sync boundary, so bound the wait rather than assuming a
+    // particular batching.
     for _ in 0..8 {
         queue.roundtrip(&mut state)?;
         if shared.lock().unwrap().is_ready() {
@@ -671,8 +496,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "compositor does not offer zwp_virtual_keyboard_manager_v1"
         } else if state.seat.is_none() {
             "compositor did not advertise a seat"
-        } else if state.keymap.is_none() {
-            "compositor did not provide an initial seat keymap"
         } else {
             "virtual keyboard did not become ready"
         };
@@ -680,16 +503,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let path = socket_path()?;
-    let hyprland_events = hyprland_event_socket()?;
-    // Refuse to be the second instance. Two daemons on one seat feed each other
-    // keymaps forever: every virtual keyboard added changes the seat keymap,
-    // the other one observes that change and re-uploads its own, and round it
-    // goes. It shows as an endless "keymap updated" log alternating between two
-    // sizes, and it burns CPU for as long as both are up.
-    //
-    // Connecting is the test rather than a lock file, because it tells a live
-    // owner apart from a socket left behind by a crash. Unlinking blindly would
-    // let a newcomer steal the path from a running daemon.
+    // Refuse to be the second instance. Connecting is the test rather than a
+    // lock file, because it tells a live owner apart from a socket left behind
+    // by a crash; unlinking blindly would let a newcomer steal the path from a
+    // running daemon and leave both serving.
     if UnixStream::connect(&path).is_ok() {
         return Err(format!("another daemon already owns {}", path.display()).into());
     }
@@ -701,7 +518,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket_shared = Arc::clone(&shared);
     let socket_connection = connection.clone();
     thread::spawn(move || serve(listener, socket_shared, socket_connection));
-    thread::spawn(move || monitor_hyprland_reload(hyprland_events));
     run(queue, state)
 }
 
@@ -710,85 +526,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keymap_limiter_allows_a_legitimate_burst() {
-        let start = Instant::now();
-        let mut limiter = KeymapRateLimiter::new(start);
-
-        for _ in 0..32 {
-            assert!(limiter.accept(start));
-        }
-        assert!(!limiter.accept(start));
-    }
-
-    #[test]
-    fn keymap_limiter_stops_a_forty_per_second_storm_within_one_second() {
-        let start = Instant::now();
-        let mut limiter = KeymapRateLimiter::new(start);
-        let mut stopped_at = None;
-
-        for event in 0..40 {
-            let at = start + Duration::from_millis(event * 25);
-            if !limiter.accept(at) {
-                stopped_at = Some(at);
-                break;
-            }
-        }
-        assert!(stopped_at.is_some_and(|at| at < start + Duration::from_secs(1)));
-    }
-
-    #[test]
-    fn keymap_limiter_allows_four_events_per_second_sustained() {
-        let start = Instant::now();
-        let mut limiter = KeymapRateLimiter::new(start);
-
-        for event in 0..100 {
-            let at = start + Duration::from_millis(event * 250);
-            assert!(limiter.accept(at));
-        }
-    }
-
-    #[test]
-    fn keymap_tracker_learns_startup_pair_and_ignores_group_switches() {
-        let start = Instant::now();
-        let mut tracker = KeymapTracker::new(start);
-
-        assert_eq!(tracker.observe(10, start), KeymapAction::Capture);
-        assert_eq!(
-            tracker.observe(20, start + Duration::from_millis(10)),
-            KeymapAction::Ignore
-        );
-        assert_eq!(
-            tracker.observe(10, start + Duration::from_secs(2)),
-            KeymapAction::Ignore
-        );
-        assert_eq!(
-            tracker.observe(20, start + Duration::from_secs(2)),
-            KeymapAction::Ignore
+    fn compiles_a_multi_layout_keymap_with_a_group_per_layout() {
+        let text = compile_keymap("us,ua").expect("us,ua should compile");
+        assert!(text.contains("xkb_keycodes"));
+        // The second layout has to be present, since switching language
+        // selects a group rather than recompiling. Groups appear as
+        // `symbols[N]` entries on each key, so a second one means `ua` is in
+        // there alongside `us`.
+        assert!(text.contains("symbols[2]"), "expected a second layout group");
+        // libxkbcommon writes keysyms as numbers rather than names, so the
+        // check is for the value: 0x6ca is Cyrillic_shorti, the Q position on
+        // the Ukrainian layout. Its presence proves group 2 really is `ua` and
+        // not a second copy of `us`.
+        assert!(
+            text.contains("0x6ca"),
+            "expected the ua layout's own symbols in group 2"
         );
     }
 
     #[test]
-    fn keymap_tracker_requests_reload_for_new_map_after_startup() {
-        let start = Instant::now();
-        let mut tracker = KeymapTracker::new(start);
-
-        assert_eq!(tracker.observe(10, start), KeymapAction::Capture);
-        assert_eq!(
-            tracker.observe(20, start + Duration::from_millis(10)),
-            KeymapAction::Ignore
-        );
-        assert_eq!(
-            tracker.observe(30, start + Duration::from_secs(2)),
-            KeymapAction::Reload
-        );
+    fn rejects_a_layout_that_does_not_exist() {
+        assert!(compile_keymap("definitely-not-a-layout").is_none());
     }
 
     #[test]
-    fn only_config_reload_events_restart_the_helper() {
-        assert!(is_config_reload_event("configreloaded>>"));
-        assert!(!is_config_reload_event(
-            "activelayout>>keyboard,English (US)"
-        ));
-        assert!(!is_config_reload_event("configerror>>something"));
+    fn reads_key_positions_out_of_a_compiled_keymap() {
+        let text = compile_keymap("us").expect("us should compile");
+        let codes = parse_keycodes(&text);
+        // AD01 is the Q position; evdev numbers it 16, xkb 24.
+        assert_eq!(codes.get("AD01"), Some(&16));
+        assert_eq!(codes.get("SPCE"), Some(&57));
+    }
+
+    #[test]
+    fn parses_both_key_names_and_raw_codes() {
+        assert!(matches!(parse("tap AD01"), Some(Command::Tap(Key::Name(_)))));
+        assert!(matches!(parse("tap 16"), Some(Command::Tap(Key::Code(16)))));
+        assert!(matches!(parse("layout us,ua"), Some(Command::Layout(_))));
+        assert!(parse("nonsense").is_none());
     }
 }
+
