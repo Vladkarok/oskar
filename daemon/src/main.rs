@@ -16,9 +16,10 @@
 //! the physical keyboard, everywhere.
 //!
 //! Protocol, one command per line on a unix socket:
-//!   tap <code>        press and release an evdev keycode
-//!   down <code>       press
-//!   up <code>         release
+//!   tap <key>         press and release; <key> is an xkb name (AD01) or an
+//!                     evdev code (16)
+//!   down <key>        press
+//!   up <key>          release
 //!   mods <mask>       set the modifier mask (depressed group)
 //!   ping              replies `pong`
 //! Replies are `ok`, `pong`, or `err <reason>`.
@@ -38,11 +39,63 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
     zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
 };
 
+/// Reads the keymap the compositor shared. It arrives as a file descriptor the
+/// client is expected to map, and a fresh handle is used so the daemon never
+/// disturbs the offset of the one being forwarded to the virtual keyboard.
+fn read_keymap(file: &std::fs::File, size: u32) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut handle = file.try_clone().ok()?;
+    handle.seek(SeekFrom::Start(0)).ok()?;
+    let mut buffer = vec![0u8; size as usize];
+    handle.read_exact(&mut buffer).ok()?;
+    // The text is NUL terminated; trim so the parser is not handed a stray byte.
+    while buffer.last() == Some(&0) {
+        buffer.pop();
+    }
+    String::from_utf8(buffer).ok()
+}
+
+/// A key is named the way xkb names it (`AD01`) or given as a raw evdev code.
+/// Names are preferred: the QML side already labels keys by xkb position, and
+/// resolving them here keeps the numbering in one place.
+enum Key {
+    Code(u32),
+    Name(String),
+}
+
 enum Command {
-    Tap(u32),
-    Down(u32),
-    Up(u32),
+    Tap(Key),
+    Down(Key),
+    Up(Key),
     Mods(u32),
+}
+
+/// Pulls `<AD01> = 24;` pairs out of the keymap's xkb_keycodes section.
+///
+/// Callers name keys the way xkb does, and the numbers are resolved here rather
+/// than in the QML client: the keymap in hand is the authority, so a layout that
+/// numbers keys unusually still works and there is no second table to keep in
+/// step. Names map to evdev codes, which are the xkb codes minus 8.
+fn parse_keycodes(keymap: &str) -> std::collections::HashMap<String, u32> {
+    let mut codes = std::collections::HashMap::new();
+    let Some(section) = keymap.split("xkb_keycodes").nth(1) else {
+        return codes;
+    };
+    let section = section.split("};").next().unwrap_or(section);
+
+    for line in section.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix('<') else { continue };
+        let Some((name, rest)) = rest.split_once('>') else { continue };
+        let Some((_, value)) = rest.split_once('=') else { continue };
+        let value = value.trim().trim_end_matches(';').trim();
+        if let Ok(code) = value.parse::<u32>() {
+            if let Some(evdev) = code.checked_sub(8) {
+                codes.insert(name.to_string(), evdev);
+            }
+        }
+    }
+    codes
 }
 
 /// What the socket threads need. Wayland proxies are Send + Sync and the
@@ -55,6 +108,8 @@ struct Shared {
     keyboard: Option<ZwpVirtualKeyboardV1>,
     /// A virtual keyboard drops key events until it has been given a keymap.
     ready: bool,
+    /// xkb key name -> evdev code, taken from the keymap in use.
+    codes: std::collections::HashMap<String, u32>,
 }
 
 type SharedRef = Arc<Mutex<Shared>>;
@@ -96,6 +151,9 @@ impl State {
         };
         keyboard.keymap(*format, file.as_fd(), *size);
         shared.ready = true;
+        if let Some(text) = read_keymap(file, *size) {
+            shared.codes = parse_keycodes(&text);
+        }
     }
 }
 
@@ -200,12 +258,16 @@ fn socket_path() -> PathBuf {
 fn parse(line: &str) -> Option<Command> {
     let mut parts = line.split_whitespace();
     let verb = parts.next()?;
-    let arg = || parts.clone().next().and_then(|value| value.parse::<u32>().ok());
+    let raw = parts.next()?;
+    let key = || match raw.parse::<u32>() {
+        Ok(code) => Key::Code(code),
+        Err(_) => Key::Name(raw.to_string()),
+    };
     match verb {
-        "tap" => arg().map(Command::Tap),
-        "down" => arg().map(Command::Down),
-        "up" => arg().map(Command::Up),
-        "mods" => arg().map(Command::Mods),
+        "tap" => Some(Command::Tap(key())),
+        "down" => Some(Command::Down(key())),
+        "up" => Some(Command::Up(key())),
+        "mods" => raw.parse::<u32>().ok().map(Command::Mods),
         _ => None,
     }
 }
@@ -251,16 +313,29 @@ fn apply(shared: &SharedRef, connection: &Connection, command: Command) -> &'sta
     static COUNTER: AtomicU32 = AtomicU32::new(1);
     let stamp = || COUNTER.fetch_add(1, Ordering::Relaxed);
 
+    // Codes go out as evdev numbers, the same numbering wl_keyboard reports,
+    // which is the xkb keycode minus 8.
+    let resolve = |key: &Key| match key {
+        Key::Code(code) => Some(*code),
+        Key::Name(name) => shared.codes.get(name).copied(),
+    };
+
     match command {
-        // Codes go out exactly as given: zwp_virtual_keyboard_v1.key takes an
-        // evdev keycode, the same numbering wl_keyboard reports, which is the
-        // xkb keycode minus 8. Callers speak evdev (KEY_Q = 16).
-        Command::Tap(code) => {
-            keyboard.key(stamp(), code, 1);
-            keyboard.key(stamp(), code, 0);
-        }
-        Command::Down(code) => keyboard.key(stamp(), code, 1),
-        Command::Up(code) => keyboard.key(stamp(), code, 0),
+        Command::Tap(ref key) => match resolve(key) {
+            Some(code) => {
+                keyboard.key(stamp(), code, 1);
+                keyboard.key(stamp(), code, 0);
+            }
+            None => return "err unknown key",
+        },
+        Command::Down(ref key) => match resolve(key) {
+            Some(code) => keyboard.key(stamp(), code, 1),
+            None => return "err unknown key",
+        },
+        Command::Up(ref key) => match resolve(key) {
+            Some(code) => keyboard.key(stamp(), code, 0),
+            None => return "err unknown key",
+        },
         Command::Mods(mask) => keyboard.modifiers(mask, 0, 0, 0),
     }
 
