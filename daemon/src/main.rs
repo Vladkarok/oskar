@@ -453,8 +453,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let path = socket_path()?;
-    // A stale socket from a killed daemon would make bind fail; nothing else
-    // owns this name, so removing it is safe.
+    // Refuse to be the second instance. Two daemons on one seat feed each other
+    // keymaps forever: every virtual keyboard added changes the seat keymap,
+    // the other one observes that change and re-uploads its own, and round it
+    // goes. It shows as an endless "keymap updated" log alternating between two
+    // sizes, and it burns CPU for as long as both are up.
+    //
+    // Connecting is the test rather than a lock file, because it tells a live
+    // owner apart from a socket left behind by a crash. Unlinking blindly would
+    // let a newcomer steal the path from a running daemon.
+    if UnixStream::connect(&path).is_ok() {
+        return Err(format!("another daemon already owns {}", path.display()).into());
+    }
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path)?;
     eprintln!("listening on {}", path.display());
