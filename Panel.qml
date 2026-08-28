@@ -22,6 +22,30 @@ Item {
         dependencyInstall.running = true
     }
 
+    // Hyprland hides the pointer while keys are being pressed, and the keys this
+    // panel sends are real ones, so the cursor vanished under the very finger
+    // aiming it. Suspending that behaviour while the keyboard is on screen keeps
+    // it for ordinary typing, where it is wanted.
+    //
+    // Applied with `hyprctl eval` and Hyprland's Lua config call: `hyprctl
+    // keyword` refuses outright under the Lua parser ("keyword can't work with
+    // non-legacy parsers. Use eval."). It only changes the running session, so a
+    // config reload restores the user's setting even if the shell dies with the
+    // panel open and never runs the restore below.
+    property string cursorHideSetting: ""
+
+    function suspendCursorHiding() {
+        cursorHideProbe.running = false
+        cursorHideProbe.running = true
+    }
+
+    function restoreCursorHiding() {
+        if (!cursorHideSetting) return
+        Quickshell.execDetached(["hyprctl", "eval",
+            "hl.config({ cursor = { hide_on_key_press = " + cursorHideSetting + " } })"])
+        cursorHideSetting = ""
+    }
+
     function open(payloadJson) {
         root.opened = true
     }
@@ -32,6 +56,40 @@ Item {
 
     function toggle() {
         root.opened = !root.opened
+    }
+
+    // Hooked to the state rather than to open/close/toggle, because the shell
+    // can raise the panel by setting `opened` directly and those hooks would
+    // never run.
+    onOpenedChanged: {
+        if (root.opened) root.suspendCursorHiding()
+        else root.restoreCursorHiding()
+    }
+
+    // Reads the current value before overriding it, so the user's own choice is
+    // what gets restored rather than a guess.
+    Process {
+        id: cursorHideProbe
+        command: ["hyprctl", "getoption", "cursor:hide_on_key_press", "-j"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                var enabled = false
+                try {
+                    // hyprctl reports this one as {"bool": true}; older builds
+                    // used "int", so accept either rather than silently reading
+                    // undefined and deciding the option is off.
+                    var parsed = JSON.parse(text)
+                    enabled = parsed.bool === true || parsed.int === 1
+                } catch (error) {
+                    return
+                }
+                if (!enabled) return
+                root.cursorHideSetting = "true"
+                Quickshell.execDetached(["hyprctl", "eval",
+                    "hl.config({ cursor = { hide_on_key_press = false } })"])
+            }
+        }
     }
 
     Component.onCompleted: root.checkDependencies()
