@@ -33,6 +33,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use wayland_client::protocol::{wl_keyboard, wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
@@ -90,9 +91,15 @@ fn parse_keycodes(keymap: &str) -> std::collections::HashMap<String, u32> {
 
     for line in section.lines() {
         let line = line.trim();
-        let Some(rest) = line.strip_prefix('<') else { continue };
-        let Some((name, rest)) = rest.split_once('>') else { continue };
-        let Some((_, value)) = rest.split_once('=') else { continue };
+        let Some(rest) = line.strip_prefix('<') else {
+            continue;
+        };
+        let Some((name, rest)) = rest.split_once('>') else {
+            continue;
+        };
+        let Some((_, value)) = rest.split_once('=') else {
+            continue;
+        };
         let value = value.trim().trim_end_matches(';').trim();
         if let Ok(code) = value.parse::<u32>() {
             if let Some(evdev) = code.checked_sub(8) {
@@ -144,6 +151,9 @@ struct State {
     /// The seat keymap, forwarded verbatim from the compositor. Kept so a
     /// keyboard created after the keymap arrived can still be initialised.
     keymap: Option<(u32, std::fs::File, u32)>,
+    /// Circuit breaker for compositor/keymap feedback.
+    keymap_window_started: Instant,
+    keymap_events_in_window: u32,
     shared: SharedRef,
 }
 
@@ -161,10 +171,13 @@ impl State {
         self.push_keymap();
     }
 
-    /// Runs when the keyboard appears and again whenever the compositor hands
-    /// us a new keymap. The second case is not optional: the compositor
-    /// interprets our keycodes through *our* keymap, so after the user switches
-    /// layout a stale keymap would keep producing the old alphabet.
+    /// Initialises the virtual keyboard from the seat keymap captured before the
+    /// virtual device was created. It already contains every configured layout;
+    /// changing language only selects another group.
+    ///
+    /// Re-uploading later keymap events creates a feedback loop: our upload
+    /// changes the seat, Hyprland rebuilds its keymap and sends it back, and the
+    /// cycle can invoke xkbcomp hundreds of times per second.
     fn push_keymap(&mut self) {
         let Some((format, file, size)) = self.keymap.as_ref() else {
             return;
@@ -180,6 +193,18 @@ impl State {
         if let Some(text) = read_keymap(file, *size) {
             shared.codes = parse_keycodes(&text);
         }
+    }
+
+    fn keymap_event_is_storm(&mut self, now: Instant) -> bool {
+        const WINDOW: Duration = Duration::from_secs(2);
+        const MAX_EVENTS: u32 = 100;
+
+        if now.duration_since(self.keymap_window_started) > WINDOW {
+            self.keymap_window_started = now;
+            self.keymap_events_in_window = 0;
+        }
+        self.keymap_events_in_window += 1;
+        self.keymap_events_in_window > MAX_EVENTS
     }
 }
 
@@ -210,13 +235,17 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let wl_registry::Event::Global { name, interface, version } = event else {
+        let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        else {
             return;
         };
         match interface.as_str() {
             "wl_seat" => {
-                let seat: wl_seat::WlSeat =
-                    registry.bind(name, version.min(7), qh, ());
+                let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), qh, ());
                 state.seat = Some(seat);
             }
             "zwp_virtual_keyboard_manager_v1" => {
@@ -237,7 +266,10 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(caps) } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(caps),
+        } = event
+        {
             if caps.contains(wl_seat::Capability::Keyboard) {
                 // Taking the seat keyboard is the whole point: its keymap event
                 // is the compositor's own keymap, which is what makes typed
@@ -262,13 +294,26 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             return;
         }
         if let wl_keyboard::Event::Keymap { format, fd, size } = event {
+            if state.keymap_event_is_storm(Instant::now()) {
+                eprintln!("safety stop: more than 100 keymap events in 2s");
+                // EX_CONFIG. systemd is configured not to restart this status.
+                std::process::exit(78);
+            }
+
+            // Only the keymap captured before our virtual device joined the
+            // seat is safe to mirror. Later events may be consequences of our
+            // own device and do not need uploading; group selection handles
+            // normal language changes.
+            if state.keymap.is_some() {
+                return;
+            }
             let format = match format {
                 WEnum::Value(value) => value as u32,
                 WEnum::Unknown(raw) => raw,
             };
             state.keymap = Some((format, std::fs::File::from(fd), size));
             state.push_keymap();
-            eprintln!("keymap updated ({size} bytes)");
+            eprintln!("keymap loaded ({size} bytes)");
         }
     }
 }
@@ -337,7 +382,9 @@ fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
 }
 
 fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) {
-    let Ok(mut out) = stream.try_clone() else { return };
+    let Ok(mut out) = stream.try_clone() else {
+        return;
+    };
     // Keys this connection pressed and has not released. If the shell restarts
     // mid-chord the compositor would otherwise keep Ctrl logically down for the
     // rest of the session, which looks like a broken machine rather than a
@@ -492,6 +539,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seat: None,
         manager: None,
         keymap: None,
+        keymap_window_started: Instant::now(),
+        keymap_events_in_window: 0,
         shared: Arc::clone(&shared),
     };
 
@@ -526,4 +575,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket_connection = connection.clone();
     thread::spawn(move || serve(listener, socket_shared, socket_connection));
     run(queue, state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_at(start: Instant) -> State {
+        State {
+            seat: None,
+            manager: None,
+            keymap: None,
+            keymap_window_started: start,
+            keymap_events_in_window: 0,
+            shared: Arc::new(Mutex::new(Shared::default())),
+        }
+    }
+
+    #[test]
+    fn keymap_circuit_breaker_trips_after_one_hundred_events() {
+        let start = Instant::now();
+        let mut state = state_at(start);
+
+        for _ in 0..100 {
+            assert!(!state.keymap_event_is_storm(start + Duration::from_secs(1)));
+        }
+        assert!(state.keymap_event_is_storm(start + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn keymap_circuit_breaker_resets_after_quiet_window() {
+        let start = Instant::now();
+        let mut state = state_at(start);
+
+        for _ in 0..100 {
+            assert!(!state.keymap_event_is_storm(start + Duration::from_secs(1)));
+        }
+        assert!(!state.keymap_event_is_storm(start + Duration::from_secs(3)));
+    }
 }

@@ -24,6 +24,7 @@ ExecStart=%h/.local/libexec/omarchy-osk-daemon
 # propagated by PartOf=, does not restart.
 Restart=always
 RestartSec=1
+RestartPreventExitStatus=78
 
 # Owns the socket directory, which also clears a stale socket after a crash.
 RuntimeDirectory=omarchy-osk
@@ -39,6 +40,12 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
 RestrictAddressFamilies=AF_UNIX
+
+# A virtual-keyboard helper should remain tiny and idle. If a regression makes
+# it misbehave, sacrifice keyboard input before the desktop becomes unusable.
+CPUQuota=10%
+MemoryMax=64M
+TasksMax=16
 
 [Install]
 WantedBy=graphical-session.target
