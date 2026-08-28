@@ -49,6 +49,10 @@ Item {
     property var languageCycle: ["us"]
     property int layoutCycleIndex: 0
     property var layoutNameMap: ({})
+    // The keyboard the switch is applied to. Switching "all" moves every device
+    // on the seat, including pseudo-keyboards that never advance on their own,
+    // which is how they end up sitting on different layouts from each other.
+    property string typedKeyboard: ""
     property string currentLayoutName: {
         var name = layoutNameMap[currentLayout]
         return name ? name : currentLayout.toUpperCase()
@@ -90,6 +94,11 @@ Item {
                 active = String(parts[1] || "").trim()
                 continue
             }
+            if (parts[0] === "DEVICE") {
+                var device = String(parts[1] || "").trim()
+                if (device) typedKeyboard = device
+                continue
+            }
             if (parts[0] === "LAYOUT") {
                 detected.push(String(parts[1] || "").trim())
             }
@@ -116,6 +125,12 @@ Item {
         if (!selected && detected.length > 0) selected = detected[0]
         if (selected) {
             layoutCycleIndex = Math.max(0, detected.indexOf(selected))
+            // The helper types through its own virtual keyboard, which is a
+            // separate device on the seat with its own layout group, and a new
+            // device starts at group 0. Without this it keeps typing the first
+            // layout while the caps show whichever one the physical keyboard
+            // moved to, so the two look swapped.
+            sendCommand("group " + layoutCycleIndex)
             if (selected !== currentLayout) loadLanguageLayout(selected)
         }
     }
@@ -134,6 +149,8 @@ Item {
             + "active=$(awk -v target=\"$active_keymap\" 'BEGIN{s=0} /^! layout/{s=1;next} /^!/{if(s) exit} s && NF>=2 { code=$1; $1=\"\"; sub(/^ +/, \"\", $0); if ($0 == target) { print code; exit } }' /usr/share/X11/xkb/rules/base.lst 2>/dev/null); "
             + "if [[ -z \"$active\" ]]; then active=$(hyprctl devices -j | jq -r '[.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not)] | max_by(.active_layout_index // 0) as $k | ($k.layout | split(\",\")[($k.active_layout_index // 0)])' 2>/dev/null); fi; "
             + "printf 'ACTIVE\\t%s\\n' \"$active\"; "
+            + "device=$(hyprctl devices -j | jq -r '[.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not)] | max_by(.active_layout_index // 0) | .name' 2>/dev/null); "
+            + "printf 'DEVICE\\t%s\\n' \"$device\"; "
             + "layouts=$(hyprctl devices -j | jq -r '(.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not) | .layout)' | head -n1 | tr ',' '\\n' | sed '/^$/d'); "
             + "echo \"$layouts\" | awk '{print \"LAYOUT\\t\" $0}'; "
             + "echo \"$layouts\" | while read code; do "
@@ -199,10 +216,16 @@ Item {
         if (languageCycle.length < 2) return
         // Advance our local index so we know exactly what layout is next,
         // independent of the system's virtual keyboard reporting wrong index.
-        // Ask and wait. Guessing the next layout locally is what let the panel
-        // drift out of step with the compositor; the activelayout event brings
-        // back what actually happened.
-        Hyprland.dispatch("switchxkblayout all next")
+        // switchxkblayout is a hyprctl command, not a dispatcher, so it cannot
+        // go over the dispatch socket — the built-in layout widget runs it the
+        // same way. This is a one-off on a button press rather than anything on
+        // the typing path, which stays free of spawned processes.
+        //
+        // Nothing is applied locally: the activelayout event reports what
+        // actually happened, and guessing here is what let the panel drift out
+        // of step with the compositor.
+        if (!typedKeyboard) return
+        Quickshell.execDetached(["hyprctl", "switchxkblayout", typedKeyboard, "next"])
     }
 
     Component.onCompleted: refreshLayoutsFromHypr()
@@ -425,6 +448,12 @@ Item {
                     root.clearComboMods()
                     daemon.write("mods 0\n")
                     daemon.flush()
+                    // A restarted helper is back at group 0 and has no idea
+                    // which layout is current. Re-reading the compositor sends
+                    // the right group; using layoutCycleIndex here would send
+                    // whatever it held before the first sync, which is 0 on a
+                    // fresh panel and would force the first layout.
+                    root.refreshLayoutsFromHypr()
                 } else if (reply.indexOf("err") === 0) {
                     root.inputReady = false
                     root.inputStatus = reply

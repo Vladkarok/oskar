@@ -20,7 +20,8 @@
 //!                     evdev code (16)
 //!   down <key>        press
 //!   up <key>          release
-//!   mods <mask>       set the modifier mask (depressed group)
+//!   mods <mask>       set the modifier mask
+//!   group <n>         select the layout index this device types in
 //!   hello <version>   readiness gate, replies `ready <version>`
 //!   ping              replies `pong`
 //! Replies are `ok`, `ready <n>`, `pong`, or `err <reason>`.
@@ -69,6 +70,9 @@ enum Command {
     Down(Key),
     Up(Key),
     Mods(u32),
+    /// Selects the layout our own device types in. Ours is a separate keyboard
+    /// on the seat with its own group, so it does not follow the physical one.
+    Group(u32),
 }
 
 /// Pulls `<AD01> = 24;` pairs out of the keymap's xkb_keycodes section.
@@ -319,6 +323,7 @@ fn parse(line: &str) -> Option<Command> {
         "down" => Some(Command::Down(key())),
         "up" => Some(Command::Up(key())),
         "mods" => raw.parse::<u32>().ok().map(Command::Mods),
+        "group" => raw.parse::<u32>().ok().map(Command::Group),
         _ => None,
     }
 }
@@ -390,6 +395,18 @@ fn apply(
     command: Command,
     mut held: Option<&mut Vec<u32>>,
 ) -> &'static str {
+    // Needs a write lock, so it is dealt with before the read path below.
+    if let Command::Group(group) = command {
+        let mut state = shared.lock().unwrap();
+        state.group = group;
+        let Some(keyboard) = state.keyboard.as_ref() else {
+            return "err no virtual keyboard";
+        };
+        keyboard.modifiers(0, 0, 0, group);
+        let _ = connection.flush();
+        return "ok";
+    }
+
     let shared = shared.lock().unwrap();
     let Some(keyboard) = shared.keyboard.as_ref() else {
         return "err no virtual keyboard";
@@ -441,6 +458,8 @@ fn apply(
         // The group rides along with every modifier update: dropping it here
         // would silently reset the device to the first layout.
         Command::Mods(mask) => keyboard.modifiers(mask, 0, 0, shared.group),
+        // Handled before the lock below; unreachable here.
+        Command::Group(_) => {}
     }
 
     // Requests sit in the connection buffer until flushed, and the event loop
