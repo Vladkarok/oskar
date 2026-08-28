@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.vladkarok.osk",
+  "name": "On-Screen Keyboard",
+  "version": "0.1.0",
+  "author": "vladkarok",
+  "license": "MIT",
+  "description": "Mouse-driven on-screen keyboard that follows the active keyboard layout, types through a persistent virtual keyboard, and matches the Omarchy theme. Toggle with the bar icon or: omarchy-shell shell toggle io.github.vladkarok.osk",
+  "kinds": ["panel", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "Panel.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "On-Screen Keyboard",
+    "description": "Bar icon that toggles the on-screen keyboard",
+    "category": "Widgets",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
