@@ -110,6 +110,11 @@ Item {
         detected = detected.filter(function(layout) { return layout.length > 0 })
         if (detected.length > 0) {
             languageCycle = detected
+            // The helper owns an independent keymap and starts with US only.
+            // Install every configured layout before selecting a group. The
+            // daemon treats an unchanged list as a no-op, so periodic repair
+            // queries do not recompile anything.
+            sendCommand("layout " + detected.join(","))
         }
         // Merge any newly discovered names into the map
         var merged = ({})

@@ -533,7 +533,10 @@ mod tests {
         // selects a group rather than recompiling. Groups appear as
         // `symbols[N]` entries on each key, so a second one means `ua` is in
         // there alongside `us`.
-        assert!(text.contains("symbols[2]"), "expected a second layout group");
+        assert!(
+            text.contains("symbols[2]"),
+            "expected a second layout group"
+        );
         // libxkbcommon writes keysyms as numbers rather than names, so the
         // check is for the value: 0x6ca is Cyrillic_shorti, the Q position on
         // the Ukrainian layout. Its presence proves group 2 really is `ua` and
@@ -560,10 +563,12 @@ mod tests {
 
     #[test]
     fn parses_both_key_names_and_raw_codes() {
-        assert!(matches!(parse("tap AD01"), Some(Command::Tap(Key::Name(_)))));
+        assert!(matches!(
+            parse("tap AD01"),
+            Some(Command::Tap(Key::Name(_)))
+        ));
         assert!(matches!(parse("tap 16"), Some(Command::Tap(Key::Code(16)))));
         assert!(matches!(parse("layout us,ua"), Some(Command::Layout(_))));
         assert!(parse("nonsense").is_none());
     }
 }
-

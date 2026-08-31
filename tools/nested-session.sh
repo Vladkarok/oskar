@@ -112,5 +112,15 @@ status=$?
 # under test: a keymap churn loop shows up as xkbcomp rebuilds while the
 # daemon's own log stays quiet. Counting here is what makes it visible.
 after_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || echo 0)
-echo "--- exited with $status; compositor keymap rebuilds during run: $((after_xkb - before_xkb)) ---"
+rebuilds=$((after_xkb - before_xkb))
+echo "--- exited with $status; compositor keymap rebuilds during run: $rebuilds ---"
+
+# The smoke test deliberately installs the default and configured maps, which
+# currently accounts for four xkbcomp log entries. Leave modest headroom for
+# compositor-version differences; a feedback loop grows far beyond this almost
+# immediately and must fail in the disposable session.
+if (( rebuilds > 10 )); then
+    echo "unsafe keymap churn detected" >&2
+    exit 1
+fi
 exit $status
