@@ -5,15 +5,17 @@ active keyboard layout, so what is drawn is what gets typed, and the panel takes
 its colours and geometry from the Omarchy theme.
 
 Derived from [abdxdev/omarchy-onscreen-keyboard](https://github.com/abdxdev/omarchy-onscreen-keyboard)
-(MIT). Both copyright lines are kept in `LICENSE`.
+(MIT). Both copyright lines are kept in `LICENSE`; the input path no longer
+shares anything with it.
 
 ## Status
 
 **Work in progress. Not ready to enable on a machine you rely on.**
 
-The QML panel works. The input helper in `daemon/` does not yet meet the bar: it
-is disabled by default and should stay that way until the issues below are
-closed.
+The QML panel works. The input helper in `daemon/` passes its unit tests and
+the nested-session smoke, and is disabled by default until it has survived
+daily use — next step is dogfooding in a disposable Omarchy VM, then on a real
+session.
 
 ## Layout
 
@@ -37,25 +39,52 @@ small synthetic keymap that XWayland ignores — keystrokes vanished into Proton
 games and Electron apps. A single long-lived helper with a complete keymap
 brought that to 0.4ms average and does reach XWayland.
 
+## Why not an existing keyboard
+
+Surveyed August 2026. None does layout mirroring on Hyprland; this is the only
+implementation found that follows the system layout at all.
+
+- **wvkbd** types through the same protocol but ships static keycap sets switched
+  only by its own key, and its auto-show occupies the single input-method slot.
+- **squeekboard** is unmaintained (Phosh replaced it); **maliit** speaks
+  input-method-v1, which Hyprland does not implement, and is dormant.
+- **IME/text-input routes** (fcitx5, maliit, GNOME apps) never reach XWayland,
+  which is a hard requirement here, and would fight Caps-Lock layout toggles
+  with a second layout state.
+- **GNOME Shell's OSK** is the proof the design is right — a compositor-owned
+  virtual device over one system-wide input source — but it is welded to
+  mutter/ibus. **Sway** already has the compositor-side fix (same-keymap
+  devices share layout state, switches skip virtual keyboards); that is the
+  model for the eventual Hyprland upstream work.
+
 ## Known problems
 
-These are why the helper is off. Details are in the commit messages.
-
-1. **The helper's keymap becomes the seat's.** Hyprland calls `setKeyboard()`
-   before forwarding virtual input, which broadcasts that device's keymap to
-   every client including XWayland. Typing therefore swaps the seat-advertised
-   keymap between the physical keyboard, any other virtual keyboard, and this
-   one. On a live session that produced 56 keymap rebuilds a minute and appeared
-   to disturb layout switching in other applications. The helper's keymap must
-   match the compositor's complete RMLVO configuration before this is safe.
-2. **The compiled keymap is incomplete.** `kb_variant`, `kb_options`,
-   `kb_model` and `kb_rules` are not all carried through yet.
-3. **Device selection is wrong.** The panel picks the keyboard with the highest
-   layout index, which is not the same as the one being typed on. Hyprland lists
-   every device exposing an HID keyboard interface as a keyboard — including
-   gaming mice, lid switches and power buttons — so a switch can land on a mouse
-   and the reading follows it.
-4. **Held keys are tracked per connection** while the device is shared.
+1. ~~**The helper's keymap becomes the seat's.**~~ **Closed by design.** Hyprland
+   re-points the seat at the typing device before forwarding input, but a client
+   is only told about a keymap change when the bytes differ
+   (`CWLKeyboardResource::sendKeymap`, `src/protocols/core/Seat.cpp`). The helper
+   compiles the identical RMLVO the compositor uses, so switching between the
+   physical keyboard and the helper is invisible to clients. The churn storm that
+   motivated this (56 rebuilds a minute, 56,547 in five minutes once it fed back)
+   only happened because the old keymaps differed. Remaining work is proof, not
+   design: the polygon asserts compositor rebuilds stay at the floor, and the
+   claim still needs daily-use confirmation.
+2. ~~**The compiled keymap is incomplete.**~~ **Closed.** The `configure` command
+   carries rules, model, layouts, variants, options and a keymap file, and the
+   panel sends it with the full set read from the compositor.
+3. **Device selection is imperfect.** The panel now prefers, in order: the device
+   the last layout switch named, then Hyprland's active-keyboard flag (`main`,
+   which is the seat's current keyboard — the last device that produced input),
+   then layout progress. The flag only counts inside the filtered list, because
+   it sits on the helper's own device right after typing and can land on
+   whatever was hotplugged last; a mouse's media keys can still take it between
+   switches. The root cause is upstream: Hyprland keeps layout state per device
+   (including power buttons and gaming mice) and offers no event when the seat's
+   current keyboard changes. An upstream discussion with Sway's keyboard-group
+   semantics as prior art is planned.
+4. ~~**Held keys are tracked per connection**~~ **Closed.** Keys a client left
+   pressed are released and modifiers zeroed on disconnect; the smoke exercises a
+   client dying mid-chord and asserts the helper keeps serving.
 
 ## Testing
 
@@ -71,6 +100,9 @@ tools/nested-session.sh tools/smoke-daemon.sh
 The harness starts a disposable nested Hyprland, gives the subject a private
 `XDG_RUNTIME_DIR` so its control socket cannot collide with an installed
 service, and fails the run if compositor keymap rebuilds exceed a threshold.
+The smoke checks the readiness gate, that a byte-identical `configure` is
+short-circuited rather than recompiled, typing in both layout groups, and that
+a client disconnecting mid-chord leaves the helper serving.
 
 ```sh
 cd daemon && cargo test
@@ -85,5 +117,5 @@ install -Dm644 ../systemd/omarchy-osk.service ~/.config/systemd/user/omarchy-osk
 systemctl --user daemon-reload
 ```
 
-Leave the service disabled until the problems above are resolved. The panel
+Leave the service disabled until the helper has survived daily use. The panel
 alone can be enabled with `omarchy plugin enable io.github.vladkarok.osk`.
