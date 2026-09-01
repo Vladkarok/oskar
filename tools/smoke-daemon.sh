@@ -19,27 +19,56 @@ for _ in $(seq 1 50); do
   [[ -S "$socket" ]] && break
   sleep 0.05
 done
-[[ -S "$socket" ]] || { echo "helper socket did not appear" >&2; exit 1; }
+if [[ ! -S "$socket" ]]; then
+  echo "helper socket did not appear" >&2
+  echo "--- helper log ---" >&2
+  cat "$log" >&2 || true
+  exit 1
+fi
+
+# The daemon sits on the group its last `group`/`configure` command selected,
+# and that state is visible as the virtual keyboard device's
+# active_layout_index — the one layout fact about the helper that can be read
+# back without a client. Retry briefly: the modifiers event crosses the
+# compositor asynchronously. The name match is deliberately the protocol
+# prefix, not the process name: Hyprland names virtual keyboards
+# hl-virtual-keyboard[-<binary>] depending on misc:name_vk_after_proc, and the
+# nested session has no other virtual keyboard for the prefix to collide with.
+group_of() {
+  hyprctl devices -j | jq -r '
+    [.keyboards[] | select(.name | test("hl-virtual-keyboard"))][0].active_layout_index' 2>/dev/null
+}
+wait_for_group() {
+  local wanted="$1"
+  for _ in $(seq 1 40); do
+    [[ "$(group_of)" == "$wanted" ]] && return 0
+    sleep 0.05
+  done
+  echo "device group never became $wanted (saw: $(group_of))" >&2
+  return 1
+}
+
+# The second configure is byte-identical to the first: the daemon must
+# short-circuit it instead of compiling again. The reply alone cannot prove
+# that (both paths answer "configured"), so the caller counts the daemon's
+# "keymap compiled" log lines at the end.
 
 python3 - "$socket" <<'PY'
 import socket
 import sys
 import time
 
-# The second configure is byte-identical to the first: the daemon must
-# short-circuit it instead of compiling again. The reply alone cannot prove
-# that (both paths answer "configured"), so the caller counts the daemon's
-# "keymap compiled" log lines afterwards.
 configure = "configure\tevdev\tpc105\tus,ua\t\tgrp:caps_toggle\t\t1"
+# Every typing operation sits between two group assertions, so what is
+# asserted is the group the tap actually ran under, not a final state.
 commands = [
     "hello 2",
-    configure,
-    "tap AD01",       # types in group 1, the second layout (ua)
-    "group 0",
-    "tap AD01",       # types in group 0 (us)
-    "group 1",
-    configure,        # identical payload: must be a short-circuit, not a recompile
+    configure,        # starts the helper on group 1, the second layout (ua)
     "tap AD01",
+    "group 0",
+    "tap AD01",       # under group 0 (us)
+    configure,        # identical payload: must be a short-circuit, not a recompile
+    "tap AD01",       # back under group 1
 ]
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 sock.settimeout(10)
@@ -70,29 +99,25 @@ stream.close()
 sock.close()
 PY
 
-# The daemon sits on the group the last `group` command selected, and that
-# state is visible as the virtual keyboard device's active_layout_index — the
-# one layout fact about the helper that can be read back without a client.
-# Retry briefly: the modifiers event crosses the compositor asynchronously.
-# The name match is deliberately the protocol prefix, not the process name:
-# Hyprland names virtual keyboards hl-virtual-keyboard[-<binary>] depending on
-# misc:name_vk_after_proc, and the nested session has no other virtual
-# keyboard for the prefix to collide with.
-group_of() {
-  hyprctl devices -j | jq -r '
-    [.keyboards[] | select(.name | test("hl-virtual-keyboard"))][0].active_layout_index' 2>/dev/null
-}
-wait_for_group() {
-  local wanted="$1"
-  for _ in $(seq 1 40); do
-    [[ "$(group_of)" == "$wanted" ]] && return 0
-    sleep 0.05
-  done
-  echo "device group never became $wanted (saw: $(group_of))" >&2
-  return 1
-}
 wait_for_group 1
-echo "device group follows 'group 1'"
+echo "device group follows configure/group 1"
+
+python3 - "$socket" <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(10)
+s.connect(sys.argv[1])
+f = s.makefile("rw")
+f.write("group 0\n")
+f.flush()
+reply = f.readline().strip()
+if reply != "ok":
+    raise SystemExit(f"'group 0': expected 'ok', got {reply!r}")
+f.close()
+s.close()
+PY
+wait_for_group 0
+echo "device group follows 'group 0'"
 
 # A client that dies mid-chord must not take the helper with it, and the keys
 # it left pressed are its connection's problem: the helper releases them and
@@ -120,7 +145,6 @@ PY
 python3 - "$socket" <<'PY'
 import socket
 import sys
-import time
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(10)
 s.connect(sys.argv[1])
@@ -140,23 +164,45 @@ f.close()
 s.close()
 PY
 
-# Back to the first layout, and the device must follow.
+# Multi-client ownership, asserted at the protocol level. The compositor
+# exposes no per-device modifier state a client could read back
+# (active_layout_index follows the client-asserted mask, not the keys held),
+# but the daemon's own rules make ownership visible: a connection that never
+# claimed a code cannot release it, and a tap may not lift someone else's
+# hold. LCTL carries no lock actions, so taps stay inert.
 python3 - "$socket" <<'PY'
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.settimeout(10)
-s.connect(sys.argv[1])
-f = s.makefile("rw")
-f.write("group 0\n")
-f.flush()
-reply = f.readline().strip()
-if reply != "ok":
-    raise SystemExit(f"'group 0': expected 'ok', got {reply!r}")
-f.close()
-s.close()
+import socket
+import sys
+
+def connect():
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(10)
+    s.connect(sys.argv[1])
+    return s, s.makefile("rw")
+
+a, fa = connect()
+b, fb = connect()
+
+def ask(f, command, expected):
+    f.write(command + "\n")
+    f.flush()
+    reply = f.readline().strip()
+    if reply != expected:
+        raise SystemExit(f"{command!r}: expected {expected!r}, got {reply!r}")
+
+ask(fa, "down LCTL", "ok")
+ask(fa, "down LCTL", "ok")           # duplicate: one claim, not two
+ask(fb, "up LCTL", "err not holding")  # B cannot end A's hold
+ask(fa, "tap LCTL", "err key held")    # a tap may not lift A's hold either
+ask(fb, "down LCTL", "ok")             # B claims it too: one press, two holders
+ask(fa, "up LCTL", "ok")               # A lets go: B's hold keeps the key down
+ask(fa, "tap LCTL", "err key held")
+ask(fb, "up LCTL", "ok")               # last holder: the release goes out
+ask(fa, "tap LCTL", "ok")              # nothing held any more: a tap works
+print("multi-client holds: foreign releases rejected, shared hold survives a holder, owner's release lands")
+fa.close(); a.close()
+fb.close(); b.close()
 PY
-wait_for_group 0
-echo "device group follows 'group 0'"
 
 # Two keymaps total — the default compiled at startup and the configured one.
 # A third line means the byte-identical configure recompiled, which is the
