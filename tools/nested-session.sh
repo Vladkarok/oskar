@@ -57,15 +57,16 @@ hl.config({
 })
 CONF
 
-# The signature has to be unset, or the nested compositor is taken for a
-# duplicate of the running one. XDG_RUNTIME_DIR stays as it is: the nested
-# instance is a Wayland client of the session and needs the host's socket to
-# attach to. Overriding it here makes the backend fail to create.
-env -u HYPRLAND_INSTANCE_SIGNATURE \
-    Hyprland -c "$workdir/hypr.lua" > "$workdir/hypr.log" 2>&1 &
-
 host_runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 before=$(ls "$host_runtime"/wayland-* 2>/dev/null | grep -v '\.lock$' | sort)
+
+# Take the socket snapshot before launch; a fast compositor can publish its
+# socket before the next shell command and would otherwise become invisible to
+# the set difference below. The signature is unset so Hyprland accepts a second
+# instance. XDG_RUNTIME_DIR remains the host one because nested Hyprland is a
+# Wayland client of the real session.
+env -u HYPRLAND_INSTANCE_SIGNATURE \
+    Hyprland -c "$workdir/hypr.lua" > "$workdir/hypr.log" 2>&1 &
 
 for _ in $(seq 1 40); do
     after=$(ls "$host_runtime"/wayland-* 2>/dev/null | grep -v '\.lock$' | sort)
@@ -102,7 +103,7 @@ fi
 echo "nested compositor: $display  (private runtime $runtime)"
 echo "--- running: $* ---"
 
-before_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || echo 0)
+before_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 
 WAYLAND_DISPLAY="$display" XDG_RUNTIME_DIR="$runtime" \
     HYPRLAND_INSTANCE_SIGNATURE="$signature" "$@"
@@ -111,7 +112,7 @@ status=$?
 # The cost of this class of bug lands in the compositor, not in the subject
 # under test: a keymap churn loop shows up as xkbcomp rebuilds while the
 # daemon's own log stays quiet. Counting here is what makes it visible.
-after_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || echo 0)
+after_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 rebuilds=$((after_xkb - before_xkb))
 echo "--- exited with $status; compositor keymap rebuilds during run: $rebuilds ---"
 

@@ -30,7 +30,8 @@
 //!   up <key>          release
 //!   mods <mask>       set the modifier mask
 //!   group <n>         select which compiled layout to type in
-//!   layout <codes>    recompile for a layout list, e.g. `layout us,ua`
+//!   configure<TAB>rules<TAB>model<TAB>layouts<TAB>variants<TAB>options
+//!             <TAB>kb_file<TAB>group
 //! Replies are `ok`, `ready <n>`, `pong`, or `err <reason>`.
 
 use std::io::{BufRead, BufReader, Write};
@@ -40,6 +41,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use wayland_client::protocol::{wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
@@ -50,26 +52,82 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 
 /// Bumped whenever the command set changes, so a plugin updated without
 /// reinstalling the helper says so instead of failing silently.
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 2;
 
 /// Until the panel reports the real list. Any layout compiles; this one just
 /// gives the helper a valid keymap to be ready with.
-const DEFAULT_LAYOUTS: &str = "us";
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct XkbConfig {
+    rules: String,
+    model: String,
+    layouts: String,
+    variants: String,
+    options: String,
+    kb_file: String,
+    group: u32,
+}
+
+impl Default for XkbConfig {
+    fn default() -> Self {
+        Self {
+            rules: "evdev".into(),
+            model: "pc105".into(),
+            layouts: "us".into(),
+            variants: String::new(),
+            options: String::new(),
+            kb_file: String::new(),
+            group: 0,
+        }
+    }
+}
+
+impl XkbConfig {
+    fn same_keymap(&self, other: &Self) -> bool {
+        self.rules == other.rules
+            && self.model == other.model
+            && self.layouts == other.layouts
+            && self.variants == other.variants
+            && self.options == other.options
+            && self.kb_file == other.kb_file
+    }
+}
 
 /// Builds a keymap for an RMLVO layout list such as "us,ua".
-fn compile_keymap(layouts: &str) -> Option<String> {
+fn compile_keymap(config: &XkbConfig) -> Option<String> {
     use xkbcommon::xkb;
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    // Rules and model are named explicitly. Left empty, libxkbcommon resolves
-    // the first layout but leaves later groups without their own symbols, so a
-    // "us,ua" keymap came out with a second group full of Latin.
+    if !config.kb_file.is_empty() {
+        let text = std::fs::read_to_string(&config.kb_file).ok()?;
+        if text.len() > 2 * 1024 * 1024 {
+            return None;
+        }
+        let keymap = xkb::Keymap::new_from_string(
+            &context,
+            text,
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )?;
+        return Some(keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1));
+    }
+
+    let rules = if config.rules.is_empty() {
+        "evdev"
+    } else {
+        &config.rules
+    };
+    let model = if config.model.is_empty() {
+        "pc105"
+    } else {
+        &config.model
+    };
+    let options = (!config.options.is_empty()).then(|| config.options.clone());
     let keymap = xkb::Keymap::new_from_names(
         &context,
-        "evdev",
-        "pc105",
-        layouts,
-        "",
-        None,
+        rules,
+        model,
+        &config.layouts,
+        &config.variants,
+        options,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )?;
     Some(keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1))
@@ -133,8 +191,8 @@ enum Command {
     Mods(u32),
     /// Selects which compiled layout this device types in.
     Group(u32),
-    /// Recompiles for a new layout list.
-    Layout(String),
+    /// Atomically installs complete XKB state and selects its active group.
+    Configure(XkbConfig),
 }
 
 /// What the socket threads need. Wayland proxies are Send + Sync and the
@@ -149,8 +207,9 @@ struct Shared {
     codes: std::collections::HashMap<String, u32>,
     /// Which compiled layout is active.
     group: u32,
-    /// The layout list currently compiled, e.g. "us,ua".
-    layouts: String,
+    config: Option<XkbConfig>,
+    held: std::collections::HashSet<u32>,
+    uploads: std::collections::VecDeque<Instant>,
 }
 
 impl Shared {
@@ -161,25 +220,61 @@ impl Shared {
 
     /// Compiles `layouts` and installs the result. Held by the caller's lock so
     /// a keystroke can never observe a half-swapped keymap.
-    fn install_layouts(&mut self, layouts: &str) -> bool {
-        let Some(text) = compile_keymap(layouts) else {
-            eprintln!("cannot compile keymap for '{layouts}'");
+    fn install_config(&mut self, config: &XkbConfig) -> bool {
+        if self
+            .config
+            .as_ref()
+            .is_some_and(|current| current.same_keymap(config))
+        {
+            self.group = config.group;
+            if let Some(keyboard) = self.keyboard.as_ref() {
+                keyboard.modifiers(0, 0, 0, self.group);
+            }
+            self.config = Some(config.clone());
+            return true;
+        }
+        let now = Instant::now();
+        while self
+            .uploads
+            .front()
+            .is_some_and(|at| now.duration_since(*at) > Duration::from_secs(10))
+        {
+            self.uploads.pop_front();
+        }
+        if self.uploads.len() >= 4 {
+            eprintln!("refusing excessive keymap reconfiguration");
+            return false;
+        }
+        let Some(text) = compile_keymap(config) else {
+            eprintln!("cannot compile requested XKB configuration");
             return false;
         };
         let Some(keyboard) = self.keyboard.as_ref() else {
             return false;
         };
+        if self.ready {
+            for code in self.held.drain() {
+                keyboard.key(0, code, 0);
+            }
+            keyboard.modifiers(0, 0, 0, self.group);
+        }
         if let Err(error) = upload_keymap(keyboard, &text) {
-            eprintln!("cannot upload keymap for '{layouts}': {error}");
+            eprintln!("cannot upload requested keymap: {error}");
             return false;
         }
 
         // A new keymap resets the device's group, so re-assert it.
+        self.group = config.group;
         keyboard.modifiers(0, 0, 0, self.group);
         self.codes = parse_keycodes(&text);
         self.ready = !self.codes.is_empty();
-        self.layouts = layouts.to_string();
-        eprintln!("keymap compiled for '{layouts}' ({} bytes)", text.len());
+        self.config = Some(config.clone());
+        self.uploads.push_back(now);
+        eprintln!(
+            "keymap compiled for '{}' ({} bytes)",
+            config.layouts,
+            text.len()
+        );
         self.ready
     }
 }
@@ -202,7 +297,7 @@ impl State {
             return;
         }
         shared.keyboard = Some(manager.create_virtual_keyboard(seat, qh, ()));
-        shared.install_layouts(DEFAULT_LAYOUTS);
+        shared.install_config(&XkbConfig::default());
     }
 }
 
@@ -282,6 +377,21 @@ fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 fn parse(line: &str) -> Option<Command> {
+    if let Some(raw) = line.strip_prefix("configure\t") {
+        let fields: Vec<&str> = raw.split('\t').collect();
+        if fields.len() != 7 {
+            return None;
+        }
+        return Some(Command::Configure(XkbConfig {
+            rules: fields[0].to_string(),
+            model: fields[1].to_string(),
+            layouts: fields[2].to_string(),
+            variants: fields[3].to_string(),
+            options: fields[4].to_string(),
+            kb_file: fields[5].to_string(),
+            group: fields[6].parse().ok()?,
+        }));
+    }
     let mut parts = line.split_whitespace();
     let verb = parts.next()?;
     let raw = parts.next()?;
@@ -295,16 +405,33 @@ fn parse(line: &str) -> Option<Command> {
         "up" => Some(Command::Up(key())),
         "mods" => raw.parse::<u32>().ok().map(Command::Mods),
         "group" => raw.parse::<u32>().ok().map(Command::Group),
-        "layout" => Some(Command::Layout(raw.to_string())),
         _ => None,
     }
 }
 
 fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
+    const MAX_CLIENTS: usize = 4;
+    let clients = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
+        if clients.fetch_add(1, Ordering::AcqRel) >= MAX_CLIENTS {
+            clients.fetch_sub(1, Ordering::AcqRel);
+            drop(stream);
+            continue;
+        }
         let shared = Arc::clone(&shared);
         let connection = connection.clone();
-        thread::spawn(move || handle_client(stream, shared, connection));
+        let clients = Arc::clone(&clients);
+        if thread::Builder::new()
+            .name("osk-client".into())
+            .spawn(move || {
+                handle_client(stream, shared, connection);
+                clients.fetch_sub(1, Ordering::AcqRel);
+            })
+            .is_err()
+        {
+            eprintln!("cannot spawn socket client worker");
+            std::process::exit(70);
+        }
     }
 }
 
@@ -331,7 +458,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             let reply = if wanted != PROTOCOL_VERSION {
                 format!("err protocol {PROTOCOL_VERSION} required, helper needs reinstall")
             } else if shared.lock().unwrap().is_ready() {
-                format!("ready {PROTOCOL_VERSION}")
+                format!("hello {PROTOCOL_VERSION}")
             } else {
                 "err not ready".to_string()
             };
@@ -369,18 +496,13 @@ fn apply(
 ) -> &'static str {
     let mut shared = shared.lock().unwrap();
 
-    // Recompiling is rare and only happens when the configured layouts change,
-    // so it is worth doing nothing when they have not.
-    if let Command::Layout(ref layouts) = command {
-        if shared.layouts == *layouts {
-            return "ok";
-        }
-        let installed = shared.install_layouts(layouts);
+    if let Command::Configure(ref config) = command {
+        let installed = shared.install_config(config);
         let _ = connection.flush();
         return if installed {
-            "ok"
+            "configured"
         } else {
-            "err cannot compile layout"
+            "err cannot configure keymap"
         };
     }
 
@@ -416,6 +538,7 @@ fn apply(
         Command::Down(ref key) => match resolve(key) {
             Some(code) => {
                 keyboard.key(stamp(), code, 1);
+                shared.held.insert(code);
                 pressed = Some(code);
             }
             None => return "err unknown key",
@@ -423,6 +546,7 @@ fn apply(
         Command::Up(ref key) => match resolve(key) {
             Some(code) => {
                 keyboard.key(stamp(), code, 0);
+                shared.held.remove(&code);
                 released = Some(code);
             }
             None => return "err unknown key",
@@ -435,7 +559,7 @@ fn apply(
             shared.group = group;
             keyboard.modifiers(0, 0, 0, group);
         }
-        Command::Layout(_) => unreachable!("handled above"),
+        Command::Configure(_) => unreachable!("handled above"),
     }
 
     if let Some(held) = held.as_deref_mut() {
@@ -502,6 +626,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(reason.into());
     }
 
+    // `keyboard.keymap` is asynchronous. Do not expose the control socket until
+    // the compositor has processed it; otherwise a fast client can send a
+    // modifiers request first and Hyprland terminates the protocol object with
+    // "Mods event received before a keymap was set".
+    connection.flush()?;
+    queue.roundtrip(&mut state)?;
+
     let path = socket_path()?;
     // Refuse to be the second instance. Connecting is the test rather than a
     // lock file, because it tells a live owner apart from a socket left behind
@@ -527,7 +658,11 @@ mod tests {
 
     #[test]
     fn compiles_a_multi_layout_keymap_with_a_group_per_layout() {
-        let text = compile_keymap("us,ua").expect("us,ua should compile");
+        let text = compile_keymap(&XkbConfig {
+            layouts: "us,ua".into(),
+            ..XkbConfig::default()
+        })
+        .expect("us,ua should compile");
         assert!(text.contains("xkb_keycodes"));
         // The second layout has to be present, since switching language
         // selects a group rather than recompiling. Groups appear as
@@ -549,12 +684,16 @@ mod tests {
 
     #[test]
     fn rejects_a_layout_that_does_not_exist() {
-        assert!(compile_keymap("definitely-not-a-layout").is_none());
+        assert!(compile_keymap(&XkbConfig {
+            layouts: "definitely-not-a-layout".into(),
+            ..XkbConfig::default()
+        })
+        .is_none());
     }
 
     #[test]
     fn reads_key_positions_out_of_a_compiled_keymap() {
-        let text = compile_keymap("us").expect("us should compile");
+        let text = compile_keymap(&XkbConfig::default()).expect("us should compile");
         let codes = parse_keycodes(&text);
         // AD01 is the Q position; evdev numbers it 16, xkb 24.
         assert_eq!(codes.get("AD01"), Some(&16));
@@ -568,7 +707,10 @@ mod tests {
             Some(Command::Tap(Key::Name(_)))
         ));
         assert!(matches!(parse("tap 16"), Some(Command::Tap(Key::Code(16)))));
-        assert!(matches!(parse("layout us,ua"), Some(Command::Layout(_))));
+        assert!(matches!(
+            parse("configure\tevdev\tpc105\tus,ua\t,unicode\tgrp:caps_toggle\t\t1"),
+            Some(Command::Configure(XkbConfig { group: 1, .. }))
+        ));
         assert!(parse("nonsense").is_none());
     }
 }

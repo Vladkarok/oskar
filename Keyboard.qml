@@ -53,6 +53,13 @@ Item {
     // on the seat, including pseudo-keyboards that never advance on their own,
     // which is how they end up sitting on different layouts from each other.
     property string typedKeyboard: ""
+    property string typedKeyboardName: ""
+    property string xkbRules: ""
+    property string xkbModel: ""
+    property string xkbLayouts: "us"
+    property string xkbVariants: ""
+    property string xkbOptions: ""
+    property string xkbFile: ""
     property string currentLayoutName: {
         var name = layoutNameMap[currentLayout]
         return name ? name : currentLayout.toUpperCase()
@@ -84,6 +91,7 @@ Item {
         var active = ""
         var detected = []
         var names = ({})
+        var configGroup = 0
 
         for (var i = 0; i < lines.length; i++) {
             var line = lines[i].trim()
@@ -99,6 +107,16 @@ Item {
                 if (device) typedKeyboard = device
                 continue
             }
+            if (parts[0] === "CONFIG" && parts.length >= 8) {
+                xkbRules = parts[1]
+                xkbModel = parts[2]
+                xkbLayouts = parts[3]
+                xkbVariants = parts[4]
+                xkbOptions = parts[5]
+                xkbFile = parts[6] === "[[EMPTY]]" ? "" : parts[6]
+                configGroup = parseInt(parts[7]) || 0
+                continue
+            }
             if (parts[0] === "LAYOUT") {
                 detected.push(String(parts[1] || "").trim())
             }
@@ -110,11 +128,6 @@ Item {
         detected = detected.filter(function(layout) { return layout.length > 0 })
         if (detected.length > 0) {
             languageCycle = detected
-            // The helper owns an independent keymap and starts with US only.
-            // Install every configured layout before selecting a group. The
-            // daemon treats an unchanged list as a no-op, so periodic repair
-            // queries do not recompile anything.
-            sendCommand("layout " + detected.join(","))
         }
         // Merge any newly discovered names into the map
         var merged = ({})
@@ -130,38 +143,43 @@ Item {
         if (!selected && detected.length > 0) selected = detected[0]
         if (selected) {
             layoutCycleIndex = Math.max(0, detected.indexOf(selected))
-            // The helper types through its own virtual keyboard, which is a
-            // separate device on the seat with its own layout group, and a new
-            // device starts at group 0. Without this it keeps typing the first
-            // layout while the caps show whichever one the physical keyboard
-            // moved to, so the two look swapped.
-            sendCommand("group " + layoutCycleIndex)
+            inputReady = false
+            inputStatus = "configuring"
+            sendCommandUnchecked("configure\t" + xkbRules + "\t" + xkbModel
+                + "\t" + xkbLayouts + "\t" + xkbVariants + "\t" + xkbOptions
+                + "\t" + xkbFile + "\t" + configGroup)
             if (selected !== currentLayout) loadLanguageLayout(selected)
         }
     }
 
     function refreshLayoutsFromHypr() {
         layoutDetectProcess.running = false
-        // Emits ACTIVE/LAYOUT/NAME: the active layout code, the codes available
-        // to cycle through, and their human names for the language button.
+        // Select one typed physical keyboard and derive every field from that
+        // same record. The event-named device wins; layout progress is only the
+        // startup fallback. Pseudo-keyboards and this helper are excluded.
         layoutDetectProcess.command = ["bash", "-lc",
-            // Every keyboard on the seat carries the same layout list, but only the
-            // one being typed on advances through it, so the furthest-advanced is
-            // the one worth reading. Taking the first non-virtual device instead
-            // lands on pseudo-keyboards like video-bus or power-button, which sit
-            // at index 0 forever and never reflect a switch.
-            "active_keymap=$(hyprctl devices -j | jq -r '[.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not)] | max_by(.active_layout_index // 0) | .active_keymap' 2>/dev/null); "
-            + "active=$(awk -v target=\"$active_keymap\" 'BEGIN{s=0} /^! layout/{s=1;next} /^!/{if(s) exit} s && NF>=2 { code=$1; $1=\"\"; sub(/^ +/, \"\", $0); if ($0 == target) { print code; exit } }' /usr/share/X11/xkb/rules/base.lst 2>/dev/null); "
-            + "if [[ -z \"$active\" ]]; then active=$(hyprctl devices -j | jq -r '[.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not)] | max_by(.active_layout_index // 0) as $k | ($k.layout | split(\",\")[($k.active_layout_index // 0)])' 2>/dev/null); fi; "
-            + "printf 'ACTIVE\\t%s\\n' \"$active\"; "
-            + "device=$(hyprctl devices -j | jq -r '[.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not)] | max_by(.active_layout_index // 0) | .name' 2>/dev/null); "
-            + "printf 'DEVICE\\t%s\\n' \"$device\"; "
-            + "layouts=$(hyprctl devices -j | jq -r '(.keyboards[] | select(.name | test(\"virtual\"; \"i\") | not) | .layout)' | head -n1 | tr ',' '\\n' | sed '/^$/d'); "
+            "devices=$(hyprctl devices -j 2>/dev/null); "
+            + "keyboard=$(printf '%s' \"$devices\" | jq -c --arg named \"$1\" '"
+            + "[.keyboards[] | select((.name | test(\"^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)|omarchy-osk\"; \"i\")) | not)] as $typed | "
+            + "($typed | map(select(.name == $named))[0] // max_by(.active_layout_index // 0) // empty)' 2>/dev/null); "
+            + "[[ -n \"$keyboard\" ]] || exit 1; "
+            + "device=$(printf '%s' \"$keyboard\" | jq -r '.name'); "
+            + "layouts_csv=$(printf '%s' \"$keyboard\" | jq -r '.layout // \"us\"'); "
+            + "group=$(printf '%s' \"$keyboard\" | jq -r '.active_layout_index // 0'); "
+            + "active=$(printf '%s' \"$layouts_csv\" | cut -d, -f$((group + 1))); "
+            + "rules=$(printf '%s' \"$keyboard\" | jq -r '.rules // \"\"'); "
+            + "model=$(printf '%s' \"$keyboard\" | jq -r '.model // \"\"'); "
+            + "variants=$(printf '%s' \"$keyboard\" | jq -r '.variant // \"\"'); "
+            + "options=$(printf '%s' \"$keyboard\" | jq -r '.options // \"\"'); "
+            + "kb_file=$(hyprctl getoption input:kb_file -j 2>/dev/null | jq -r '.str // \"\"'); "
+            + "printf 'ACTIVE\\t%s\\nDEVICE\\t%s\\nCONFIG\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "
+            + "\"$active\" \"$device\" \"$rules\" \"$model\" \"$layouts_csv\" \"$variants\" \"$options\" \"$kb_file\" \"$group\"; "
+            + "layouts=$(printf '%s' \"$layouts_csv\" | tr ',' '\\n' | sed '/^$/d'); "
             + "echo \"$layouts\" | awk '{print \"LAYOUT\\t\" $0}'; "
             + "echo \"$layouts\" | while read code; do "
             + "  name=$(awk -v c=\"$code\" 'BEGIN{s=0} /^! layout/{s=1;next} /^!/{if(s) exit} s && NF>=2 && $1==c { $1=\"\"; sub(/^ +/,\"\",$0); print $0; exit }' /usr/share/X11/xkb/rules/base.lst 2>/dev/null); "
             + "  [[ -n \"$name\" ]] && printf 'NAME\\t%s\\t%s\\n' \"$code\" \"$name\"; "
-            + "done"]
+            + "done", "onscreen-keyboard", typedKeyboardName]
         layoutDetectProcess.running = true
     }
 
@@ -180,6 +198,8 @@ Item {
         // compile is in flight would apply the old layout's symbols to the new
         // one and never correct itself. Stop it first.
         layoutLoadProcess.running = false
+        var variantList = String(xkbVariants || "").split(",")
+        var activeVariant = variantList[layoutCycleIndex] || ""
         // pipefail so a failed xkbcli is not masked by awk exiting 0, which
         // would install an empty map and silently leave the keyboard blank.
         layoutLoadProcess.command = ["bash", "-lc",
@@ -195,12 +215,16 @@ Item {
             // definition instead, then take the symbol list from it. Reading
             // `symbols[N]=` first matters: `symbols[1]` would otherwise be
             // mistaken for the bracketed list by a plain `[...]` match.
-            "set -o pipefail; xkbcli compile-keymap --layout \"$1\" 2>/dev/null | awk '\n"
+            "set -o pipefail; "
+            + "if [[ -n \"$7\" ]]; then source=(--keymap \"$7\"); wanted=$8; "
+            + "else source=(--rules \"${1:-evdev}\" --model \"${2:-pc105}\" --layout \"$3\" --variant \"$4\" --options \"$5\"); wanted=1; fi; "
+            + "xkbcli compile-keymap \"${source[@]}\" 2>/dev/null | awk -v wanted=\"$wanted\" '\n"
             + " match($0, /key[[:space:]]*<([A-Z0-9]+)>/, k) { name=k[1]; buf=\"\"; inkey=1 }\n"
             + " inkey {\n"
             + "   buf = buf \" \" $0\n"
             + "   if (index($0, \"}\")) {\n"
-            + "     if (match(buf, /symbols\\[[0-9]+\\][[:space:]]*=[[:space:]]*\\[([^]]+)\\]/, s) ||\n"
+            + "     typed = \"symbols\\\\[\" wanted \"\\\\][[:space:]]*=[[:space:]]*\\\\[([^]]+)\\\\]\"\n"
+            + "     if (match(buf, typed, s) || (wanted == 1 &&\n"
             + "         match(buf, /\\{[[:space:]]*\\[([^]]+)\\]/, s)) {\n"
             + "       split(s[1], arr, /,/)\n"
             + "       gsub(/[[:space:]]+/, \"\", arr[1])\n"
@@ -213,7 +237,8 @@ Item {
             // Passed as an argument rather than concatenated into the script:
             // the code comes from hyprctl, and splicing it in would let a stray
             // space or shell metacharacter change the command.
-            + "'", "onscreen-keyboard", layoutCode]
+            + "'", "onscreen-keyboard", xkbRules, xkbModel, layoutCode,
+            activeVariant, xkbOptions, "", xkbFile, String(layoutCycleIndex + 1)]
         layoutLoadProcess.running = true
     }
 
@@ -286,6 +311,16 @@ Item {
         function onRawEvent(event) {
             if (!event || !event.name) return
             var name = String(event.name)
+            if (name === "activelayout") {
+                var parts = null
+                try { if (event.parse) parts = event.parse(2) } catch (error) {}
+                if (!parts) parts = String(event.data || "").split(",")
+                var named = String(parts[0] || "")
+                if (named && named.indexOf("hl-virtual-keyboard") !== 0
+                        && named.indexOf("omarchy-osk") === -1) {
+                    root.typedKeyboardName = named
+                }
+            }
             // A reload can add or remove layouts without moving anything, so it
             // changes what the panel may cycle through even with no switch.
             if (name.indexOf("activelayout") !== -1 || name === "configreloaded") {
@@ -433,7 +468,7 @@ Item {
                 // Readiness is not the same as "the socket answered": the
                 // daemon accepts commands before the compositor keymap has been
                 // forwarded to its virtual keyboard, and would drop every key.
-                write("hello 1\n")
+                write("hello 2\n")
                 flush()
             } else {
                 root.inputReady = false
@@ -445,9 +480,9 @@ Item {
         parser: SplitParser {
             onRead: function (line) {
                 var reply = String(line).trim()
-                if (reply.indexOf("ready") === 0) {
-                    root.inputReady = true
-                    root.inputStatus = "ready"
+                if (reply === "hello 2") {
+                    root.inputReady = false
+                    root.inputStatus = "configuring"
                     // A reconnect can land with the daemon still holding
                     // modifiers this panel no longer thinks are down.
                     root.clearComboMods()
@@ -459,6 +494,9 @@ Item {
                     // whatever it held before the first sync, which is 0 on a
                     // fresh panel and would force the first layout.
                     root.refreshLayoutsFromHypr()
+                } else if (reply === "configured") {
+                    root.inputReady = true
+                    root.inputStatus = "ready"
                 } else if (reply.indexOf("err") === 0) {
                     root.inputReady = false
                     root.inputStatus = reply
@@ -478,6 +516,10 @@ Item {
 
     function sendCommand(text) {
         if (!inputReady) return false
+        return sendCommandUnchecked(text)
+    }
+
+    function sendCommandUnchecked(text) {
         daemon.write(text + "\n")
         daemon.flush()
         return true
