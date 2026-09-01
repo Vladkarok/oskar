@@ -320,23 +320,11 @@ function applyLanguage(rowsSource, layoutCode, symbolMap) {
     return layoutRows
 }
 
-// wtype command builders. Kept pure (no Quickshell import) so this file
-// can stay a plain .pragma library script; QML side calls
-// Quickshell.execDetached(KeyboardLayout.buildXxx(...)).
-
-function buildTypeCommand(text) {
-    return ["wtype", "--", text]
-}
-
-function buildKeyCommand(keysym) {
-    return ["wtype", "-k", keysym]
-}
-
-// The rows label special keys by keysym ("Return", "BackSpace") because that is
-// what wtype wanted. The daemon speaks key positions instead, so the compositor
-// decides what a position means — which is what lets one keystroke work on any
-// layout and reach XWayland clients. This maps the keysyms already present in
-// the layout table onto xkb positions.
+// The rows label special keys by keysym ("Return", "BackSpace"). The daemon
+// speaks key positions instead, so the compositor decides what a position
+// means — which is what lets one keystroke work on any layout and reach
+// XWayland clients. This maps the keysyms already present in the layout table
+// onto xkb positions.
 var keysymPositions = {
     Escape: "ESC",
     Tab: "TAB",
@@ -377,52 +365,4 @@ function positionForKeysym(keysym) {
 
 function positionForModifier(modifier) {
     return modifierPositions[String(modifier || "")] || ""
-}
-
-// Held-modifier combo, e.g. Ctrl+C: wtype -M ctrl -p c -m ctrl
-function normalizedModifiers(modifiers) {
-    if (!Array.isArray(modifiers)) return [modifiers]
-    return modifiers
-}
-
-// `wtype -k` wants a keysym, not a character. Latin letters double as valid
-// keysym names, but anything outside ASCII does not: `wtype -k й` exits with
-// "Unknown key 'й'", so Ctrl/Alt combinations silently failed on every
-// non-Latin layout. libxkbcommon also accepts the U#### spelling, which covers
-// any character without needing a name table.
-function keysymForChar(character) {
-    var text = String(character || "")
-    if (text.length === 0) return text
-
-    var codePoint = text.codePointAt(0)
-    if (codePoint < 0x80) return text
-
-    var hex = codePoint.toString(16).toUpperCase()
-    while (hex.length < 4) hex = "0" + hex
-    return "U" + hex
-}
-
-function buildChordCommand(modifiers, key) {
-    var mods = normalizedModifiers(modifiers).filter(function (mod) {
-        return !!mod
-    })
-    var argv = ["wtype"]
-
-    for (var i = 0; i < mods.length; i++) {
-        argv.push("-M", mods[i])
-    }
-    argv.push("-k", key)
-    for (var j = mods.length - 1; j >= 0; j--) {
-        argv.push("-m", mods[j])
-    }
-
-    return argv
-}
-
-function buildModCharCommand(modifiers, char) {
-    return buildChordCommand(modifiers, keysymForChar(char))
-}
-
-function buildModKeyCommand(modifiers, keysym) {
-    return buildChordCommand(modifiers, keysym)
 }

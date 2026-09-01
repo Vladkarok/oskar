@@ -97,6 +97,16 @@ Item {
             var line = lines[i].trim()
             if (!line) continue
             var parts = line.split("\t")
+            if (parts[0] === "DEVICE") {
+                // Cleared unconditionally: a refresh that finds no safe
+                // target must not leave the language button aiming at a
+                // device that has gone missing or was never safe to advance.
+                // An empty name lands here as a bare "DEVICE" after the line
+                // trim, so this branch has to come before the field-count
+                // guard below.
+                typedKeyboard = String(parts[1] || "").trim()
+                continue
+            }
             if (parts.length < 2) continue
             if (parts[0] === "ACTIVE") {
                 active = String(parts[1] || "").trim()
@@ -157,40 +167,48 @@ Item {
         // Two selections, deliberately different.
         //
         // The reading (group, layout list, RMLVO) comes from whichever typed
-        // keyboard the evidence favours: the device the last switch named,
-        // then Hyprland's active-keyboard flag, then layout progress. In the
-        // all-tied-at-zero state the last tier is a coin toss among
-        // pseudo-keyboards, but every tied device reads the same group 0, so
-        // the reading cannot be wrong.
+        // keyboard the evidence favours: the seat's active keyboard if a
+        // filtered device holds it, then the device the last switch named,
+        // then layout progress. Hyprland keeps XKB group state per device and
+        // emits "activelayout" not only for deliberate switches but also for
+        // hotplug, keymap (re)application and input-config reloads, so an
+        // event name is weaker evidence than the flag — and the flag is what
+        // "which device will the next physical key come from" actually means.
+        // The flag moves on every real keypress, which is what keeps the
+        // reading from going stale after the user switches devices.
         //
         // The switch target ("DEVICE", the device the language button
-        // advances) only comes from the first two tiers. Advancing a guessed
-        // device is what poisoned the seat before: a mouse advanced once,
-        // the indicator read it forever after, and the label stopped saying
-        // what typing produced. Until a real switch fires an activelayout
-        // event or real input puts the active-keyboard flag on a typed
-        // device, there is no safe target and the language button does
-        // nothing.
+        // advances) only comes from those first two tiers. Advancing a
+        // guessed device is what poisoned the seat before: a mouse advanced
+        // once, the indicator read it forever after, and the label stopped
+        // saying what typing produced. Until there is positive evidence, the
+        // language button does nothing.
         //
         // The active-keyboard flag ("main" in devices JSON) is literally the
-        // seat's current keyboard — the last device that produced input —
-        // which is what a fresh login needs. It only counts inside the
-        // filtered list: with an IME running, fcitx5's virtual keyboard
-        // holds it, and it lands on this helper's own device right after
-        // typing, and on whatever was hotplugged last. Mouse media keys can
-        // take it too, which is why the event-named device keeps precedence;
-        // in that window the language button can advance the mouse — bounded
-        // damage, since nothing else ever reads that device's index once a
-        // real switch has fired.
+        // seat's current keyboard — HyprCtl prints IKeyboard::m_active as
+        // "main". It only counts inside the filtered list: with an IME
+        // running, fcitx5's virtual keyboard holds it whenever the user has
+        // not typed since the IME last connected, and it lands on this
+        // helper's own device right after typing. Residual windows that no
+        // devices-JSON reading can close: hotplug or a mouse's media keys can
+        // take the flag until the next physical keypress, and the flag alone
+        // does not prove the device was typed on rather than merely plugged
+        // in. The upstream fix is an event when the seat's current keyboard
+        // changes, or a seat-level layout concept; Sway's keyboard groups are
+        // the prior art.
+        //
+        // One caveat the JSON cannot answer: tied-at-zero devices are assumed
+        // to share the seat's RMLVO, which holds unless the user configures
+        // per-device keymaps (device:name { kb_layout }).
         layoutDetectProcess.command = ["bash", "-lc",
             "devices=$(hyprctl devices -j 2>/dev/null); "
             + "keyboard=$(printf '%s' \"$devices\" | jq -c --arg named \"$1\" '"
             + "[.keyboards[] | select((.name | test(\"^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)|omarchy-osk\"; \"i\")) | not)] as $typed | "
-        + "($typed | map(select(.name == $named))[0] // ($typed | map(select(.main == true))[0]) // ($typed | max_by(.active_layout_index // 0)) // empty)' 2>/dev/null); "
+        + "($typed | map(select(.main == true))[0] // ($typed | map(select(.name == $named))[0]) // ($typed | max_by(.active_layout_index // 0)) // empty)' 2>/dev/null); "
         + "[[ -n \"$keyboard\" ]] || exit 1; "
         + "switchable=$(printf '%s' \"$devices\" | jq -r --arg named \"$1\" '"
         + "[.keyboards[] | select((.name | test(\"^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)|omarchy-osk\"; \"i\")) | not)] as $typed | "
-        + "($typed | map(select(.name == $named))[0] // ($typed | map(select(.main == true))[0]) // {name: \"\"}) | .name' 2>/dev/null); "
+        + "($typed | map(select(.main == true))[0] // ($typed | map(select(.name == $named))[0]) // {name: \"\"}) | .name' 2>/dev/null); "
             + "layouts_csv=$(printf '%s' \"$keyboard\" | jq -r '.layout // \"us\"'); "
             + "group=$(printf '%s' \"$keyboard\" | jq -r '.active_layout_index // 0'); "
             + "active=$(printf '%s' \"$layouts_csv\" | cut -d, -f$((group + 1))); "
@@ -343,8 +361,9 @@ Item {
                 try { if (event.parse) parts = event.parse(2) } catch (error) {}
                 if (!parts) parts = String(event.data || "").split(",")
                 var named = String(parts[0] || "")
-                if (named && named.indexOf("hl-virtual-keyboard") !== 0
-                        && named.indexOf("omarchy-osk") === -1) {
+                var lower = named.toLowerCase()
+                if (named && lower.indexOf("hl-virtual-keyboard") !== 0
+                        && lower.indexOf("omarchy-osk") === -1) {
                     root.typedKeyboardName = named
                 }
             }
@@ -470,18 +489,16 @@ Item {
         return !!keyData.s && !isLetterKey(keyData)
     }
 
-    // Every keystroke goes straight to wtype. This used to dispatch
-    // `focuscurrentorlast` first, on the theory that it reclaimed focus for the
-    // real target window — but that dispatcher *toggles* between the current and
-    // previously focused window, so with two or more windows open every keypress
-    // moved focus away and wtype typed into the wrong one. The panel is
-    // `keyboardFocus: None`, so the target never loses focus and there is
-    // nothing to reclaim.
-    // Input goes to the helper daemon over a unix socket. Nothing here spawns a
-    // process: the plugin runs inside the long-lived shell, and the Omarchy
-    // guide asks plugins not to launch shell processes. It also could not work
-    // if it did — a fresh `wtype` per keystroke uploads a synthetic keymap that
-    // XWayland ignores, so keys never reached Proton games or Electron apps.
+    // Input goes to the helper daemon over a unix socket; the panel never
+    // takes keyboard focus (`keyboardFocus: None` in Panel.qml), so the
+    // window being typed into keeps it and the daemon's keystrokes land
+    // there. Nothing here spawns a process: the plugin runs inside the
+    // long-lived shell, and the Omarchy guide asks plugins not to launch
+    // shell processes. The first version spawned `wtype` per keystroke, and
+    // could never have worked well even had it been allowed — a fresh
+    // `wtype` per key uploads a synthetic keymap that XWayland ignores, so
+    // keys never reached Proton games or Electron apps, and each spawn cost
+    // tens of milliseconds.
     property bool inputReady: false
     property string inputStatus: "connecting"
 
@@ -659,15 +676,18 @@ Item {
                             border.width: root.keyBorderWidth
 
                             property bool toggled: root.isToggled(keyData)
+                            // The language key reads as disabled while the
+                            // panel has no safe switch target; see
+                            // refreshLayoutsFromHypr for why one may not exist.
                             property bool isLang: keyData.key === "lang"
                             property bool isDual: root.isDualKey(keyData)
 
-                            color: isLang ? root.accentColor
+                            color: isLang ? (root.typedKeyboard ? root.accentColor : root.keyBg)
                                 : toggled ? root.accentColor
                                 : mouseArea.pressed ? root.keyActiveBg
                                 : mouseArea.containsMouse ? root.keyHoverBg
                                 : root.keyBg
-                            border.color: isLang ? root.accentColor
+                            border.color: isLang ? (root.typedKeyboard ? root.accentColor : root.keyBorderColor)
                                 : toggled ? root.accentColor
                                 : root.keyBorderColor
 
