@@ -65,6 +65,7 @@ fi
 exec qemu-system-x86_64 \
     -name omarchy-osk-vm \
     -machine q35 -accel kvm -cpu host \
+    -global ICH9-LPC.disable_s3=0 \
     -smp 6 -m 8G \
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
     -drive if=pflash,format=raw,file="$VARS" \
