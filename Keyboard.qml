@@ -500,57 +500,84 @@ Item {
     // tens of milliseconds.
     property bool inputReady: false
     property string inputStatus: "connecting"
+    // The helper socket, created by the loader below. Root-scope alias because
+    // the component's own id does not reach the functions out here.
+    property QtObject daemonSocket: daemonLoader.item
 
-    Socket {
-        id: daemon
-        path: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"
-        connected: true
+    // The helper may start after the shell: systemd orders the service
+    // against graphical-session.target, not against the shell, so the panel's
+    // first connection attempt can find no socket. Quickshell's Socket never
+    // recovers from that — a failed connect leaves its internal QLocalSocket
+    // in place, and setConnected(true) only dials when that object is gone,
+    // with nothing but a successful connection ever clearing it — so the
+    // whole socket is rebuilt whenever the helper's socket file exists and
+    // the helper has not answered hello yet. A daemon that dies later needs
+    // none of this: the disconnected path clears the object and the pending
+    // targetConnected redials on its own. One rebuild per two seconds while
+    // the helper is down; hello stops the timer.
+    Loader {
+        id: daemonLoader
+        active: true
+        sourceComponent: daemonComponent
+    }
 
-        onConnectionStateChanged: {
-            if (connected) {
-                // Readiness is not the same as "the socket answered": the
-                // daemon accepts commands before the compositor keymap has been
-                // forwarded to its virtual keyboard, and would drop every key.
-                write("hello 2\n")
-                flush()
-            } else {
-                root.inputReady = false
-                root.inputStatus = "reconnecting"
-                reconnectTimer.restart()
-            }
-        }
+    Component {
+        id: daemonComponent
 
-        parser: SplitParser {
-            onRead: function (line) {
-                var reply = String(line).trim()
-                if (reply === "hello 2") {
+        Socket {
+            id: daemon
+            path: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"
+            connected: true
+
+            onConnectionStateChanged: {
+                if (connected) {
+                    // Readiness is not the same as "the socket answered": the
+                    // daemon accepts commands before the compositor keymap has
+                    // been forwarded to its virtual keyboard, and would drop
+                    // every key. The property also flips on the request, before
+                    // the socket has actually opened — writing here lands on a
+                    // closed device — so hello goes out on a short delay.
+                    helloTimer.restart()
+                } else {
                     root.inputReady = false
-                    root.inputStatus = "configuring"
-                    // A reconnect can land with the daemon still holding
-                    // modifiers this panel no longer thinks are down.
-                    root.clearComboMods()
-                    daemon.write("mods 0\n")
-                    daemon.flush()
-                    // A restarted helper is back at group 0 and has no idea
-                    // which layout is current. Re-reading the compositor sends
-                    // the right group; using layoutCycleIndex here would send
-                    // whatever it held before the first sync, which is 0 on a
-                    // fresh panel and would force the first layout.
-                    root.refreshLayoutsFromHypr()
-                } else if (reply === "configured") {
-                    root.inputReady = true
-                    root.inputStatus = "ready"
-                } else if (reply.indexOf("err") === 0) {
-                    if (reply === "err key held" || reply === "err not holding") {
-                        // Ownership refusals mean the daemon's hold state is
-                        // ahead of ours; the device is fine and typing stays
-                        // enabled. The panel's chords never produce them, so
-                        // one appearing is a client bug worth surfacing in
-                        // the status without bricking the keyboard.
-                        root.inputStatus = reply
-                    } else {
+                    root.inputStatus = "reconnecting"
+                }
+            }
+
+            parser: SplitParser {
+                onRead: function (line) {
+                    var reply = String(line).trim()
+                    if (reply === "hello 2") {
                         root.inputReady = false
-                        root.inputStatus = reply
+                        root.inputStatus = "configuring"
+                        // A reconnect can land with the daemon still holding
+                        // modifiers this panel no longer thinks are down.
+                        root.clearComboMods()
+                        daemon.write("mods 0\n")
+                        daemon.flush()
+                        // A restarted helper is back at group 0 and has no idea
+                        // which layout is current. Re-reading the compositor
+                        // sends the right group; using layoutCycleIndex here
+                        // would send whatever it held before the first sync,
+                        // which is 0 on a fresh panel and would force the
+                        // first layout.
+                        root.refreshLayoutsFromHypr()
+                    } else if (reply === "configured") {
+                        root.inputReady = true
+                        root.inputStatus = "ready"
+                    } else if (reply.indexOf("err") === 0) {
+                        if (reply === "err key held" || reply === "err not holding") {
+                            // Ownership refusals mean the daemon's hold state
+                            // is ahead of ours; the device is fine and typing
+                            // stays enabled. The panel's chords never produce
+                            // them, so one appearing is a client bug worth
+                            // surfacing in the status without bricking the
+                            // keyboard.
+                            root.inputStatus = reply
+                        } else {
+                            root.inputReady = false
+                            root.inputStatus = reply
+                        }
                     }
                 }
             }
@@ -558,12 +585,37 @@ Item {
     }
 
     Timer {
-        id: reconnectTimer
-        // Capped so a missing helper costs a connect attempt every couple of
-        // seconds rather than a busy loop.
-        interval: 2000
+        id: helloTimer
+        // Gives a fresh connection attempt a moment to actually open before
+        // hello goes out. When the helper is still down the write fails
+        // harmlessly and the next rebuild dials again.
+        interval: 150
         repeat: false
-        onTriggered: daemon.connected = true
+        onTriggered: {
+            if (root.daemonSocket) {
+                root.daemonSocket.write("hello 2\n")
+                root.daemonSocket.flush()
+            }
+        }
+    }
+
+    Process {
+        id: socketPathCheck
+        command: ["test", "-S", (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"]
+        onExited: function(exitCode, exitStatus) {
+            if (exitCode === 0 && !root.inputReady) {
+                daemonLoader.active = false
+                daemonLoader.active = true
+            }
+        }
+    }
+
+    Timer {
+        id: reconnectTimer
+        interval: 2000
+        repeat: true
+        running: !root.inputReady
+        onTriggered: socketPathCheck.running = true
     }
 
     function sendCommand(text) {
@@ -572,8 +624,8 @@ Item {
     }
 
     function sendCommandUnchecked(text) {
-        daemon.write(text + "\n")
-        daemon.flush()
+        daemonSocket.write(text + "\n")
+        daemonSocket.flush()
         return true
     }
 
