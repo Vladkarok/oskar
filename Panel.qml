@@ -96,7 +96,10 @@ Item {
 
     Process {
         id: dependencyCheck
-        command: ["bash", "-c", "command -v wtype >/dev/null && command -v hyprctl >/dev/null"]
+        // Typing goes through the helper daemon, which has no external
+        // commands to check for. hyprctl is the one binary the panel still
+        // needs: layout queries in Keyboard.qml and the cursor override above.
+        command: ["bash", "-c", "command -v hyprctl >/dev/null"]
         onExited: function(exitCode, exitStatus) {
             root.dependenciesReady = exitCode === 0 && exitStatus === 0
         }
@@ -106,7 +109,7 @@ Item {
         id: dependencyInstall
         command: ["xdg-terminal-exec", "--app-id=org.omarchy.terminal",
             "--title=Install On-Screen Keyboard dependencies", "omarchy", "pkg",
-            "add", "wtype", "hyprland"]
+            "add", "hyprland"]
         onExited: function(exitCode, exitStatus) {
             root.dependenciesReady = false
             root.checkDependencies()
@@ -128,8 +131,8 @@ Item {
         }
 
         // The whole point: never take keyboard focus, so the app window
-        // you're typing into keeps it, and wtype has something to type
-        // into. Clicks on the keys still work fine with keyboardFocus: None
+        // you're typing into keeps it, and the helper's keystrokes land
+        // there. Clicks on the keys still work fine with keyboardFocus: None
         // — only keyboard input routing is refused at the compositor level.
         WlrLayershell.namespace: "io.github.vladkarok.osk"
         WlrLayershell.layer: WlrLayer.Overlay
