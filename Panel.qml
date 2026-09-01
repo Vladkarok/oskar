@@ -97,9 +97,12 @@ Item {
     Process {
         id: dependencyCheck
         // Typing goes through the helper daemon, which has no external
-        // commands to check for. hyprctl is the one binary the panel still
-        // needs: layout queries in Keyboard.qml and the cursor override above.
-        command: ["bash", "-c", "command -v hyprctl >/dev/null"]
+        // commands to check for. The layout tracker still needs hyprctl
+        // (devices, getoption), jq (devices JSON) and xkbcli (compiling the
+        // key caps' symbols); all three come with the packages the install
+        // button below pulls in.
+        command: ["bash", "-c",
+            "command -v hyprctl >/dev/null && command -v jq >/dev/null && command -v xkbcli >/dev/null"]
         onExited: function(exitCode, exitStatus) {
             root.dependenciesReady = exitCode === 0 && exitStatus === 0
         }
@@ -109,7 +112,7 @@ Item {
         id: dependencyInstall
         command: ["xdg-terminal-exec", "--app-id=org.omarchy.terminal",
             "--title=Install On-Screen Keyboard dependencies", "omarchy", "pkg",
-            "add", "hyprland"]
+            "add", "hyprland", "jq"]
         onExited: function(exitCode, exitStatus) {
             root.dependenciesReady = false
             root.checkDependencies()

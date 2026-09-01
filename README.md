@@ -72,19 +72,24 @@ implementation found that follows the system layout at all.
 2. ~~**The compiled keymap is incomplete.**~~ **Closed.** The `configure` command
    carries rules, model, layouts, variants, options and a keymap file, and the
    panel sends it with the full set read from the compositor.
-3. **Device selection is imperfect.** The panel now prefers, in order: the device
-   the last layout switch named, then Hyprland's active-keyboard flag (`main`,
-   which is the seat's current keyboard — the last device that produced input),
-   then layout progress. The flag only counts inside the filtered list, because
-   it sits on the helper's own device right after typing and can land on
-   whatever was hotplugged last; a mouse's media keys can still take it between
-   switches. The root cause is upstream: Hyprland keeps layout state per device
-   (including power buttons and gaming mice) and offers no event when the seat's
-   current keyboard changes. An upstream discussion with Sway's keyboard-group
-   semantics as prior art is planned.
-4. ~~**Held keys are tracked per connection**~~ **Closed.** Keys a client left
-   pressed are released and modifiers zeroed on disconnect; the smoke exercises a
-   client dying mid-chord and asserts the helper keeps serving.
+3. **Device selection is imperfect.** The panel reads layouts from the most
+   convincing typed keyboard — Hyprland's active-keyboard flag (`main`, the
+   seat's current keyboard) if a filtered device holds it, else the device the
+   last switch named, else layout progress — but advances only a device
+   supported by the first two tiers; with no positive evidence the language
+   button does nothing rather than guess. The evidence tiers cannot be closed
+   completely: hotplug and mouse media keys can move the flag until the next
+   physical keypress, Hyprland emits `activelayout` for hotplug and config
+   reloads and not only for deliberate switches, and tied-at-zero devices are
+   assumed to share the seat's RMLVO. The root cause is upstream: layout state
+   lives per device (including power buttons and gaming mice), and nothing
+   announces a change of the seat's current keyboard. An upstream discussion
+   with Sway's keyboard-group semantics as prior art is planned.
+4. ~~**Held keys are tracked per connection**~~ **Closed.** The device is
+   shared, so held keys are refcounted per connection: a code stays down until
+   its last holder lets go, a disconnect releases only that connection's
+   holds, and a client dying mid-chord leaves the helper serving (smoke
+   covered).
 
 ## Testing
 
@@ -100,9 +105,11 @@ tools/nested-session.sh tools/smoke-daemon.sh
 The harness starts a disposable nested Hyprland, gives the subject a private
 `XDG_RUNTIME_DIR` so its control socket cannot collide with an installed
 service, and fails the run if compositor keymap rebuilds exceed a threshold.
-The smoke checks the readiness gate, that a byte-identical `configure` is
-short-circuited rather than recompiled, typing in both layout groups, and that
-a client disconnecting mid-chord leaves the helper serving.
+The smoke checks the readiness gate, that exactly two keymaps get compiled
+(default plus configured — a byte-identical `configure` must short-circuit),
+that the device's group actually follows `group` commands (read back from
+`hyprctl devices`), and that a client disconnecting mid-chord leaves the
+helper serving.
 
 ```sh
 cd daemon && cargo test
