@@ -537,8 +537,17 @@ Item {
                     root.inputReady = true
                     root.inputStatus = "ready"
                 } else if (reply.indexOf("err") === 0) {
-                    root.inputReady = false
-                    root.inputStatus = reply
+                    if (reply === "err key held" || reply === "err not holding") {
+                        // Ownership refusals mean the daemon's hold state is
+                        // ahead of ours; the device is fine and typing stays
+                        // enabled. The panel's chords never produce them, so
+                        // one appearing is a client bug worth surfacing in
+                        // the status without bricking the keyboard.
+                        root.inputStatus = reply
+                    } else {
+                        root.inputReady = false
+                        root.inputStatus = reply
+                    }
                 }
             }
         }

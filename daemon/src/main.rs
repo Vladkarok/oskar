@@ -230,9 +230,15 @@ impl Shared {
             .as_ref()
             .is_some_and(|current| current.same_keymap(config))
         {
-            self.group = config.group;
-            if let Some(keyboard) = self.keyboard.as_ref() {
-                keyboard.modifiers(0, 0, 0, self.group);
+            // A same-keymap reconfigure is only ever a group change: the
+            // device state was never reset, so the mask needs no re-assert —
+            // and zeroing it here would clobber whatever a client's chord
+            // holds across the swap.
+            if self.group != config.group {
+                self.group = config.group;
+                if let Some(keyboard) = self.keyboard.as_ref() {
+                    keyboard.modifiers(0, 0, 0, self.group);
+                }
             }
             self.config = Some(config.clone());
             return true;
@@ -488,13 +494,17 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
 /// Releases whatever a departing client left pressed and, when nothing is
 /// held any more, zeroes the modifier mask — so a dropped connection cannot
 /// strand the session with a stuck key, while a surviving connection's
-/// modifiers survive a neighbour disconnecting.
+/// chord survives a neighbour disconnecting. The whole cleanup runs under
+/// one lock acquisition: an emptiness check followed by a separate
+/// re-locked `mods` would admit another connection's claim in between and
+/// clear the mask out from under it.
 fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>, conn_id: u64) {
+    let mut shared = shared.lock().unwrap();
     for code in held {
-        apply(shared, connection, Command::Up(Key::Code(code)), None, conn_id);
+        apply_locked(&mut shared, connection, Command::Up(Key::Code(code)), None, conn_id);
     }
-    if shared.lock().unwrap().held.is_empty() {
-        apply(shared, connection, Command::Mods(0), None, conn_id);
+    if shared.held.is_empty() {
+        apply_locked(&mut shared, connection, Command::Mods(0), None, conn_id);
     }
 }
 
@@ -502,11 +512,20 @@ fn apply(
     shared: &SharedRef,
     connection: &Connection,
     command: Command,
-    mut held: Option<&mut Vec<u32>>,
+    held: Option<&mut Vec<u32>>,
     conn_id: u64,
 ) -> &'static str {
     let mut shared = shared.lock().unwrap();
+    apply_locked(&mut shared, connection, command, held, conn_id)
+}
 
+fn apply_locked(
+    shared: &mut Shared,
+    connection: &Connection,
+    command: Command,
+    mut held: Option<&mut Vec<u32>>,
+    conn_id: u64,
+) -> &'static str {
     if let Command::Configure(ref config) = command {
         let installed = shared.install_config(config);
         let _ = connection.flush();
@@ -560,15 +579,20 @@ fn apply(
         },
         Command::Down(ref key) => match resolve(key) {
             Some(code) => {
-                keyboard.key(stamp(), code, 1);
-                // One claim per connection: a client repeating `down` for a
-                // code it already holds must not add a claim it will only
-                // release once.
-                let already_held = held
-                    .as_deref()
-                    .is_some_and(|connection_held| connection_held.contains(&code));
-                if !already_held {
-                    shared.held.entry(code).or_default().insert(conn_id);
+                // The claim set is the authority: the device press belongs to
+                // the first claim and the release to the last, so a duplicate
+                // `down` neither re-presses nor re-claims. Gating on the set
+                // (not the connection's own list) is what lets a connection
+                // re-claim after a keymap swap drained the claims out from
+                // under it — its list still shows the code, but the device
+                // press is genuinely new again.
+                let claimants = shared.held.entry(code).or_default();
+                let was_first = claimants.is_empty();
+                if !claimants.contains(&conn_id) {
+                    claimants.insert(conn_id);
+                }
+                if was_first {
+                    keyboard.key(stamp(), code, 1);
                 }
                 pressed = Some(code);
             }

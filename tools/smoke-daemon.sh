@@ -34,42 +34,27 @@ fi
 # prefix, not the process name: Hyprland names virtual keyboards
 # hl-virtual-keyboard[-<binary>] depending on misc:name_vk_after_proc, and the
 # nested session has no other virtual keyboard for the prefix to collide with.
-group_of() {
-  hyprctl devices -j | jq -r '
-    [.keyboards[] | select(.name | test("hl-virtual-keyboard"))][0].active_layout_index' 2>/dev/null
-}
-wait_for_group() {
-  local wanted="$1"
-  for _ in $(seq 1 40); do
-    [[ "$(group_of)" == "$wanted" ]] && return 0
-    sleep 0.05
-  done
-  echo "device group never became $wanted (saw: $(group_of))" >&2
-  return 1
-}
-
 # The second configure is byte-identical to the first: the daemon must
 # short-circuit it instead of compiling again. The reply alone cannot prove
 # that (both paths answer "configured"), so the caller counts the daemon's
-# "keymap compiled" log lines at the end.
+# "keymap compiled" log lines at the end. The device's active_layout_index is
+# the one layout fact about the helper that can be read back without a
+# client, and every typing operation asserts it first — what is proven is the
+# group the tap actually ran under, not a final state. The name match is
+# deliberately the protocol prefix: Hyprland names virtual keyboards
+# hl-virtual-keyboard[-<binary>] depending on misc:name_vk_after_proc, and
+# the nested session has no other virtual keyboard for the prefix to collide
+# with. Retries absorb the modifiers event crossing the compositor
+# asynchronously.
 
 python3 - "$socket" <<'PY'
+import json
 import socket
+import subprocess
 import sys
 import time
 
 configure = "configure\tevdev\tpc105\tus,ua\t\tgrp:caps_toggle\t\t1"
-# Every typing operation sits between two group assertions, so what is
-# asserted is the group the tap actually ran under, not a final state.
-commands = [
-    "hello 2",
-    configure,        # starts the helper on group 1, the second layout (ua)
-    "tap AD01",
-    "group 0",
-    "tap AD01",       # under group 0 (us)
-    configure,        # identical payload: must be a short-circuit, not a recompile
-    "tap AD01",       # back under group 1
-]
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 sock.settimeout(10)
 for attempt in range(50):
@@ -82,42 +67,40 @@ for attempt in range(50):
         time.sleep(0.05)
 stream = sock.makefile("rw")
 
-for command in commands:
+def ask(command, expected):
     stream.write(command + "\n")
     stream.flush()
     reply = stream.readline().strip()
-    if command == "hello 2":
-        expected = "hello 2"
-    elif command.startswith("configure"):
-        expected = "configured"
-    else:
-        expected = "ok"
     if reply != expected:
         raise SystemExit(f"{command!r}: expected {expected!r}, got {reply!r}")
     print(f"{command} -> {reply}")
+
+def group():
+    out = subprocess.run(["hyprctl", "devices", "-j"], capture_output=True, text=True).stdout
+    keyboards = json.loads(out)["keyboards"]
+    return [k for k in keyboards if "hl-virtual-keyboard" in k["name"]][0]["active_layout_index"]
+
+def wait_group(wanted):
+    for _ in range(40):
+        if str(group()) == str(wanted):
+            return
+        time.sleep(0.05)
+    raise SystemExit(f"device group never became {wanted} (saw: {group()})")
+
+ask("hello 2", "hello 2")
+ask(configure, "configured")      # starts the helper on group 1, the second layout (ua)
+wait_group(1)
+ask("tap AD01", "ok")             # under group 1
+ask("group 0", "ok")
+wait_group(0)
+ask("tap AD01", "ok")             # under group 0 (us)
+ask(configure, "configured")      # identical payload: short-circuit, not a recompile
+wait_group(1)
+ask("tap AD01", "ok")             # back under group 1
 stream.close()
 sock.close()
+print("device group followed configure and group, asserted around every tap")
 PY
-
-wait_for_group 1
-echo "device group follows configure/group 1"
-
-python3 - "$socket" <<'PY'
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.settimeout(10)
-s.connect(sys.argv[1])
-f = s.makefile("rw")
-f.write("group 0\n")
-f.flush()
-reply = f.readline().strip()
-if reply != "ok":
-    raise SystemExit(f"'group 0': expected 'ok', got {reply!r}")
-f.close()
-s.close()
-PY
-wait_for_group 0
-echo "device group follows 'group 0'"
 
 # A client that dies mid-chord must not take the helper with it, and the keys
 # it left pressed are its connection's problem: the helper releases them and

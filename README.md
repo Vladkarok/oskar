@@ -86,11 +86,11 @@ implementation found that follows the system layout at all.
    announces a change of the seat's current keyboard. An upstream discussion
    with Sway's keyboard-group semantics as prior art is planned.
 4. ~~**Held keys are tracked per connection**~~ **Closed.** The device is
-   shared, so held keys carry per-connection claims: a code goes down with the
-   first claim and up with the last, a release from a connection that never
-   claimed the code is refused, a tap cannot lift another connection's hold,
-   and a disconnect releases only that connection's claims (smoke-covered,
-   including two clients sharing one hold).
+   shared, so held keys carry per-connection claims: the press belongs to the
+   first claim, the release to the last, a release from a connection that
+   never claimed the code is refused, a tap cannot lift another connection's
+   hold, and a disconnect releases only that connection's claims (smoke
+   covered, including two clients sharing one hold).
 
 ## Testing
 
@@ -108,10 +108,12 @@ The harness starts a disposable nested Hyprland, gives the subject a private
 service, and fails the run if compositor keymap rebuilds exceed a threshold.
 The smoke checks the readiness gate, that exactly two keymaps get compiled
 (default plus configured — a byte-identical `configure` must short-circuit),
-that the device's group follows `group`/`configure` commands (read back from
-`hyprctl devices`), that a client disconnecting mid-chord leaves the helper
-serving, and the multi-client ownership rules (foreign releases rejected,
-shared holds surviving one holder's release, taps refusing to lift a hold).
+that the device's group follows `configure`/`group` commands with an
+assertion before every tap (read back from `hyprctl devices`), that a client
+disconnecting mid-chord leaves the helper serving, and the multi-client
+ownership rules (foreign releases refused, shared holds surviving one
+holder's release, taps refusing to lift a hold). What it cannot see is the
+character an app receives — that is what the VM dogfooding phase is for.
 
 ```sh
 cd daemon && cargo test
