@@ -224,6 +224,7 @@ Item {
     }
 
     function loadLanguageLayout(layoutCode) {
+        console.log("[osk] loadLanguageLayout:", layoutCode, "variant-index:", layoutCycleIndex)
         currentLayout = layoutCode
         updateLayoutRows()
         // Compile the layout with xkbcli rather than reading
@@ -265,7 +266,7 @@ Item {
             + "   if (index($0, \"}\")) {\n"
             + "     typed = \"symbols\\\\[\" wanted \"\\\\][[:space:]]*=[[:space:]]*\\\\[([^]]+)\\\\]\"\n"
             + "     if (match(buf, typed, s) || (wanted == 1 &&\n"
-            + "         match(buf, /\\{[[:space:]]*\\[([^]]+)\\]/, s)) {\n"
+            + "         match(buf, /\\{[[:space:]]*\\[([^]]+)\\]/, s))) {\n"
             + "       split(s[1], arr, /,/)\n"
             + "       gsub(/[[:space:]]+/, \"\", arr[1])\n"
             + "       gsub(/[[:space:]]+/, \"\", arr[2])\n"
@@ -280,6 +281,7 @@ Item {
             + "'", "onscreen-keyboard", xkbRules, xkbModel, layoutCode,
             activeVariant, xkbOptions, "", xkbFile, String(layoutCycleIndex + 1)]
         layoutLoadProcess.running = true
+        console.log("[osk] keycaps process starting for", layoutCode)
     }
 
     function cycleLanguage() {
@@ -326,9 +328,11 @@ Item {
             }
         }
         onRunningChanged: {
+            console.log("[osk] keycaps process running:", running)
             if (running) collected = ""
         }
         onExited: function(exitCode, exitStatus) {
+            console.log("[osk] keycaps process exited:", exitCode, exitStatus, "collected bytes:", collected.length)
             if (exitCode === 0 && exitStatus === 0) {
                 root.parseLayoutSymbolOutput(layoutLoadProcess.collected)
                 return
