@@ -112,11 +112,6 @@ Item {
                 active = String(parts[1] || "").trim()
                 continue
             }
-            if (parts[0] === "DEVICE") {
-                var device = String(parts[1] || "").trim()
-                if (device) typedKeyboard = device
-                continue
-            }
             if (parts[0] === "CONFIG" && parts.length >= 8) {
                 xkbRules = parts[1]
                 xkbModel = parts[2]

@@ -199,7 +199,13 @@ Item {
                     width: langLabel.implicitWidth + keyboard.gapPx * 3
                     height: Style.space(30)
                     radius: Style.cornerRadius
-                    color: languageArea.containsMouse ? (languageArea.pressed ? Color.accent : Util.alpha(Color.foreground, Style.hoverFillAlpha)) : Util.alpha(Color.foreground, Style.normalFillAlpha)
+                    // Reads as disabled while the panel has no safe switch
+                    // target (see refreshLayoutsFromHypr in Keyboard.qml):
+                    // clicking still calls cycleLanguage, which refuses to
+                    // guess rather than advance a device nobody typed on.
+                    color: !keyboard.typedKeyboard ? Util.alpha(Color.foreground, Style.normalFillAlpha)
+                        : languageArea.containsMouse ? (languageArea.pressed ? Color.accent : Util.alpha(Color.foreground, Style.hoverFillAlpha))
+                        : Util.alpha(Color.foreground, Style.normalFillAlpha)
                     border.color: Util.alpha(Color.foreground, Style.pressedFillAlpha)
                     border.width: Style.normalBorderWidth
                     z: 2
@@ -208,7 +214,7 @@ Item {
                         id: langLabel
                         anchors.centerIn: parent
                         text: keyboard.currentLayoutName
-                        color: Color.foreground
+                        color: keyboard.typedKeyboard ? Color.foreground : Color.muted
                         font.family: Style.font.family
                         font.pixelSize: Style.font.bodySmall
                         font.bold: true
