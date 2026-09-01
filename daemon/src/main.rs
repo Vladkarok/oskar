@@ -208,7 +208,10 @@ struct Shared {
     /// Which compiled layout is active.
     group: u32,
     config: Option<XkbConfig>,
-    held: std::collections::HashSet<u32>,
+    /// Evdev codes held at the device, with the number of connections holding
+    /// each. The device is shared, so a code is one logical press with many
+    /// claimants: it stays down until its last holder lets go.
+    held: std::collections::HashMap<u32, usize>,
     uploads: std::collections::VecDeque<Instant>,
 }
 
@@ -253,7 +256,7 @@ impl Shared {
             return false;
         };
         if self.ready {
-            for code in self.held.drain() {
+            for (code, _) in self.held.drain() {
                 keyboard.key(0, code, 0);
             }
             keyboard.modifiers(0, 0, 0, self.group);
@@ -513,6 +516,11 @@ fn apply(
         return "err no keymap yet";
     }
 
+    // Held-key bookkeeping below mutates `shared`, so drop the borrow the
+    // proxy carries by cloning it — proxies are cheap handles, and the Group
+    // arm already does this.
+    let keyboard = keyboard.clone();
+
     // The compositor only orders events by this stamp, so a counter is enough
     // and saves a clock syscall per keystroke.
     static COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -538,15 +546,40 @@ fn apply(
         Command::Down(ref key) => match resolve(key) {
             Some(code) => {
                 keyboard.key(stamp(), code, 1);
-                shared.held.insert(code);
+                // One logical hold per connection: a client repeating `down`
+                // for a code it already holds must not raise the count above
+                // the number of connections that will release it.
+                let already_held = held
+                    .as_deref()
+                    .is_some_and(|connection_held| connection_held.contains(&code));
+                if !already_held {
+                    *shared.held.entry(code).or_insert(0) += 1;
+                }
                 pressed = Some(code);
             }
             None => return "err unknown key",
         },
         Command::Up(ref key) => match resolve(key) {
             Some(code) => {
-                keyboard.key(stamp(), code, 0);
-                shared.held.remove(&code);
+                // The release reaches the device only when the last claimant
+                // lets go. An Up for a code nothing holds is forwarded
+                // anyway: the compositor drops releases for keys it does not
+                // consider held, and refusing them here would strand a
+                // client's view of its own state.
+                let send_release = match shared.held.get_mut(&code) {
+                    Some(count) if *count > 1 => {
+                        *count -= 1;
+                        false
+                    }
+                    Some(_) => {
+                        shared.held.remove(&code);
+                        true
+                    }
+                    None => true,
+                };
+                if send_release {
+                    keyboard.key(stamp(), code, 0);
+                }
                 released = Some(code);
             }
             None => return "err unknown key",
