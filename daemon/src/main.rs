@@ -38,7 +38,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -208,10 +208,11 @@ struct Shared {
     /// Which compiled layout is active.
     group: u32,
     config: Option<XkbConfig>,
-    /// Evdev codes held at the device, with the number of connections holding
-    /// each. The device is shared, so a code is one logical press with many
-    /// claimants: it stays down until its last holder lets go.
-    held: std::collections::HashMap<u32, usize>,
+    /// Evdev codes held at the device, with the connections claiming each.
+    /// The device is shared, so a code is one logical press with many
+    /// claimants: it goes down with the first claim and up with the last
+    /// release, and a claim is what authorizes a release.
+    held: std::collections::HashMap<u32, std::collections::HashSet<u64>>,
     uploads: std::collections::VecDeque<Instant>,
 }
 
@@ -447,6 +448,8 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
     // rest of the session, which looks like a broken machine rather than a
     // broken plugin.
     let mut held: Vec<u32> = Vec::new();
+    static CONNECTION: AtomicU64 = AtomicU64::new(1);
+    let conn_id = CONNECTION.fetch_add(1, Ordering::Relaxed);
 
     for line in BufReader::new(stream).lines().map_while(Result::ok) {
         let line = line.trim();
@@ -473,22 +476,26 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             continue;
         }
         let reply = match parse(line) {
-            Some(command) => apply(&shared, &connection, command, Some(&mut held)),
+            Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
             None => "err unknown command",
         };
         let _ = writeln!(out, "{reply}");
     }
 
-    release_all(&shared, &connection, held);
+    release_all(&shared, &connection, held, conn_id);
 }
 
-/// Releases whatever a departing client left pressed and zeroes the modifier
-/// mask, so a dropped connection cannot strand the session with a stuck key.
-fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>) {
+/// Releases whatever a departing client left pressed and, when nothing is
+/// held any more, zeroes the modifier mask — so a dropped connection cannot
+/// strand the session with a stuck key, while a surviving connection's
+/// modifiers survive a neighbour disconnecting.
+fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>, conn_id: u64) {
     for code in held {
-        apply(shared, connection, Command::Up(Key::Code(code)), None);
+        apply(shared, connection, Command::Up(Key::Code(code)), None, conn_id);
     }
-    apply(shared, connection, Command::Mods(0), None);
+    if shared.lock().unwrap().held.is_empty() {
+        apply(shared, connection, Command::Mods(0), None, conn_id);
+    }
 }
 
 fn apply(
@@ -496,6 +503,7 @@ fn apply(
     connection: &Connection,
     command: Command,
     mut held: Option<&mut Vec<u32>>,
+    conn_id: u64,
 ) -> &'static str {
     let mut shared = shared.lock().unwrap();
 
@@ -536,8 +544,15 @@ fn apply(
     let mut released = None;
 
     match command {
+        // A tap participates in the same ownership as down/up: while any
+        // connection holds the code, the key is down, so the compositor
+        // would drop the duplicate press and the tap's release would lift
+        // someone else's hold. Neither is sent; the claim is left alone.
         Command::Tap(ref key) => match resolve(key) {
             Some(code) => {
+                if shared.held.contains_key(&code) {
+                    return "err key held";
+                }
                 keyboard.key(stamp(), code, 1);
                 keyboard.key(stamp(), code, 0);
             }
@@ -546,14 +561,14 @@ fn apply(
         Command::Down(ref key) => match resolve(key) {
             Some(code) => {
                 keyboard.key(stamp(), code, 1);
-                // One logical hold per connection: a client repeating `down`
-                // for a code it already holds must not raise the count above
-                // the number of connections that will release it.
+                // One claim per connection: a client repeating `down` for a
+                // code it already holds must not add a claim it will only
+                // release once.
                 let already_held = held
                     .as_deref()
                     .is_some_and(|connection_held| connection_held.contains(&code));
                 if !already_held {
-                    *shared.held.entry(code).or_insert(0) += 1;
+                    shared.held.entry(code).or_default().insert(conn_id);
                 }
                 pressed = Some(code);
             }
@@ -561,19 +576,24 @@ fn apply(
         },
         Command::Up(ref key) => match resolve(key) {
             Some(code) => {
-                // The release reaches the device only when the last claimant
-                // lets go. An Up for a code nothing holds is forwarded
-                // anyway: the compositor drops releases for keys it does not
-                // consider held, and refusing them here would strand a
-                // client's view of its own state.
+                // A claim authorizes a release: the device sees the key go up
+                // only when the last claim on it goes. A connection that
+                // never claimed the code cannot end another connection's
+                // hold, and says so. An Up for a code nothing holds is still
+                // forwarded — the compositor drops releases for keys it does
+                // not consider held, and refusing would strand a client's
+                // view of its own state after a mid-hold keymap swap
+                // released everything behind its back.
                 let send_release = match shared.held.get_mut(&code) {
-                    Some(count) if *count > 1 => {
-                        *count -= 1;
-                        false
-                    }
-                    Some(_) => {
-                        shared.held.remove(&code);
-                        true
+                    Some(claimants) => {
+                        if !claimants.remove(&conn_id) {
+                            return "err not holding";
+                        }
+                        let last = claimants.is_empty();
+                        if last {
+                            shared.held.remove(&code);
+                        }
+                        last
                     }
                     None => true,
                 };
