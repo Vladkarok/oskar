@@ -43,9 +43,9 @@ for arg in "$@"; do
     esac
 done
 
+
 install_mode=0
 if [[ ! -f "$DISK" ]]; then
-    qemu-img create -f qcow2 "$DISK" 64G >/dev/null
     install_mode=1
 fi
 
@@ -69,6 +69,10 @@ if (( install_mode || want_iso )); then
             exit 1
         }
     fi
+fi
+
+if (( install_mode )); then
+    qemu-img create -f qcow2 "$DISK" 64G >/dev/null
 fi
 
 iso_args=()

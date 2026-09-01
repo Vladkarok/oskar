@@ -34,8 +34,9 @@ fi
 # checks every dependency individually — a rerun with only some of them
 # present must still install the rest. -Syu rather than -Sy: a partial
 # upgrade is how Arch systems get broken.
-if ! command -v cargo >/dev/null || ! command -v rsync >/dev/null \
-        || ! command -v jq >/dev/null || ! pacman -Q libxkbcommon >/dev/null 2>&1; then
+if ! command -v cargo >/dev/null || ! command -v pkg-config >/dev/null \
+        || ! command -v rsync >/dev/null || ! command -v jq >/dev/null \
+        || ! command -v sshd >/dev/null || ! pacman -Q libxkbcommon >/dev/null 2>&1; then
     sudo pacman -Syu --needed --noconfirm rust pkg-config rsync openssh jq libxkbcommon
 fi
 
@@ -92,7 +93,7 @@ else
     plugin_state="NOT enabled (omarchy plugin enable failed — run it by hand)"
 fi
 
-cat <<'NEXT'
+cat <<NEXT
 
 Provisioning done.
   - plugin installed ($plugin_state), daemon built and installed

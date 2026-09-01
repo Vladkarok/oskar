@@ -610,7 +610,11 @@ Item {
         id: socketPathCheck
         command: ["test", "-S", (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"]
         onExited: function(exitCode, exitStatus) {
-            if (exitCode === 0 && !root.inputReady) {
+            // The check ran a moment ago; the socket may have connected since
+            // (the original attempt succeeding, or a sibling tick's rebuild).
+            // Rebuilding a live connection would drop it mid-handshake.
+            var item = root.daemonSocket
+            if (exitCode === 0 && !root.inputReady && !(item && item.connected)) {
                 daemonLoader.active = false
                 daemonLoader.active = true
             }
