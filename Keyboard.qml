@@ -514,7 +514,7 @@ Item {
     // the helper has not answered hello yet. A daemon that dies later needs
     // none of this: the disconnected path clears the object and the pending
     // targetConnected redials on its own. One rebuild per two seconds while
-    // the helper is down; hello stops the timer.
+    // the helper is down; a completed handshake stops the timer.
     Loader {
         id: daemonLoader
         active: true
@@ -534,9 +534,9 @@ Item {
                     // Readiness is not the same as "the socket answered": the
                     // daemon accepts commands before the compositor keymap has
                     // been forwarded to its virtual keyboard, and would drop
-                    // every key. The property also flips on the request, before
-                    // the socket has actually opened — writing here lands on a
-                    // closed device — so hello goes out on a short delay.
+                    // every key. hello therefore goes out on a short delay
+                    // after the flip — inline writes were observed landing on
+                    // a closed device during the VM dogfooding.
                     helloTimer.restart()
                 } else {
                     root.inputReady = false
@@ -566,7 +566,14 @@ Item {
                         root.inputReady = true
                         root.inputStatus = "ready"
                     } else if (reply.indexOf("err") === 0) {
-                        if (reply === "err key held" || reply === "err not holding") {
+                        if (reply === "err not ready") {
+                            // A helper fresh out of systemd start answers err
+                            // until its default keymap is installed; it cannot
+                            // become ready without a configure, and nothing
+                            // else sends one — so ask the compositor now
+                            // instead of waiting out the repair timer.
+                            root.refreshLayoutsFromHypr()
+                        } else if (reply === "err key held" || reply === "err not holding") {
                             // Ownership refusals mean the daemon's hold state
                             // is ahead of ours; the device is fine and typing
                             // stays enabled. The panel's chords never produce
@@ -615,7 +622,19 @@ Item {
         interval: 2000
         repeat: true
         running: !root.inputReady
-        onTriggered: socketPathCheck.running = true
+        onTriggered: {
+            // An open socket is never torn down, whatever the handshake is
+            // doing: a configure round trip can outlast this tick, and
+            // rebuilding mid-handshake would drop it and restart the dance.
+            // Open-but-unready gets a fresh hello; absent or wedged gets the
+            // rebuild, if the helper's socket file is on disk.
+            var item = root.daemonSocket
+            if (item && item.connected) {
+                helloTimer.restart()
+                return
+            }
+            socketPathCheck.running = true
+        }
     }
 
     function sendCommand(text) {
@@ -624,6 +643,7 @@ Item {
     }
 
     function sendCommandUnchecked(text) {
+        if (!daemonSocket) return false
         daemonSocket.write(text + "\n")
         daemonSocket.flush()
         return true

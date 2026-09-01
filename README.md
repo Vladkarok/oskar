@@ -12,10 +12,13 @@ shares anything with it.
 
 **Work in progress. Not ready to enable on a machine you rely on.**
 
-The QML panel works. The input helper in `daemon/` passes its unit tests and
-the nested-session smoke, and is disabled by default until it has survived
-daily use — next step is dogfooding in a disposable Omarchy VM, then on a real
-session.
+The QML panel works and the input helper passes its unit tests, the
+nested-session smoke, and first dogfooding in a disposable Omarchy VM:
+typing precision (screenshot-verified), layout mirroring in both
+directions with zero keymap churn, USB hotplug survival, and cold-boot
+self-recovery. Still ahead: daily use in the VM, sleep/wake on real
+hardware, and a longer stretch on a real session before the service
+earns a place in autostart.
 
 ## Layout
 

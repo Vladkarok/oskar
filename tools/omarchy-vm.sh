@@ -30,19 +30,18 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 mkdir -p "$VM_DIR"
 
-if [[ ! -f "$ISO" ]]; then
-    echo "Downloading Omarchy 4.0.2..." >&2
-    curl -L --retry 3 -o "$ISO.part" https://iso.omarchy.org/omarchy-4.0.2.iso
-    mv "$ISO.part" "$ISO"
-fi
-echo "$ISO_SHA256  $ISO" | sha256sum -c - || {
-    echo "ISO checksum mismatch" >&2
-    exit 1
-}
-
 if [[ ! -f "$VARS" ]]; then
     cp /usr/share/edk2/x64/OVMF_VARS.4m.fd "$VARS"
 fi
+
+want_iso=0
+want_console=0
+for arg in "$@"; do
+    case "$arg" in
+        --iso) want_iso=1 ;;
+        --console) want_console=1 ;;
+    esac
+done
 
 install_mode=0
 if [[ ! -f "$DISK" ]]; then
@@ -50,16 +49,37 @@ if [[ ! -f "$DISK" ]]; then
     install_mode=1
 fi
 
+# The ISO is only fetched when a boot from it is actually requested: the
+# download is ~6 GB and a stale copy should not stand between the VM and its
+# disk. The checksum runs against the partial file, so a truncated or
+# error-page download is deleted instead of ever becoming the ISO.
+if (( install_mode || want_iso )); then
+    if [[ ! -f "$ISO" ]]; then
+        echo "Downloading Omarchy 4.0.2..." >&2
+        curl -L --fail --retry 3 -o "$ISO.part" https://iso.omarchy.org/omarchy-4.0.2.iso
+        echo "$ISO_SHA256  $ISO.part" | sha256sum -c - || {
+            rm -f "$ISO.part"
+            echo "ISO checksum mismatch; partial download removed" >&2
+            exit 1
+        }
+        mv "$ISO.part" "$ISO"
+    else
+        echo "$ISO_SHA256  $ISO" | sha256sum -c - || {
+            echo "ISO checksum mismatch" >&2
+            exit 1
+        }
+    fi
+fi
+
 iso_args=()
-if (( install_mode )) || [[ "${1:-}" == "--iso" ]]; then
+if (( install_mode || want_iso )); then
     iso_args=(-cdrom "$ISO")
 fi
 
-display_args=(-display gtk,gl=on,grab-on-hover=on)
-if [[ "${1:-}" == "--console" ]]; then
+if (( want_console )); then
     display_args=(-display none -serial mon:stdio)
 else
-    display_args+=(-serial file:"$VM_DIR/serial.log")
+    display_args=(-display gtk,gl=on,grab-on-hover=on -serial file:"$VM_DIR/serial.log")
 fi
 
 exec qemu-system-x86_64 \
@@ -77,7 +97,7 @@ exec qemu-system-x86_64 \
     -device usb-kbd,id=kbd0 \
     -device usb-kbd,id=kbd1 \
     -device usb-tablet,id=tab0 \
-    -fsdev local,id=osk-src,security_model=none,path="$REPO" \
+    -fsdev local,id=osk-src,security_model=none,readonly=on,path="$REPO" \
     -device virtio-9p-pci,fsdev=osk-src,mount_tag=osk-src \
     -monitor unix:"$VM_DIR/monitor.sock",server,nowait \
     "${display_args[@]}" \

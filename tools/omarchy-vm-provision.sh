@@ -30,9 +30,13 @@ if [[ ! -d "$SRC/tools" ]]; then
 fi
 
 # rust builds the daemon; pkg-config + libxkbcommon link the xkbcommon crate;
-# rsync syncs; openssh lets the host drive this machine afterwards.
-if ! command -v cargo >/dev/null || ! command -v rsync >/dev/null || ! command -v jq >/dev/null; then
-    sudo pacman -Sy --needed --noconfirm rust pkg-config rsync openssh jq
+# rsync syncs; openssh lets the host drive this machine afterwards. The gate
+# checks every dependency individually — a rerun with only some of them
+# present must still install the rest. -Syu rather than -Sy: a partial
+# upgrade is how Arch systems get broken.
+if ! command -v cargo >/dev/null || ! command -v rsync >/dev/null \
+        || ! command -v jq >/dev/null || ! pacman -Q libxkbcommon >/dev/null 2>&1; then
+    sudo pacman -Syu --needed --noconfirm rust pkg-config rsync openssh jq libxkbcommon
 fi
 
 # Guest-local copy: building on 9p is possible but painfully slow, and the
@@ -53,6 +57,11 @@ rsync -a --delete \
 install -Dm755 "$HOME_SRC/daemon/target/release/omarchy-osk-daemon" "$HOME/.local/libexec/omarchy-osk-daemon"
 install -Dm644 "$HOME_SRC/systemd/omarchy-osk.service" "$HOME/.config/systemd/user/omarchy-osk.service"
 systemctl --user daemon-reload
+# A rerun after host edits installs a new binary; a running service would
+# keep serving the old one without this.
+if systemctl --user is-active --quiet omarchy-osk; then
+    systemctl --user try-restart omarchy-osk
+fi
 
 # Same layouts the real machine runs, so the layout zoo looks familiar.
 # Keyed on our own marker comment: grepping for "kb_layout" matches the
@@ -75,14 +84,18 @@ fi
 
 sudo systemctl enable --now sshd
 
-# The service is left disabled until you choose to turn it on: the whole
-# point of this VM is deciding whether it earns a place in autostart.
-omarchy plugin enable "$PLUGIN_ID" 2>/dev/null || true
+# The service is left enabled or not exactly as omarchy plugin enable leaves
+# it; the banner below only reports what happened.
+if omarchy plugin enable "$PLUGIN_ID"; then
+    plugin_state="enabled"
+else
+    plugin_state="NOT enabled (omarchy plugin enable failed — run it by hand)"
+fi
 
 cat <<'NEXT'
 
 Provisioning done.
-  - plugin installed (enabled), daemon built and installed (service still disabled)
+  - plugin installed ($plugin_state), daemon built and installed
   - enable typing:   systemctl --user enable --now omarchy-osk
   - host access:     ssh -p 2222 into this machine works
   - re-sync + rebuild after host edits: rerun this script
