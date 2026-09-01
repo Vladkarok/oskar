@@ -22,7 +22,11 @@ HOME_SRC="$HOME/osk-src"
 if [[ ! -d "$SRC/tools" ]]; then
     echo "mounting host repo share" >&2
     sudo mkdir -p "$SRC"
-    sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 osk-src "$SRC"
+    sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 osk-src "$SRC" || true
+fi
+if [[ ! -d "$SRC/tools" ]]; then
+    echo "ERROR: host repo share not reachable at $SRC" >&2
+    exit 1
 fi
 
 # rust builds the daemon; pkg-config + libxkbcommon link the xkbcommon crate;
@@ -51,7 +55,10 @@ install -Dm644 "$HOME_SRC/systemd/omarchy-osk.service" "$HOME/.config/systemd/us
 systemctl --user daemon-reload
 
 # Same layouts the real machine runs, so the layout zoo looks familiar.
-if ! grep -q "kb_layout" "$HOME/.config/hypr/input.lua" 2>/dev/null; then
+# Keyed on our own marker comment: grepping for "kb_layout" matches the
+# commented-out example in Omarchy's stock input.lua, which makes the script
+# believe its block is already there and skip appending it forever.
+if ! grep -q "omarchy-vm-provision.sh" "$HOME/.config/hypr/input.lua" 2>/dev/null; then
     cat >> "$HOME/.config/hypr/input.lua" <<'LUA'
 
 -- Two layouts and Caps Lock switching, mirroring the real machine (added by
