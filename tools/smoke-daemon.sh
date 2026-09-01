@@ -182,17 +182,31 @@ ask(fa, "up LCTL", "ok")               # A lets go: B's hold keeps the key down
 ask(fa, "tap LCTL", "err key held")
 ask(fb, "up LCTL", "ok")               # last holder: the release goes out
 ask(fa, "tap LCTL", "ok")              # nothing held any more: a tap works
-print("multi-client holds: foreign releases rejected, shared hold survives a holder, owner's release lands")
+
+# The keymap-swap regression: a configure drains the claims but not the
+# connections' own lists, so A re-pressing its code after the swap must
+# re-claim — under the earlier bookkeeping the press went out unclaimed and
+# B could end it. The configure below differs from the configured keymap (a
+# different model), which is what sends it down the full-compile path where
+# the drain lives.
+ask(fa, "configure\tevdev\tpc104\tus,ua\t\tgrp:caps_toggle\t\t1", "configured")
+ask(fa, "down LCTL", "ok")             # re-claim after the drain, fresh press
+ask(fb, "up LCTL", "err not holding")  # B cannot end A's fresh claim
+ask(fa, "tap LCTL", "err key held")
+ask(fa, "up LCTL", "ok")
+ask(fa, "tap LCTL", "ok")
+print("multi-client holds: foreign releases rejected, shared hold survives a holder, owner's release lands, swap re-claim re-presses")
 fa.close(); a.close()
 fb.close(); b.close()
 PY
 
-# Two keymaps total — the default compiled at startup and the configured one.
-# A third line means the byte-identical configure recompiled, which is the
-# churn-storm shape in miniature.
+# Three keymaps total — the default compiled at startup, the configured one,
+# and the swapped model in the drain regression above. A fourth line means
+# the byte-identical configure recompiled, which is the churn-storm shape in
+# miniature.
 compiles=$(grep -c "keymap compiled for" "$log")
-if [[ "$compiles" != "2" ]]; then
-  echo "expected 2 keymap compiles (default + configured), saw $compiles" >&2
+if [[ "$compiles" != "3" ]]; then
+  echo "expected 3 keymap compiles (default + configured + swap), saw $compiles" >&2
   exit 1
 fi
 

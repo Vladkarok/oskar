@@ -67,8 +67,8 @@ implementation found that follows the system layout at all.
    physical keyboard and the helper is invisible to clients. The churn storm that
    motivated this (56 rebuilds a minute, 56,547 in five minutes once it fed back)
    only happened because the old keymaps differed. Remaining work is proof, not
-   design: the polygon asserts compositor rebuilds stay at the floor, and the
-   claim still needs daily-use confirmation.
+   design: the nested-session harness bounds compositor rebuilds by threshold,
+   and the claim still needs daily-use confirmation.
 2. ~~**The compiled keymap is incomplete.**~~ **Closed.** The `configure` command
    carries rules, model, layouts, variants, options and a keymap file, and the
    panel sends it with the full set read from the compositor.
@@ -106,14 +106,16 @@ tools/nested-session.sh tools/smoke-daemon.sh
 The harness starts a disposable nested Hyprland, gives the subject a private
 `XDG_RUNTIME_DIR` so its control socket cannot collide with an installed
 service, and fails the run if compositor keymap rebuilds exceed a threshold.
-The smoke checks the readiness gate, that exactly two keymaps get compiled
-(default plus configured — a byte-identical `configure` must short-circuit),
-that the device's group follows `configure`/`group` commands with an
-assertion before every tap (read back from `hyprctl devices`), that a client
-disconnecting mid-chord leaves the helper serving, and the multi-client
-ownership rules (foreign releases refused, shared holds surviving one
-holder's release, taps refusing to lift a hold). What it cannot see is the
-character an app receives — that is what the VM dogfooding phase is for.
+The smoke checks the readiness gate, that exactly three keymaps get compiled
+(default, configured, and the model swap in the drain regression — a
+byte-identical `configure` must short-circuit), that the device's group
+follows `configure`/`group` commands with an assertion before every tap
+(read back from `hyprctl devices`), that a client disconnecting mid-chord
+leaves the helper serving, and the multi-client ownership rules (foreign
+releases refused, shared holds surviving one holder's release, taps refusing
+to lift a hold, a re-claim after a keymap swap re-pressing). What it cannot
+see is the character an app receives — that is what the VM dogfooding phase
+is for.
 
 ```sh
 cd daemon && cargo test
