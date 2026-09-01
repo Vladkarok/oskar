@@ -154,16 +154,43 @@ Item {
 
     function refreshLayoutsFromHypr() {
         layoutDetectProcess.running = false
-        // Select one typed physical keyboard and derive every field from that
-        // same record. The event-named device wins; layout progress is only the
-        // startup fallback. Pseudo-keyboards and this helper are excluded.
+        // Two selections, deliberately different.
+        //
+        // The reading (group, layout list, RMLVO) comes from whichever typed
+        // keyboard the evidence favours: the device the last switch named,
+        // then Hyprland's active-keyboard flag, then layout progress. In the
+        // all-tied-at-zero state the last tier is a coin toss among
+        // pseudo-keyboards, but every tied device reads the same group 0, so
+        // the reading cannot be wrong.
+        //
+        // The switch target ("DEVICE", the device the language button
+        // advances) only comes from the first two tiers. Advancing a guessed
+        // device is what poisoned the seat before: a mouse advanced once,
+        // the indicator read it forever after, and the label stopped saying
+        // what typing produced. Until a real switch fires an activelayout
+        // event or real input puts the active-keyboard flag on a typed
+        // device, there is no safe target and the language button does
+        // nothing.
+        //
+        // The active-keyboard flag ("main" in devices JSON) is literally the
+        // seat's current keyboard — the last device that produced input —
+        // which is what a fresh login needs. It only counts inside the
+        // filtered list: with an IME running, fcitx5's virtual keyboard
+        // holds it, and it lands on this helper's own device right after
+        // typing, and on whatever was hotplugged last. Mouse media keys can
+        // take it too, which is why the event-named device keeps precedence;
+        // in that window the language button can advance the mouse — bounded
+        // damage, since nothing else ever reads that device's index once a
+        // real switch has fired.
         layoutDetectProcess.command = ["bash", "-lc",
             "devices=$(hyprctl devices -j 2>/dev/null); "
             + "keyboard=$(printf '%s' \"$devices\" | jq -c --arg named \"$1\" '"
             + "[.keyboards[] | select((.name | test(\"^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)|omarchy-osk\"; \"i\")) | not)] as $typed | "
-            + "($typed | map(select(.name == $named))[0] // max_by(.active_layout_index // 0) // empty)' 2>/dev/null); "
-            + "[[ -n \"$keyboard\" ]] || exit 1; "
-            + "device=$(printf '%s' \"$keyboard\" | jq -r '.name'); "
+        + "($typed | map(select(.name == $named))[0] // ($typed | map(select(.main == true))[0]) // ($typed | max_by(.active_layout_index // 0)) // empty)' 2>/dev/null); "
+        + "[[ -n \"$keyboard\" ]] || exit 1; "
+        + "switchable=$(printf '%s' \"$devices\" | jq -r --arg named \"$1\" '"
+        + "[.keyboards[] | select((.name | test(\"^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)|omarchy-osk\"; \"i\")) | not)] as $typed | "
+        + "($typed | map(select(.name == $named))[0] // ($typed | map(select(.main == true))[0]) // {name: \"\"}) | .name' 2>/dev/null); "
             + "layouts_csv=$(printf '%s' \"$keyboard\" | jq -r '.layout // \"us\"'); "
             + "group=$(printf '%s' \"$keyboard\" | jq -r '.active_layout_index // 0'); "
             + "active=$(printf '%s' \"$layouts_csv\" | cut -d, -f$((group + 1))); "
@@ -173,7 +200,7 @@ Item {
             + "options=$(printf '%s' \"$keyboard\" | jq -r '.options // \"\"'); "
             + "kb_file=$(hyprctl getoption input:kb_file -j 2>/dev/null | jq -r '.str // \"\"'); "
             + "printf 'ACTIVE\\t%s\\nDEVICE\\t%s\\nCONFIG\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "
-            + "\"$active\" \"$device\" \"$rules\" \"$model\" \"$layouts_csv\" \"$variants\" \"$options\" \"$kb_file\" \"$group\"; "
+            + "\"$active\" \"$switchable\" \"$rules\" \"$model\" \"$layouts_csv\" \"$variants\" \"$options\" \"$kb_file\" \"$group\"; "
             + "layouts=$(printf '%s' \"$layouts_csv\" | tr ',' '\\n' | sed '/^$/d'); "
             + "echo \"$layouts\" | awk '{print \"LAYOUT\\t\" $0}'; "
             + "echo \"$layouts\" | while read code; do "
