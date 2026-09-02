@@ -23,6 +23,44 @@ CONFIGURE = "configure\tevdev\tpc105\tus,ua\t\tgrp:caps_toggle\t\t1"
 # instead of short-circuiting.
 CONFIGURE_SWAPPED = "configure\tevdev\tpc104\tus,ua\t\tgrp:caps_toggle\t\t1"
 
+# Three layouts, so a cycle has a third group to reach and wrapping has
+# somewhere to wrap from (ticket 10: the chooser popup is v2, but cycling
+# through three groups has to be proven before the panel goes public).
+THREE_GROUP = "configure\tevdev\tpc105\tus,ua,de\t\tgrp:caps_toggle\t\t0"
+# Byte-identical keymap, different group: the path a `group <n>` mirrors
+# takes when the panel re-sends its configure after a compositor switch.
+THREE_GROUP_ON_DE = "configure\tevdev\tpc105\tus,ua,de\t\tgrp:caps_toggle\t\t2"
+
+
+@test("a three-group keymap cycles through every group and wraps")
+def three_group_cycling(helper, keyboard):
+    helper.expect_log("listening on")
+    # First test on a fresh helper, deliberately: the only compiles in the
+    # log are the startup default and the three-group keymap, so the count
+    # taken at the end proves cycling recompiled nothing (spec-v1 §3.3: group
+    # switching is never a recompile).
+    client = helper.connect()
+    client.expect("hello 2", "hello 2")
+    client.expect(THREE_GROUP, "configured")
+    keyboard.expect_group(0)
+    # Both protocol paths the panel drives, in the order a cycle moves
+    # through them: a byte-identical configure carrying the next group
+    # (what follows every compositor switch), then the direct `group <n>`.
+    client.expect(THREE_GROUP_ON_DE, "configured")
+    keyboard.expect_group(2)
+    client.expect("group 0", "ok")
+    keyboard.expect_group(0)
+    client.expect("group 1", "ok")
+    keyboard.expect_group(1)
+    client.expect("group 2", "ok")
+    keyboard.expect_group(2)
+    client.expect("group 0", "ok")
+    keyboard.expect_group(0)  # and wraps back to the first
+    # Two compiles: the startup default and the three-group keymap. A third
+    # means a group switch recompiled, which is the churn storm in miniature.
+    helper.expect_compiles(2)
+    client.close()
+
 
 @test("the device group follows configure and group, around every tap")
 def group_follows_protocol(helper, keyboard):
@@ -101,12 +139,13 @@ def layout_reaches_the_compositor(helper, keyboard):
     keyboard.expect_layout("us,ua")
 
 
-@test("keymap churn stayed at three compiles: default, configured, swap")
+@test("keymap churn stayed at four compiles: default, three-group, configured, swap")
 def churn_held(helper, keyboard):
-    # The default compiled at startup, the configured one, and the swapped
-    # model in the claims test. A fourth means the byte-identical
-    # configure recompiled, which is the churn storm in miniature.
-    helper.expect_compiles(3)
+    # The default compiled at startup, the three-group cycling keymap, the
+    # us,ua one, and the swapped model in the claims test. A fifth means the
+    # byte-identical configure recompiled or a group switch did, which is
+    # the churn storm in miniature.
+    helper.expect_compiles(4)
     # And the helper's own rate limiter never had to save us from one.
     helper.expect_no_log("refusing excessive keymap reconfiguration")
 
