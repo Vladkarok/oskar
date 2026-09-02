@@ -394,12 +394,27 @@ Item {
     /// Runs one event through the reducer and writes whatever it says to
     /// write. The only path modifier state changes on, so the panel cannot
     /// drift from what the seam's tests cover.
+    ///
+    /// Refused outright while the helper is not ready, rather than advancing
+    /// the state over writes that go nowhere: a lock whose `down` was dropped
+    /// would leave the cap showing a modifier the compositor never received,
+    /// which is the one thing the indicator must not do. Nothing is typeable
+    /// in that state anyway.
     function applyModifierEvent(event) {
+        if (!inputReady) return
         var outcome = Modifiers.reduce(modifierState, event)
         modifierState = outcome.state
         for (var i = 0; i < outcome.lines.length; i++) {
             sendCommand(outcome.lines[i])
         }
+    }
+
+    /// Lifts whatever is locked and returns every modifier to idle. The panel
+    /// closing is not the compositor forgetting: a locked Ctrl is really held
+    /// at the device, and leaving it that way turns closing the keyboard into
+    /// a session that behaves as if Ctrl were taped down.
+    function releaseModifiers() {
+        applyModifierEvent({ type: "releaseAll" })
     }
 
     function shiftActive() {
