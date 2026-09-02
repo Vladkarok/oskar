@@ -64,7 +64,9 @@ defaults rather than failing to start.
 
 `sound: true` plays the freedesktop sound theme's `bell` event on each key
 press through QtMultimedia — nothing is spawned per keystroke. It needs
-`qt6-multimedia` installed; without it the keyboard works and stays silent.
+`qt6-multimedia` and `ffmpeg`; the theme's Vorbis file is transcoded to PCM
+once at startup (SoundEffect plays uncompressed WAV only), into
+`$XDG_RUNTIME_DIR`. Without them the keyboard works and stays silent.
 `follow_theme` follows the Omarchy theme today and does nothing else in v1;
 the independent colour schema is v2.
 

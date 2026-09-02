@@ -46,8 +46,8 @@ Item {
     // Keys the config file carries that v1 does not know about, preserved so
     // the next write does not eat them.
     property var configExtra: ({})
-    // Absolute path of the resolved key-click sound; empty until looked up or
-    // when the theme has no such event.
+    // Absolute path of the PCM copy the click effect plays; empty until
+    // resolved or when the theme has no such event.
     property string soundFile: ""
 
     function checkDependencies() {
@@ -216,8 +216,12 @@ Item {
         }
     }
 
-    // Resolves the freedesktop sound theme's file for the click exactly once,
-    // when the sound is on at startup — never per keystroke. Looked up through
+    // Resolves the freedesktop sound theme's file for the click and transcodes
+    // it to PCM, exactly once, when the sound is on at startup — never per
+    // keystroke. The theme ships Vorbis, and Qt's SoundEffect plays
+    // uncompressed WAV only, so the copy in XDG_RUNTIME_DIR (tmpfs, gone at
+    // logout) is what the effect actually plays: still the theme's sound, no
+    // asset shipped, no taste to defend. Looked up through
     // XDG_DATA_HOME/XDG_DATA_DIRS like any theme consumer instead of
     // hardcoding /usr/share, with the event id and the search paths passed as
     // arguments so nothing from the environment is spliced into the command.
@@ -229,19 +233,29 @@ Item {
         command: ["bash", "-c",
             "for base in ${2//:/ } ${3//:/ }; do "
             + "file=$base/sounds/freedesktop/stereo/$1.oga; "
-            + "[ -f \"$file\" ] && { printf '%s' \"$file\"; exit 0; }; "
+            + "if [ -f \"$file\" ]; then "
+            + "out=$4/omarchy-osk-keyclick.wav; "
+            + "ffmpeg -nostdin -v error -y -i \"$file\" \"$out\" || exit 3; "
+            + "printf '%s' \"$out\"; exit 0; "
+            + "fi; "
             + "done; exit 1",
             "omarchy-osk-sound", soundResolve.eventId,
             Quickshell.env("XDG_DATA_HOME") || ((Quickshell.env("HOME") || "") + "/.local/share"),
-            Quickshell.env("XDG_DATA_DIRS") || "/usr/local/share:/usr/share"]
+            Quickshell.env("XDG_DATA_DIRS") || "/usr/local/share:/usr/share",
+            Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.soundFile = text.trim()
         }
         onExited: function(exitCode, exitStatus) {
-            if (exitCode !== 0 || exitStatus !== 0) {
+            if (exitCode === 1) {
                 console.warn("[osk] no '" + soundResolve.eventId
                     + "' event found in the freedesktop sound theme; the key click stays silent")
+                return
+            }
+            if (exitCode !== 0 || exitStatus !== 0) {
+                console.warn("[osk] could not decode the '" + soundResolve.eventId
+                    + "' event sound; the key click stays silent")
                 return
             }
             console.log("[osk] key click sound:", root.soundFile)
@@ -308,7 +322,7 @@ Item {
             left: true
             right: true
         }
-        height: root.cardHeight
+        implicitHeight: root.cardHeight
         color: "transparent"
         mask: Region {
             item: card
