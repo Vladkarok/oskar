@@ -10,6 +10,26 @@ source files.** One subagent per ticket does that; you pick the ticket,
 brief it, check its claims cheaply, and move on. The point is that your
 context after ten tickets looks like ten short reports, not ten diffs.
 
+## What this expects to be installed
+
+`mattpocock-skills:implement`, from the `mattpocock-skills` plugin on
+the official marketplace — the per-ticket work is that skill, and this
+file only decides which ticket and checks the result. The plugin is a
+machine-level install (`~/.claude/plugins/`, enabled in
+`~/.claude/settings.json`), so a fresh clone on another machine will not
+have it.
+
+If it is not in the available-skills list, do not guess at a substitute
+and do not paraphrase what you imagine it says. Say it is missing — it
+is installed with `/plugin` from an interactive `claude` terminal,
+plugin `mattpocock-skills` on the `claude-plugins-official` marketplace
+— and offer to run the tickets without it. The loop still works; the
+ticket work just loses the TDD and review discipline that skill
+carries.
+
+If it is present but has moved or been renamed by a plugin update, the
+name in this file is the thing to fix.
+
 ## The one rule that keeps this working
 
 Every token you spend reading the repo is a token the next ticket does
