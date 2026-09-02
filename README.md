@@ -32,6 +32,9 @@ earns a place in autostart.
 | `daemon/` | Rust helper holding one virtual keyboard |
 | `tools/nested-session.sh` | runs a command against a throwaway nested Hyprland |
 | `tools/smoke-daemon.sh` | end-to-end check of the helper |
+| `docs/orientation.md` | what this is, current state, how the work runs |
+| `docs/decisions.md` | why the design looks like this, and the dead ends |
+| `docs/vm-handoff.md` | the dogfooding VM: operating manual and queue |
 
 ## Why there is a helper at all
 

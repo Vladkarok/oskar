@@ -1,64 +1,79 @@
-# Dogfooding handoff — VM phase
+# The VM — dogfooding lab
 
-State as of 2026-09-01, session end. Read this instead of re-deriving.
+Updated 2026-09-02. Why the VM exists and what it cannot do is in
+[decisions.md §12](decisions.md#12-testing-ladder-and-what-each-rung-cannot-see);
+this is the operating manual.
 
-## Where things are
+## Repo state
 
-- Repo: `~/Projects/omarchy-osk`, branch `master`, all work committed
-  (HEAD `0ebcde3`). Not pushed.
-- Phases 0–1 done and review-hardened: 4 Codex rounds + parallel subagent
-  audits, final verdicts "ship". Held-key ownership is claim-based
-  (first-claim-down / last-release-up), device selection reads `main:true`
-  (filtered) first and only advances devices with positive evidence.
-- Polygon: `tools/nested-session.sh tools/smoke-daemon.sh` — green
-  (group asserted before every tap, 3 compiles, ownership matrix).
-  Never run the daemon on the working session.
+- `~/Projects/omarchy-osk`, `master` at `42017b2`, clean, pushed to the
+  private `Vladkarok/omarchy-osk`.
+- Polygon green: `tools/nested-session.sh tools/smoke-daemon.sh`.
+- Host: plugin installed and hot-reloading; user service **disabled** on
+  purpose until daily use proves it.
 
-## The VM
+## Driving the VM
 
-- `tools/omarchy-vm.sh` launches it (KVM, UEFI, qcow2 disk at
-  `~/.local/share/omarchy-vm/`). Guest = Omarchy 4.0.2, user `vladkarok`,
-  hostname `testprod`. SSH: `ssh omarchy-vm` (host port 2222, key
-  `~/.ssh/id_ed25519`, already authorized in guest).
-- Over SSH, export `XDG_RUNTIME_DIR=/run/user/$(id -u)` and
-  `HYPRLAND_INSTANCE_SIGNATURE=$(ls $XDG_RUNTIME_DIR/hypr | head -1)`
-  or hyprctl/journalctl won't reach the session.
-- Guest is provisioned: rust/jq/rsync/openssh installed, plugin
-  `io.github.vladkarok.osk` enabled, daemon built at
-  `~/.local/libexec/omarchy-osk-daemon`, service **enabled and active**,
-  `us,ua` + `grp:caps_toggle` applied to `~/.config/hypr/input.lua`
-  (that config was the provision bug — fixed in `0ebcde3`).
-- Device zoo in guest: 2× QEMU USB keyboards, power-button, PS/2, plus
-  fcitx5 virtual keyboard holding `main:true` — faithful replica of host.
-- Re-sync after host edits: rerun `tools/omarchy-vm-provision.sh` in the
-  guest (needs the 9p mount; or rsync over ssh and rebuild).
-- Networking is SLIRP: guest IP unreachable from host, only 2222→22.
-- Boot shows a text LUKS prompt (installer encrypted the disk; cosmetic).
+- `tools/omarchy-vm.sh` launches it — KVM, UEFI, qcow2 disk under
+  `~/.local/share/omarchy-vm/`. First run boots the ISO for the
+  interactive install; later runs boot the disk.
+- Guest: Omarchy 4.0.2, user `vladkarok`, hostname `testprod`.
+  `ssh omarchy-vm` (host port 2222 → guest 22, key `~/.ssh/id_ed25519`,
+  already authorised). Networking is SLIRP: only the forwarded port
+  reaches the guest.
+- **Every SSH command that touches the session needs the environment**,
+  or hyprctl/journalctl will not find it:
 
-## What to test now (the actual dogfooding)
+```bash
+ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t $XDG_RUNTIME_DIR/hypr | head -1); export WAYLAND_DISPLAY=wayland-1; hyprctl devices -j | jq -c ".keyboards[] | {name, main, active_layout_index}"'
+```
 
-1. OSK panel in the guest: bar widget → open; click keys into foot/alacritty.
-2. Caps Lock switch with OSK open: caps must flip to the other alphabet.
-3. Language button on the OSK: must advance the physical device (bar
-   indicator should agree), and refuse (grey) when no safe target.
-4. XWayland target: type into an XWayland app (xterm via XWAYLAND).
-5. Hotplug: QEMU monitor at `~/.local/share/omarchy-vm/monitor.sock` —
-   `device_add usb-kbd,id=kbd2` / `device_del kbd2` while typing.
-6. Sleep/wake if feasible; fcitx5 running vs not.
+- QEMU monitor socket: `~/.local/share/omarchy-vm/monitor.sock` — used
+  for hotplug (`device_add usb-kbd,id=kbd2` / `device_del kbd2`).
+- Screenshots: `grim` in the guest (needs `WAYLAND_DISPLAY`), then `scp`
+  back. Screenshot evidence beats log lines for anything about
+  characters on screen.
+- Re-sync after host edits: `scp` the QML (the plugin hot-reloads on
+  save) or rerun `tools/omarchy-vm-provision.sh` in the guest for a full
+  rebuild — it needs the 9p mount and restarts the service.
+- Input zoo in the guest, deliberately messy: PS/2 keyboard, two USB
+  keyboards, a USB tablet, a power-button pseudo-device, plus fcitx5's
+  virtual keyboard holding `main:true` — a faithful replica of the host.
+- S3 is requested (`-global ICH9-LPC.disable_s3=0`) but QEMU+OVMF still
+  refuses to suspend. Sleep/wake testing belongs on real hardware.
 
-## Upstream queue (Phase 4, after dogfooding is clean)
+## Verified in the VM so far
 
-- Hyprland discussion (not issue — they migrated): `switchxkblayout current`
-  excluding virtual keyboards; event on seat keyboard change; seat-level
-  layout concept. Prior art: Sway keyboard groups. Cite #6298, #6589,
-  #8409, #15897 + omarchy #8964/#9129/#9552/#9565.
-- wayland-protocols #209 comment; revive #296 with the OSK use case.
-- Omarchy: bar widget `main:true` preference; share selection module with
-  this plugin.
+- Typing precision, screenshot-verified: 3 taps → exactly `qqq`;
+  group 1 → `ййй`.
+- Layout mirror both directions, hands-off: `hyprctl switchxkblayout`
+  on the physical keyboard, no explicit `group` command, correct
+  alphabet typed.
+- Zero keymap churn: the daemon compiles twice ever (startup default +
+  the panel's `configure`); hotplugging a keyboard adds none.
+- Socket recovery both ways: daemon started under a running panel →
+  configure in 2 s; daemon killed mid-flight → re-configure in 2 s;
+  cold boot → panel configured 1 s after the daemon.
+- Keycap pipeline green after `8c8546c` (Ukrainian symbols collected).
 
-## Rules of engagement
+## Still to do here
 
-- Codex review loop on every commit batch: full context brief (idea,
-  problem, constraints), findings resolved, verdict recorded.
-- Same brief to a parallel review subagent.
-- Keep sessions short — context is re-billed every turn.
+1. Actual daily use — open the panel, click keys, work in it for a while.
+2. Language button on the panel: must advance the physical device (the
+   bar indicator should agree) and grey out when there is no safe target.
+3. XWayland target: type into an XWayland window (xterm under XWAYLAND).
+4. fcitx5 running vs stopped, both ways.
+5. Longer hotplug storms while typing.
+
+## Upstream queue
+
+Phase 4, after dogfooding is clean:
+
+- Hyprland **discussion** (they migrated off issues): `switchxkblayout
+  current` excluding virtual keyboards; an event when the seat's current
+  keyboard changes; a seat-level layout concept. Prior art: Sway
+  keyboard groups. Cite #6298, #6589, #8409, #15897 and omarchy
+  #8964 / #9129 / #9552 / #9565.
+- wayland-protocols: comment on #209, revive #296 with the OSK use case.
+- Omarchy: bar widget should prefer `main:true`; share the device
+  selection module with this plugin.
