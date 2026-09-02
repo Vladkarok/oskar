@@ -73,14 +73,22 @@ One at a time. The tickets pile onto the same few files, and parallel
 agents in one checkout collide. Give it the ticket path and let it read
 its own context — do not paste the ticket body into the prompt.
 
-Brief it with: the repo path; the ticket path; that `CLAUDE.md`,
-`docs/orientation.md`, `docs/spec-v1.md` and `CONTEXT.md` are the
-standing context; that the two test seams in spec §15 are where tests
-go and a third seam is not wanted; that host suites run through
-`tools/run-tests.sh` and socket-level work through
-`tools/nested-session.sh tools/smoke-daemon.sh`; that it must commit in
-conventional-commit style and update the ticket's `Status:` and
-`## Comments` before returning.
+**The ticket itself is done by invoking
+`mattpocock-skills:implement` with the ticket path.** That skill is how
+every ticket on this board has been built — TDD at the agreed seams,
+`/code-review` before anything is called done, commit at the end — and
+naming it keeps the loop's output the same shape as the tickets that
+were done by hand. Do not paraphrase it here; tell the subagent to load
+it and follow it.
+
+Brief the subagent with: the repo path; the ticket path; the instruction
+above; that `CLAUDE.md`, `docs/orientation.md`, `docs/spec-v1.md` and
+`CONTEXT.md` are the standing context; that the two test seams in spec
+§15 are where tests go and a third seam is not wanted; that host suites
+run through `tools/run-tests.sh` and socket-level work through
+`tools/nested-session.sh tools/smoke-daemon.sh`, in the guest over ssh
+when the daemon changed; and that it must update the ticket's `Status:`
+and `## Comments` before returning.
 
 Require the report back in **under 200 words**: what changed, the commit
 SHAs, the last line of each suite it ran verbatim, and anything a human
