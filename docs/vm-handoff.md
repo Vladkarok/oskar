@@ -17,6 +17,24 @@ this is the operating manual.
 - `tools/omarchy-vm.sh` launches it — KVM, UEFI, qcow2 disk under
   `~/.local/share/omarchy-vm/`. First run boots the ISO for the
   interactive install; later runs boot the disk.
+- The same guest is also defined in libvirt as domain `omarchy-osk` on
+  the **user session** connection, so it can be started from
+  virt-manager. Add the connection once with File → Add Connection →
+  QEMU/KVM user session; it appears beside the system connection that
+  holds `win11`. The domain lives at
+  `~/.local/share/omarchy-vm/omarchy-osk.xml`; redefine after editing
+  with `virsh -c qemu:///session define ~/.local/share/omarchy-vm/omarchy-osk.xml`.
+  It is the system connection that cannot host this VM: QEMU there runs
+  as `libvirt-qemu`, which cannot traverse `$HOME`.
+- **One at a time.** The script and the libvirt domain open the same
+  qcow2; running both at once corrupts it.
+- Differences under libvirt: the display is SPICE rather than a QEMU GTK
+  window (virt-manager opens it), and libvirt owns the QEMU monitor, so
+  hotplug goes through
+  `virsh -c qemu:///session qemu-monitor-command --hmp omarchy-osk 'device_add usb-kbd,id=kbd2'`
+  instead of `monitor.sock`. Everything else — 6 vCPU, 8G, the input
+  zoo, the read-only 9p mount of the repo at `osk-src`, ssh on 2222 — is
+  the same, including S3 being requested.
 - Guest: Omarchy 4.0.2, user `vladkarok`, hostname `testprod`.
   `ssh omarchy-vm` (host port 2222 → guest 22, key `~/.ssh/id_ed25519`,
   already authorised). Networking is SLIRP: only the forwarded port
