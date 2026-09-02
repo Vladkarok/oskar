@@ -35,6 +35,7 @@ earns a place in autostart.
 | `tools/nested-session.sh` | runs a command against a throwaway nested Hyprland |
 | `tools/smoke-daemon.sh` | end-to-end check of the helper |
 | `tools/integration/` | the assertions that check runs, and their plumbing |
+| `tools/provenance.py` | measures what the shell layer still shares with upstream |
 | `docs/orientation.md` | what this is, current state, how the work runs |
 | `docs/decisions.md` | why the design looks like this, and the dead ends |
 | `docs/vm-handoff.md` | the dogfooding VM: operating manual and queue |
@@ -131,6 +132,27 @@ implementation found that follows the system layout at all.
    never claimed the code is refused, a tap cannot lift another connection's
    hold, and a disconnect releases only that connection's claims (smoke
    covered, including two clients sharing one hold).
+
+## Provenance
+
+The shell layer is derived from abdxdev's panel and is being reimplemented
+against [spec-v1](docs/spec-v1.md) until no substantive logic is shared with
+upstream — measured against `e3771b6`, the last commit there before our own
+PR merged into it. One script keeps the answer a number instead of an
+argument:
+
+```sh
+tools/provenance.py
+```
+
+It prints shared substantive lines per file and a total. Substantive
+excludes blank lines, lone braces, comments, and lines of twelve characters
+or fewer — the boilerplate independently written QML still coincides on,
+which should not be counted. The upstream checkout is verified against the
+exact commit and the measurement is refused against anything else; pass
+`--upstream DIR` to use an existing checkout, `--verbose` to list the shared
+lines. The script exits `1` while the total is above zero, so the licence
+change to a sole copyright can gate on it reading zero.
 
 ## Testing
 
