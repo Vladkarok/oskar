@@ -51,19 +51,19 @@ ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export HYPRLAND_INSTA
 - Screenshots: `grim` in the guest (needs `WAYLAND_DISPLAY`), then `scp`
   back. Screenshot evidence beats log lines for anything about
   characters on screen.
-- Re-sync after host edits: `scp` the QML (the plugin hot-reloads on
-  save) or rerun the provision script for a full rebuild — it restarts
-  the service. From the host:
+- Getting the source into the guest — a clone is the plain way, and the
+  provision script builds whichever copy it was run from:
 
 ```bash
-ssh -tt omarchy-vm 'bash -s' < tools/omarchy-vm-provision.sh
+git clone https://github.com/vladkarok/omarchy-osk   # then: git pull
+bash omarchy-osk/tools/omarchy-vm-provision.sh
 ```
 
-  Or `bash /mnt/osk-src/tools/omarchy-vm-provision.sh` in the guest.
-- **Bootstrapping a fresh guest is the one case that has to be typed at
-  the console.** The share carries the repo in and the script turns sshd
-  on, so before the first run there is no `/mnt/osk-src` to launch it
-  from and no ssh to pipe it through:
+- The 9p share is the other way, and the only one that can test **work
+  that is not pushed yet**: it is the host's working tree as it stands.
+  A guest with no clone and no mount has to be bootstrapped at the
+  console, because the share is what carries the repo in and the script
+  is what turns sshd on:
 
 ```bash
 sudo mkdir -p /mnt/osk-src
@@ -71,15 +71,26 @@ sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 osk-src /mnt/o
 bash /mnt/osk-src/tools/omarchy-vm-provision.sh
 ```
 
-  It writes an `/etc/fstab` entry, so from the next boot the mount is
-  just there and both commands above work.
+  That run writes an `/etc/fstab` entry, so from the next boot the mount
+  is just there. Run from the share, the script rsyncs to `~/osk-src`
+  and builds there — 9p is far too slow for a cargo target dir.
+- Re-sync after changes: `scp` the QML (the plugin hot-reloads on save),
+  or `git pull` and rerun the provision script for a full rebuild — it
+  restarts the service. From the host, needing nothing on the guest:
+
+```bash
+ssh -tt omarchy-vm 'bash -s' < tools/omarchy-vm-provision.sh
+```
+
+  Piped in it has no path of its own, so it falls back to the share.
 - The integration suite in the guest, against the daemon the guest built:
 
 ```bash
-cd ~/osk-src && tools/nested-session.sh tools/smoke-daemon.sh
+cd ~/omarchy-osk && tools/nested-session.sh tools/smoke-daemon.sh
 ```
 
-  From `~/osk-src`, not `/mnt/osk-src`: the script finds the daemon
+  From the tree that was built — the clone, or `~/osk-src` if the source
+  was the share. Never from `/mnt/osk-src`: the script finds the daemon
   relative to the repo root, and the share is the host's tree, read-only
   and carrying the host's build output if any.
 - Input zoo in the guest, deliberately messy: PS/2 keyboard, two USB

@@ -216,9 +216,15 @@ that the caps are right. (`8c8546c`)
    (`disable_s3=0` is set and it still refuses), so suspend testing
    belongs on the laptop, which is where the sleep bugs live anyway.
 
-VM plumbing choices: the host repo is shared over 9p **read-only**
-(provisioning only reads) and rsynced to a guest-local copy, because 9p
-is far too slow for a cargo target dir; the provision script is
+VM plumbing choices: the guest gets the repo either by cloning it from
+GitHub or over the 9p share, and the provision script takes whichever
+copy it was run from. The clone is the plainer path — no mount, nothing
+to bootstrap, `git pull` to update — but it can only ever hold pushed
+commits, so testing an edit that is not pushed yet is what the share is
+for: it is the host's working tree as it stands. The share is exported
+**read-only** (provisioning only reads) and rsynced to a guest-local
+copy, because 9p is far too slow for a cargo target dir; a clone is
+already local and is built where it stands. The provision script is
 idempotent and keys its config guard on **its own marker comment** — an
 earlier version grepped for `kb_layout`, which matches the commented-out
 example in Omarchy's stock `input.lua`, so it silently never applied the

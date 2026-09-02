@@ -1,61 +1,82 @@
 #!/usr/bin/env bash
 #
-# Runs INSIDE the Omarchy VM (not on the host).
+# Runs INSIDE the Omarchy VM (not on the host), from whichever copy of the
+# repo the guest has. Two ways to get one:
+#
+#   git clone https://github.com/vladkarok/omarchy-osk   # simplest
+#   bash omarchy-osk/tools/omarchy-vm-provision.sh
+#
+# and the 9p share the VM exports, which is the host's working tree — the
+# only way to test edits that are not pushed yet:
+#
+#   bash /mnt/osk-src/tools/omarchy-vm-provision.sh
 #
 # A freshly installed guest has neither the share mounted nor sshd running,
-# and this script is what fixes both — so the first run is typed at the guest
-# console, mount included:
+# and this script is what fixes both, so with no clone the first run is typed
+# at the console with the mount in front of it:
 #
 #   sudo mkdir -p /mnt/osk-src
 #   sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 osk-src /mnt/osk-src
 #   bash /mnt/osk-src/tools/omarchy-vm-provision.sh
 #
-# It adds the fstab entry, so from the next boot the mount is simply there
-# and later runs are either of:
+# That run writes the fstab entry, so from the next boot the mount is simply
+# there. Once sshd is up the host can also pipe the script in, which needs
+# nothing on the guest and so repairs one that lost its share:
 #
-#   bash /mnt/osk-src/tools/omarchy-vm-provision.sh          # in the guest
-#   ssh -tt omarchy-vm 'bash -s' < tools/omarchy-vm-provision.sh   # from the host
+#   ssh -tt omarchy-vm 'bash -s' < tools/omarchy-vm-provision.sh
 #
 # -tt because the sudo calls need a terminal to prompt on: stdin is the
-# script itself. Piped in that way the script needs no mount to start, so it
-# also repairs a guest that lost the share.
+# script itself.
 #
-# Idempotent. Installs the build toolchain, syncs the host repo from the 9p
-# share to a guest-local copy (9p is far too slow for a cargo target dir),
-# builds the daemon, installs the plugin and the systemd service, and turns
-# on sshd so the host can drive the VM afterwards. Re-run it any time the
-# host repo changed.
+# Idempotent. Installs the build toolchain, builds the daemon, installs the
+# plugin and the systemd service, and turns on sshd so the host can drive the
+# VM afterwards. Re-run it any time the source changed.
 #
 # First run wants one sudo password (packages). Every later run is silent
 # unless packages are missing again.
 
 set -euo pipefail
 
-SRC=/mnt/osk-src
+SHARE=/mnt/osk-src
 PLUGIN_ID=io.github.vladkarok.osk
-HOME_SRC="$HOME/osk-src"
-
 MOUNT_OPTS=trans=virtio,version=9p2000.L,msize=104857600
 
-# Reachable only when the script arrived some way that did not go through the
-# mount — piped in over ssh on a fresh guest, or run from the ~/osk-src copy a
-# previous run left behind.
-if [[ ! -d "$SRC/tools" ]]; then
-    echo "mounting host repo share" >&2
-    sudo mkdir -p "$SRC"
-    sudo mount -t 9p -o "$MOUNT_OPTS" osk-src "$SRC" || true
-fi
-if [[ ! -d "$SRC/tools" ]]; then
-    echo "ERROR: host repo share not reachable at $SRC" >&2
-    exit 1
+# Where this script is speaks for which copy of the repo it belongs to. Piped
+# in over ssh it has no path at all, and then the share is the only source
+# there is.
+self="${BASH_SOURCE[0]}"
+if [[ -f "$self" ]]; then
+    SRC=$(cd "$(dirname "$self")/.." && pwd)
+else
+    SRC="$SHARE"
 fi
 
-# A mount that dies at reboot makes the documented invocation a lie every
-# cold boot. nofail so a guest booted without the share still reaches a login
-# prompt; the export is read-only on the host side either way.
-if ! grep -q "[[:space:]]$SRC[[:space:]]" /etc/fstab; then
-    echo "osk-src $SRC 9p $MOUNT_OPTS,ro,nofail 0 0" | sudo tee -a /etc/fstab >/dev/null
-    sudo systemctl daemon-reload
+if [[ "$SRC" == "$SHARE" ]]; then
+    if [[ ! -d "$SRC/tools" ]]; then
+        echo "mounting host repo share" >&2
+        sudo mkdir -p "$SRC"
+        sudo mount -t 9p -o "$MOUNT_OPTS" osk-src "$SRC" || true
+    fi
+    if [[ ! -d "$SRC/tools" ]]; then
+        echo "ERROR: host repo share not reachable at $SRC" >&2
+        exit 1
+    fi
+    # A mount that dies at reboot makes the documented invocation a lie every
+    # cold boot. nofail so a guest booted without the share still reaches a
+    # login prompt; the export is read-only on the host side either way.
+    if ! grep -q "[[:space:]]$SHARE[[:space:]]" /etc/fstab; then
+        echo "osk-src $SHARE 9p $MOUNT_OPTS,ro,nofail 0 0" | sudo tee -a /etc/fstab >/dev/null
+        sudo systemctl daemon-reload
+    fi
+fi
+
+# Building on 9p is possible but painfully slow, so the share gets copied to a
+# guest-local tree first. A clone is already guest-local and writable: build
+# where it stands, and let git rather than rsync be what updates it.
+if [[ "$SRC" == "$SHARE" ]]; then
+    BUILD_SRC="$HOME/osk-src"
+else
+    BUILD_SRC="$SRC"
 fi
 
 # rust builds the daemon; pkg-config + libxkbcommon link the xkbcommon crate;
@@ -70,26 +91,27 @@ if ! command -v cargo >/dev/null || ! command -v pkg-config >/dev/null \
     sudo pacman -Syu --needed --noconfirm rust pkg-config rsync openssh jq libxkbcommon python
 fi
 
-# Guest-local copy: building on 9p is possible but painfully slow, and the
-# daemon target dir is excluded from the sync anyway. tools/ comes along
-# because the integration suite runs here, against the daemon built below —
-# and it has to run from this copy, since the paths inside it are relative to
-# the repo root and the 9p mount has no build output.
-mkdir -p "$HOME_SRC"
-rsync -a --delete \
-    --exclude .git --exclude 'daemon/target' --exclude 'core.*' \
-    "$SRC/" "$HOME_SRC/"
+if [[ "$BUILD_SRC" != "$SRC" ]]; then
+    # tools/ comes along because the integration suite runs in the guest,
+    # against the daemon built below — and it has to run from this copy, since
+    # its paths are relative to the repo root and the share has no build
+    # output. The daemon target dir stays out: it is the reason for the copy.
+    mkdir -p "$BUILD_SRC"
+    rsync -a --delete \
+        --exclude .git --exclude 'daemon/target' --exclude 'core.*' \
+        "$SRC/" "$BUILD_SRC/"
+fi
 
-echo "--- building daemon"
-cargo build --release --manifest-path "$HOME_SRC/daemon/Cargo.toml"
+echo "--- building daemon from $BUILD_SRC"
+cargo build --release --manifest-path "$BUILD_SRC/daemon/Cargo.toml"
 
 echo "--- installing plugin and service"
 mkdir -p "$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 rsync -a --delete \
     --exclude .git --exclude daemon --exclude tools --exclude 'core.*' \
-    "$HOME_SRC/" "$HOME/.config/omarchy/plugins/$PLUGIN_ID/"
-install -Dm755 "$HOME_SRC/daemon/target/release/omarchy-osk-daemon" "$HOME/.local/libexec/omarchy-osk-daemon"
-install -Dm644 "$HOME_SRC/systemd/omarchy-osk.service" "$HOME/.config/systemd/user/omarchy-osk.service"
+    "$BUILD_SRC/" "$HOME/.config/omarchy/plugins/$PLUGIN_ID/"
+install -Dm755 "$BUILD_SRC/daemon/target/release/omarchy-osk-daemon" "$HOME/.local/libexec/omarchy-osk-daemon"
+install -Dm644 "$BUILD_SRC/systemd/omarchy-osk.service" "$HOME/.config/systemd/user/omarchy-osk.service"
 systemctl --user daemon-reload
 # A rerun after host edits installs a new binary; a running service would
 # keep serving the old one without this.
@@ -133,6 +155,6 @@ Provisioning done.
   - enable typing:   systemctl --user enable --now omarchy-osk
   - host access:     ssh -p 2222 into this machine works
   - integration suite:
-      cd $HOME_SRC && tools/nested-session.sh tools/smoke-daemon.sh
-  - re-sync + rebuild after host edits: rerun this script
+      cd $BUILD_SRC && tools/nested-session.sh tools/smoke-daemon.sh
+  - after source changes: git pull (or rerun from the share), then rerun this
 NEXT
