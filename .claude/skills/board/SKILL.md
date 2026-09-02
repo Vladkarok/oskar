@@ -14,10 +14,41 @@ context after ten tickets looks like ten short reports, not ten diffs.
 
 Every token you spend reading the repo is a token the next ticket does
 not get. You may run `git log --oneline`, `git status -sb`, `grep` for a
-`Status:` line, and `tools/run-tests.sh`. You may read a ticket file.
-**Nothing else.** If you catch yourself opening `Keyboard.qml`, stop —
-that is the subagent's job, and a question about the code is a question
-for a subagent.
+`Status:` line, `tools/run-tests.sh`, and the VM commands below. You may
+read a ticket file. **Nothing else.** If you catch yourself opening
+`Keyboard.qml`, stop — that is the subagent's job, and a question about
+the code is a question for a subagent.
+
+## The VM is yours to drive
+
+It is reachable over ssh and it is not the session you are working in,
+so use it rather than handing the user a homework list. Check it once at
+the start:
+
+```bash
+ssh -o ConnectTimeout=5 omarchy-vm true
+```
+
+If that fails the guest is off or still at its LUKS prompt, which is the
+one thing only the user can clear. Ask them to boot and unlock it, and
+carry on with host-testable tickets meanwhile.
+
+Getting work into the guest — push first, the clone pulls:
+
+```bash
+git push
+ssh omarchy-vm 'cd ~/omarchy-osk && git pull --ff-only'
+ssh omarchy-vm 'bash ~/omarchy-osk/tools/omarchy-vm-provision.sh'   # when the daemon or plugin changed
+ssh omarchy-vm 'cd ~/omarchy-osk && tools/nested-session.sh tools/smoke-daemon.sh'
+```
+
+Anything touching the live session needs the environment preamble in
+`docs/vm-handoff.md`, or hyprctl will not find it. Screenshots are
+`grim` in the guest and `scp` back, and a screenshot is evidence a log
+line is not — for anything about what is drawn on a cap, take one.
+
+What is left for the user is the LUKS passphrase, and saying whether the
+thing feels right under a mouse. Not running commands.
 
 ## Each cycle
 
@@ -67,8 +98,12 @@ tools/run-tests.sh 2>&1 | tail -5
 
 The suite is the check that costs nothing and catches the one failure
 mode that matters — a subagent that reported green on red. If the ticket
-touched the socket, ask the user to run the nested-session suite, or run
-it yourself if this session is not the one under test.
+touched the socket or the daemon, push, pull it into the guest and run
+the nested-session suite there yourself.
+
+Tell the subagent to take its own screenshots in the guest and report
+what they show, rather than sending images back to you. Its context is
+the disposable one.
 
 Confirm the ticket's `Status:` line actually changed. A subagent that
 forgot is a one-line fix, not a respawn.
@@ -83,9 +118,10 @@ started this loop to stop being asked.
 
 Stop and hand back when: a subagent reports a blocker or a design
 question the ticket does not answer; the suite goes red and the fix is
-not obvious from the report; a ticket needs the VM or a human eye; or
-the board has no unblocked `ready-for-agent` ticket left.
+not obvious from the report; the VM is unreachable and the remaining
+tickets need it; or the board has no unblocked `ready-for-agent` ticket
+left.
 
-End with the human-verification list you accumulated — the VM runs and
-eyeball checks — in one place, so the user can do them in a single
-sitting instead of one per ticket.
+End with what is genuinely left for the user — the panel used by hand,
+the judgement calls — in one place. Keep that list short and honest:
+anything you could have run over ssh does not belong on it.
