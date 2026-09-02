@@ -342,14 +342,9 @@ var keysymPositions = {
     Insert: "INS"
 }
 
-// Modifier names the panel uses, mapped to the positions that carry them.
-var modifierPositions = {
-    shift: "LFSH",
-    ctrl: "LCTL",
-    alt: "LALT",
-    logo: "LWIN",
-    altgr: "RALT"
-}
+// Modifier positions are not here: they belong to ModifierReducer.js, which
+// is the only thing that presses one, and a second table of them is a second
+// thing to keep in step.
 
 function positionForKeysym(keysym) {
     var name = String(keysym || "")
@@ -361,8 +356,4 @@ function positionForKeysym(keysym) {
         return "FK" + (index.length < 2 ? "0" + index : index)
     }
     return ""
-}
-
-function positionForModifier(modifier) {
-    return modifierPositions[String(modifier || "")] || ""
 }

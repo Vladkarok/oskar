@@ -4,6 +4,7 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import qs.Commons
 import "KeyboardLayout.js" as Layout
+import "ModifierReducer.js" as Modifiers
 
 Item {
     id: root
@@ -26,25 +27,30 @@ Item {
     readonly property color keyActiveBg: Util.alpha(Color.foreground, Style.pressedFillAlpha)
     readonly property color keyBorderColor: Util.alpha(Color.foreground, Style.pressedFillAlpha)
     readonly property color accentColor: Util.alpha(Color.accent, Style.pressedFillAlpha)
+    // The three modifier states, told apart by fill weight rather than by two
+    // shades of one colour (spec-v1 §5): idle is the ordinary key, latched is
+    // an accent tint under a thick accent outline, locked is solid accent with
+    // the label knocked out.
+    readonly property color latchedFill: Style.selectedAccentFill
+    readonly property color lockedFill: Color.accent
+    readonly property color lockedText: Color.background
     readonly property color textMain: Color.foreground
     readonly property color textDim: Color.muted
     readonly property color textHighlightColor: Color.foreground
     readonly property string keyboardFont: Style.font.family
     readonly property int keyBorderWidth: Style.normalBorderWidth
+    // Doubled rather than taken straight from focusBorderWidth, which falls
+    // back to the normal width on themes that do not set it — a latched
+    // outline the same thickness as an idle one is not a distinguishable state.
+    readonly property int latchedBorderWidth: Math.max(2 * keyBorderWidth, Style.focusBorderWidth)
     readonly property int keyFontSize: Style.font.body
     readonly property int keySmallFontSize: Style.font.bodySmall
 
     property bool capsOn: false
-    property bool shiftOn: false
-    property bool shiftHeld: false
-    property bool ctrlOn: false
-    property bool ctrlHeld: false
-    property bool altOn: false
-    property bool altHeld: false
-    property bool superOn: false
-    property bool superHeld: false
-    property bool altgrOn: false
-    property bool altgrHeld: false
+    // Every modifier's idle/latched/locked state, owned by the reducer
+    // (spec-v1 §15, seam 2). The panel holds the value and draws it; the
+    // transitions and the protocol lines are the module's.
+    property var modifierState: Modifiers.initialState()
     property string currentLayout: "us"
     property var languageCycle: ["us"]
     property int layoutCycleIndex: 0
@@ -385,81 +391,27 @@ Item {
         onTriggered: root.refreshLayoutsFromHypr()
     }
 
-    function activeModifiers() {
-        var mods = []
-        if (ctrlOn) mods.push("ctrl")
-        if (altOn) mods.push("alt")
-        if (superOn) mods.push("logo")
-        if (altgrOn) mods.push("altgr")
-        if (shiftOn) mods.push("shift")
-        return mods
+    /// Runs one event through the reducer and writes whatever it says to
+    /// write. The only path modifier state changes on, so the panel cannot
+    /// drift from what the seam's tests cover.
+    function applyModifierEvent(event) {
+        var outcome = Modifiers.reduce(modifierState, event)
+        modifierState = outcome.state
+        for (var i = 0; i < outcome.lines.length; i++) {
+            sendCommand(outcome.lines[i])
+        }
     }
 
-    function clearComboMods() {
-        shiftOn = shiftHeld
-        ctrlOn = ctrlHeld
-        altOn = altHeld
-        superOn = superHeld
-        altgrOn = altgrHeld
+    function shiftActive() {
+        return Modifiers.isActive(modifierState, "shift")
     }
 
     function isUpper() {
-        return capsOn !== shiftOn
+        return capsOn !== shiftActive()
     }
 
     function isSymbolShiftActive() {
-        return shiftOn
-    }
-
-    function isHoldableModifierKey(key) {
-        switch (key) {
-        case "shift":
-        case "ctrl":
-        case "alt":
-        case "logo":
-        case "altgr":
-            return true
-        }
-        return false
-    }
-
-    function modifierHeld(key) {
-        switch (key) {
-        case "shift": return shiftHeld
-        case "ctrl": return ctrlHeld
-        case "alt": return altHeld
-        case "logo": return superHeld
-        case "altgr": return altgrHeld
-        }
-        return false
-    }
-
-    function setModifierHeld(key, held) {
-        switch (key) {
-        case "shift": shiftHeld = held; shiftOn = held; return
-        case "ctrl": ctrlHeld = held; ctrlOn = held; return
-        case "alt": altHeld = held; altOn = held; return
-        case "logo": superHeld = held; superOn = held; return
-        case "altgr": altgrHeld = held; altgrOn = held; return
-        }
-    }
-
-    function toggleModifier(key, doubleClick) {
-        if (doubleClick) {
-            setModifierHeld(key, !modifierHeld(key))
-            return
-        }
-        if (modifierHeld(key)) {
-            setModifierHeld(key, false)
-            return
-        }
-        switch (key) {
-        case "shift": shiftOn = !shiftOn; return
-        case "ctrl": ctrlOn = !ctrlOn; return
-        case "alt": altOn = !altOn; return
-        case "logo": superOn = !superOn; return
-        case "altgr": altgrOn = !altgrOn; return
-        }
+        return shiftActive()
     }
 
     // A letter key is one whose shifted symbol is simply the capital of its
@@ -479,7 +431,7 @@ Item {
         if (isLetterKey(keyData)) {
             return isUpper() && keyData.s ? keyData.s : keyData.t
         }
-        return shiftOn && keyData.s ? keyData.s : keyData.t
+        return shiftActive() && keyData.s ? keyData.s : keyData.t
     }
 
     // Punctuation/number keys show both symbols stacked (like the
@@ -550,9 +502,14 @@ Item {
                     if (reply === "hello 2") {
                         root.inputReady = false
                         root.inputStatus = "configuring"
-                        // A reconnect can land with the daemon still holding
-                        // modifiers this panel no longer thinks are down.
-                        root.clearComboMods()
+                        // The helper released everything this panel's old
+                        // connection held when that socket closed, so a
+                        // locked modifier did not survive the reconnect
+                        // however the indicator looked. Reset to match, and
+                        // do it without emitting the releases — sending `up`
+                        // for a code nobody holds is a lie in the other
+                        // direction.
+                        root.modifierState = Modifiers.initialState()
                         daemon.write("mods 0\n")
                         daemon.flush()
                         // A restarted helper is back at group 0 and has no idea
@@ -653,50 +610,19 @@ Item {
         return true
     }
 
-    /// Taps a key position with modifier positions held around it. Modifiers go
-    /// as real key presses rather than a modifier mask so the compositor derives
-    /// the state exactly as it would from a physical keyboard.
-    function tapPosition(position, modifierPositions) {
-        if (!position) return
-        for (var i = 0; i < modifierPositions.length; i++) {
-            sendCommand("down " + modifierPositions[i])
-        }
-        sendCommand("tap " + position)
-        for (var j = modifierPositions.length - 1; j >= 0; j--) {
-            sendCommand("up " + modifierPositions[j])
-        }
-    }
-
-    function heldModifierPositions() {
-        var positions = []
-        var names = activeModifiers()
-        for (var i = 0; i < names.length; i++) {
-            var position = Layout.positionForModifier(names[i])
-            if (position) positions.push(position)
-        }
-        return positions
-    }
-
+    // Shift is applied as a real Shift press rather than by picking the shifted
+    // character, because the compositor resolves the position through its own
+    // layout. Which of Caps or Shift is doing the work follows the same rule
+    // the key caps are drawn with, so what is shown is what is typed — the
+    // reducer decides both, from the same `letter` and `caps` facts.
     function pressChar(keyData) {
         if (!keyData.k) return
-
-        // Shift is applied as a real Shift press rather than by picking the
-        // shifted character, because the compositor resolves the position
-        // through its own layout. Which of Caps or Shift is doing the work
-        // follows the same rule the key caps are drawn with, so what is shown
-        // is what is typed.
-        var positions = heldModifierPositions().filter(function (position) {
-            return position !== "LFSH"
+        applyModifierEvent({
+            type: "press",
+            position: keyData.k,
+            letter: isLetterKey(keyData),
+            caps: capsOn
         })
-        var wantsShift = isLetterKey(keyData) ? isUpper() : shiftOn
-        if (wantsShift) positions.push("LFSH")
-
-        tapPosition(keyData.k, positions)
-
-        if (activeModifiers().length > 0) {
-            clearComboMods()
-        }
-        shiftOn = shiftHeld
     }
 
     function pressSpecial(keyData, doubleClick) {
@@ -705,28 +631,25 @@ Item {
         case "emoji": Quickshell.execDetached(["omarchy-menu-emoji"]); return
         case "lang": cycleLanguage(); return
         case "caps": capsOn = !capsOn; return
-        case "shift": toggleModifier("shift", doubleClick); return
-        case "ctrl": toggleModifier("ctrl", doubleClick); return
-        case "alt": toggleModifier("alt", doubleClick); return
-        case "logo": toggleModifier("logo", doubleClick); return
-        case "altgr": toggleModifier("altgr", doubleClick); return
+        }
+        if (Modifiers.isModifier(keyData.key)) {
+            applyModifierEvent({
+                type: doubleClick ? "doubleClick" : "click",
+                modifier: keyData.key
+            })
+            return
         }
         var position = Layout.positionForKeysym(keyData.key)
         if (!position) return
-        tapPosition(position, heldModifierPositions())
-        clearComboMods()
+        applyModifierEvent({ type: "press", position: position })
     }
 
-    function isToggled(keyData) {
-        switch (keyData.key) {
-        case "caps": return capsOn
-        case "shift": return shiftOn
-        case "ctrl": return ctrlOn
-        case "alt": return altOn
-        case "logo": return superOn
-        case "altgr": return altgrOn
-        }
-        return false
+    /// "idle", "latched" or "locked" for anything that has those states, so the
+    /// cap can draw all three distinguishably rather than lit-or-not.
+    function keyModifierState(keyData) {
+        if (keyData.key === "caps") return capsOn ? "locked" : "idle"
+        if (!Modifiers.isModifier(keyData.key)) return "idle"
+        return modifierState[keyData.key]
     }
 
     Column {
@@ -757,9 +680,15 @@ Item {
                             anchors.fill: parent
                             visible: keyData.cluster !== "arrows"
                             radius: root.keyRadius
-                            border.width: root.keyBorderWidth
 
-                            property bool toggled: root.isToggled(keyData)
+                            // Three states have to be told apart at a glance
+                            // (spec-v1 §5), so they differ in more than
+                            // shade: latched is an accent outline over the
+                            // ordinary fill, locked is filled accent. One
+                            // reads as armed, the other as held down.
+                            property string modState: root.keyModifierState(keyData)
+                            property bool latched: modState === "latched"
+                            property bool locked: modState === "locked"
                             // The language key reads as disabled while the
                             // panel has no safe switch target; see
                             // refreshLayoutsFromHypr for why one may not exist.
@@ -767,13 +696,15 @@ Item {
                             property bool isDual: root.isDualKey(keyData)
 
                             color: isLang ? (root.typedKeyboard ? root.accentColor : root.keyBg)
-                                : toggled ? root.accentColor
+                                : locked ? root.lockedFill
+                                : latched ? root.latchedFill
                                 : mouseArea.pressed ? root.keyActiveBg
                                 : mouseArea.containsMouse ? root.keyHoverBg
                                 : root.keyBg
                             border.color: isLang ? (root.typedKeyboard ? root.accentColor : root.keyBorderColor)
-                                : toggled ? root.accentColor
+                                : (latched || locked) ? Color.accent
                                 : root.keyBorderColor
+                            border.width: latched ? root.latchedBorderWidth : root.keyBorderWidth
 
                             Text {
                                 visible: !keyRect.isDual
@@ -781,8 +712,8 @@ Item {
                                 text: keyData.label
                                     ? keyData.label
                                     : root.resolvedTypedChar(keyData)
-                                color: keyRect.isLang || keyRect.toggled
-                                    ? root.textHighlightColor
+                                color: keyRect.locked ? root.lockedText
+                                    : keyRect.isLang ? root.textHighlightColor
                                     : root.textMain
                                 font.family: root.keyboardFont
                                 font.pixelSize: root.keyFontSize
@@ -847,7 +778,7 @@ Item {
                                 // tap from the first half of a double.
                                 onClicked: {
                                     if (!keyData.key) return
-                                    if (!root.isHoldableModifierKey(keyData.key)) {
+                                    if (!Modifiers.isModifier(keyData.key)) {
                                         root.pressSpecial(keyData, false)
                                         return
                                     }
@@ -856,7 +787,7 @@ Item {
                                 }
 
                                 onDoubleClicked: {
-                                    if (!keyData.key || !root.isHoldableModifierKey(keyData.key)) return
+                                    if (!keyData.key || !Modifiers.isModifier(keyData.key)) return
                                     modifierSingleClickDelay.pendingKeyData = null
                                     modifierSingleClickDelay.stop()
                                     root.pressSpecial(keyData, true)
