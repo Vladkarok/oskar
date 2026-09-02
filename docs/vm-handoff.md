@@ -114,15 +114,24 @@ cd ~/omarchy-osk && tools/nested-session.sh tools/smoke-daemon.sh
 - Keycap pipeline green after `8c8546c` (Ukrainian symbols collected).
 - The integration seam runs in the guest, from a clone of
   `spec/v1-keyboard`: 5 passed, four compositor keymap rebuilds.
+- Three-group cycling (ticket 10): with `kb_layout = us,ua,de` and the
+  physical Caps Lock, the caps walked us → de → us (wrapped) → ua with
+  the panel untouched, the helper's device following each switch and
+  zero compiles after the config change. The de caps matched a plain
+  `xkbcli compile-keymap --layout de` for AD01–AD11, AC10, AC11, BKSL,
+  AE11 and AB01. A real click on the language button advanced the
+  physical device (1 → 2) with the caps following; with `main` on the
+  helper's own virtual keyboard after a shell restart the button drew
+  muted and clicking it moved nothing. Physical devices and the
+  `power-button` pseudo-device never left group 0 unless a switch
+  targeted them.
 
 ## Still to do here
 
 1. Actual daily use — open the panel, click keys, work in it for a while.
-2. Language button on the panel: must advance the physical device (the
-   bar indicator should agree) and grey out when there is no safe target.
-3. XWayland target: type into an XWayland window (xterm under XWAYLAND).
-4. fcitx5 running vs stopped, both ways.
-5. Longer hotplug storms while typing.
+2. XWayland target: type into an XWayland window (xterm under XWAYLAND).
+3. fcitx5 running vs stopped, both ways.
+4. Longer hotplug storms while typing.
 
 ## Upstream queue
 
