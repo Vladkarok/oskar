@@ -30,21 +30,25 @@ if [[ ! -d "$SRC/tools" ]]; then
 fi
 
 # rust builds the daemon; pkg-config + libxkbcommon link the xkbcommon crate;
-# rsync syncs; openssh lets the host drive this machine afterwards. The gate
-# checks every dependency individually — a rerun with only some of them
-# present must still install the rest. -Syu rather than -Sy: a partial
-# upgrade is how Arch systems get broken.
+# rsync syncs; openssh lets the host drive this machine afterwards; python
+# runs the integration suite. The gate checks every dependency individually —
+# a rerun with only some of them present must still install the rest. -Syu
+# rather than -Sy: a partial upgrade is how Arch systems get broken.
 if ! command -v cargo >/dev/null || ! command -v pkg-config >/dev/null \
         || ! command -v rsync >/dev/null || ! command -v jq >/dev/null \
-        || ! command -v sshd >/dev/null || ! pacman -Q libxkbcommon >/dev/null 2>&1; then
-    sudo pacman -Syu --needed --noconfirm rust pkg-config rsync openssh jq libxkbcommon
+        || ! command -v sshd >/dev/null || ! command -v python3 >/dev/null \
+        || ! pacman -Q libxkbcommon >/dev/null 2>&1; then
+    sudo pacman -Syu --needed --noconfirm rust pkg-config rsync openssh jq libxkbcommon python
 fi
 
 # Guest-local copy: building on 9p is possible but painfully slow, and the
-# daemon target dir is excluded from the sync anyway.
+# daemon target dir is excluded from the sync anyway. tools/ comes along
+# because the integration suite runs here, against the daemon built below —
+# and it has to run from this copy, since the paths inside it are relative to
+# the repo root and the 9p mount has no build output.
 mkdir -p "$HOME_SRC"
 rsync -a --delete \
-    --exclude .git --exclude 'daemon/target' --exclude tools --exclude 'core.*' \
+    --exclude .git --exclude 'daemon/target' --exclude 'core.*' \
     "$SRC/" "$HOME_SRC/"
 
 echo "--- building daemon"
@@ -99,5 +103,7 @@ Provisioning done.
   - plugin installed ($plugin_state), daemon built and installed
   - enable typing:   systemctl --user enable --now omarchy-osk
   - host access:     ssh -p 2222 into this machine works
+  - integration suite:
+      cd $HOME_SRC && tools/nested-session.sh tools/smoke-daemon.sh
   - re-sync + rebuild after host edits: rerun this script
 NEXT

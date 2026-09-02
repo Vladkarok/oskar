@@ -54,6 +54,16 @@ ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export HYPRLAND_INSTA
 - Re-sync after host edits: `scp` the QML (the plugin hot-reloads on
   save) or rerun `tools/omarchy-vm-provision.sh` in the guest for a full
   rebuild — it needs the 9p mount and restarts the service.
+- The integration suite in the guest, against the daemon the guest built:
+
+```bash
+bash /mnt/osk-src/tools/omarchy-vm-provision.sh   # syncs ~/osk-src, builds
+cd ~/osk-src && tools/nested-session.sh tools/smoke-daemon.sh
+```
+
+  Run it from `~/osk-src`, not from `/mnt/osk-src`: the script finds the
+  daemon relative to the repo root, and the 9p share is the host's tree,
+  read-only and carrying the host's build output if any.
 - Input zoo in the guest, deliberately messy: PS/2 keyboard, two USB
   keyboards, a USB tablet, a power-button pseudo-device, plus fcitx5's
   virtual keyboard holding `main:true` — a faithful replica of the host.
