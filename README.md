@@ -25,9 +25,11 @@ earns a place in autostart.
 | path | what it is |
 |---|---|
 | `manifest.json` | plugin manifest (`io.github.vladkarok.osk`) |
-| `Panel.qml` | the floating keyboard window |
+| `Panel.qml` | the keyboard window: a docked full-width strip or a floating overlay |
 | `Keyboard.qml` | key grid, layout tracking, socket client |
 | `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
+| `ModifierReducer.js` | the modifier state machine (pure, tested) |
+| `Config.js` | parse/serialize for the one config file |
 | `BarWidget.qml` | bar icon that toggles the panel |
 | `daemon/` | Rust helper holding one virtual keyboard |
 | `tools/nested-session.sh` | runs a command against a throwaway nested Hyprland |
@@ -36,6 +38,35 @@ earns a place in autostart.
 | `docs/orientation.md` | what this is, current state, how the work runs |
 | `docs/decisions.md` | why the design looks like this, and the dead ends |
 | `docs/vm-handoff.md` | the dogfooding VM: operating manual and queue |
+
+## Modes and configuration
+
+The panel has two geometries. **Docked** (the default on first run) sits
+flush along the bottom edge at full width and reserves that space through
+the layer-shell exclusive zone, so windows move up while it is open and
+return when it closes — the way the Windows touch keyboard behaves. A
+fullscreen window ignores exclusive zones and is overlaid instead. **Floating**
+reserves nothing and is dragged by its bar. The mode button on the panel
+switches between them.
+
+Everything persists in one file, `$XDG_CONFIG_HOME/omarchy-osk/config.json`,
+which is both the documented config and the saved state — there is no second
+state file. A missing file or a missing or malformed key falls back to the
+defaults rather than failing to start.
+
+| key | values | default |
+|---|---|---|
+| `mode` | `docked` \| `floating` | `docked` |
+| `position` | `{x, y}`, floating mode only | unset |
+| `size_preset` | preset name | `medium` |
+| `sound` | `true` \| `false` | `false` |
+| `follow_theme` | `true` \| `false` | `true` |
+
+`sound: true` plays the freedesktop sound theme's `bell` event on each key
+press through QtMultimedia — nothing is spawned per keystroke. It needs
+`qt6-multimedia` installed; without it the keyboard works and stays silent.
+`follow_theme` follows the Omarchy theme today and does nothing else in v1;
+the independent colour schema is v2.
 
 ## Why there is a helper at all
 

@@ -11,6 +11,10 @@ Item {
     implicitWidth: grid.implicitWidth
     implicitHeight: grid.implicitHeight
     signal closeRequested()
+    // Emitted for every keystroke-shaped press — letters, arrows, modifier
+    // clicks, Caps Lock — and never for the panel's own UI actions. The panel
+    // plays the key click sound on it (spec-v1 §10).
+    signal keyPressed()
 
     // ---- Design tokens, copied 1:1 from the reference HTML/CSS ----
     readonly property real gapPx: Style.spacing.md
@@ -632,6 +636,7 @@ Item {
     // reducer decides both, from the same `letter` and `caps` facts.
     function pressChar(keyData) {
         if (!keyData.k) return
+        root.keyPressed()
         applyModifierEvent({
             type: "press",
             position: keyData.k,
@@ -645,9 +650,13 @@ Item {
         case "close": closeRequested(); return
         case "emoji": Quickshell.execDetached(["omarchy-menu-emoji"]); return
         case "lang": cycleLanguage(); return
-        case "caps": capsOn = !capsOn; return
+        case "caps":
+            root.keyPressed()
+            capsOn = !capsOn
+            return
         }
         if (Modifiers.isModifier(keyData.key)) {
+            root.keyPressed()
             applyModifierEvent({
                 type: doubleClick ? "doubleClick" : "click",
                 modifier: keyData.key
@@ -656,6 +665,7 @@ Item {
         }
         var position = Layout.positionForKeysym(keyData.key)
         if (!position) return
+        root.keyPressed()
         applyModifierEvent({ type: "press", position: position })
     }
 
