@@ -149,7 +149,9 @@ Two modes, switched from the panel and remembered.
 width of its output, and it **reserves space** — windows move up rather
 than being covered, which is what the Windows keyboard does when docked
 and the reason it is the default: it needs no positioning decision from
-someone who just installed it. Fullscreen windows ignore layer-shell
+someone who just installed it. Closing it gives the space back and the
+windows return; opening the keyboard is not a one-way change to the
+workspace. Fullscreen windows ignore layer-shell
 exclusive zones, so during a fullscreen film the keyboard overlays
 instead. That is accepted rather than special-cased; mode switching that
 depends on window state is surprising, and overlay is the right answer
@@ -178,6 +180,10 @@ radius — through the shared style tokens, and it does so from the first
 line of the rewrite rather than as a later pass. Following the theme is
 the baseline expectation for a Quickshell plugin, and hardcoded colours
 are the one thing in this spec that is genuinely expensive to undo.
+
+A theme switch redraws the keyboard **without a restart** of the shell
+or the plugin, the way the rest of Omarchy behaves. A redraw costs no
+keymap compile and no reconnection.
 
 `follow_theme: false` is the v1 escape hatch and does nothing else yet;
 the independent colour schema lands in v2 when someone says which
@@ -288,3 +294,53 @@ feel where the two overlap.
 | layout (§11) | caps follow a physical-keyboard layout switch; language button moves the physical device; three-group config cycles correctly |
 | churn | the daemon's compile count stays at two across every test above |
 | provenance (§13) | the `tools/` script reads zero |
+
+## 15. Test seams
+
+Where §14 says *what* must be true, this says *where* it is checked.
+Appended rather than slotted next to §14 so that the section numbers
+other documents already cite stay put.
+
+A good test here asserts on what crosses a boundary: the protocol lines
+that leave the panel, the compositor state the helper produces, the
+state a reducer returns. Never on how a component is arranged
+internally, and never on the panel's own belief about anything — the
+compositor is the source of truth (§3.4), so a test that asks the panel
+which layout is active is testing the wrong thing.
+
+**There are two seams and there should not be a third.**
+
+**Seam 1 — the control socket.** `tools/smoke-daemon.sh` grows from a
+smoke test into the integration suite: the real helper, the real
+protocol, the real socket, inside a nested Hyprland session, asserting
+against compositor-observable facts and the helper's own log. It keeps
+requiring the VM. There is no host-runnable split, because the facts
+worth asserting on only exist when a compositor is there to produce
+them.
+
+Because keys are positions and not characters (§3.2), most of this spec
+reduces to *which protocol lines came out, in what order* — which is
+exactly what this seam sees. It covers chords arriving as one press,
+`down`/`up` pairing (§6), the 15 s cap and the modifier exemption,
+`group <n>` switching without a recompile (§3.3), a byte-identical
+`configure` short-circuiting, and the compile count holding at two.
+
+**Seam 2 — the modifier reducer.** The §5 state machine lives in a
+JavaScript module with no QML imports, tested directly as a pure
+function: events in, next state and emitted protocol lines out. This is
+a structural requirement on the rewrite, not only a testing one. It is
+the one piece of panel logic with enough branching to earn a seam —
+three states across four modifiers, stacking, consume-on-next-press, and
+survival across page and language switches.
+
+**Verified by hand in the VM, with no automated seam:** space
+reservation and its release (§7), the fullscreen overlay case, floating
+position persistence and drag to a second monitor, theme redraw (§8),
+cursor-hide suspension (§9), and focus retention through a full sentence
+including XWayland (§3.1). Layer-shell exclusive zones and theme redraws
+have no cheap automated seam, and a mock would only test the mock.
+
+The Rust unit tests in the helper stay as the in-process seam for claim
+bookkeeping and protocol parsing. They are not a third seam in the sense
+above — they test the helper's internals, not the product's behaviour,
+and nothing in §14 is verified there alone.
