@@ -112,6 +112,8 @@ cd ~/omarchy-osk && tools/nested-session.sh tools/smoke-daemon.sh
   configure in 2 s; daemon killed mid-flight → re-configure in 2 s;
   cold boot → panel configured 1 s after the daemon.
 - Keycap pipeline green after `8c8546c` (Ukrainian symbols collected).
+- The integration seam runs in the guest, from a clone of
+  `spec/v1-keyboard`: 5 passed, four compositor keymap rebuilds.
 
 ## Still to do here
 
