@@ -52,18 +52,36 @@ ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export HYPRLAND_INSTA
   back. Screenshot evidence beats log lines for anything about
   characters on screen.
 - Re-sync after host edits: `scp` the QML (the plugin hot-reloads on
-  save) or rerun `tools/omarchy-vm-provision.sh` in the guest for a full
-  rebuild — it needs the 9p mount and restarts the service.
+  save) or rerun the provision script for a full rebuild — it restarts
+  the service. From the host:
+
+```bash
+ssh -tt omarchy-vm 'bash -s' < tools/omarchy-vm-provision.sh
+```
+
+  Or `bash /mnt/osk-src/tools/omarchy-vm-provision.sh` in the guest.
+- **Bootstrapping a fresh guest is the one case that has to be typed at
+  the console.** The share carries the repo in and the script turns sshd
+  on, so before the first run there is no `/mnt/osk-src` to launch it
+  from and no ssh to pipe it through:
+
+```bash
+sudo mkdir -p /mnt/osk-src
+sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 osk-src /mnt/osk-src
+bash /mnt/osk-src/tools/omarchy-vm-provision.sh
+```
+
+  It writes an `/etc/fstab` entry, so from the next boot the mount is
+  just there and both commands above work.
 - The integration suite in the guest, against the daemon the guest built:
 
 ```bash
-bash /mnt/osk-src/tools/omarchy-vm-provision.sh   # syncs ~/osk-src, builds
 cd ~/osk-src && tools/nested-session.sh tools/smoke-daemon.sh
 ```
 
-  Run it from `~/osk-src`, not from `/mnt/osk-src`: the script finds the
-  daemon relative to the repo root, and the 9p share is the host's tree,
-  read-only and carrying the host's build output if any.
+  From `~/osk-src`, not `/mnt/osk-src`: the script finds the daemon
+  relative to the repo root, and the share is the host's tree, read-only
+  and carrying the host's build output if any.
 - Input zoo in the guest, deliberately messy: PS/2 keyboard, two USB
   keyboards, a USB tablet, a power-button pseudo-device, plus fcitx5's
   virtual keyboard holding `main:true` — a faithful replica of the host.

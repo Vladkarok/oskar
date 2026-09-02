@@ -1,8 +1,24 @@
 #!/usr/bin/env bash
 #
-# Runs INSIDE the Omarchy VM (not on the host):
+# Runs INSIDE the Omarchy VM (not on the host).
 #
+# A freshly installed guest has neither the share mounted nor sshd running,
+# and this script is what fixes both — so the first run is typed at the guest
+# console, mount included:
+#
+#   sudo mkdir -p /mnt/osk-src
+#   sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 osk-src /mnt/osk-src
 #   bash /mnt/osk-src/tools/omarchy-vm-provision.sh
+#
+# It adds the fstab entry, so from the next boot the mount is simply there
+# and later runs are either of:
+#
+#   bash /mnt/osk-src/tools/omarchy-vm-provision.sh          # in the guest
+#   ssh -tt omarchy-vm 'bash -s' < tools/omarchy-vm-provision.sh   # from the host
+#
+# -tt because the sudo calls need a terminal to prompt on: stdin is the
+# script itself. Piped in that way the script needs no mount to start, so it
+# also repairs a guest that lost the share.
 #
 # Idempotent. Installs the build toolchain, syncs the host repo from the 9p
 # share to a guest-local copy (9p is far too slow for a cargo target dir),
@@ -19,14 +35,27 @@ SRC=/mnt/osk-src
 PLUGIN_ID=io.github.vladkarok.osk
 HOME_SRC="$HOME/osk-src"
 
+MOUNT_OPTS=trans=virtio,version=9p2000.L,msize=104857600
+
+# Reachable only when the script arrived some way that did not go through the
+# mount — piped in over ssh on a fresh guest, or run from the ~/osk-src copy a
+# previous run left behind.
 if [[ ! -d "$SRC/tools" ]]; then
     echo "mounting host repo share" >&2
     sudo mkdir -p "$SRC"
-    sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 osk-src "$SRC" || true
+    sudo mount -t 9p -o "$MOUNT_OPTS" osk-src "$SRC" || true
 fi
 if [[ ! -d "$SRC/tools" ]]; then
     echo "ERROR: host repo share not reachable at $SRC" >&2
     exit 1
+fi
+
+# A mount that dies at reboot makes the documented invocation a lie every
+# cold boot. nofail so a guest booted without the share still reaches a login
+# prompt; the export is read-only on the host side either way.
+if ! grep -q "[[:space:]]$SRC[[:space:]]" /etc/fstab; then
+    echo "osk-src $SRC 9p $MOUNT_OPTS,ro,nofail 0 0" | sudo tee -a /etc/fstab >/dev/null
+    sudo systemctl daemon-reload
 fi
 
 # rust builds the daemon; pkg-config + libxkbcommon link the xkbcommon crate;
