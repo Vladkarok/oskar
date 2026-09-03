@@ -416,32 +416,32 @@ def repeat_belongs_to_the_compositor(helper, keyboard):
     client.expect("hello 2", "hello 2")
     keyboard.expect_group(0)
 
-    target = TypingTarget()
     held = 1.2
     try:
         # A 300 ms delay leaves 0.9 s of repeating, so the expected counts are
-        # about 1 + 0.9 * rate. Asserted as generous bands rather than exact
-        # numbers — the point is that the count tracks the setting, and a VM
-        # under load drops repeats without that being a defect.
-        for rate, low, high in ((5, 3, 9), (30, 18, 45)):
+        # about 1 + 0.9 * rate. Generous bands rather than exact numbers: the
+        # point is that the count tracks the setting, and a VM under load
+        # drops repeats without that being a defect. Nothing in between could
+        # produce both numbers from one constant.
+        for rate, low, high in ((8, 4, 13), (30, 18, 45)):
             _set_repeat(300, rate)
-            # Wayland repeat is the client's job: the compositor sends
-            # `repeat_info` and the client runs the timer. The new value has
-            # been seen reaching the focused client a burst late, so measure
-            # until it lands rather than once — a panel-side timer would sit
-            # at one number through every attempt and fail on both bands.
-            for attempt in range(3):
+            # Key repeat in Wayland is the *client's* timer: the compositor
+            # sends `repeat_info` and the client runs it, which is about as
+            # far from a panel-side timer as the design gets. A client already
+            # running has been seen keeping its old values, so each rate gets
+            # a client that saw the new ones on its keyboard enter.
+            target = TypingTarget()
+            try:
                 typed = _repeats_while_held(client, target, held)
-                if low <= typed <= high:
-                    break
-            else:
+            finally:
+                target.close()
+            if not low <= typed <= high:
                 raise Failure(
                     f"at repeat_rate {rate} a {held}s hold typed {typed}, "
                     f"expected between {low} and {high}"
                 )
     finally:
         _set_repeat(600, 25)  # Hyprland's defaults, for anything after this
-        target.close()
         client.close()
 
 
