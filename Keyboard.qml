@@ -124,6 +124,7 @@ Item {
     // keyboard-shaped HID interface is rejected before it reaches this list.
     property var startupKeyboards: []
     property string startupKeyboardName: ""
+    property bool startupInventorySeen: false
     property string xkbRules: ""
     property string xkbModel: ""
     property string xkbLayouts: "us"
@@ -641,14 +642,16 @@ Item {
                         // which is 0 on a fresh panel and would force the
                         // first layout.
                     } else if (reply === "keyboards" || reply.indexOf("keyboards\t") === 0) {
-                        var wasStartup = root.typedKeyboardName === root.startupKeyboardName
                         var names = reply.split("\t").slice(1).filter(function(name) {
                             return name.length > 0
                         })
                         root.startupKeyboards = names
-                        root.startupKeyboardName = names.length > 0 ? names[0] : ""
-                        if (!root.typedKeyboardName || wasStartup)
-                            root.typedKeyboardName = root.startupKeyboardName
+                        if (!root.startupInventorySeen) {
+                            root.startupInventorySeen = true
+                            root.startupKeyboardName = names.length > 0 ? names[0] : ""
+                            if (!root.typedKeyboardName)
+                                root.typedKeyboardName = root.startupKeyboardName
+                        }
                         root.refreshLayoutsFromHypr()
                     } else if (reply === "configured") {
                         root.inputReady = true
