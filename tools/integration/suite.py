@@ -354,24 +354,46 @@ def disconnect_releases_a_hold(helper, keyboard):
     fresh.close()
 
 
-def _hyprctl(*keywords):
-    for keyword in keywords:
-        subprocess.run(["hyprctl", "keyword", *keyword.split()], capture_output=True)
+def _set_repeat(delay, rate):
+    """Change the compositor's repeat settings, live, and require it took.
+
+    `hyprctl keyword` refuses a Lua config ("keyword can't work with
+    non-legacy parsers"), and refuses it on stdout with a zero exit status, so
+    the read-back is what makes this an assertion rather than a wish.
+    """
+    subprocess.run(
+        [
+            "hyprctl",
+            "eval",
+            f"hl.config({{ input = {{ repeat_delay = {delay}, repeat_rate = {rate} }} }})",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    for name, wanted in (("repeat_delay", delay), ("repeat_rate", rate)):
+        out = subprocess.run(
+            ["hyprctl", "getoption", f"input:{name}"], capture_output=True, text=True
+        ).stdout
+        if f"int: {wanted}" not in out:
+            raise Failure(f"compositor did not take input:{name} = {wanted}: {out!r}")
 
 
 def _repeats_while_held(client, target, seconds):
     """How many characters a held position produced at the focused client."""
-    before = target.text().count("q")
+    baseline = target.text()
     client.expect("down AD01", "ok")
     time.sleep(seconds)
     client.expect("up AD01", "ok")
-    # `cat` is line buffered, so the whole burst arrives with the newline.
+    # `cat` is line buffered, so the whole burst arrives with the newline —
+    # and the wait is for the text to *change*, since it already ended with
+    # one from the burst before.
     client.expect("tap RTRN", "ok")
-    for _ in range(40):
-        if target.text().endswith("\n"):
-            break
+    for _ in range(50):
         time.sleep(0.1)
-    return target.text().count("q") - before
+        text = target.text()
+        if text != baseline and text.endswith("\n"):
+            break
+    return target.text().count("q") - baseline.count("q")
 
 
 @test("a held key repeats, at the compositor's rate rather than a constant")
@@ -390,20 +412,22 @@ def repeat_belongs_to_the_compositor(helper, keyboard):
     keyboard.expect_group(0)
 
     target = TypingTarget()
+    held = 1.2
     try:
-        _hyprctl("input:repeat_delay 300", "input:repeat_rate 5")
-        slow = _repeats_while_held(client, target, 1.2)
-        _hyprctl("input:repeat_delay 300", "input:repeat_rate 30")
-        fast = _repeats_while_held(client, target, 1.2)
-        if slow < 2:
-            raise Failure(f"a held key did not repeat at all (typed {slow})")
-        if fast <= slow:
-            raise Failure(
-                f"the rate changed and the panel did not follow: {slow} at 5/s, "
-                f"{fast} at 30/s"
-            )
+        # A 300 ms delay leaves 0.9 s of repeating, so the expected counts are
+        # about 1 + 0.9 * rate. Asserted as generous bands rather than exact
+        # numbers — the point is that the count tracks the setting, and a VM
+        # under load drops repeats without that being a defect.
+        for rate, low, high in ((5, 3, 9), (30, 18, 40)):
+            _set_repeat(300, rate)
+            typed = _repeats_while_held(client, target, held)
+            if not low <= typed <= high:
+                raise Failure(
+                    f"at repeat_rate {rate} a {held}s hold typed {typed}, "
+                    f"expected between {low} and {high}"
+                )
     finally:
-        _hyprctl("input:repeat_delay 600", "input:repeat_rate 25")
+        _set_repeat(600, 25)
         target.close()
         client.close()
 
