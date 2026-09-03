@@ -506,8 +506,9 @@ Item {
     /// Protocol-bearing events are refused while the helper is not ready,
     /// rather than advancing state over writes that go nowhere: a lock whose
     /// `down` was dropped would leave the cap showing a modifier the compositor
-    /// never received. Caps is the exception because it is a local semantic
-    /// toggle and emits no protocol line; reconnecting must not delay it.
+    /// never received. Caps and Fn are exceptions because they are local
+    /// semantic controls and emit no protocol line; reconnecting must not
+    /// delay them.
     function applyModifierEvent(event) {
         if (!inputReady && (!event || (event.type !== "capsClick" && event.type !== "fnClick"))) return
         var outcome = Modifiers.reduce(modifierState, event)
