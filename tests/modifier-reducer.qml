@@ -86,6 +86,111 @@ QtObject {
             T.equal(lifted.state.ctrl, "locked")
         })
 
+        // ---- the double-click gesture, as the real MouseArea delivers it
+        // (issue 17) ----
+        //
+        // Modifiers latch on the way down now, so the reducer no longer sees a
+        // tidy one-click-per-gesture stream. A real MouseArea emits, measured:
+        //
+        //   single click   pressed, released, clicked
+        //   double click   pressed, released, clicked, pressed, doubleClicked,
+        //                  released
+        //
+        // Both presses reach the reducer as `click`; `clicked` is routed
+        // nowhere for modifiers because Qt withholds it for the second press
+        // anyway (issue 13). So a lock arrives as click, click, doubleClick,
+        // and the second click has already bounced a fresh latch back to idle
+        // by the time the lock is known. `doubleClick` therefore rolls the
+        // gesture back to where it started rather than reading the state it
+        // happens to find, and emits only the difference against the device.
+
+        T.test("click, click, doubleClick from idle ends locked and held once", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "ctrl" })
+            T.equal(state.state.ctrl, "latched")
+            T.deepEqual(state.lines, [])
+            var second = Reducer.reduce(state.state, { type: "click", modifier: "ctrl" })
+            // The second press of the double click is seen first as a click on
+            // a latched modifier, which §5 says returns it to idle without
+            // passing through locked. It must not emit anything either, or the
+            // lock's `down` would be preceded by a stray `up`.
+            T.equal(second.state.ctrl, "idle")
+            T.deepEqual(second.lines, [])
+            var out = Reducer.reduce(second.state, { type: "doubleClick", modifier: "ctrl" })
+            T.equal(out.state.ctrl, "locked")
+            T.deepEqual(out.lines, ["down LCTL"])
+        })
+
+        T.test("click, click, doubleClick from latched ends locked", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
+            T.equal(state.shift, "latched")
+            state = Reducer.reduce(state, { type: "click", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "shift" }).state
+            var out = Reducer.reduce(state, { type: "doubleClick", modifier: "shift" })
+            T.equal(out.state.shift, "locked")
+            T.deepEqual(out.lines, ["down LFSH"])
+        })
+
+        T.test("click, click, doubleClick from locked ends idle, lifted exactly once", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "alt" }).state
+            T.equal(state.alt, "locked")
+            var first = Reducer.reduce(state, { type: "click", modifier: "alt" })
+            // The first press of the gesture already lifted it.
+            T.deepEqual(first.lines, ["up LALT"])
+            var second = Reducer.reduce(first.state, { type: "click", modifier: "alt" })
+            T.deepEqual(second.lines, [])
+            var out = Reducer.reduce(second.state, { type: "doubleClick", modifier: "alt" })
+            T.equal(out.state.alt, "idle")
+            // And the rollback must not lift it a second time: the helper is
+            // no longer holding LALT, so a second `up` would be a line about a
+            // key nothing is down on.
+            T.deepEqual(out.lines, [])
+        })
+
+        T.test("a single click that unlocks does not poison the next double click", function () {
+            // The sequence that a one-click-deep memory gets wrong: unlock,
+            // then double click. The gesture starts from idle, so it must
+            // lock — not read the `locked` that preceded the unlocking click.
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
+            T.equal(state.ctrl, "idle")
+            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
+            var out = Reducer.reduce(state, { type: "doubleClick", modifier: "ctrl" })
+            T.equal(out.state.ctrl, "locked")
+            T.deepEqual(out.lines, ["down LCTL"])
+        })
+
+        T.test("a double click on one modifier ignores the clicks on another", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "ctrl" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "alt" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "alt" }).state
+            var out = Reducer.reduce(state, { type: "doubleClick", modifier: "shift" })
+            T.equal(out.state.shift, "locked")
+            T.deepEqual(out.lines, ["down LFSH"])
+            // and nothing it did leaked sideways
+            T.equal(out.state.ctrl, "latched")
+            T.equal(out.state.alt, "idle")
+        })
+
+        T.test("the gesture memory does not survive into the next gesture", function () {
+            // lock, then unlock by a plain single click much later: the
+            // doubleClick that made the lock must have cleared its own
+            // bookkeeping, or the click would roll back instead of lifting.
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "logo" }).state
+            var out = Reducer.reduce(state, { type: "click", modifier: "logo" })
+            T.equal(out.state.logo, "idle")
+            T.deepEqual(out.lines, ["up LWIN"])
+        })
+
+        T.test("no click is ever charged a delay: every click answers in one call", function () {
+            // The point of issue 17. There is no timer left to wait on, so the
+            // latch is in the returned state, not in a state some interval
+            // later. Pinned as a property of the reducer's shape: a click
+            // event's answer is complete when `reduce` returns.
+            var out = Reducer.reduce(idle, { type: "click", modifier: "ctrl" })
+            T.equal(Reducer.isActive(out.state, "ctrl"), true)
+        })
+
         // ---- stacking (spec-v1 §5) ----
 
         T.test("Super+Shift+Alt+E leaves as one chord and clears all three", function () {

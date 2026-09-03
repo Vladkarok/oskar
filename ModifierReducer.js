@@ -47,6 +47,12 @@ function initialState() {
     // around it, so the release can lift them in the right order. Null between
     // presses; see `press` for why a press is not self-contained any more.
     state.pending = null
+    // The two most recent clicks, newest in `lastClick`, each
+    // `{ modifier, before }`. A double click arrives after its own two clicks
+    // have already been applied, so `doubleClick` needs to know where the
+    // gesture started rather than where those clicks left it — see there.
+    state.lastClick = null
+    state.prevClick = null
     return state
 }
 
@@ -115,34 +121,69 @@ function reduce(state, event) {
     return unchanged(state)
 }
 
+/// The protocol lines that carry a modifier from one state to another. Only
+/// `locked` is held at the device, so only crossing that boundary is worth a
+/// line: idle and latched are both "not down", and latching emits nothing.
+///
+/// Every transition goes through here rather than being spelled out at each
+/// case, because `doubleClick` can now land on a modifier that the gesture's
+/// own earlier clicks already moved. Emitting the difference against the
+/// device is the only way to be sure the helper is not told to lift a key it
+/// is not holding, or to press one it already is.
+function transition(state, modifier, target) {
+    var next = copy(state)
+    next[modifier] = target
+    var was = state[modifier] === "locked"
+    var now = target === "locked"
+    if (was === now) return { state: next, lines: [] }
+    return { state: next, lines: [(now ? "down " : "up ") + POSITIONS[modifier]] }
+}
+
 function click(state, modifier) {
     if (!isModifier(modifier)) return unchanged(state)
-    var next = copy(state)
-    switch (state[modifier]) {
-    case "locked":
-        next[modifier] = "idle"
-        return { state: next, lines: ["up " + POSITIONS[modifier]] }
-    case "latched":
-        // Straight back to idle. Promotion to locked is the double-click
-        // path only, so a second single click undoes the first rather than
-        // escalating it.
-        next[modifier] = "idle"
-        return { state: next, lines: [] }
-    default:
-        next[modifier] = "latched"
-        return { state: next, lines: [] }
+    // Latched and locked both fall back to idle; idle latches. Promotion to
+    // locked is the double-click path only, so a second single click undoes
+    // the first rather than escalating it (spec-v1 §5).
+    var target = state[modifier] === "idle" ? "latched" : "idle"
+    var out = transition(state, modifier, target)
+    out.state.prevClick = state.lastClick
+    out.state.lastClick = { modifier: modifier, before: state[modifier] }
+    return out
+}
+
+/// Where the gesture that is ending in this double click began.
+///
+/// Modifiers act on the way down (issue 17), so by the time Qt tells us the
+/// gesture was a double click, both of its presses have already been applied
+/// as clicks — the first latching, the second bouncing that latch back to
+/// idle. The answer we want is the state before the *first* of them, which is
+/// what `prevClick` holds. Two deep rather than one, because a single click
+/// immediately before a double click would otherwise be mistaken for the
+/// gesture's own first press.
+///
+/// The modifier has to match: a double click is always preceded by two clicks
+/// on the same cap, so anything else is a stale record and the state we can
+/// see is the better answer. That fallback is also what makes `doubleClick`
+/// meaningful on its own, which is how the seam's other tests drive it.
+function gestureOrigin(state, modifier) {
+    if (state.prevClick && state.prevClick.modifier === modifier) {
+        return state.prevClick.before
     }
+    if (state.lastClick && state.lastClick.modifier === modifier) {
+        return state.lastClick.before
+    }
+    return state[modifier]
 }
 
 function doubleClick(state, modifier) {
     if (!isModifier(modifier)) return unchanged(state)
-    var next = copy(state)
-    if (state[modifier] === "locked") {
-        next[modifier] = "idle"
-        return { state: next, lines: ["up " + POSITIONS[modifier]] }
-    }
-    next[modifier] = "locked"
-    return { state: next, lines: ["down " + POSITIONS[modifier]] }
+    var origin = gestureOrigin(state, modifier)
+    var out = transition(state, modifier, origin === "locked" ? "idle" : "locked")
+    // The gesture is spent. Leaving it behind would let the next single click
+    // roll back to it instead of acting on what is actually on screen.
+    out.state.lastClick = null
+    out.state.prevClick = null
+    return out
 }
 
 function press(state, event) {

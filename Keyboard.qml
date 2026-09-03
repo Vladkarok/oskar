@@ -752,7 +752,10 @@ Item {
             return
         }
         if (Modifiers.isModifier(keyData.key)) {
-            root.keyPressed()
+            // One click per physical press, and a lock is two presses, not
+            // three: `doubleClick` arrives on top of the second press's own
+            // click (issue 17) and would otherwise sound a third time.
+            if (!doubleClick) root.keyPressed()
             applyModifierEvent({
                 type: doubleClick ? "doubleClick" : "click",
                 modifier: keyData.key
@@ -894,18 +897,6 @@ Item {
                                 anchors.bottomMargin: -rowItem.hitBottom
                                 hoverEnabled: true
 
-                                Timer {
-                                    id: modifierSingleClickDelay
-                                    interval: 250
-                                    repeat: false
-                                    property var pendingKeyData: null
-                                    onTriggered: {
-                                        if (!pendingKeyData) return
-                                        root.pressSpecial(pendingKeyData, false)
-                                        pendingKeyData = null
-                                    }
-                                }
-
                                 // Everything that types fires on press, not on
                                 // click. Two reasons, and the second one is
                                 // the load-bearing one.
@@ -927,12 +918,37 @@ Item {
                                 // five fast Backspaces deleted three. `pressed`
                                 // is emitted for both, which is why letter caps
                                 // never showed the loss.
+                                //
+                                // The modifiers are here too now (issue 17).
+                                // They used to wait for the click and then a
+                                // further 250 ms, in case a second click was
+                                // coming that would make it a lock — which the
+                                // owner felt, correctly, as a quarter-second
+                                // of lag on every Shift. They latch on the way
+                                // down instead and the lock upgrades them,
+                                // which costs nothing and waits for nothing.
+                                // What makes that safe is the measured order
+                                // of the signals: for two fast taps a real
+                                // MouseArea emits
+                                //
+                                //   pressed, released, clicked,
+                                //   pressed, doubleClicked, released
+                                //
+                                // so `doubleClicked` arrives on the way *down*
+                                // of the second press, in the same delivery as
+                                // its `pressed` and before any frame is drawn.
+                                // The second press is therefore seen first as
+                                // a click on a latched modifier — which §5
+                                // says returns it to idle, not to locked — and
+                                // the reducer rolls that back when the lock
+                                // lands. Nothing renders in between.
                                 onPressed: {
                                     if (!keyData.key) {
                                         root.pressChar(keyData)
                                         return
                                     }
-                                    if (Layout.positionForKeysym(keyData.key)) {
+                                    if (Layout.positionForKeysym(keyData.key)
+                                            || Modifiers.isModifier(keyData.key)) {
                                         root.pressSpecial(keyData, false)
                                     }
                                 }
@@ -949,28 +965,24 @@ Item {
                                 onReleased: if (keyRect.types) root.releaseKey()
                                 onCanceled: if (keyRect.types) root.releaseKey()
 
-                                // What is left on the click is what does not
-                                // type: the modifiers, whose double press is a
-                                // second meaning a press alone cannot tell
-                                // apart, and the command caps (close, emoji,
-                                // page, caps) where acting on the way down
-                                // would tear the panel out from under the
-                                // button that is still held.
+                                // What is left on the click is only the command
+                                // caps — close, emoji, lang, caps — where
+                                // acting on the way down would tear the panel
+                                // out from under the button that is still
+                                // held. They are deliberately not swept into
+                                // the press path with the modifiers. They also
+                                // pay Qt's second-press suppression (issue 13)
+                                // for it, which is survivable here because
+                                // nobody double-clicks Close to close twice.
                                 onClicked: {
                                     if (!keyData.key) return
                                     if (Layout.positionForKeysym(keyData.key)) return
-                                    if (!Modifiers.isModifier(keyData.key)) {
-                                        root.pressSpecial(keyData, false)
-                                        return
-                                    }
-                                    modifierSingleClickDelay.pendingKeyData = keyData
-                                    modifierSingleClickDelay.restart()
+                                    if (Modifiers.isModifier(keyData.key)) return
+                                    root.pressSpecial(keyData, false)
                                 }
 
                                 onDoubleClicked: {
                                     if (!keyData.key || !Modifiers.isModifier(keyData.key)) return
-                                    modifierSingleClickDelay.pendingKeyData = null
-                                    modifierSingleClickDelay.stop()
                                     root.pressSpecial(keyData, true)
                                 }
                             }
