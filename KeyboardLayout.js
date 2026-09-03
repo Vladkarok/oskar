@@ -114,7 +114,7 @@ function levelCaps(positions, level) {
 var symbolRows = [
     [{ label: "esc", key: "Escape", w: 1.25 }]
         .concat(levelCaps(["TLDE", "AE01", "AE02", "AE03", "AE04", "AE05", "AE06", "AE07",
-               "AE08", "AE09", "AE10", "AE11", "AE12"], 2)
+               "AE08", "AE09", "AE10", "AE11", "AE12"], 2))
         .concat([{ label: "Backspace", key: "BackSpace", w: 1.5 }]),
     [{ label: "Tab", key: "Tab", w: 1.4 }]
         .concat(levelCaps(punctuationPositions, 1))
