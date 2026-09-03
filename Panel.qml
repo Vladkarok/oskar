@@ -173,7 +173,12 @@ Item {
         card.y = root.clamp(root.floatingPosition.y, 0, panel.height - card.height)
     }
 
+    // A press on the bar that moved nothing is still a release, and every save
+    // is a blocking atomic write — so only a position that actually changed is
+    // written back.
     function rememberFloatingPosition() {
+        var previous = root.floatingPosition
+        if (previous && previous.x === card.x && previous.y === card.y) return
         root.floatingPosition = { x: card.x, y: card.y }
         root.saveConfig()
     }
