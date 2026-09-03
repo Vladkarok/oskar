@@ -165,10 +165,11 @@ class TypingTarget:
         self.path = os.path.join(runtime, "osk-typed.txt")
         if os.path.exists(self.path):
             os.unlink(self.path)
+        self._errors = open(os.path.join(runtime, "osk-typing-target.log"), "w+")
         self._process = subprocess.Popen(
             ["foot", "sh", "-c", f"cat > {self.path}"],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=self._errors,
         )
         self._wait_for_focus()
 
@@ -191,10 +192,16 @@ class TypingTarget:
                 return
             if self._process.poll() is not None:
                 raise Failure(
-                    f"foot exited with {self._process.returncode} instead of taking focus"
+                    f"foot exited with {self._process.returncode} instead of taking "
+                    f"focus: {self._diagnosis()}"
                 )
             time.sleep(0.1)
         raise Failure("no focused foot window to type into")
+
+    def _diagnosis(self):
+        self._errors.flush()
+        self._errors.seek(0)
+        return self._errors.read().strip() or "it printed nothing"
 
     def text(self):
         try:
@@ -217,6 +224,7 @@ class TypingTarget:
             self._process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             self._process.kill()
+        self._errors.close()
         if os.path.exists(self.path):
             os.unlink(self.path)
 
