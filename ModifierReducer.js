@@ -44,6 +44,9 @@ function initialState() {
         state[ORDER[i]] = "idle"
     }
     state.caps = false
+    // A local display mode, not an XKB modifier. It belongs here so switching
+    // the function row cannot accidentally consume or release a real modifier.
+    state.fn = false
     // The key the mouse button is currently down on, and the modifiers wrapped
     // around it, so the release can lift them in the right order. Null between
     // presses; see `press` for why a press is not self-contained any more.
@@ -86,6 +89,7 @@ function unchanged(state) {
 ///
 /// Events:
 ///   { type: "capsClick" }
+///   { type: "fnClick" }
 ///   { type: "click",        modifier }
 ///   { type: "doubleClick",  modifier }
 ///   { type: "press",        position, letter, shift }
@@ -106,6 +110,10 @@ function reduce(state, event) {
         var next = copy(state)
         next.caps = !state.caps
         return { state: next, lines: [] }
+    case "fnClick":
+        var fnNext = copy(state)
+        fnNext.fn = !state.fn
+        return { state: fnNext, lines: [] }
     case "click":
         return click(state, event.modifier)
     case "doubleClick":
@@ -297,5 +305,6 @@ function releaseAll(state) {
     }
     var next = initialState()
     next.caps = state.caps
+    next.fn = state.fn
     return { state: next, lines: lines }
 }

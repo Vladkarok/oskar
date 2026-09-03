@@ -82,6 +82,12 @@ keyboard cannot reach in one press. Reached by a dedicated key, returns
 by pressing it again. Its caps come from the compiled keymap for the
 active group like every other cap; there is no fixed ASCII table.
 
+**Function row (`Fn`)** — hidden by default so the panel opens at the compact
+Windows-keyboard height. `Fn` is an immediate two-state display control in the
+bottom row: on reveals `Esc`, `F1`–`F12` and `Delete`; off hides that whole row.
+It emits no key or modifier, works on both pages, and keeps its state only for
+the shell session. Hiding the row also reduces the docked exclusive zone.
+
 Arrow cluster: `←↑↓→` as a group, positioned so repeated clicks are easy
 to land on — arrow keys are the ones that get clicked most in a row.
 
@@ -241,8 +247,8 @@ cannot lose it:
 ## 12. Deferred to v2
 
 Chooser popup for three or more layouts. Independent theme colours.
-Context row (`.com` and friends). Dead-key accented characters. Function
-keys. Appearance extras beyond theme-following.
+Context row (`.com` and friends). Dead-key accented characters. Appearance
+extras beyond theme-following.
 
 Sitting untouched by choice, not oversight: sleep/wake on real hardware,
 and the upstream Hyprland work in

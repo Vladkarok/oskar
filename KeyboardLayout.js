@@ -24,6 +24,9 @@ var functionRow = [
 function commandRow(pageLabel) {
     return [
         { label: "Ctrl", key: "ctrl", w: 1.25 },
+        // Fn is a panel display control: it reveals the function row and never
+        // emits a key position or participates in modifier latching.
+        { label: "Fn", key: "fn", w: 1.0 },
         { label: "Super", key: "logo", w: 1.25 },
         { label: "Alt", key: "alt", w: 1.25 },
         { label: "", key: "emoji", w: 1.25 },

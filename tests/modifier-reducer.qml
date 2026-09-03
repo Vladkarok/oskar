@@ -265,6 +265,36 @@ QtObject {
             T.deepEqual(out.lines, [])
         })
 
+        T.test("Fn is an immediate two-state panel control that emits nothing", function () {
+            var on = Reducer.reduce(idle, { type: "fnClick" })
+            T.equal(on.state.fn, true)
+            T.deepEqual(on.lines, [])
+            var off = Reducer.reduce(on.state, { type: "fnClick" })
+            T.equal(off.state.fn, false)
+            T.deepEqual(off.lines, [])
+        })
+
+        T.test("Fn switching preserves every modifier and Caps state", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "capsClick" }).state
+            var out = Reducer.reduce(state, { type: "fnClick" })
+            T.equal(out.state.ctrl, "locked")
+            T.equal(out.state.shift, "latched")
+            T.equal(out.state.caps, true)
+            T.equal(out.state.fn, true)
+            T.deepEqual(out.lines, [])
+        })
+
+        T.test("closing releases held keys but keeps session Fn mode", function () {
+            var state = Reducer.reduce(idle, { type: "fnClick" }).state
+            state = Reducer.reduce(state, { type: "doubleClick", modifier: "ctrl" }).state
+            var out = Reducer.reduce(state, { type: "releaseAll" })
+            T.equal(out.state.fn, true)
+            T.equal(out.state.ctrl, "idle")
+            T.deepEqual(out.lines, ["up LCTL"])
+        })
+
         // ---- the symbols page, whose caps stand for a shift level and have to
         // type it with a real Shift press (spec-v1 §4) ----
 

@@ -15,7 +15,8 @@ Item {
     // &123 is pressed. The grid is anchored to the bottom, so the command row —
     // modifiers, space, arrows, and the page key itself — stays under the
     // pointer across a switch and the slack appears at the top.
-    readonly property int maxPageRows: Math.max(Layout.rows.length, Layout.symbolRows.length)
+    readonly property int maxPageRows: Math.max(pageRowsFor(Layout.rows).length,
+                                                pageRowsFor(Layout.symbolRows).length)
     implicitHeight: maxPageRows * keyHeight + (maxPageRows - 1) * gapPx
     signal closeRequested()
     // Emitted for every keystroke-shaped press — letters, arrows, modifier
@@ -140,10 +141,16 @@ Item {
     // modifier: it changes what can be seen and nothing else — not the keymap,
     // not the group, not what any modifier is holding.
     property string page: "main"
-    property var layoutRows: Layout.applyLanguage(Layout.rows, currentLayout, symbolMap)
+    property var layoutRows: Layout.applyLanguage(pageRows(), currentLayout, symbolMap)
 
     function pageRows() {
-        return page === "symbols" ? Layout.symbolRows : Layout.rows
+        return pageRowsFor(page === "symbols" ? Layout.symbolRows : Layout.rows)
+    }
+
+    // Both pages share row zero. Fn hides exactly that row, leaving the number
+    // or symbols row at the top and reducing panel height by one row plus gap.
+    function pageRowsFor(rows) {
+        return modifierState.fn ? rows : rows.slice(1)
     }
 
     function updateLayoutRows() {
@@ -502,7 +509,7 @@ Item {
     /// never received. Caps is the exception because it is a local semantic
     /// toggle and emits no protocol line; reconnecting must not delay it.
     function applyModifierEvent(event) {
-        if (!inputReady && (!event || event.type !== "capsClick")) return
+        if (!inputReady && (!event || (event.type !== "capsClick" && event.type !== "fnClick"))) return
         var outcome = Modifiers.reduce(modifierState, event)
         modifierState = outcome.state
         for (var i = 0; i < outcome.lines.length; i++) {
@@ -777,6 +784,10 @@ Item {
         // Not a keystroke, so no click sound, for the same reason close is
         // silent: nothing was typed.
         case "page": togglePage(); return
+        case "fn":
+            applyModifierEvent({ type: "fnClick" })
+            updateLayoutRows()
+            return
         case "caps":
             root.keyPressed()
             applyModifierEvent({ type: "capsClick" })
@@ -803,6 +814,7 @@ Item {
     /// "latched" and "locked" so all of their states remain distinguishable.
     function keyModifierState(keyData) {
         if (keyData.key === "caps") return modifierState.caps ? "on" : "off"
+        if (keyData.key === "fn") return modifierState.fn ? "on" : "off"
         if (!Modifiers.isModifier(keyData.key)) return "idle"
         return modifierState[keyData.key]
     }
@@ -993,7 +1005,8 @@ Item {
                                     }
                                     if (Layout.positionForKeysym(keyData.key)
                                             || Modifiers.isModifier(keyData.key)
-                                            || keyData.key === "caps") {
+                                            || keyData.key === "caps"
+                                            || keyData.key === "fn") {
                                         root.pressSpecial(keyData, false)
                                     }
                                 }
@@ -1024,6 +1037,7 @@ Item {
                                     if (Layout.positionForKeysym(keyData.key)) return
                                     if (Modifiers.isModifier(keyData.key)) return
                                     if (keyData.key === "caps") return
+                                    if (keyData.key === "fn") return
                                     root.pressSpecial(keyData, false)
                                 }
 
