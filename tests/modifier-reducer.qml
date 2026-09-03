@@ -137,6 +137,49 @@ QtObject {
             T.deepEqual(out.lines, [])
         })
 
+        // ---- the symbols page, whose caps stand for a shift level and have to
+        // type it with a real Shift press (spec-v1 §4) ----
+
+        T.test("a shift-level cap presses Shift around the position on its own", function () {
+            var out = Reducer.reduce(idle, { type: "press", position: "AE01", shift: true })
+            T.deepEqual(out.lines, ["down LFSH", "tap AE01", "up LFSH"])
+        })
+
+        T.test("a shift-level cap does not press Shift twice while it is latched", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
+            var out = Reducer.reduce(state, { type: "press", position: "AE01", shift: true })
+            T.deepEqual(out.lines, ["down LFSH", "tap AE01", "up LFSH"])
+            T.equal(out.state.shift, "idle")
+        })
+
+        T.test("a shift-level cap adds nothing while Shift is locked and held", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(state, { type: "press", position: "AE01", shift: true })
+            T.deepEqual(out.lines, ["tap AE01"])
+            T.equal(out.state.shift, "locked")
+        })
+
+        T.test("a shift-level cap stacks under a latched Ctrl", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "ctrl" }).state
+            var out = Reducer.reduce(state, { type: "press", position: "AB10", shift: true })
+            T.deepEqual(out.lines, ["down LCTL", "down LFSH", "tap AB10", "up LFSH", "up LCTL"])
+            T.equal(out.state.ctrl, "idle")
+        })
+
+        T.test("a base-level cap on the symbols page carries no Shift of its own", function () {
+            var out = Reducer.reduce(idle, { type: "press", position: "AB10", shift: false })
+            T.deepEqual(out.lines, ["tap AB10"])
+        })
+
+        T.test("a latch survives the switch to the symbols page and is spent there", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "alt" }).state
+            state = Reducer.reduce(state, { type: "pageSwitch" }).state
+            T.equal(state.alt, "latched")
+            var out = Reducer.reduce(state, { type: "press", position: "AE01", shift: true })
+            T.deepEqual(out.lines, ["down LALT", "down LFSH", "tap AE01", "up LFSH", "up LALT"])
+            T.equal(out.state.alt, "idle")
+        })
+
         T.test("a locked modifier still emits its hold after a page switch releases nothing", function () {
             var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
             state = Reducer.reduce(state, { type: "pageSwitch" }).state

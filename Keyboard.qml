@@ -9,7 +9,14 @@ import "ModifierReducer.js" as Modifiers
 Item {
     id: root
     implicitWidth: grid.implicitWidth
-    implicitHeight: grid.implicitHeight
+    // Pinned to the taller of the two pages rather than to whichever is on
+    // screen. Docked mode reserves this height (§7), so letting it follow the
+    // current page would shove every window on the output up and down each time
+    // &123 is pressed. The grid is anchored to the bottom, so the command row —
+    // modifiers, space, arrows, and the page key itself — stays under the
+    // pointer across a switch and the slack appears at the top.
+    readonly property int maxPageRows: Math.max(Layout.rows.length, Layout.symbolRows.length)
+    implicitHeight: maxPageRows * keyHeight + (maxPageRows - 1) * gapPx
     signal closeRequested()
     // Emitted for every keystroke-shaped press — letters, arrows, modifier
     // clicks, Caps Lock — and never for the panel's own UI actions. The panel
@@ -75,10 +82,28 @@ Item {
         return name ? name : currentLayout.toUpperCase()
     }
     property var symbolMap: ({})
+    // Which page is drawn (spec-v1 §4). A page is not a mode and not a
+    // modifier: it changes what can be seen and nothing else — not the keymap,
+    // not the group, not what any modifier is holding.
+    property string page: "main"
     property var layoutRows: Layout.applyLanguage(Layout.rows, currentLayout, symbolMap)
 
+    function pageRows() {
+        return page === "symbols" ? Layout.symbolRows : Layout.rows
+    }
+
     function updateLayoutRows() {
-        layoutRows = Layout.applyLanguage(Layout.rows, currentLayout, symbolMap)
+        layoutRows = Layout.applyLanguage(pageRows(), currentLayout, symbolMap)
+    }
+
+    /// The one key in and the same key out. The reducer is told, so that what
+    /// the modifiers do across a switch is decided in the one place the seam
+    /// covers rather than here; it holds everything where it was, which is why
+    /// a locked modifier is still locked and still drawn locked on the far side.
+    function togglePage() {
+        page = page === "symbols" ? "main" : "symbols"
+        updateLayoutRows()
+        applyModifierEvent({ type: "pageSwitch" })
     }
 
     function parseLayoutSymbolOutput(text) {
@@ -455,8 +480,10 @@ Item {
 
     // Punctuation/number keys show both symbols stacked (like the
     // reference's `.key.dual`); plain letter keys just swap case.
+    // A symbols-page cap is never dual: it stands for one level, and the level
+    // above it has its own cap on the row below.
     function isDualKey(keyData) {
-        return !!keyData.s && !isLetterKey(keyData)
+        return !keyData.lvl && !!keyData.s && !isLetterKey(keyData)
     }
 
     // Input goes to the helper daemon over a unix socket; the panel never
@@ -641,7 +668,11 @@ Item {
             type: "press",
             position: keyData.k,
             letter: isLetterKey(keyData),
-            caps: capsOn
+            caps: capsOn,
+            // A symbols-page cap draws one level and has to type that level.
+            // Same treatment as Caps Lock: a real Shift press around the key,
+            // never a character the panel picked for itself.
+            shift: keyData.lvl === 2
         })
     }
 
@@ -650,6 +681,9 @@ Item {
         case "close": closeRequested(); return
         case "emoji": Quickshell.execDetached(["omarchy-menu-emoji"]); return
         case "lang": cycleLanguage(); return
+        // Not a keystroke, so no click sound, for the same reason close and
+        // lang are silent: nothing was typed.
+        case "page": togglePage(); return
         case "caps":
             root.keyPressed()
             capsOn = !capsOn
@@ -679,6 +713,7 @@ Item {
 
     Column {
         id: grid
+        anchors.bottom: parent.bottom
         spacing: root.gapPx
 
         Repeater {

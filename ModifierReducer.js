@@ -76,7 +76,13 @@ function unchanged(state) {
 /// Events:
 ///   { type: "click",        modifier }
 ///   { type: "doubleClick",  modifier }
-///   { type: "press",        position, letter, caps }
+///   { type: "press",        position, letter, caps, shift }
+///
+/// `shift` on a press means the cap draws the position's shift level and must
+/// type that level — the symbols page (spec-v1 §4). Like Caps Lock it is
+/// satisfied with a real Shift press around the key rather than by choosing a
+/// character, because the compositor resolves the position through its own
+/// layout and the panel does not get to decide what comes out.
 ///   { type: "pageSwitch" }
 ///   { type: "languageSwitch" }
 ///   { type: "releaseAll" }
@@ -155,7 +161,14 @@ function press(state, event) {
     // A locked Shift is already down at the device and cannot be lifted for
     // one key, so caps and a locked Shift do not cancel the way caps and a
     // latched Shift do. That combination is degenerate and left alone.
-    if (state.shift !== "latched" && state.shift !== "locked" && shiftWanted(event, false)) {
+    //
+    // A shift-level cap wants the same thing by a different route, and the
+    // same guard covers it: whatever is already holding Shift — the latch
+    // wrapped above, or a lock that is genuinely down at the device — is
+    // enough, and pressing it a second time would emit a `down` for a code the
+    // helper is already holding.
+    if (state.shift !== "latched" && state.shift !== "locked"
+            && (event.shift === true || shiftWanted(event, false))) {
         wrap.push("shift")
     }
 
