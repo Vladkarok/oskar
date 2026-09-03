@@ -51,6 +51,38 @@ Item {
     // `padding: var(--gap)` around `.keyboard-grid`.
     readonly property real rowWidth: containerMaxWidth - 2 * gapPx
 
+    // ---- Hit geometry (ticket 15) ----
+    //
+    // The gaps are visual only. A cap is drawn at its own size, but the area
+    // that answers the mouse reaches to the midpoint of the gap on every side
+    // it shares with a neighbour, so the grid tiles and a click between two
+    // caps lands on one of them instead of nowhere. This is a mouse-driven
+    // keyboard; a miss costs a correction.
+    //
+    // Non-overlap is by construction, not by hope, and that is the whole of
+    // the design. Neighbours in a row are exactly `gapPx` apart and each
+    // claims `gapPx / 2` of it, so the two areas meet on a line and share no
+    // area. Rows are `gapPx` apart in the Column and split it the same way,
+    // which makes the row bands disjoint in y before the caps inside them are
+    // considered at all. So the grid is a partition: a row band, then a column
+    // within it. The line itself is not a tie either — `QQuickItem::contains`
+    // is half-open, excluding the far edge, so a coordinate exactly on a
+    // boundary belongs to the right (or lower) neighbour and to nothing else.
+    // Nothing here is decided by stacking order, which is the failure this has
+    // to avoid: two areas over one point would pick a winner by sibling order
+    // and read as a random wrong character.
+    //
+    // Hover follows the hit area, so the cap that owns a gap lights up while
+    // the pointer is in it. That is the intent, not a side effect: it is how
+    // the user sees where the boundary is.
+    readonly property real halfGap: gapPx / 2
+    // What the outermost caps claim on their outward side. The card's padding
+    // around the grid equals the gap (see `rowWidth` above), so this hands the
+    // border strip to the caps against it and stops exactly where the card's
+    // own chrome starts — the drag bar sits `gapPx` above the top row, so the
+    // top row's area meets it rather than stealing from it.
+    readonly property real edgeOutset: gapPx
+
     readonly property color keyBg: Util.alpha(root.theme.foreground, root.theme.normalFillAlpha)
     readonly property color keyHoverBg: Util.alpha(root.theme.foreground, root.theme.hoverFillAlpha)
     readonly property color keyActiveBg: Util.alpha(root.theme.foreground, root.theme.pressedFillAlpha)
@@ -752,6 +784,12 @@ Item {
                 id: rowItem
                 spacing: root.gapPx
                 readonly property var rowModel: modelData
+                // `index` is the Repeater's, and the inner delegate's own
+                // `index` shadows it, so the row's position is carried here.
+                readonly property int rowIndex: index
+                readonly property real hitTop: rowIndex === 0 ? root.edgeOutset : root.halfGap
+                readonly property real hitBottom: rowIndex === root.layoutRows.length - 1
+                    ? root.edgeOutset : root.halfGap
                 readonly property real flexSum: rowModel.reduce(function (acc, item) {
                     return acc + (item.w || 1)
                 }, 0)
@@ -764,6 +802,10 @@ Item {
                         property var keyData: modelData
                         width: rowItem.innerWidth * (keyData.w || 1) / rowItem.flexSum
                         height: root.keyHeight
+                        readonly property real hitLeft: index === 0
+                            ? root.edgeOutset : root.halfGap
+                        readonly property real hitRight: index === rowItem.rowModel.length - 1
+                            ? root.edgeOutset : root.halfGap
 
                         Rectangle {
                             id: keyRect
@@ -835,7 +877,21 @@ Item {
 
                             MouseArea {
                                 id: mouseArea
+                                // Deliberately larger than the cap it belongs
+                                // to: negative margins push it out to the
+                                // midpoint of each gap (and to the card's
+                                // padding at the grid's edges), so the areas
+                                // tile the grid while the drawn caps keep the
+                                // spacing they have always had. Nothing here
+                                // clips — neither the Rectangle, nor the
+                                // delegate Item, nor the Row and Column
+                                // positioners — so Qt still delivers presses
+                                // that land outside the cap's own rectangle.
                                 anchors.fill: parent
+                                anchors.leftMargin: -keyDelegate.hitLeft
+                                anchors.rightMargin: -keyDelegate.hitRight
+                                anchors.topMargin: -rowItem.hitTop
+                                anchors.bottomMargin: -rowItem.hitBottom
                                 hoverEnabled: true
 
                                 Timer {
