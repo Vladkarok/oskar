@@ -260,8 +260,13 @@ merged into it. Baseline at the time of writing, substantive lines only:
 |---|---|
 | `BarWidget.qml` | 11 / 13 |
 | `Panel.qml` | 146 / 179 |
-| `Keyboard.qml` | 341 / 529 |
+| `Keyboard.qml` | 345 / 529 |
 | `KeyboardLayout.js` | 115 / 279 |
+
+`Keyboard.qml` was first recorded here by hand as 341. The measuring
+script reads 345 from the same tree and reproduces the other three rows
+exactly, so the hand count was the thing that was wrong; the table now
+carries the script's number.
 
 The daemon, `systemd/` and `tools/` share nothing and never did.
 

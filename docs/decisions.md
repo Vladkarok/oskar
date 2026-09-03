@@ -238,10 +238,13 @@ and imprecise. "The input path shares nothing with it now" was true and
 kept getting read as "none of this is derived any more." Measuring
 against upstream `e3771b6` — the last commit before our own PR merged
 into abdxdev's repo — said otherwise, counting substantive lines only:
-`BarWidget.qml` 11 of 13, `Panel.qml` 146 of 179, `Keyboard.qml` 341 of
-529, `KeyboardLayout.js` 115 of 279. The daemon, `systemd/` and `tools/`
-share nothing and never did. So the split was clean and the claim was
-not: **the input path is ours, the shell layer is his.**
+`BarWidget.qml` 11 of 13, `Panel.qml` 146 of 179, `Keyboard.qml` 345 of
+529, `KeyboardLayout.js` 115 of 279. (`Keyboard.qml` was counted by hand
+as 341 that day; `tools/provenance.py` later read 345 from the same tree
+while reproducing the other three exactly, so 345 is the number.) The
+daemon, `systemd/` and `tools/` share nothing and never did. So the split
+was clean and the claim was not: **the input path is ours, the shell
+layer is his.**
 
 Three options. Keep the attribution permanently and ship weeks earlier;
 flip to a sole copyright now and call the overlap convergent QML
