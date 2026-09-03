@@ -185,11 +185,20 @@ fn parse_keycodes(keymap: &str) -> std::collections::HashMap<String, u32> {
 /// `modifiers` request alone; it does not watch key events and work it out.
 /// So the helper has to say what is held, and to say it, it has to know which
 /// positions are modifiers — a fact that belongs to the keymap and to nothing
-/// else. `us` puts RALT on Mod1 while a layout with `lv3:ralt_switch` puts it
-/// on Mod5, and a hard-coded table would be wrong for one of them.
+/// else. Which position carries which modifier is an option away from
+/// changing — `altwin:swap_lalt_lwin` moves LALT from Mod1 to Mod4 — and a
+/// hard-coded table would be wrong for every setup but the one it was
+/// written against.
 ///
 /// The bit for a real modifier is its index in the order xkb fixes: Shift,
 /// Lock, Control, Mod1..Mod5.
+///
+/// Read from `modifier_map` and nowhere else, which is the known limit: a
+/// position that becomes a modifier through a compat interpret rather than a
+/// modifier map gets no bit. `lv3:ralt_switch` is the case that exists —
+/// AltGr there emits ISO_Level3_Shift and reaches Mod5 through the interpret
+/// — and it is out of v1's modifier roster (spec-v1 §5), so it is left alone
+/// rather than guessed at.
 fn parse_modifier_masks(
     keymap: &str,
     codes: &std::collections::HashMap<String, u32>,
@@ -866,6 +875,28 @@ mod tests {
         // An ordinary letter carries no modifier bit at all, which is what
         // keeps the mask from being re-asserted on every keystroke.
         assert_eq!(masks.get(&codes["AD01"]), None);
+        // Plain `us` puts RALT on Mod1, alongside LALT.
+        assert_eq!(masks.get(&codes["RALT"]), Some(&0b1000));
+    }
+
+    #[test]
+    fn a_position_carries_whichever_modifier_the_options_gave_it() {
+        // The reason the table is read from the keymap instead of written
+        // down: an option moves a position from one modifier to another.
+        // With alt and super swapped, LALT is Mod4 and LWIN is Mod1 — the
+        // exact reverse of the assertions above, and a hard-coded table
+        // would send Alt where the user pressed Super.
+        let text = compile_keymap(&XkbConfig {
+            options: "altwin:swap_lalt_lwin".into(),
+            ..XkbConfig::default()
+        })
+        .expect("us with altwin:swap_lalt_lwin should compile");
+        let codes = parse_keycodes(&text);
+        let masks = parse_modifier_masks(&text, &codes);
+        assert_eq!(masks.get(&codes["LALT"]), Some(&0b100_0000));
+        assert_eq!(masks.get(&codes["LWIN"]), Some(&0b1000));
+        // And the modifiers the option does not touch are unmoved.
+        assert_eq!(masks.get(&codes["LFSH"]), Some(&0b1));
     }
 
     #[test]

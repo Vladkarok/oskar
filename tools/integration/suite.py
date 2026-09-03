@@ -181,6 +181,21 @@ def modifiers_reach_the_client(helper, keyboard):
         client.expect("up LALT", "ok")
         client.expect("tap RTRN", "ok")
         target.expect_text("q\nQ\nq\n\x1bQ\n")
+
+        # A locked modifier survives a language switch (spec-v1 §5): the group
+        # rides on the same request as the mask, so a `group` command that
+        # sent a zero would silently drop what is held. Ukrainian's shifted
+        # AD01 is a capital Й, which is only reachable with both the switch
+        # and the modifier intact.
+        client.expect("down LFSH", "ok")
+        client.expect("group 1", "ok")
+        keyboard.expect_group(1)
+        client.expect("tap AD01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("group 0", "ok")
+        keyboard.expect_group(0)
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\nQ\nq\n\x1bQ\nЙ\n")
     finally:
         target.close()
         client.close()
