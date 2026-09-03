@@ -173,7 +173,10 @@ class TypingTarget:
         self._wait_for_focus()
 
     def _wait_for_focus(self):
-        for _ in range(60):
+        # Generous: a cold foot in a nested compositor has been seen taking
+        # several seconds to map, and a timeout here reads as a failure of
+        # whatever was being typed.
+        for _ in range(300):
             out = subprocess.run(
                 ["hyprctl", "activewindow", "-j"], capture_output=True, text=True
             ).stdout
@@ -186,6 +189,10 @@ class TypingTarget:
                 # about to get is what makes the first keystroke land.
                 time.sleep(0.5)
                 return
+            if self._process.poll() is not None:
+                raise Failure(
+                    f"foot exited with {self._process.returncode} instead of taking focus"
+                )
             time.sleep(0.1)
         raise Failure("no focused foot window to type into")
 
