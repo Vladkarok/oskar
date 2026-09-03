@@ -28,7 +28,8 @@
 //!                     evdev code (16)
 //!   down <key>        press
 //!   up <key>          release
-//!   mods <mask>       set the modifier mask
+//!   mods <mask>       set the modifier mask by hand; the helper maintains it
+//!                     from the keys held, so the next down/up supersedes this
 //!   group <n>         select which compiled layout to type in
 //!   configure<TAB>rules<TAB>model<TAB>layouts<TAB>variants<TAB>options
 //!             <TAB>kb_file<TAB>group
@@ -178,6 +179,52 @@ fn parse_keycodes(keymap: &str) -> std::collections::HashMap<String, u32> {
     codes
 }
 
+/// Which evdev codes carry which modifier bit, read out of the keymap in hand.
+///
+/// A wlroots compositor takes a virtual keyboard's modifier state from the
+/// `modifiers` request alone; it does not watch key events and work it out.
+/// So the helper has to say what is held, and to say it, it has to know which
+/// positions are modifiers — a fact that belongs to the keymap and to nothing
+/// else. `us` puts RALT on Mod1 while a layout with `lv3:ralt_switch` puts it
+/// on Mod5, and a hard-coded table would be wrong for one of them.
+///
+/// The bit for a real modifier is its index in the order xkb fixes: Shift,
+/// Lock, Control, Mod1..Mod5.
+fn parse_modifier_masks(
+    keymap: &str,
+    codes: &std::collections::HashMap<String, u32>,
+) -> std::collections::HashMap<u32, u32> {
+    const REAL_MODIFIERS: [&str; 8] = [
+        "Shift", "Lock", "Control", "Mod1", "Mod2", "Mod3", "Mod4", "Mod5",
+    ];
+    let mut masks = std::collections::HashMap::new();
+
+    for entry in keymap.split("modifier_map").skip(1) {
+        let Some((name, rest)) = entry.split_once('{') else {
+            continue;
+        };
+        let Some(index) = REAL_MODIFIERS
+            .iter()
+            .position(|modifier| *modifier == name.trim())
+        else {
+            continue;
+        };
+        let Some((body, _)) = rest.split_once('}') else {
+            continue;
+        };
+        for key in body.split(',') {
+            let key = key.trim();
+            let Some(key) = key.strip_prefix('<').and_then(|k| k.strip_suffix('>')) else {
+                continue;
+            };
+            if let Some(code) = codes.get(key) {
+                *masks.entry(*code).or_insert(0) |= 1 << index;
+            }
+        }
+    }
+    masks
+}
+
 /// A key is named the way xkb names it (`AD01`) or given as a raw evdev code.
 enum Key {
     Code(u32),
@@ -205,6 +252,8 @@ struct Shared {
     ready: bool,
     /// xkb key name -> evdev code, taken from the keymap in use.
     codes: std::collections::HashMap<String, u32>,
+    /// evdev code -> modifier bit, for the codes the keymap calls modifiers.
+    modifier_masks: std::collections::HashMap<u32, u32>,
     /// Which compiled layout is active.
     group: u32,
     config: Option<XkbConfig>,
@@ -222,6 +271,16 @@ impl Shared {
         self.keyboard.is_some() && self.ready && !self.codes.is_empty()
     }
 
+    /// The modifier mask the device should be reporting: every bit carried by
+    /// a code some connection currently holds. Derived from `held` rather than
+    /// accumulated, so it cannot drift out of step with what is pressed.
+    fn modifier_mask(&self) -> u32 {
+        self.held
+            .keys()
+            .filter_map(|code| self.modifier_masks.get(code))
+            .fold(0, |mask, bit| mask | bit)
+    }
+
     /// Compiles `layouts` and installs the result. Held by the caller's lock so
     /// a keystroke can never observe a half-swapped keymap.
     fn install_config(&mut self, config: &XkbConfig) -> bool {
@@ -231,13 +290,13 @@ impl Shared {
             .is_some_and(|current| current.same_keymap(config))
         {
             // A same-keymap reconfigure is only ever a group change: the
-            // device state was never reset, so the mask needs no re-assert —
-            // and zeroing it here would clobber whatever a client's chord
-            // holds across the swap.
+            // device state was never reset, so whatever a client's chord
+            // holds must survive the swap. The group rides on the same
+            // request as the mask, so the mask goes back out with it.
             if self.group != config.group {
                 self.group = config.group;
                 if let Some(keyboard) = self.keyboard.as_ref() {
-                    keyboard.modifiers(0, 0, 0, self.group);
+                    keyboard.modifiers(self.modifier_mask(), 0, 0, self.group);
                 }
             }
             self.config = Some(config.clone());
@@ -277,6 +336,7 @@ impl Shared {
         self.group = config.group;
         keyboard.modifiers(0, 0, 0, self.group);
         self.codes = parse_keycodes(&text);
+        self.modifier_masks = parse_modifier_masks(&text, &self.codes);
         self.ready = !self.codes.is_empty();
         self.config = Some(config.clone());
         self.uploads.push_back(now);
@@ -631,12 +691,27 @@ fn apply_locked(
         // The group rides along with every modifier update: dropping it would
         // silently reset the device to the first layout.
         Command::Mods(mask) => keyboard.modifiers(mask, 0, 0, shared.group),
+        // A language switch mid-chord must not drop what is held, so the
+        // group goes out alongside the mask the held keys imply rather than
+        // alongside a zero.
         Command::Group(group) => {
             let keyboard = keyboard.clone();
             shared.group = group;
-            keyboard.modifiers(0, 0, 0, group);
+            keyboard.modifiers(shared.modifier_mask(), 0, 0, group);
         }
         Command::Configure(_) => unreachable!("handled above"),
+    }
+
+    // A key event carries no modifier state of its own. The compositor learns
+    // what is held from `modifiers` and from nothing else, so a chord that was
+    // only ever pressed and released arrives modifierless: `down LFSH / tap
+    // AD01 / up LFSH` typed `q`, which is how this shipped broken. Re-assert
+    // the mask whenever a modifier code goes down or comes up, and the tap in
+    // between lands under it.
+    if let Some(code) = pressed.or(released) {
+        if shared.modifier_masks.contains_key(&code) {
+            keyboard.modifiers(shared.modifier_mask(), 0, 0, shared.group);
+        }
     }
 
     if let Some(held) = held.as_deref_mut() {
@@ -775,6 +850,22 @@ mod tests {
         // AD01 is the Q position; evdev numbers it 16, xkb 24.
         assert_eq!(codes.get("AD01"), Some(&16));
         assert_eq!(codes.get("SPCE"), Some(&57));
+    }
+
+    #[test]
+    fn reads_modifier_bits_out_of_a_compiled_keymap() {
+        let text = compile_keymap(&XkbConfig::default()).expect("us should compile");
+        let codes = parse_keycodes(&text);
+        let masks = parse_modifier_masks(&text, &codes);
+        // xkb fixes the order of the real modifiers, so Shift is bit 0,
+        // Control bit 2 and Mod4 — which is where `us` puts Super — bit 6.
+        assert_eq!(masks.get(&codes["LFSH"]), Some(&0b1));
+        assert_eq!(masks.get(&codes["RTSH"]), Some(&0b1));
+        assert_eq!(masks.get(&codes["LCTL"]), Some(&0b100));
+        assert_eq!(masks.get(&codes["LWIN"]), Some(&0b100_0000));
+        // An ordinary letter carries no modifier bit at all, which is what
+        // keeps the mask from being re-asserted on every keystroke.
+        assert_eq!(masks.get(&codes["AD01"]), None);
     }
 
     #[test]
