@@ -93,6 +93,12 @@ cd ~/omarchy-osk && tools/nested-session.sh tools/smoke-daemon.sh
   was the share. Never from `/mnt/osk-src`: the script finds the daemon
   relative to the repo root, and the share is the host's tree, read-only
   and carrying the host's build output if any.
+- **`smoke-daemon.sh` runs the binary it finds, and never builds one.** A
+  `git pull` in the guest changes the source and nothing else, so the
+  suite silently keeps testing the previous build. Run `cargo build
+  --release --manifest-path daemon/Cargo.toml` after every pull that
+  touched `daemon/`. A daemon fix that reads as still-broken here, with
+  the suite otherwise healthy, is this first.
 - **The nested session comes up without an output perhaps a third of the
   time in the guest**, and roughly as often does not come up at all. The
   suite's typing target is the first test that needs one, so it is where
