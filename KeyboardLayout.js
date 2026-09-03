@@ -47,7 +47,18 @@ var rows = [
         { label: "AltGr", key: "altgr", w: 1.25 },
         { label: "Super", key: "logo", w: 1.25 },
         { label: "Ctrl", key: "ctrl", w: 1.25 },
-        { cluster: "arrows", w: 3.75 }
+        // The four arrows sit together at the end of the row and are ordinary
+        // full-height caps, not a nested cluster of half-height ones. Arrows
+        // are the keys clicked most times in a row, so each one has to be a
+        // target the pointer can hit five times without re-aiming; the stacked
+        // up/down pair this replaces was a little under half the height of
+        // every other key on the panel. Being ordinary caps also puts them on
+        // the delegate's `onPressed` path rather than their own `onClicked`
+        // MouseAreas, so they act on the way down like everything else.
+        { label: "◀", key: "Left" },
+        { label: "▲", key: "Up" },
+        { label: "▼", key: "Down" },
+        { label: "▶", key: "Right" }
     ]
 ]
 
@@ -294,9 +305,24 @@ function tokenToText(token, fallback) {
     return fallback
 }
 
+// A cap that draws a fixed label — Esc, Enter, the arrows, and Space, whose
+// label is deliberately empty — shows the same thing on every layout and has
+// no keymap symbol to miss. Only the caps that are supposed to come out of the
+// compiled keymap can fall back to a built-in value, and only those are worth
+// reporting.
+function drawsFixedLabel(keyData) {
+    return keyData.hasOwnProperty("label")
+}
+
+// A missing token is a marker, not a character: `tokenToText` is asked for it
+// so that a keymap that really does resolve to an empty string cannot be
+// mistaken for a failure.
+var UNRESOLVED = " unresolved"
+
 function applyLanguage(rowsSource, layoutCode, symbolMap) {
     var layoutRows = cloneRows(rowsSource)
     var label = String(layoutCode || "us").toUpperCase()
+    var fallbacks = []
 
     for (var r = 0; r < layoutRows.length; r++) {
         for (var c = 0; c < layoutRows[r].length; c++) {
@@ -305,16 +331,42 @@ function applyLanguage(rowsSource, layoutCode, symbolMap) {
                 keyData.label = label
                 continue
             }
-            if (!keyData.k || !symbolMap || !symbolMap[keyData.k]) continue
+            if (!keyData.k) continue
 
-            var symbols = symbolMap[keyData.k]
-            if (!Array.isArray(symbols) || symbols.length === 0) continue
+            var symbols = symbolMap ? symbolMap[keyData.k] : null
+            if (!Array.isArray(symbols) || symbols.length === 0) {
+                if (!drawsFixedLabel(keyData)) fallbacks.push(keyData.k + "=<no keymap entry>")
+                continue
+            }
 
-            keyData.t = tokenToText(symbols[0], keyData.t)
-            if (symbols.length > 1) {
-                keyData.s = tokenToText(symbols[1], keyData.s)
+            var base = tokenToText(symbols[0], UNRESOLVED)
+            if (base === UNRESOLVED) {
+                if (!drawsFixedLabel(keyData)) fallbacks.push(keyData.k + "=" + symbols[0])
+            } else {
+                keyData.t = base
+            }
+
+            if (symbols.length > 1 && String(symbols[1] || "").trim() !== "") {
+                var shifted = tokenToText(symbols[1], UNRESOLVED)
+                if (shifted === UNRESOLVED) {
+                    if (!drawsFixedLabel(keyData)) fallbacks.push(keyData.k + "^=" + symbols[1])
+                } else {
+                    keyData.s = shifted
+                }
             }
         }
+    }
+
+    // A silent substitution is the failure mode decisions.md §11 records: the
+    // awk program broke, the map came back empty, and the built-in US table
+    // stayed on screen for days while the label said "Ukrainian". One line per
+    // rebuild rather than one per key, so a wholly empty map is loud without
+    // being sixty lines of noise.
+    if (fallbacks.length > 0) {
+        var shown = fallbacks.slice(0, 12).join(" ")
+        if (fallbacks.length > 12) shown += " … and " + (fallbacks.length - 12) + " more"
+        console.error("[osk] keycap fallback to built-in table for " + layoutCode
+            + ": " + fallbacks.length + " cap(s): " + shown)
     }
 
     return layoutRows

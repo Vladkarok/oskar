@@ -703,7 +703,6 @@ Item {
                         Rectangle {
                             id: keyRect
                             anchors.fill: parent
-                            visible: keyData.cluster !== "arrows"
                             radius: root.keyRadius
 
                             // Three states have to be told apart at a glance
@@ -842,116 +841,6 @@ Item {
                                     modifierSingleClickDelay.pendingKeyData = null
                                     modifierSingleClickDelay.stop()
                                     root.pressSpecial(keyData, true)
-                                }
-                            }
-                        }
-
-                        Row {
-                            id: arrowRow
-                            anchors.fill: parent
-                            visible: keyData.cluster === "arrows"
-                            spacing: root.gapPx
-                            readonly property real subWidth: (width - 2 * root.gapPx) / 3
-
-                            Rectangle {
-                                width: arrowRow.subWidth
-                                height: parent.height
-                                radius: root.keyRadius
-                                border.width: root.keyBorderWidth
-                                border.color: root.keyBorderColor
-                                color: leftArrowArea.pressed ? root.keyActiveBg
-                                    : leftArrowArea.containsMouse ? root.keyHoverBg
-                                    : root.keyBg
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "\u25c0"
-                                    color: root.textMain
-                                    font.family: root.keyboardFont
-                                    font.pixelSize: root.keyFontSize
-                                }
-                                MouseArea {
-                                    id: leftArrowArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: root.pressSpecial({ key: "Left" })
-                                }
-                            }
-
-                            Column {
-                                width: arrowRow.subWidth
-                                height: parent.height
-                                spacing: root.gapPx
-
-                                Rectangle {
-                                    width: parent.width
-                                    height: (parent.height - parent.spacing) / 2
-                                    radius: root.keyRadius
-                                    border.width: root.keyBorderWidth
-                                    border.color: root.keyBorderColor
-                                    color: upArrowArea.pressed ? root.keyActiveBg
-                                        : upArrowArea.containsMouse ? root.keyHoverBg
-                                        : root.keyBg
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "\u25b2"
-                                        color: root.textMain
-                                        font.family: root.keyboardFont
-                                        font.pixelSize: root.keySmallFontSize
-                                    }
-                                    MouseArea {
-                                        id: upArrowArea
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        onClicked: root.pressSpecial({ key: "Up" })
-                                    }
-                                }
-
-                                Rectangle {
-                                    width: parent.width
-                                    height: (parent.height - parent.spacing) / 2
-                                    radius: root.keyRadius
-                                    border.width: root.keyBorderWidth
-                                    border.color: root.keyBorderColor
-                                    color: downArrowArea.pressed ? root.keyActiveBg
-                                        : downArrowArea.containsMouse ? root.keyHoverBg
-                                        : root.keyBg
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "\u25bc"
-                                        color: root.textMain
-                                        font.family: root.keyboardFont
-                                        font.pixelSize: root.keySmallFontSize
-                                    }
-                                    MouseArea {
-                                        id: downArrowArea
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        onClicked: root.pressSpecial({ key: "Down" })
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                width: arrowRow.subWidth
-                                height: parent.height
-                                radius: root.keyRadius
-                                border.width: root.keyBorderWidth
-                                border.color: root.keyBorderColor
-                                color: rightArrowArea.pressed ? root.keyActiveBg
-                                    : rightArrowArea.containsMouse ? root.keyHoverBg
-                                    : root.keyBg
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "\u25b6"
-                                    color: root.textMain
-                                    font.family: root.keyboardFont
-                                    font.pixelSize: root.keyFontSize
-                                }
-                                MouseArea {
-                                    id: rightArrowArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: root.pressSpecial({ key: "Right" })
                                 }
                             }
                         }
