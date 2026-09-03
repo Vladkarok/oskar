@@ -13,7 +13,7 @@ tests share one helper process and each one starts where the last left off.
 
 import sys
 
-from harness import run, test
+from harness import TypingTarget, run, test
 
 # Two layouts, caps-toggle, starting on the second one. The nested session's
 # own config matches, so the compositor and the helper agree on the world.
@@ -132,6 +132,45 @@ def claims_are_owned(helper, keyboard):
 
     a.close()
     b.close()
+
+
+@test("a held modifier reaches a focused client as a chord")
+def modifiers_reach_the_client(helper, keyboard):
+    # The gap that let ticket 03 ship broken: every other assertion in this
+    # file is about a key going out, and a key going out is exactly what did
+    # work — bare taps typed while every chord arrived modifierless, because
+    # a wlroots compositor takes a virtual keyboard's modifier state from the
+    # `modifiers` request and not from watching key events. Only a client
+    # reading characters can tell the two apart.
+    client = helper.connect()
+    client.expect("hello 2", "hello 2")
+    # us,ua is still installed from the claims test; group 0 is `us`, and a
+    # `group` command is not a compile, so the churn count below is untouched.
+    client.expect("group 0", "ok")
+    keyboard.expect_group(0)
+
+    target = TypingTarget()
+    try:
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\n")
+
+        # The chord the panel emits for a latched Shift (ModifierReducer's
+        # `press`): the modifier is held around the one key it applies to.
+        client.expect("down LFSH", "ok")
+        client.expect("tap AD01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\nQ\n")
+
+        # And the latch really cleared: the same position after the release
+        # is lower case again.
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\nQ\nq\n")
+    finally:
+        target.close()
+        client.close()
 
 
 @test("the compositor still sees the configured layouts")
