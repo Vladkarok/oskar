@@ -308,16 +308,22 @@ def cap_exempts_modifiers(helper, keyboard):
     # client still reads a capital.
     client = helper.connect()
     client.expect("hello 2", "hello 2")
-    client.expect("down LFSH", "ok")
-    time.sleep(HOLD_CAP * 2 + 1.0)
-    helper.expect_no_log(f"releasing stuck key {LFSH}")
-    client.expect("tap LFSH", "err key held")
 
     target = TypingTarget()
     try:
+        # Unshifted first, so a later capital means the modifier and not a
+        # terminal that was never listening.
         client.expect("tap AD01", "ok")
         client.expect("tap RTRN", "ok")
-        target.expect_text("Q\n")
+        target.expect_text("q\n")
+
+        client.expect("down LFSH", "ok")
+        time.sleep(HOLD_CAP * 2 + 1.0)
+        helper.expect_no_log(f"releasing stuck key {LFSH}")
+        client.expect("tap LFSH", "err key held")
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\nQ\n")
     finally:
         target.close()
         client.expect("up LFSH", "ok")
