@@ -788,21 +788,47 @@ Item {
                                     }
                                 }
 
-                                // Ordinary keys fire on press, not on click. A
-                                // click only completes when the button comes
+                                // Everything that types fires on press, not on
+                                // click. Two reasons, and the second one is
+                                // the load-bearing one.
+                                //
+                                // A click only completes when the button comes
                                 // back up, so waiting for it charges every
                                 // keystroke the length of the press — which
                                 // reads as lag even though nothing is slow.
                                 // Real keyboards act on the way down.
+                                //
+                                // And `clicked` is not emitted at all for the
+                                // second press of a double click: the delegate
+                                // has an `onDoubleClicked`, so Qt marks that
+                                // press consumed and the sequence a cap sees
+                                // for two fast taps is press, click, press,
+                                // doubleClick. A cap driven from `onClicked`
+                                // therefore loses every other tap once the
+                                // taps fall inside the double-click interval —
+                                // five fast Backspaces deleted three. `pressed`
+                                // is emitted for both, which is why letter caps
+                                // never showed the loss.
                                 onPressed: {
-                                    if (!keyData.key) root.pressChar(keyData)
+                                    if (!keyData.key) {
+                                        root.pressChar(keyData)
+                                        return
+                                    }
+                                    if (Layout.positionForKeysym(keyData.key)) {
+                                        root.pressSpecial(keyData, false)
+                                    }
                                 }
 
-                                // Keys with a double-press meaning still need
-                                // the click, since a press alone cannot tell a
-                                // tap from the first half of a double.
+                                // What is left on the click is what does not
+                                // type: the modifiers, whose double press is a
+                                // second meaning a press alone cannot tell
+                                // apart, and the command caps (close, emoji,
+                                // lang, caps) where acting on the way down
+                                // would tear the panel out from under the
+                                // button that is still held.
                                 onClicked: {
                                     if (!keyData.key) return
+                                    if (Layout.positionForKeysym(keyData.key)) return
                                     if (!Modifiers.isModifier(keyData.key)) {
                                         root.pressSpecial(keyData, false)
                                         return
