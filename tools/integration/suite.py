@@ -31,6 +31,14 @@ THREE_GROUP = "configure\tevdev\tpc105\tus,ua,de\t\tgrp:caps_toggle\t\t0"
 # takes when the panel re-sends its configure after a compositor switch.
 THREE_GROUP_ON_DE = "configure\tevdev\tpc105\tus,ua,de\t\tgrp:caps_toggle\t\t2"
 
+# The owner's own option string. `shift:both_capslock_cancel` alongside
+# `grp:caps_toggle` is what lands <LFSH> in the Lock modifier map, which is
+# the difference between this suite's world and the session the panel
+# actually shipped into.
+CONFIGURE_CAPSLOCK_CANCEL = (
+    "configure\tevdev\tpc105\tus,ua\t\tshift:both_capslock_cancel,grp:caps_toggle\t\t0"
+)
+
 
 @test("a three-group keymap cycles through every group and wraps")
 def three_group_cycling(helper, keyboard):
@@ -215,6 +223,40 @@ def churn_held(helper, keyboard):
     helper.expect_compiles(4)
     # And the helper's own rate limiter never had to save us from one.
     helper.expect_no_log("refusing excessive keymap reconfiguration")
+
+
+@test("a held Shift capitalises under options that put Shift in the Lock modmap")
+def shift_capitalises_under_capslock_cancel(helper, keyboard):
+    # The gap that let the modifier fix ship still broken. Every case above
+    # runs on `grp:caps_toggle` alone, and on that keymap the modifier map
+    # says a held Shift means Shift. The owner's session adds
+    # `shift:both_capslock_cancel`, which puts Caps_Lock on the Shift keys'
+    # second level; with CAPS already out of Lock the compiled keymap reads
+    # `modifier_map Lock { <LFSH> }`, and a mask taken from that union told
+    # the compositor Shift+Lock. Shift+Lock on an ALPHABETIC key is level 1,
+    # so letters came out lowercase while the TWO_LEVEL number row, which
+    # ignores Lock, shifted correctly. Only a client reading both a letter
+    # and a digit can see that split.
+    #
+    # Last in the file on purpose: it is the only case that needs a keymap
+    # nothing else uses, and compiling one here rather than earlier keeps the
+    # churn count above a statement about the paths that matter.
+    client = helper.connect()
+    client.expect("hello 2", "hello 2")
+    client.expect(CONFIGURE_CAPSLOCK_CANCEL, "configured")
+    keyboard.expect_group(0)
+
+    target = TypingTarget()
+    try:
+        client.expect("down LFSH", "ok")
+        client.expect("tap AD01", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("Q!\n")
+    finally:
+        target.close()
+        client.close()
 
 
 if __name__ == "__main__":

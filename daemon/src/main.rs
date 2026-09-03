@@ -193,42 +193,48 @@ fn parse_keycodes(keymap: &str) -> std::collections::HashMap<String, u32> {
 /// The bit for a real modifier is its index in the order xkb fixes: Shift,
 /// Lock, Control, Mod1..Mod5.
 ///
-/// Read from `modifier_map` and nowhere else, which is the known limit: a
-/// position that becomes a modifier through a compat interpret rather than a
-/// modifier map gets no bit. `lv3:ralt_switch` is the case that exists —
-/// AltGr there emits ISO_Level3_Shift and reaches Mod5 through the interpret
-/// — and it is out of v1's modifier roster (spec-v1 §5), so it is left alone
-/// rather than guessed at.
-fn parse_modifier_masks(
+/// Asked of a real xkb state rather than read out of `modifier_map`, because
+/// the modifier map is not what a keypress means. It is the union of every
+/// modifier a position can reach on any level, and xkb resolves a press
+/// through the action on the level actually selected. `shift:both_capslock_
+/// cancel` is the case that broke: it puts Caps_Lock on the Shift keys'
+/// second level, so with `grp:caps_toggle` also in play the keymap says
+/// `modifier_map Lock { <LFSH> }`, and a union said a held Shift meant
+/// Shift+Lock. Shift+Lock on an ALPHABETIC key is level 1 — the letters came
+/// out lowercase while the TWO_LEVEL number row, which ignores Lock, shifted
+/// correctly.
+///
+/// Pressing the position in a clean state and serializing what comes out is
+/// what the compositor would do for a physical keyboard, so it agrees by
+/// construction — and it picks up the positions that become modifiers through
+/// a compat interpret rather than a modifier map, which the old reading
+/// admitted it could not see.
+fn modifier_masks_for_keymap(
     keymap: &str,
     codes: &std::collections::HashMap<String, u32>,
 ) -> std::collections::HashMap<u32, u32> {
-    const REAL_MODIFIERS: [&str; 8] = [
-        "Shift", "Lock", "Control", "Mod1", "Mod2", "Mod3", "Mod4", "Mod5",
-    ];
-    let mut masks = std::collections::HashMap::new();
+    use xkbcommon::xkb;
 
-    for entry in keymap.split("modifier_map").skip(1) {
-        let Some((name, rest)) = entry.split_once('{') else {
-            continue;
-        };
-        let Some(index) = REAL_MODIFIERS
-            .iter()
-            .position(|modifier| *modifier == name.trim())
-        else {
-            continue;
-        };
-        let Some((body, _)) = rest.split_once('}') else {
-            continue;
-        };
-        for key in body.split(',') {
-            let key = key.trim();
-            let Some(key) = key.strip_prefix('<').and_then(|k| k.strip_suffix('>')) else {
-                continue;
-            };
-            if let Some(code) = codes.get(key) {
-                *masks.entry(*code).or_insert(0) |= 1 << index;
-            }
+    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+    let Some(compiled) = xkb::Keymap::new_from_string(
+        &context,
+        keymap.to_string(),
+        xkb::KEYMAP_FORMAT_TEXT_V1,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    ) else {
+        return std::collections::HashMap::new();
+    };
+
+    let mut masks = std::collections::HashMap::new();
+    for code in codes.values() {
+        // A fresh state per position rather than press-then-release: a key
+        // carrying LockMods (Caps Lock) does not undo itself on release, and
+        // would leave its bit set for every position probed after it.
+        let mut state = xkb::State::new(&compiled);
+        state.update_key(xkb::Keycode::from(code + 8), xkb::KeyDirection::Down);
+        let mask = state.serialize_mods(xkb::STATE_MODS_EFFECTIVE);
+        if mask != 0 {
+            masks.insert(*code, mask);
         }
     }
     masks
@@ -345,7 +351,7 @@ impl Shared {
         self.group = config.group;
         keyboard.modifiers(0, 0, 0, self.group);
         self.codes = parse_keycodes(&text);
-        self.modifier_masks = parse_modifier_masks(&text, &self.codes);
+        self.modifier_masks = modifier_masks_for_keymap(&text, &self.codes);
         self.ready = !self.codes.is_empty();
         self.config = Some(config.clone());
         self.uploads.push_back(now);
@@ -865,7 +871,7 @@ mod tests {
     fn reads_modifier_bits_out_of_a_compiled_keymap() {
         let text = compile_keymap(&XkbConfig::default()).expect("us should compile");
         let codes = parse_keycodes(&text);
-        let masks = parse_modifier_masks(&text, &codes);
+        let masks = modifier_masks_for_keymap(&text, &codes);
         // xkb fixes the order of the real modifiers, so Shift is bit 0,
         // Control bit 2 and Mod4 — which is where `us` puts Super — bit 6.
         assert_eq!(masks.get(&codes["LFSH"]), Some(&0b1));
@@ -892,11 +898,76 @@ mod tests {
         })
         .expect("us with altwin:swap_lalt_lwin should compile");
         let codes = parse_keycodes(&text);
-        let masks = parse_modifier_masks(&text, &codes);
+        let masks = modifier_masks_for_keymap(&text, &codes);
         assert_eq!(masks.get(&codes["LALT"]), Some(&0b100_0000));
         assert_eq!(masks.get(&codes["LWIN"]), Some(&0b1000));
         // And the modifiers the option does not touch are unmoved.
         assert_eq!(masks.get(&codes["LFSH"]), Some(&0b1));
+    }
+
+    #[test]
+    fn a_position_that_is_a_modifier_only_by_interpret_still_carries_its_bit() {
+        // The limit the old modifier-map reading admitted to: under
+        // `lv3:ralt_switch` AltGr emits ISO_Level3_Shift and reaches Mod5
+        // through a compat interpret, with no modifier-map entry to read.
+        let text = compile_keymap(&XkbConfig {
+            options: "lv3:ralt_switch".into(),
+            ..XkbConfig::default()
+        })
+        .expect("us with lv3:ralt_switch should compile");
+        let codes = parse_keycodes(&text);
+        let masks = modifier_masks_for_keymap(&text, &codes);
+        assert_eq!(masks.get(&codes["RALT"]), Some(&0b1000_0000));
+    }
+
+    /// Asserts on the characters a client would read, not on a bit pattern:
+    /// the mask was wrong in a way that still looked plausible, and only the
+    /// letter came out wrong.
+    ///
+    /// The owner's options are the case that broke.
+    /// `shift:both_capslock_cancel` puts Caps_Lock on the second level of the
+    /// Shift keys and `grp:caps_toggle` takes CAPS out of Lock, so the
+    /// compiled keymap ends up with `modifier_map Lock { <LFSH> }` alongside
+    /// `modifier_map Shift { <LFSH>, <RTSH> }`. A mask OR-ed straight out of
+    /// the modifier map therefore reported Shift+Lock for a held Shift — and
+    /// Shift+Lock on an ALPHABETIC key selects level 1, a lowercase letter.
+    /// The number row is TWO_LEVEL and ignores Lock, which is exactly why
+    /// digits shifted while letters did not.
+    #[test]
+    fn a_held_shift_types_a_capital_under_the_owners_options() {
+        use xkbcommon::xkb;
+
+        let text = compile_keymap(&XkbConfig {
+            layouts: "us,ua".into(),
+            options: "shift:both_capslock_cancel,grp:caps_toggle".into(),
+            ..XkbConfig::default()
+        })
+        .expect("the owner's RMLVO should compile");
+        let codes = parse_keycodes(&text);
+        let masks = modifier_masks_for_keymap(&text, &codes);
+        let mask = masks
+            .get(&codes["LFSH"])
+            .copied()
+            .expect("Shift must carry a modifier bit");
+
+        // Stand in for the compositor: a fresh state told what the helper
+        // says is held, then asked what the key positions produce.
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_string(
+            &context,
+            text,
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .expect("the helper's own keymap text should compile");
+        let mut state = xkb::State::new(&keymap);
+        state.update_mask(mask, 0, 0, 0, 0, 0);
+
+        let typed = |name: &str| state.key_get_utf8(xkb::Keycode::from(codes[name] + 8));
+        assert_eq!(typed("AD01"), "Q", "a held Shift must capitalise a letter");
+        // The half that kept working, asserted so a fix that breaks it fails
+        // here rather than on the next hand test.
+        assert_eq!(typed("AE01"), "!", "a held Shift must shift the number row");
     }
 
     #[test]
