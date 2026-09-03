@@ -97,9 +97,11 @@ Wrong answers we shipped and withdrew:
 What we do now: **reading** takes the first tier that answers — filtered
 `main:true` (Hyprland's `m_active`, the seat's current keyboard, which
 moves on every real keypress), then the device the last switch named,
-then layout progress. **Switching** only accepts the first two tiers;
-with no positive evidence the language button greys out rather than
-guessing, because advancing a guessed device is what poisoned the seat
+then layout progress. **Switching** only accepts the first two tiers, and
+ticket 19 strengthens both with a physical-device inventory gate; at startup
+that inventory seeds the named tier. With no positive evidence the language
+button greys out rather than guessing, because advancing a guessed device is
+what poisoned the seat
 before. Residual windows are documented in the code comments rather than
 pretended away: hotplug and mouse media keys can move the flag until the
 next keypress, `activelayout` also fires for hotplug and config reloads,
@@ -275,9 +277,10 @@ our merged fix under his MIT, same as ours carries his.
 At shell start, the seat's `main` keyboard can already be fcitx5 or this
 helper, so the two safe switch tiers from §5 have no physical device to name.
 The helper now snapshots kernel input devices and udev metadata: a candidate
-must be tagged `ID_INPUT_KEYBOARD=1`, have a libinput device group, and share
-that group with no mouse, touchpad, touchscreen or tablet. The pointer-group
-rule rejects gaming mice whose HID interfaces advertise a complete keyboard.
+must have a physical bus and path, be tagged `ID_INPUT_KEYBOARD=1`, advertise
+the ordinary typing positions, have a libinput device group, and share that
+group with no mouse, touchpad, touchscreen or tablet. The pointer-group rule
+rejects gaming mice whose HID interfaces advertise a complete keyboard.
 Missing metadata rejects the candidate; it never becomes a reason to guess.
 
 The first positively identified name seeds §5's existing named-device tier.

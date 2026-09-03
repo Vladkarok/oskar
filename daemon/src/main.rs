@@ -514,8 +514,19 @@ fn physical_keyboard_names(input_root: &Path, udev_root: &Path) -> Vec<String> {
         name: String,
         group: String,
         keyboard: bool,
+        physical: bool,
+        typing_keys: bool,
         pointer: bool,
     }
+
+    let has_key = |bitmap: &str, code: usize| {
+        bitmap
+            .split_whitespace()
+            .rev()
+            .nth(code / u64::BITS as usize)
+            .and_then(|word| u64::from_str_radix(word, 16).ok())
+            .is_some_and(|word| word & (1 << (code % u64::BITS as usize)) != 0)
+    };
 
     let Ok(entries) = std::fs::read_dir(input_root) else {
         return Vec::new();
@@ -549,10 +560,21 @@ fn physical_keyboard_names(input_root: &Path, udev_root: &Path) -> Vec<String> {
         if group.is_empty() {
             continue;
         }
+        let keys =
+            std::fs::read_to_string(path.join("device/capabilities/key")).unwrap_or_default();
+        let typing_positions = (2..=11)
+            .chain(16..=25)
+            .chain(30..=38)
+            .chain(44..=50)
+            .chain([28, 57]);
         devices.push(Device {
             name: name.trim().to_string(),
             group,
             keyboard: property("ID_INPUT_KEYBOARD") == Some("1"),
+            physical: property("ID_BUS").is_some() && property("ID_PATH").is_some(),
+            typing_keys: typing_positions
+                .into_iter()
+                .all(|code| has_key(&keys, code)),
             pointer: [
                 "ID_INPUT_MOUSE",
                 "ID_INPUT_TOUCHPAD",
@@ -571,7 +593,12 @@ fn physical_keyboard_names(input_root: &Path, udev_root: &Path) -> Vec<String> {
         .collect();
     let mut names: Vec<String> = devices
         .iter()
-        .filter(|device| device.keyboard && !pointer_groups.contains(device.group.as_str()))
+        .filter(|device| {
+            device.keyboard
+                && device.physical
+                && device.typing_keys
+                && !pointer_groups.contains(device.group.as_str())
+        })
         .map(|device| {
             device
                 .name
@@ -1087,10 +1114,11 @@ mod tests {
         let udev = root.join("udev");
         std::fs::create_dir_all(&udev).unwrap();
 
-        let device = |event: &str, dev: &str, name: &str, properties: &str| {
+        let device = |event: &str, dev: &str, name: &str, properties: &str, keys: &str| {
             let path = input.join(event);
-            std::fs::create_dir_all(path.join("device")).unwrap();
+            std::fs::create_dir_all(path.join("device/capabilities")).unwrap();
             std::fs::write(path.join("device/name"), name).unwrap();
+            std::fs::write(path.join("device/capabilities/key"), keys).unwrap();
             std::fs::write(path.join("dev"), dev).unwrap();
             std::fs::write(udev.join(format!("c{dev}")), properties).unwrap();
         };
@@ -1098,25 +1126,43 @@ mod tests {
             "event1",
             "13:1",
             "QEMU USB Keyboard",
-            "E:ID_INPUT_KEYBOARD=1\nE:LIBINPUT_DEVICE_GROUP=keyboard\n",
+            "E:ID_INPUT_KEYBOARD=1\nE:ID_BUS=usb\nE:ID_PATH=pci-keyboard\nE:LIBINPUT_DEVICE_GROUP=keyboard\n",
+            "ffffffffffffffff",
         );
         device(
             "event2",
             "13:2",
             "Gaming Mouse Keyboard",
-            "E:ID_INPUT_KEYBOARD=1\nE:LIBINPUT_DEVICE_GROUP=mouse\n",
+            "E:ID_INPUT_KEYBOARD=1\nE:ID_BUS=usb\nE:ID_PATH=pci-mouse\nE:LIBINPUT_DEVICE_GROUP=mouse\n",
+            "ffffffffffffffff",
         );
         device(
             "event3",
             "13:3",
             "Gaming Mouse",
-            "E:ID_INPUT_MOUSE=1\nE:LIBINPUT_DEVICE_GROUP=mouse\n",
+            "E:ID_INPUT_MOUSE=1\nE:ID_BUS=usb\nE:ID_PATH=pci-mouse\nE:LIBINPUT_DEVICE_GROUP=mouse\n",
+            "0",
         );
         device(
             "event4",
             "13:4",
             "Power Button",
             "E:ID_INPUT_KEY=1\nE:LIBINPUT_DEVICE_GROUP=power\n",
+            "ffffffffffffffff",
+        );
+        device(
+            "event5",
+            "13:5",
+            "uinput pseudo keyboard",
+            "E:ID_INPUT_KEYBOARD=1\nE:LIBINPUT_DEVICE_GROUP=pseudo\n",
+            "ffffffffffffffff",
+        );
+        device(
+            "event6",
+            "13:6",
+            "Laptop Hotkeys Keyboard",
+            "E:ID_INPUT_KEYBOARD=1\nE:ID_BUS=platform\nE:ID_PATH=platform-hotkeys\nE:LIBINPUT_DEVICE_GROUP=hotkeys\n",
+            "8000",
         );
 
         assert_eq!(
