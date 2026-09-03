@@ -935,13 +935,23 @@ Item {
                                 //   pressed, doubleClicked, released
                                 //
                                 // so `doubleClicked` arrives on the way *down*
-                                // of the second press, in the same delivery as
-                                // its `pressed` and before any frame is drawn.
-                                // The second press is therefore seen first as
-                                // a click on a latched modifier — which §5
-                                // says returns it to idle, not to locked — and
-                                // the reducer rolls that back when the lock
-                                // lands. Nothing renders in between.
+                                // of the second press, before its own
+                                // `released`. The second press is therefore
+                                // seen first as a click on a latched modifier
+                                // — which §5 says returns it to idle, never to
+                                // locked — and the reducer rolls that back
+                                // when the lock lands a moment later.
+                                //
+                                // The window in which the cap holds that
+                                // intermediate idle is one event delivery, not
+                                // a timer, so the worst it can cost is a
+                                // single frame of the idle fill during a
+                                // double click. That it is *zero* frames was
+                                // not established: QTest injects the whole
+                                // sequence in one pass and so cannot measure
+                                // what the compositor's own delivery does.
+                                // The bound is what is claimed here, and it is
+                                // the residual the by-hand retest looks for.
                                 onPressed: {
                                     if (!keyData.key) {
                                         root.pressChar(keyData)
