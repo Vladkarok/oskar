@@ -11,10 +11,22 @@ Adding a coverage: write another `@test` below. The order matters — the
 tests share one helper process and each one starts where the last left off.
 """
 
+import os
+import subprocess
 import sys
 import time
 
-from harness import TypingTarget, run, test
+from harness import Failure, TypingTarget, run, test
+
+# The helper's stuck-key cap, injected by tools/smoke-daemon.sh so the suite
+# does not have to sleep through the real fifteen seconds. Same variable the
+# helper reads, so the two cannot drift apart.
+HOLD_CAP = int(os.environ.get("OMARCHY_OSK_HOLD_CAP_MS", "15000")) / 1000.0
+
+# Evdev codes, which is what the helper names in its log. AD01 is the Q
+# position and LFSH the left Shift.
+AD01 = 16
+LFSH = 42
 
 # Two layouts, caps-toggle, starting on the second one. The nested session's
 # own config matches, so the compositor and the helper agree on the world.
@@ -264,6 +276,125 @@ def shift_capitalises_under_capslock_cancel(helper, keyboard):
         client.expect("tap RTRN", "ok")
         target.expect_text("Q!\n")
     finally:
+        target.close()
+        client.close()
+
+
+@test("a non-modifier held past the cap is released by the helper and logged")
+def cap_releases_a_stuck_key(helper, keyboard):
+    # The wedged-panel case (spec-v1 §6). Nothing arrives on the socket after
+    # the `down`, which is exactly the shape a panel that is alive but stuck
+    # has — so the release cannot come from the panel and cannot come from a
+    # heartbeat, because there is none.
+    client = helper.connect()
+    client.expect("hello 2", "hello 2")
+    client.expect("down AD01", "ok")
+    # `tap` on a held code is refused, which is how the claim is observable
+    # from out here without reading the helper's internals.
+    client.expect("tap AD01", "err key held")
+    time.sleep(HOLD_CAP + 1.0)
+    helper.expect_log(f"releasing stuck key {AD01}")
+    # And the claim really went with it: the same position taps again.
+    client.expect("tap AD01", "ok")
+    client.close()
+
+
+@test("a modifier held past the cap is left alone and still modifies")
+def cap_exempts_modifiers(helper, keyboard):
+    # A locked Ctrl is deliberately held for minutes (spec-v1 §5), so the cap
+    # must not touch a modifier code. "The lock indicator still matches
+    # reality" is a panel-side statement, but the fact underneath it is
+    # visible here: after twice the cap the modifier is still claimed, and a
+    # client still reads a capital.
+    client = helper.connect()
+    client.expect("hello 2", "hello 2")
+    client.expect("down LFSH", "ok")
+    time.sleep(HOLD_CAP * 2 + 1.0)
+    helper.expect_no_log(f"releasing stuck key {LFSH}")
+    client.expect("tap LFSH", "err key held")
+
+    target = TypingTarget()
+    try:
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("Q\n")
+    finally:
+        target.close()
+        client.expect("up LFSH", "ok")
+        client.close()
+
+
+@test("a client dying mid-hold releases the non-modifier it was holding")
+def disconnect_releases_a_hold(helper, keyboard):
+    # Layer one of the protection, and the common case: the per-connection
+    # claim rules already lift everything a connection holds when its socket
+    # closes, well before the cap would.
+    dying = helper.connect()
+    dying.expect("hello 2", "hello 2")
+    dying.expect("down AD01", "ok")
+    dying.close()
+    # The release happens on the dying connection's own thread when its read
+    # returns EOF. Well under the cap, and the point of the assertion below is
+    # that the cap is not what did it.
+    time.sleep(0.5)
+
+    fresh = helper.connect()
+    fresh.expect("hello 2", "hello 2")
+    # Free immediately, not fifteen seconds later: the disconnect did it.
+    fresh.expect("tap AD01", "ok")
+    fresh.close()
+
+
+def _hyprctl(*keywords):
+    for keyword in keywords:
+        subprocess.run(["hyprctl", "keyword", *keyword.split()], capture_output=True)
+
+
+def _repeats_while_held(client, target, seconds):
+    """How many characters a held position produced at the focused client."""
+    before = target.text().count("q")
+    client.expect("down AD01", "ok")
+    time.sleep(seconds)
+    client.expect("up AD01", "ok")
+    # `cat` is line buffered, so the whole burst arrives with the newline.
+    client.expect("tap RTRN", "ok")
+    for _ in range(40):
+        if target.text().endswith("\n"):
+            break
+        time.sleep(0.1)
+    return target.text().count("q") - before
+
+
+@test("a held key repeats, at the compositor's rate rather than a constant")
+def repeat_belongs_to_the_compositor(helper, keyboard):
+    # The point of sending `down`/`up` instead of `tap`, and the reason the
+    # panel has no repeat timer: everything between the two is the
+    # compositor's, at the delay and rate the user configured. Asserted by
+    # changing those settings and nothing else — no rebuild, no restart, no
+    # code change — and requiring the observed count to follow.
+    #
+    # Last in the file: it is the only test that writes to the compositor's
+    # config, so whatever that provokes cannot disturb the compile counts
+    # above.
+    client = helper.connect()
+    client.expect("hello 2", "hello 2")
+    keyboard.expect_group(0)
+
+    target = TypingTarget()
+    try:
+        _hyprctl("input:repeat_delay 300", "input:repeat_rate 5")
+        slow = _repeats_while_held(client, target, 1.2)
+        _hyprctl("input:repeat_delay 300", "input:repeat_rate 30")
+        fast = _repeats_while_held(client, target, 1.2)
+        if slow < 2:
+            raise Failure(f"a held key did not repeat at all (typed {slow})")
+        if fast <= slow:
+            raise Failure(
+                f"the rate changed and the panel did not follow: {slow} at 5/s, "
+                f"{fast} at 30/s"
+            )
+    finally:
+        _hyprctl("input:repeat_delay 600", "input:repeat_rate 25")
         target.close()
         client.close()
 

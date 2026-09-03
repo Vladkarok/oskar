@@ -43,6 +43,10 @@ function initialState() {
     for (var i = 0; i < ORDER.length; i++) {
         state[ORDER[i]] = "idle"
     }
+    // The key the mouse button is currently down on, and the modifiers wrapped
+    // around it, so the release can lift them in the right order. Null between
+    // presses; see `press` for why a press is not self-contained any more.
+    state.pending = null
     return state
 }
 
@@ -77,6 +81,7 @@ function unchanged(state) {
 ///   { type: "click",        modifier }
 ///   { type: "doubleClick",  modifier }
 ///   { type: "press",        position, letter, caps, shift }
+///   { type: "release" }
 ///
 /// `shift` on a press means the cap draws the position's shift level and must
 /// type that level — the symbols page (spec-v1 §4). Like Caps Lock it is
@@ -95,6 +100,8 @@ function reduce(state, event) {
         return doubleClick(state, event.modifier)
     case "press":
         return press(state, event)
+    case "release":
+        return release(state)
     // A page switch changes what can be seen, not what is held: locked
     // modifiers stay down and latched ones stay armed, because neither is a
     // key press and only a key press consumes a latch. Same for a language
@@ -176,9 +183,28 @@ function press(state, event) {
     for (var d = 0; d < ORDER.length; d++) {
         if (wrap.indexOf(ORDER[d]) !== -1) lines.push("down " + POSITIONS[ORDER[d]])
     }
-    lines.push("tap " + position)
+    // `down`, not `tap`: the key stays down for as long as the mouse button
+    // does, and the compositor repeats it at the user's own repeat_delay and
+    // repeat_rate (spec-v1 §6). A tap could only ever type once, and a panel
+    // timer that made up the difference could not match the user's settings.
+    lines.push("down " + position)
+    next.pending = { position: position, wrap: wrap }
+    return { state: next, lines: lines }
+}
+
+/// The other half of a press: lifts the key, then the modifiers wrapped around
+/// it, in the reverse of the order they went down. A release with nothing
+/// pending emits nothing, which is what makes it safe to call from both
+/// `released` and `canceled`.
+function release(state) {
+    if (!state.pending) return unchanged(state)
+    var next = copy(state)
+    next.pending = null
+    var lines = ["up " + state.pending.position]
     for (var u = ORDER.length - 1; u >= 0; u--) {
-        if (wrap.indexOf(ORDER[u]) !== -1) lines.push("up " + POSITIONS[ORDER[u]])
+        if (state.pending.wrap.indexOf(ORDER[u]) !== -1) {
+            lines.push("up " + POSITIONS[ORDER[u]])
+        }
     }
     return { state: next, lines: lines }
 }
@@ -195,7 +221,10 @@ function shiftWanted(event, shiftLatched) {
 /// when the panel closes or reconnects to a helper that no longer shares its
 /// idea of what is down.
 function releaseAll(state) {
-    var lines = []
+    // Whatever the mouse button is still down on goes first, with its own
+    // wrap, before the locks: closing the panel mid-hold must not leave the
+    // key repeating into whatever had focus.
+    var lines = release(state).lines
     for (var i = ORDER.length - 1; i >= 0; i--) {
         if (state[ORDER[i]] === "locked") lines.push("up " + POSITIONS[ORDER[i]])
     }

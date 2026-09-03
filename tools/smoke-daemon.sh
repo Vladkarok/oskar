@@ -15,6 +15,12 @@ daemon="$root/daemon/target/release/omarchy-osk-daemon"
 socket="$XDG_RUNTIME_DIR/omarchy-osk/control.sock"
 log="$XDG_RUNTIME_DIR/omarchy-osk-smoke.log"
 
+# The stuck-key cap ships at fifteen seconds (spec-v1 §6). A suite that slept
+# through that four times over would be useless, so the helper takes the cap
+# from the environment and the suite reads the same variable — what is asserted
+# is the cap's behaviour, with its duration as the one injected fact.
+export OMARCHY_OSK_HOLD_CAP_MS="${OMARCHY_OSK_HOLD_CAP_MS:-2000}"
+
 "$daemon" >"$log" 2>&1 &
 daemon_pid=$!
 cleanup() {

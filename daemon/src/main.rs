@@ -34,6 +34,12 @@
 //!   configure<TAB>rules<TAB>model<TAB>layouts<TAB>variants<TAB>options
 //!             <TAB>kb_file<TAB>group
 //! Replies are `ok`, `ready <n>`, `pong`, or `err <reason>`.
+//!
+//! Key repeat belongs to the compositor: a press is `down`, a release is `up`,
+//! and nothing here or in the panel repeats anything. What the helper does add
+//! is a cap — a non-modifier code held past fifteen seconds is lifted and
+//! logged, because the only way that happens is a panel that is alive but
+//! wedged. Modifier codes are exempt; a locked Ctrl is deliberately held.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
@@ -54,6 +60,33 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 /// Bumped whenever the command set changes, so a plugin updated without
 /// reinstalling the helper says so instead of failing silently.
 const PROTOCOL_VERSION: u32 = 2;
+
+/// How long a non-modifier code may stay held before the helper lifts it
+/// (spec-v1 §6). Fifteen seconds of held backspace is about six hundred
+/// repeats; nobody does that with a mouse button, so a hold that long means
+/// the panel is alive but wedged.
+const DEFAULT_HOLD_CAP: Duration = Duration::from_secs(15);
+
+/// The cap, overridable so the integration seam can assert on it without
+/// sleeping fifteen seconds. Read once: a value that changed under a live
+/// hold would make the deadline already armed on a client thread a lie.
+fn hold_cap() -> Duration {
+    static CAP: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("OMARCHY_OSK_HOLD_CAP_MS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .filter(|ms| *ms > 0)
+            .map_or(DEFAULT_HOLD_CAP, Duration::from_millis)
+    })
+}
+
+/// The compositor only orders key events by this stamp, so a counter is enough
+/// and saves a clock syscall per keystroke.
+fn stamp() -> u32 {
+    static COUNTER: AtomicU32 = AtomicU32::new(1);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Until the panel reports the real list. Any layout compiles; this one just
 /// gives the helper a valid keymap to be ready with.
@@ -257,6 +290,14 @@ enum Command {
     Configure(XkbConfig),
 }
 
+/// One logical press: who is claiming it, and when the device first saw it go
+/// down. The instant belongs to the press rather than to any one claim, since
+/// the device only holds the key once however many connections want it.
+struct Hold {
+    claimants: std::collections::HashSet<u64>,
+    since: Instant,
+}
+
 /// What the socket threads need. Wayland proxies are Send + Sync and the
 /// connection serialises requests internally, so client threads drive the
 /// keyboard directly. That leaves the main thread free to sit in poll.
@@ -276,7 +317,7 @@ struct Shared {
     /// The device is shared, so a code is one logical press with many
     /// claimants: it goes down with the first claim and up with the last
     /// release, and a claim is what authorizes a release.
-    held: std::collections::HashMap<u32, std::collections::HashSet<u64>>,
+    held: std::collections::HashMap<u32, Hold>,
     uploads: std::collections::VecDeque<Instant>,
 }
 
@@ -532,7 +573,45 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
     static CONNECTION: AtomicU64 = AtomicU64::new(1);
     let conn_id = CONNECTION.fetch_add(1, Ordering::Relaxed);
 
-    for line in BufReader::new(stream).lines().map_while(Result::ok) {
+    let mut reader = BufReader::new(match stream.try_clone() {
+        Ok(handle) => handle,
+        Err(_) => return,
+    });
+    let mut pending = String::new();
+    loop {
+        // The only thing this connection ever waits on is its own next line.
+        // Arming that wait with the cap's deadline is what enforces the cap
+        // without a timer thread: no hold means no deadline and the read
+        // blocks the way it always did, and a hold means exactly one wakeup,
+        // at the moment the key is due to be lifted.
+        let timeout = hold_deadline(&shared, conn_id).map(|deadline| {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .max(Duration::from_millis(1))
+        });
+        if stream.set_read_timeout(timeout).is_err() {
+            break;
+        }
+        match reader.read_line(&mut pending) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                // The deadline came due with nothing to read, which is the
+                // wedged panel this cap exists for. `pending` keeps whatever
+                // part of a line did arrive; the next read appends to it.
+                for code in expire_stuck_keys(&shared, &connection) {
+                    held.retain(|entry| *entry != code);
+                }
+                continue;
+            }
+            Err(_) => break,
+        }
+        let line = std::mem::take(&mut pending);
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -583,6 +662,61 @@ fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>, conn
     }
 }
 
+/// When the client thread must next wake to enforce the cap: the earliest
+/// expiry among the non-modifier codes this connection is claiming, or `None`
+/// when it holds nothing capped. `None` means the read blocks with no deadline
+/// at all, which is what keeps this from being a poll — an idle connection
+/// wakes zero times, and a holding one wakes once.
+fn hold_deadline(shared: &SharedRef, conn_id: u64) -> Option<Instant> {
+    let shared = shared.lock().unwrap();
+    let cap = hold_cap();
+    shared
+        .held
+        .iter()
+        .filter(|(code, hold)| {
+            hold.claimants.contains(&conn_id) && !shared.modifier_masks.contains_key(*code)
+        })
+        .map(|(_, hold)| hold.since + cap)
+        .min()
+}
+
+/// Lifts every non-modifier code held past the cap and says so in the log.
+/// Modifier codes are exempt: a locked Ctrl (spec-v1 §5) is deliberately held
+/// for minutes, and releasing it would make the lock indicator lie.
+///
+/// The release is unconditional rather than per-claim — the device holds the
+/// key once, so lifting it means dropping every claim on it. Returns the codes
+/// it released so the caller can forget them too.
+fn expire_stuck_keys(shared: &SharedRef, connection: &Connection) -> Vec<u32> {
+    let mut shared = shared.lock().unwrap();
+    let cap = hold_cap();
+    let now = Instant::now();
+    let expired: Vec<u32> = shared
+        .held
+        .iter()
+        .filter(|(code, hold)| {
+            !shared.modifier_masks.contains_key(*code) && now.duration_since(hold.since) >= cap
+        })
+        .map(|(code, _)| *code)
+        .collect();
+    if expired.is_empty() {
+        return expired;
+    }
+    let Some(keyboard) = shared.keyboard.clone() else {
+        return Vec::new();
+    };
+    for code in &expired {
+        shared.held.remove(code);
+        keyboard.key(stamp(), *code, 0);
+        eprintln!(
+            "releasing stuck key {code} held past {} ms",
+            cap.as_millis()
+        );
+    }
+    let _ = connection.flush();
+    expired
+}
+
 fn apply(
     shared: &SharedRef,
     connection: &Connection,
@@ -623,11 +757,6 @@ fn apply_locked(
     // arm already does this.
     let keyboard = keyboard.clone();
 
-    // The compositor only orders events by this stamp, so a counter is enough
-    // and saves a clock syscall per keystroke.
-    static COUNTER: AtomicU32 = AtomicU32::new(1);
-    let stamp = || COUNTER.fetch_add(1, Ordering::Relaxed);
-
     // Codes go out as evdev numbers, the xkb keycode minus 8.
     let resolve = |key: &Key| match key {
         Key::Code(code) => Some(*code),
@@ -661,12 +790,18 @@ fn apply_locked(
                 // re-claim after a keymap swap drained the claims out from
                 // under it — its list still shows the code, but the device
                 // press is genuinely new again.
-                let claimants = shared.held.entry(code).or_default();
-                let was_first = claimants.is_empty();
-                if !claimants.contains(&conn_id) {
-                    claimants.insert(conn_id);
+                let hold = shared.held.entry(code).or_insert_with(|| Hold {
+                    claimants: std::collections::HashSet::new(),
+                    since: Instant::now(),
+                });
+                let was_first = hold.claimants.is_empty();
+                if !hold.claimants.contains(&conn_id) {
+                    hold.claimants.insert(conn_id);
                 }
                 if was_first {
+                    // The stuck-key cap measures the device press, so a
+                    // re-press after the last claim went restarts the clock.
+                    hold.since = Instant::now();
                     keyboard.key(stamp(), code, 1);
                 }
                 pressed = Some(code);
@@ -684,11 +819,11 @@ fn apply_locked(
                 // view of its own state after a mid-hold keymap swap
                 // released everything behind its back.
                 let send_release = match shared.held.get_mut(&code) {
-                    Some(claimants) => {
-                        if !claimants.remove(&conn_id) {
+                    Some(hold) => {
+                        if !hold.claimants.remove(&conn_id) {
                             return "err not holding";
                         }
-                        let last = claimants.is_empty();
+                        let last = hold.claimants.is_empty();
                         if last {
                             shared.held.remove(&code);
                         }

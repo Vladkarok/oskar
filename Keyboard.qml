@@ -676,6 +676,13 @@ Item {
         })
     }
 
+    /// The release half of every cap that types. The key stayed down for as
+    /// long as the mouse button did, which is what let the compositor repeat
+    /// it; this lifts it, and the modifiers that were wrapped around it.
+    function releaseKey() {
+        applyModifierEvent({ type: "release" })
+    }
+
     function pressSpecial(keyData, doubleClick) {
         switch (keyData.key) {
         case "close": closeRequested(); return
@@ -753,6 +760,12 @@ Item {
                             // refreshLayoutsFromHypr for why one may not exist.
                             property bool isLang: keyData.key === "lang"
                             property bool isDual: root.isDualKey(keyData)
+                            // Whether this cap types, which is the same test
+                            // `onPressed` makes: a character, or a keysym with
+                            // a position behind it. The modifiers and the
+                            // command caps are neither, and act on the click.
+                            property bool types: !keyData.key
+                                || !!Layout.positionForKeysym(keyData.key)
 
                             color: isLang ? (root.typedKeyboard ? root.accentColor : root.keyBg)
                                 : locked ? root.lockedFill
@@ -852,6 +865,18 @@ Item {
                                         root.pressSpecial(keyData, false)
                                     }
                                 }
+
+                                // The key is held for as long as the button
+                                // is, so the compositor repeats it at the
+                                // user's own repeat_delay and repeat_rate
+                                // (spec-v1 §6) and the panel runs no repeat
+                                // timer of its own. `canceled` matters as much
+                                // as `released`: a grab lost to a popup or to
+                                // the panel closing has to lift the key too,
+                                // or it repeats into the focused window until
+                                // the helper's cap notices.
+                                onReleased: if (keyRect.types) root.releaseKey()
+                                onCanceled: if (keyRect.types) root.releaseKey()
 
                                 // What is left on the click is what does not
                                 // type: the modifiers, whose double press is a
