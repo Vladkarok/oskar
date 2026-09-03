@@ -10,11 +10,12 @@
 // an unresolved level draws blank and is reported like any other fallback.
 var functionRow = [
     { label: "esc", key: "Escape", w: 1.25 },
+    { t: "`", s: "~", k: "TLDE" },
     { label: "F1", key: "F1" }, { label: "F2", key: "F2" }, { label: "F3", key: "F3" },
     { label: "F4", key: "F4" }, { label: "F5", key: "F5" }, { label: "F6", key: "F6" },
     { label: "F7", key: "F7" }, { label: "F8", key: "F8" }, { label: "F9", key: "F9" },
     { label: "F10", key: "F10" }, { label: "F11", key: "F11" }, { label: "F12", key: "F12" },
-    { label: "Delete", key: "Delete", w: 1.25 }
+    { label: "Backspace", key: "BackSpace", w: 1.5 }
 ]
 
 // The row both pages end on, identical but for the page key's own label. It is
@@ -24,8 +25,8 @@ var functionRow = [
 function commandRow(pageLabel) {
     return [
         { label: "Ctrl", key: "ctrl", w: 1.25 },
-        // Fn is a panel display control: it reveals the function row and never
-        // emits a key position or participates in modifier latching.
+        // Fn is a panel display control: it swaps the top row in place and
+        // never emits a key position or participates in modifier latching.
         { label: "Fn", key: "fn", w: 1.0 },
         { label: "Super", key: "logo", w: 1.25 },
         { label: "Alt", key: "alt", w: 1.25 },
@@ -54,8 +55,8 @@ function commandRow(pageLabel) {
 }
 
 var rows = [
-    functionRow,
     [
+        { label: "esc", key: "Escape", w: 1.25 },
         { t: "`", s: "~", k: "TLDE" }, { t: "1", s: "!", k: "AE01" }, { t: "2", s: "@", k: "AE02" }, { t: "3", s: "#", k: "AE03" },
         { t: "4", s: "$", k: "AE04" }, { t: "5", s: "%", k: "AE05" }, { t: "6", s: "^", k: "AE06" }, { t: "7", s: "&", k: "AE07" },
         { t: "8", s: "*", k: "AE08" }, { t: "9", s: "(", k: "AE09" }, { t: "0", s: ")", k: "AE10" }, { t: "-", s: "_", k: "AE11" },
@@ -111,8 +112,8 @@ function levelCaps(positions, level) {
 }
 
 var symbolRows = [
-    functionRow,
-    levelCaps(["TLDE", "AE01", "AE02", "AE03", "AE04", "AE05", "AE06", "AE07",
+    [{ label: "esc", key: "Escape", w: 1.25 }]
+        .concat(levelCaps(["TLDE", "AE01", "AE02", "AE03", "AE04", "AE05", "AE06", "AE07",
                "AE08", "AE09", "AE10", "AE11", "AE12"], 2)
         .concat([{ label: "Backspace", key: "BackSpace", w: 1.5 }]),
     [{ label: "Tab", key: "Tab", w: 1.4 }]

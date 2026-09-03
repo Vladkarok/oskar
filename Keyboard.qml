@@ -15,8 +15,7 @@ Item {
     // &123 is pressed. The grid is anchored to the bottom, so the command row —
     // modifiers, space, arrows, and the page key itself — stays under the
     // pointer across a switch and the slack appears at the top.
-    readonly property int maxPageRows: Math.max(pageRowsFor(Layout.rows).length,
-                                                pageRowsFor(Layout.symbolRows).length)
+    readonly property int maxPageRows: Math.max(Layout.rows.length, Layout.symbolRows.length)
     implicitHeight: maxPageRows * keyHeight + (maxPageRows - 1) * gapPx
     signal closeRequested()
     // Emitted for every keystroke-shaped press — letters, arrows, modifier
@@ -144,13 +143,11 @@ Item {
     property var layoutRows: Layout.applyLanguage(pageRows(), currentLayout, symbolMap)
 
     function pageRows() {
-        return pageRowsFor(page === "symbols" ? Layout.symbolRows : Layout.rows)
-    }
-
-    // Both pages share row zero. Fn hides exactly that row, leaving the number
-    // or symbols row at the top and reducing panel height by one row plus gap.
-    function pageRowsFor(rows) {
-        return modifierState.fn ? rows : rows.slice(1)
+        var rows = page === "symbols" ? Layout.symbolRows : Layout.rows
+        if (!modifierState.fn) return rows
+        var replaced = rows.slice()
+        replaced[0] = Layout.functionRow
+        return replaced
     }
 
     function updateLayoutRows() {

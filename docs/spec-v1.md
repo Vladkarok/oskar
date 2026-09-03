@@ -82,11 +82,12 @@ keyboard cannot reach in one press. Reached by a dedicated key, returns
 by pressing it again. Its caps come from the compiled keymap for the
 active group like every other cap; there is no fixed ASCII table.
 
-**Function row (`Fn`)** — hidden by default so the panel opens at the compact
-Windows-keyboard height. `Fn` is an immediate two-state display control in the
-bottom row: on reveals `Esc`, `F1`–`F12` and `Delete`; off hides that whole row.
+**Function layer (`Fn`)** — an immediate two-state display control in the
+bottom row. Off shows the page's ordinary top row, prefixed by `Esc`; on
+replaces that same row in place with `Esc`, grave, `F1`–`F12` and `Backspace`.
 It emits no key or modifier, works on both pages, and keeps its state only for
-the shell session. Hiding the row also reduces the docked exclusive zone.
+the shell session. The swap never changes panel or docked exclusive-zone
+height.
 
 Arrow cluster: `←↑↓→` as a group, positioned so repeated clicks are easy
 to land on — arrow keys are the ones that get clicked most in a row.
