@@ -428,11 +428,12 @@ Item {
         id: dependencyCheck
         // Typing goes through the helper daemon, which has no external
         // commands to check for. The layout tracker still needs hyprctl
-        // (devices, getoption), jq (devices JSON) and xkbcli (compiling the
-        // key caps' symbols); all three come with the packages the install
+        // (devices, getoption), jq (devices JSON), xkbcli (compiling the key
+        // caps' symbols), and udevadm (event-driven input hotplug); all come
+        // with the packages the install
         // button below pulls in.
         command: ["bash", "-c",
-            "command -v hyprctl >/dev/null && command -v jq >/dev/null && command -v xkbcli >/dev/null"]
+            "command -v hyprctl >/dev/null && command -v jq >/dev/null && command -v xkbcli >/dev/null && command -v udevadm >/dev/null"]
         onExited: function(exitCode, exitStatus) {
             root.dependenciesReady = exitCode === 0 && exitStatus === 0
         }

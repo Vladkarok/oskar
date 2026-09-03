@@ -120,6 +120,10 @@ Item {
     // which is how they end up sitting on different layouts from each other.
     property string typedKeyboard: ""
     property string typedKeyboardName: ""
+    // Names positively identified from the kernel/udev snapshot. A mouse's
+    // keyboard-shaped HID interface is rejected before it reaches this list.
+    property var startupKeyboards: []
+    property string startupKeyboardName: ""
     property string xkbRules: ""
     property string xkbModel: ""
     property string xkbLayouts: "us"
@@ -263,8 +267,10 @@ Item {
         // reading from going stale after the user switches devices.
         //
         // The switch target ("DEVICE", the device the language button
-        // advances) only comes from those first two tiers. Advancing a
-        // guessed device is what poisoned the seat before: a mouse advanced
+        // advances) comes from those same two tiers. At startup the named tier
+        // is seeded by the helper's positive physical-device snapshot; a real
+        // layout event replaces it. Advancing a guessed device is what
+        // poisoned the seat before: a mouse advanced
         // once, the indicator read it forever after, and the label stopped
         // saying what typing produced. Until there is positive evidence, the
         // language button does nothing.
@@ -287,13 +293,17 @@ Item {
         // per-device keymaps (device:name { kb_layout }).
         layoutDetectProcess.command = ["bash", "-lc",
             "devices=$(hyprctl devices -j 2>/dev/null); "
-            + "keyboard=$(printf '%s' \"$devices\" | jq -c --arg named \"$1\" '"
+            + "keyboard=$(printf '%s' \"$devices\" | jq -c --arg named \"$1\" --arg safe \"$2\" '"
             + "[.keyboards[] | select((.name | test(\"^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)|omarchy-osk\"; \"i\")) | not)] as $typed | "
-        + "($typed | map(select(.main == true))[0] // ($typed | map(select(.name == $named))[0]) // ($typed | max_by(.active_layout_index // 0)) // empty)' 2>/dev/null); "
+        + "def safe_name($name): $safe | split(\"\\n\") | any(. as $base | $base != \"\" and ($name == $base or ($name | startswith($base + \"-\")))); "
+        + "[$typed[] | select(safe_name(.name))] as $safe_typed | "
+        + "($safe_typed | map(select(.main == true))[0] // ($safe_typed | map(select(.name == $named))[0]) // ($typed | max_by(.active_layout_index // 0)) // empty)' 2>/dev/null); "
         + "[[ -n \"$keyboard\" ]] || exit 1; "
-        + "switchable=$(printf '%s' \"$devices\" | jq -r --arg named \"$1\" '"
+        + "switchable=$(printf '%s' \"$devices\" | jq -r --arg named \"$1\" --arg safe \"$2\" '"
         + "[.keyboards[] | select((.name | test(\"^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)|omarchy-osk\"; \"i\")) | not)] as $typed | "
-        + "($typed | map(select(.main == true))[0] // ($typed | map(select(.name == $named))[0]) // {name: \"\"}) | .name' 2>/dev/null); "
+        + "def safe_name($name): $safe | split(\"\\n\") | any(. as $base | $base != \"\" and ($name == $base or ($name | startswith($base + \"-\")))); "
+        + "[$typed[] | select(safe_name(.name))] as $safe_typed | "
+        + "($safe_typed | map(select(.main == true))[0] // ($safe_typed | map(select(.name == $named))[0]) // {name: \"\"}) | .name' 2>/dev/null); "
             + "layouts_csv=$(printf '%s' \"$keyboard\" | jq -r '.layout // \"us\"'); "
             + "group=$(printf '%s' \"$keyboard\" | jq -r '.active_layout_index // 0'); "
             + "active=$(printf '%s' \"$layouts_csv\" | cut -d, -f$((group + 1))); "
@@ -309,7 +319,7 @@ Item {
             + "echo \"$layouts\" | while read code; do "
             + "  name=$(awk -v c=\"$code\" 'BEGIN{s=0} /^! layout/{s=1;next} /^!/{if(s) exit} s && NF>=2 && $1==c { $1=\"\"; sub(/^ +/,\"\",$0); print $0; exit }' /usr/share/X11/xkb/rules/base.lst 2>/dev/null); "
             + "  [[ -n \"$name\" ]] && printf 'NAME\\t%s\\t%s\\n' \"$code\" \"$name\"; "
-            + "done", "onscreen-keyboard", typedKeyboardName]
+            + "done", "onscreen-keyboard", typedKeyboardName, startupKeyboards.join("\n")]
         layoutDetectProcess.running = true
     }
 
@@ -464,15 +474,19 @@ Item {
         }
     }
 
-    // A device appearing or leaving raises no event of its own, and a query
-    // that failed at login would otherwise never be retried. Slow on purpose:
-    // the events above carry the switches, this only repairs.
-    Timer {
-        id: layoutSyncTimer
-        interval: 30000
-        repeat: true
+    // Hyprland's IPC has no input-device hotplug event. udev does, so one
+    // event stream requests fresh helper/compositor snapshots on add/remove.
+    // It wakes for events only; there is no seat poll or heartbeat.
+    Process {
+        id: inputDeviceMonitor
+        command: ["udevadm", "monitor", "--udev", "--subsystem-match=input", "--property"]
         running: true
-        onTriggered: root.refreshLayoutsFromHypr()
+        stdout: SplitParser {
+            onRead: function(line) {
+                if (line === "ACTION=add" || line === "ACTION=remove")
+                    root.sendCommandUnchecked("keyboards")
+            }
+        }
     }
 
     /// Runs one event through the reducer and writes whatever it says to
@@ -600,7 +614,7 @@ Item {
             parser: SplitParser {
                 onRead: function (line) {
                     var reply = String(line).trim()
-                    if (reply === "hello 2") {
+                    if (reply === "hello 3") {
                         root.inputReady = false
                         root.inputStatus = "configuring"
                         // The helper released everything this panel's old
@@ -616,6 +630,7 @@ Item {
                         root.modifierState = Modifiers.reduce(
                             root.modifierState, { type: "releaseAll" }).state
                         daemon.write("mods 0\n")
+                        daemon.write("keyboards\n")
                         daemon.flush()
                         // A restarted helper is back at group 0 and has no idea
                         // which layout is current. Re-reading the compositor
@@ -623,6 +638,15 @@ Item {
                         // would send whatever it held before the first sync,
                         // which is 0 on a fresh panel and would force the
                         // first layout.
+                    } else if (reply === "keyboards" || reply.indexOf("keyboards\t") === 0) {
+                        var wasStartup = root.typedKeyboardName === root.startupKeyboardName
+                        var names = reply.split("\t").slice(1).filter(function(name) {
+                            return name.length > 0
+                        })
+                        root.startupKeyboards = names
+                        root.startupKeyboardName = names.length > 0 ? names[0] : ""
+                        if (!root.typedKeyboardName || wasStartup)
+                            root.typedKeyboardName = root.startupKeyboardName
                         root.refreshLayoutsFromHypr()
                     } else if (reply === "configured") {
                         root.inputReady = true
@@ -662,7 +686,7 @@ Item {
         repeat: false
         onTriggered: {
             if (root.daemonSocket) {
-                root.daemonSocket.write("hello 2\n")
+                root.daemonSocket.write("hello 3\n")
                 root.daemonSocket.flush()
             }
         }

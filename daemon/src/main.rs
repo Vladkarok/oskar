@@ -22,8 +22,9 @@
 //! thing that talks to the compositor about layouts.
 //!
 //! Protocol, one command per line on a unix socket:
-//!   hello <version>   readiness gate, replies `ready <version>`
+//!   hello <version>   readiness gate, replies `hello <version>`
 //!   ping              replies `pong`
+//!   keyboards         snapshot positively identified physical keyboards
 //!   tap <key>         press and release; <key> is an xkb name (AD01) or an
 //!                     evdev code (16)
 //!   down <key>        press
@@ -33,7 +34,8 @@
 //!   group <n>         select which compiled layout to type in
 //!   configure<TAB>rules<TAB>model<TAB>layouts<TAB>variants<TAB>options
 //!             <TAB>kb_file<TAB>group
-//! Replies are `ok`, `ready <n>`, `pong`, or `err <reason>`.
+//! Replies are `ok`, `hello <n>`, `configured`, `pong`,
+//! `keyboards<TAB>name...`, or `err <reason>`.
 //!
 //! Key repeat belongs to the compositor: a press is `down`, a release is `up`,
 //! and nothing here or in the panel repeats anything. What the helper does add
@@ -44,7 +46,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -59,7 +61,7 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 
 /// Bumped whenever the command set changes, so a plugin updated without
 /// reinstalling the helper says so instead of failing silently.
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 
 /// How long a non-modifier code may stay held before the helper lifts it
 /// (spec-v1 §6). Fifteen seconds of held backspace is about six hundred
@@ -502,6 +504,115 @@ fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(dir.join("control.sock"))
 }
 
+/// The names Hyprland gives kernel input devices that udev identifies as
+/// keyboards, excluding any libinput device group that also owns a pointer.
+/// A gaming mouse often exposes a full keyboard-shaped HID interface; the
+/// shared device group is the positive evidence that it is not a keyboard we
+/// may safely advance. Missing metadata produces no candidate, never a guess.
+fn physical_keyboard_names(input_root: &Path, udev_root: &Path) -> Vec<String> {
+    struct Device {
+        name: String,
+        group: String,
+        keyboard: bool,
+        pointer: bool,
+    }
+
+    let Ok(entries) = std::fs::read_dir(input_root) else {
+        return Vec::new();
+    };
+    let mut devices = Vec::new();
+    for entry in entries.flatten() {
+        let event = entry.file_name();
+        if !event.to_string_lossy().starts_with("event") {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(name) = std::fs::read_to_string(path.join("device/name")) else {
+            continue;
+        };
+        let Ok(dev) = std::fs::read_to_string(path.join("dev")) else {
+            continue;
+        };
+        let Ok(properties) = std::fs::read_to_string(udev_root.join(format!("c{}", dev.trim())))
+        else {
+            continue;
+        };
+        let property = |wanted: &str| {
+            properties.lines().find_map(|line| {
+                line.strip_prefix("E:")?
+                    .split_once('=')
+                    .filter(|(key, _)| *key == wanted)
+                    .map(|(_, value)| value)
+            })
+        };
+        let group = property("LIBINPUT_DEVICE_GROUP").unwrap_or("").to_string();
+        if group.is_empty() {
+            continue;
+        }
+        devices.push(Device {
+            name: name.trim().to_string(),
+            group,
+            keyboard: property("ID_INPUT_KEYBOARD") == Some("1"),
+            pointer: [
+                "ID_INPUT_MOUSE",
+                "ID_INPUT_TOUCHPAD",
+                "ID_INPUT_TOUCHSCREEN",
+                "ID_INPUT_TABLET",
+            ]
+            .iter()
+            .any(|key| property(key) == Some("1")),
+        });
+    }
+
+    let pointer_groups: std::collections::HashSet<&str> = devices
+        .iter()
+        .filter(|device| device.pointer)
+        .map(|device| device.group.as_str())
+        .collect();
+    let mut names: Vec<String> = devices
+        .iter()
+        .filter(|device| device.keyboard && !pointer_groups.contains(device.group.as_str()))
+        .map(|device| {
+            device
+                .name
+                .chars()
+                .flat_map(char::to_lowercase)
+                .map(|character| {
+                    if character.is_whitespace() {
+                        '-'
+                    } else {
+                        character
+                    }
+                })
+                .collect()
+        })
+        .filter(|name: &String| {
+            ![
+                "hl-virtual-keyboard",
+                "power-button",
+                "sleep-button",
+                "lid-switch",
+                "video-bus",
+                "omarchy-osk",
+            ]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn startup_keyboard_reply() -> String {
+    let names = physical_keyboard_names(Path::new("/sys/class/input"), Path::new("/run/udev/data"));
+    if names.is_empty() {
+        "keyboards".to_string()
+    } else {
+        format!("keyboards\t{}", names.join("\t"))
+    }
+}
+
 fn parse(line: &str) -> Option<Command> {
     if let Some(raw) = line.strip_prefix("configure\t") {
         let fields: Vec<&str> = raw.split('\t').collect();
@@ -635,6 +746,10 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             let _ = writeln!(out, "pong");
             continue;
         }
+        if line == "keyboards" {
+            let _ = writeln!(out, "{}", startup_keyboard_reply());
+            continue;
+        }
         let reply = match parse(line) {
             Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
             None => "err unknown command",
@@ -655,7 +770,13 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
 fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>, conn_id: u64) {
     let mut shared = shared.lock().unwrap();
     for code in held {
-        apply_locked(&mut shared, connection, Command::Up(Key::Code(code)), None, conn_id);
+        apply_locked(
+            &mut shared,
+            connection,
+            Command::Up(Key::Code(code)),
+            None,
+            conn_id,
+        );
     }
     if shared.held.is_empty() {
         apply_locked(&mut shared, connection, Command::Mods(0), None, conn_id);
@@ -957,6 +1078,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_inventory_rejects_a_mouse_keyboard_interface() {
+        let root =
+            std::env::temp_dir().join(format!("omarchy-osk-device-test-{}", std::process::id()));
+        let input = root.join("input");
+        let udev = root.join("udev");
+        std::fs::create_dir_all(&udev).unwrap();
+
+        let device = |event: &str, dev: &str, name: &str, properties: &str| {
+            let path = input.join(event);
+            std::fs::create_dir_all(path.join("device")).unwrap();
+            std::fs::write(path.join("device/name"), name).unwrap();
+            std::fs::write(path.join("dev"), dev).unwrap();
+            std::fs::write(udev.join(format!("c{dev}")), properties).unwrap();
+        };
+        device(
+            "event1",
+            "13:1",
+            "QEMU USB Keyboard",
+            "E:ID_INPUT_KEYBOARD=1\nE:LIBINPUT_DEVICE_GROUP=keyboard\n",
+        );
+        device(
+            "event2",
+            "13:2",
+            "Gaming Mouse Keyboard",
+            "E:ID_INPUT_KEYBOARD=1\nE:LIBINPUT_DEVICE_GROUP=mouse\n",
+        );
+        device(
+            "event3",
+            "13:3",
+            "Gaming Mouse",
+            "E:ID_INPUT_MOUSE=1\nE:LIBINPUT_DEVICE_GROUP=mouse\n",
+        );
+        device(
+            "event4",
+            "13:4",
+            "Power Button",
+            "E:ID_INPUT_KEY=1\nE:LIBINPUT_DEVICE_GROUP=power\n",
+        );
+
+        assert_eq!(
+            physical_keyboard_names(&input, &udev),
+            vec!["qemu-usb-keyboard"]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn compiles_a_multi_layout_keymap_with_a_group_per_layout() {

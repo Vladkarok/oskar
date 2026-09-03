@@ -270,6 +270,21 @@ dropping it while the scaffold commit is public reads as erasure even
 where it would be legally fine. Note it runs both ways — his repo carries
 our merged fix under his MIT, same as ours carries his.
 
+## 15. Startup device evidence comes from udev, not a seat guess
+
+At shell start, the seat's `main` keyboard can already be fcitx5 or this
+helper, so the two safe switch tiers from §5 have no physical device to name.
+The helper now snapshots kernel input devices and udev metadata: a candidate
+must be tagged `ID_INPUT_KEYBOARD=1`, have a libinput device group, and share
+that group with no mouse, touchpad, touchscreen or tablet. The pointer-group
+rule rejects gaming mice whose HID interfaces advertise a complete keyboard.
+Missing metadata rejects the candidate; it never becomes a reason to guess.
+
+The first positively identified name seeds §5's existing named-device tier.
+A real `activelayout` event replaces it, and the current-keyboard tier still
+wins. Hotplug is driven by one `udevadm monitor` event stream and fresh
+snapshots on add/remove; the former 30-second seat poll is gone. (`ticket 19`)
+
 ## Dead ends — do not retry
 
 - Subscribing to / mirroring the seat keymap (§3). Also: guarding its

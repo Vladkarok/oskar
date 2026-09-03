@@ -59,6 +59,22 @@ CONFIGURE_CAPSLOCK_CANCEL = (
 )
 
 
+@test("startup inventory reports a positively identified physical keyboard")
+def startup_keyboard_inventory(helper, keyboard):
+    client = helper.connect()
+    client.expect("hello 3", "hello 3")
+    reply = client.send("keyboards")
+    if not reply.startswith("keyboards\t"):
+        raise Failure(f"expected a keyboard inventory, got {reply!r}")
+    names = [name for name in reply.split("\t")[1:] if name]
+    if not names:
+        raise Failure("the test machine has physical keyboards but inventory was empty")
+    poisoned = ("hl-virtual-keyboard", "power-button", "video-bus", "omarchy-osk")
+    if any(name.startswith(poisoned) for name in names):
+        raise Failure(f"inventory included a pseudo keyboard: {names!r}")
+    client.close()
+
+
 @test("a three-group keymap cycles through every group and wraps")
 def three_group_cycling(helper, keyboard):
     helper.expect_log("listening on")
@@ -67,7 +83,7 @@ def three_group_cycling(helper, keyboard):
     # taken at the end proves cycling recompiled nothing (spec-v1 §3.3: group
     # switching is never a recompile).
     client = helper.connect()
-    client.expect("hello 2", "hello 2")
+    client.expect("hello 3", "hello 3")
     client.expect(THREE_GROUP, "configured")
     keyboard.expect_group(0)
     # Both protocol paths the panel drives, in the order a cycle moves
@@ -96,7 +112,7 @@ def group_follows_protocol(helper, keyboard):
     # without a client, so every typing operation asserts it first: what is
     # proven is the group the tap actually ran under, not a final state.
     client = helper.connect()
-    client.expect("hello 2", "hello 2")
+    client.expect("hello 3", "hello 3")
     client.expect(CONFIGURE, "configured")
     keyboard.expect_group(1)
     client.expect("tap AD01", "ok")
@@ -122,7 +138,7 @@ def survives_mid_chord_disconnect(helper, keyboard):
     dying.close()
 
     fresh = helper.connect()
-    fresh.expect("hello 2", "hello 2")
+    fresh.expect("hello 3", "hello 3")
     fresh.expect("tap AD01", "ok")
     fresh.close()
 
@@ -170,7 +186,7 @@ def modifiers_reach_the_client(helper, keyboard):
     # `modifiers` request and not from watching key events. Only a client
     # reading characters can tell the two apart.
     client = helper.connect()
-    client.expect("hello 2", "hello 2")
+    client.expect("hello 3", "hello 3")
     # us,ua is still installed from the claims test; group 0 is `us`, and a
     # `group` command is not a compile, so the churn count below is untouched.
     client.expect("group 0", "ok")
@@ -269,7 +285,7 @@ def shift_capitalises_under_capslock_cancel(helper, keyboard):
     time.sleep(11)
 
     client = helper.connect()
-    client.expect("hello 2", "hello 2")
+    client.expect("hello 3", "hello 3")
     client.expect(CONFIGURE_CAPSLOCK_CANCEL, "configured")
     keyboard.expect_group(0)
 
@@ -293,7 +309,7 @@ def cap_releases_a_stuck_key(helper, keyboard):
     # has — so the release cannot come from the panel and cannot come from a
     # heartbeat, because there is none.
     client = helper.connect()
-    client.expect("hello 2", "hello 2")
+    client.expect("hello 3", "hello 3")
     client.expect("down AD01", "ok")
     # `tap` on a held code is refused, which is how the claim is observable
     # from out here without reading the helper's internals.
@@ -313,7 +329,7 @@ def cap_exempts_modifiers(helper, keyboard):
     # visible here: after twice the cap the modifier is still claimed, and a
     # client still reads a capital.
     client = helper.connect()
-    client.expect("hello 2", "hello 2")
+    client.expect("hello 3", "hello 3")
 
     target = TypingTarget()
     try:
@@ -345,7 +361,7 @@ def disconnect_releases_a_hold(helper, keyboard):
     # claim rules already lift everything a connection holds when its socket
     # closes, well before the cap would.
     dying = helper.connect()
-    dying.expect("hello 2", "hello 2")
+    dying.expect("hello 3", "hello 3")
     dying.expect("down AD01", "ok")
     dying.close()
     # The release happens on the dying connection's own thread when its read
@@ -354,7 +370,7 @@ def disconnect_releases_a_hold(helper, keyboard):
     time.sleep(0.5)
 
     fresh = helper.connect()
-    fresh.expect("hello 2", "hello 2")
+    fresh.expect("hello 3", "hello 3")
     # Free immediately, not fifteen seconds later: the disconnect did it.
     fresh.expect("tap AD01", "ok")
     fresh.close()
@@ -418,7 +434,7 @@ def repeat_belongs_to_the_compositor(helper, keyboard):
     # config, so whatever that provokes cannot disturb the compile counts
     # above.
     client = helper.connect()
-    client.expect("hello 2", "hello 2")
+    client.expect("hello 3", "hello 3")
     keyboard.expect_group(0)
 
     held = 1.2
