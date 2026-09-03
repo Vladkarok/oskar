@@ -168,6 +168,19 @@ def modifiers_reach_the_client(helper, keyboard):
         client.expect("tap AD01", "ok")
         client.expect("tap RTRN", "ok")
         target.expect_text("q\nQ\nq\n")
+
+        # Modifiers stack (spec-v1 §5): two held at once must both be in the
+        # mask, not the last one to arrive. A terminal shows Alt as the ESC
+        # prefix and Shift as the capital, so one line carries both. Super is
+        # the fourth modifier and produces no character anywhere, so it stays
+        # with the reducer suite and the hand check.
+        client.expect("down LALT", "ok")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AD01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("up LALT", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\nQ\nq\n\x1bQ\n")
     finally:
         target.close()
         client.close()
