@@ -35,6 +35,25 @@ Item {
     property var floatingPosition: null
     property string sizePreset: "medium"
 
+    // Size presets (spec-v1 §7): a short cycle from a button, not a resize
+    // handle. `medium` is the geometry the keyboard shipped with and the
+    // smallest of the three — the presets only go up, because the hit targets
+    // are already sized for touch at `medium` and a smaller preset would
+    // trade that away. An unknown name in the config file lands on `medium`,
+    // which is what `indexOf` returning -1 already does below.
+    readonly property var sizePresetOrder: ["medium", "large", "x-large"]
+    readonly property var sizePresetScales: ({ "medium": 1.0, "large": 1.2, "x-large": 1.45 })
+    readonly property var sizePresetLabels: ({ "medium": "M", "large": "L", "x-large": "XL" })
+    readonly property real sizeScale: root.sizePresetScales[root.sizePreset] || 1.0
+
+    function cycleSizePreset() {
+        var index = root.sizePresetOrder.indexOf(root.sizePreset)
+        root.sizePreset = root.sizePresetOrder[(index + 1) % root.sizePresetOrder.length]
+        // A bigger card can now hang off the edge it was dragged near.
+        root.applyFloatingPosition()
+        root.saveConfig()
+    }
+
     // Key click sound: the freedesktop sound theme's event sound, off by
     // default — the stated use case is watching a film, and the mouse already
     // makes a click.
@@ -98,7 +117,83 @@ Item {
     function setMode(newMode) {
         if (root.mode === newMode) return
         root.mode = newMode
+        // The docked pin releases here, so the card falls back to whatever x/y
+        // it last had; put it where floating actually left it.
+        root.applyFloatingPosition()
         root.saveConfig()
+    }
+
+    // ---- which output, and where on it (spec-v1 §7) ----
+    //
+    // Both modes open on the monitor the pointer is on and then stay there
+    // until closed or dragged. Deliberately not bound to Hyprland's focused
+    // monitor: that would move the panel — and, docked, reflow the windows on
+    // two outputs — every time the user alt-tabs. The pointer is asked once,
+    // at the moment of opening, and once more when a drag ends.
+    //
+    // The pointer's position comes from `hyprctl cursorpos`; Wayland gives a
+    // client no way to ask where the cursor is, and hyprctl is already a
+    // dependency of the layout tracker.
+    property var pendingScreenAction: null
+
+    function moveToPointerScreen(afterwards) {
+        root.pendingScreenAction = afterwards || null
+        // A Process that is already running ignores `running = true`, so stop
+        // it first (the same dance as resolveSoundFile).
+        cursorProbe.running = false
+        cursorProbe.running = true
+    }
+
+    function screenAt(x, y) {
+        var screens = Quickshell.screens
+        for (var i = 0; i < screens.length; i++) {
+            var candidate = screens[i]
+            if (x >= candidate.x && x < candidate.x + candidate.width
+                && y >= candidate.y && y < candidate.y + candidate.height)
+                return candidate
+        }
+        return null
+    }
+
+    function clamp(value, low, high) {
+        if (high < low) return low
+        return Math.max(low, Math.min(high, value))
+    }
+
+    // Floating position is stored local to whatever output the panel is on,
+    // not in compositor coordinates: the panel follows the pointer's monitor at
+    // open, so a global position would put it half off a differently-sized
+    // second screen. Re-clamped on every application, because the output, the
+    // preset or the theme may all have changed since it was written.
+    function applyFloatingPosition() {
+        if (root.mode !== "floating") return
+        if (!root.floatingPosition) return
+        if (panel.width <= 0 || panel.height <= 0) return
+        card.x = root.clamp(root.floatingPosition.x, 0, panel.width - card.width)
+        card.y = root.clamp(root.floatingPosition.y, 0, panel.height - card.height)
+    }
+
+    function rememberFloatingPosition() {
+        root.floatingPosition = { x: card.x, y: card.y }
+        root.saveConfig()
+    }
+
+    // A drag can end with the pointer over a different output: the card itself
+    // stops at the edge of its own surface (layer-shell gives us one output at
+    // a time), but the pointer keeps going. Ending there hands the panel to
+    // that output and drops the card under the pointer, which is what "drag it
+    // to the other monitor" has to mean here.
+    function finishDrag() {
+        if (root.mode !== "floating") return
+        root.moveToPointerScreen(function (pointer, pointerScreen) {
+            if (pointerScreen && pointerScreen !== panel.screen) {
+                panel.screen = pointerScreen
+                card.x = root.clamp(pointer.x - pointerScreen.x - card.width / 2,
+                    0, Math.max(0, pointerScreen.width - card.width))
+                card.y = root.clamp(card.y, 0, Math.max(0, pointerScreen.height - card.height))
+            }
+            root.rememberFloatingPosition()
+        })
     }
 
     // Read once at startup. Per-key fallbacks live in Config.js; a file this
@@ -107,7 +202,11 @@ Item {
         var parsed = ConfigFile.parse(configFile.text())
         root.mode = parsed.mode
         root.floatingPosition = parsed.position
-        root.sizePreset = parsed.sizePreset
+        // Config.js accepts any non-empty string for the preset; the panel is
+        // where the actual preset names live, so an unknown one becomes the
+        // default here rather than leaving the button with nothing to draw.
+        root.sizePreset = root.sizePresetOrder.indexOf(parsed.sizePreset) === -1
+            ? "medium" : parsed.sizePreset
         root.sound = parsed.sound
         root.followTheme = parsed.followTheme
         root.configExtra = parsed.extra
@@ -141,6 +240,10 @@ Item {
     onOpenedChanged: {
         if (root.opened) {
             root.suspendCursorHiding()
+            root.moveToPointerScreen(function (pointer, pointerScreen) {
+                if (pointerScreen) panel.screen = pointerScreen
+                root.applyFloatingPosition()
+            })
             return
         }
         root.restoreCursorHiding()
@@ -172,6 +275,30 @@ Item {
                 root.cursorHideSetting = "true"
                 Quickshell.execDetached(["hyprctl", "eval",
                     "hl.config({ cursor = { hide_on_key_press = false } })"])
+            }
+        }
+    }
+
+    // Reports {"x": n, "y": n} in compositor coordinates, which is the same
+    // space Quickshell's screens are laid out in. A failure leaves the panel on
+    // whatever output it already had rather than guessing at one.
+    Process {
+        id: cursorProbe
+        command: ["hyprctl", "cursorpos", "-j"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                var action = root.pendingScreenAction
+                root.pendingScreenAction = null
+                if (!action) return
+                var pointer
+                try {
+                    pointer = JSON.parse(text)
+                } catch (error) {
+                    return
+                }
+                if (!pointer || typeof pointer.x !== "number" || typeof pointer.y !== "number") return
+                action(pointer, root.screenAt(pointer.x, pointer.y))
             }
         }
     }
@@ -328,6 +455,13 @@ Item {
             item: card
         }
 
+        // The surface has no size until it is mapped, and it changes size again
+        // when the panel moves to an output of a different shape — both of
+        // which are when a remembered floating position has to be re-applied
+        // and re-clamped.
+        onWidthChanged: root.applyFloatingPosition()
+        onHeightChanged: root.applyFloatingPosition()
+
         // The whole point: never take keyboard focus, so the app window
         // you're typing into keeps it, and the helper's keystrokes land
         // there. Clicks on the keys still work fine with keyboardFocus: None
@@ -388,6 +522,13 @@ Item {
                     drag.maximumX: panel.width - card.width
                     drag.minimumY: 0
                     drag.maximumY: panel.height - card.height
+                    // Where the drag lands is state worth keeping (spec-v1 §7),
+                    // and a drag the compositor takes away mid-gesture still
+                    // left the card somewhere — same reasoning as the cancel
+                    // path on the key caps. No key can be held by this
+                    // MouseArea: it covers the bar, which has no caps in it.
+                    onReleased: root.finishDrag()
+                    onCanceled: root.finishDrag()
                 }
 
                 Text {
@@ -440,6 +581,48 @@ Item {
                         id: languageArea
                         anchors.fill: parent
                         onClicked: keyboard.cycleLanguage()
+                    }
+                }
+
+                // The size presets, cycled (spec-v1 §7). A button rather than a
+                // resize handle: free-form resizing is a lot of state for
+                // something operated one-handed from a couch, and a corner grip
+                // is the wrong control for that posture. The label shows the
+                // preset now in force, not the next one — the keyboard in front
+                // of the user is the preview of what the next click does.
+                Rectangle {
+                    id: sizeButton
+                    anchors {
+                        right: modeButton.left
+                        rightMargin: keyboard.gapPx
+                        bottom: parent.bottom
+                        bottomMargin: keyboard.gapPx
+                    }
+                    width: Math.max(Style.space(30), sizeLabel.implicitWidth + keyboard.gapPx * 3)
+                    height: Style.space(30)
+                    radius: Style.cornerRadius
+                    color: sizeArea.pressed ? Color.accent
+                        : sizeArea.containsMouse ? Util.alpha(Color.foreground, Style.hoverFillAlpha)
+                        : Util.alpha(Color.foreground, Style.normalFillAlpha)
+                    border.color: sizeArea.containsMouse ? Util.alpha(Color.accent, Style.pressedFillAlpha) : Util.alpha(Color.foreground, Style.pressedFillAlpha)
+                    border.width: Style.normalBorderWidth
+                    z: 2
+
+                    Text {
+                        id: sizeLabel
+                        anchors.centerIn: parent
+                        text: root.sizePresetLabels[root.sizePreset] || "M"
+                        color: Color.foreground
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        id: sizeArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: root.cycleSizePreset()
                     }
                 }
 
@@ -522,6 +705,11 @@ Item {
 
             Keyboard {
                 id: keyboard
+                uiScale: root.sizeScale
+                // Everything the card spends on its own padding is width the
+                // grid cannot have, so a large preset on a narrow output
+                // shrinks to fit rather than running off the card.
+                availableWidth: panel.width - Style.spacing.popupPadding - keyboard.gapPx * 2
                 anchors {
                     horizontalCenter: parent.horizontalCenter
                     top: parent.top

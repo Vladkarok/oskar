@@ -23,11 +23,23 @@ Item {
     // plays the key click sound on it (spec-v1 §10).
     signal keyPressed()
 
+    // The size preset's multiplier on top of the theme's own scaling
+    // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
+    // a preset changes the whole keyboard proportionally — key height, gaps and
+    // glyphs together — rather than stretching keys into letterboxes.
+    property real uiScale: 1.0
+    // How much width the panel can actually give the grid. A preset larger than
+    // the output shrinks to fit instead of overflowing the card off-screen.
+    // Zero means unconstrained (nothing has measured yet).
+    property real availableWidth: 0
+
     // ---- Design tokens, copied 1:1 from the reference HTML/CSS ----
-    readonly property real gapPx: Style.spacing.md
-    readonly property real keyHeight: Style.space(42)
+    readonly property real gapPx: Math.max(1, Math.round(Style.spacing.md * uiScale))
+    readonly property real keyHeight: Style.space(42) * uiScale
     readonly property real keyRadius: Style.cornerRadius
-    readonly property real containerMaxWidth: Style.space(820)
+    readonly property real containerMaxWidth: availableWidth > 0
+        ? Math.min(Style.space(820) * uiScale, availableWidth)
+        : Style.space(820) * uiScale
     // Rows fill the same total width as the container minus its own
     // padding (which equals the gap), exactly like the CSS container's
     // `padding: var(--gap)` around `.keyboard-grid`.
@@ -54,8 +66,8 @@ Item {
     // back to the normal width on themes that do not set it — a latched
     // outline the same thickness as an idle one is not a distinguishable state.
     readonly property int latchedBorderWidth: Math.max(2 * keyBorderWidth, Style.focusBorderWidth)
-    readonly property int keyFontSize: Style.font.body
-    readonly property int keySmallFontSize: Style.font.bodySmall
+    readonly property int keyFontSize: Math.max(1, Math.round(Style.font.body * uiScale))
+    readonly property int keySmallFontSize: Math.max(1, Math.round(Style.font.bodySmall * uiScale))
 
     property bool capsOn: false
     // Every modifier's idle/latched/locked state, owned by the reducer
