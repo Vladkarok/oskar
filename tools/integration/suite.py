@@ -320,13 +320,16 @@ def cap_exempts_modifiers(helper, keyboard):
         client.expect("down LFSH", "ok")
         time.sleep(HOLD_CAP * 2 + 1.0)
         helper.expect_no_log(f"releasing stuck key {LFSH}")
-        client.expect("tap LFSH", "err key held")
-        client.expect("tap AD01", "ok")
+        client.expect("tap LFSH", "err key held")  # the claim survived
+        client.expect("tap AD01", "ok")            # and so did the mask
+        # Shift comes off before the flush: a terminal reads Shift+Return as
+        # the kitty protocol's CSI 13;2u rather than a newline, so `cat` would
+        # sit on the line and the assertion would read an empty file.
+        client.expect("up LFSH", "ok")
         client.expect("tap RTRN", "ok")
         target.expect_text("q\nQ\n")
     finally:
         target.close()
-        client.expect("up LFSH", "ok")
         client.close()
 
 
