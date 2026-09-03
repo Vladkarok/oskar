@@ -166,14 +166,22 @@ class TypingTarget:
         if os.path.exists(self.path):
             os.unlink(self.path)
         self._errors = open(os.path.join(runtime, "osk-typing-target.log"), "w+")
-        self._process = subprocess.Popen(
-            ["foot", "sh", "-c", f"cat > {self.path}"],
-            stdout=subprocess.DEVNULL,
-            stderr=self._errors,
-        )
-        self._wait_for_focus()
+        # A freshly built nested session sometimes refuses the first terminal
+        # it is asked for; a second attempt has always come up. Retrying here
+        # rather than letting the suite fail keeps a compositor hiccup from
+        # reading as a modifier regression.
+        self._process = None
+        for attempt in range(3):
+            self._process = subprocess.Popen(
+                ["foot", "sh", "-c", f"cat > {self.path}"],
+                stdout=subprocess.DEVNULL,
+                stderr=self._errors,
+            )
+            if self._wait_for_focus(last=attempt == 2):
+                return
 
-    def _wait_for_focus(self):
+    def _wait_for_focus(self, last):
+        """True once a foot window has focus; False if this attempt died."""
         # Generous: a cold foot in a nested compositor has been seen taking
         # several seconds to map, and a timeout here reads as a failure of
         # whatever was being typed.
@@ -189,8 +197,10 @@ class TypingTarget:
                 # The window is mapped and focused; the keyboard enter it is
                 # about to get is what makes the first keystroke land.
                 time.sleep(0.5)
-                return
+                return True
             if self._process.poll() is not None:
+                if not last:
+                    return False
                 raise Failure(
                     f"foot exited with {self._process.returncode} instead of taking "
                     f"focus: {self._diagnosis()}"
