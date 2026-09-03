@@ -1,6 +1,6 @@
 .pragma library
 
-// The modifier state machine (spec-v1 §5), kept out of QML on purpose: it is
+// The modifier and Caps state machine, kept out of QML on purpose: it is
 // the one piece of panel logic with enough branching to earn a test seam, and
 // a seam that needs a running shell is not a seam. Events in, next state and
 // the protocol lines to write out — nothing ambient is read, nothing is
@@ -43,6 +43,7 @@ function initialState() {
     for (var i = 0; i < ORDER.length; i++) {
         state[ORDER[i]] = "idle"
     }
+    state.caps = false
     // The key the mouse button is currently down on, and the modifiers wrapped
     // around it, so the release can lift them in the right order. Null between
     // presses; see `press` for why a press is not self-contained any more.
@@ -84,9 +85,10 @@ function unchanged(state) {
 /// (state, event) -> { state, lines }
 ///
 /// Events:
+///   { type: "capsClick" }
 ///   { type: "click",        modifier }
 ///   { type: "doubleClick",  modifier }
-///   { type: "press",        position, letter, caps, shift }
+///   { type: "press",        position, letter, shift }
 ///   { type: "release" }
 ///
 /// `shift` on a press means the cap draws the position's shift level and must
@@ -100,6 +102,10 @@ function unchanged(state) {
 function reduce(state, event) {
     var type = event ? String(event.type) : ""
     switch (type) {
+    case "capsClick":
+        var next = copy(state)
+        next.caps = !state.caps
+        return { state: next, lines: [] }
     case "click":
         return click(state, event.modifier)
     case "doubleClick":
@@ -192,11 +198,12 @@ function press(state, event) {
 
     var next = copy(state)
     var wrap = []
+    var restore = []
     for (var i = 0; i < ORDER.length; i++) {
         var modifier = ORDER[i]
         if (state[modifier] !== "latched") continue
         next[modifier] = "idle"
-        if (modifier === "shift" && !shiftWanted(event, true)) continue
+        if (modifier === "shift" && !shiftWanted(state, event, true)) continue
         wrap.push(modifier)
     }
 
@@ -208,21 +215,27 @@ function press(state, event) {
     // emulation only reaches letter keys, since a shifted digit is a
     // different symbol rather than a capital.
     //
-    // A locked Shift is already down at the device and cannot be lifted for
-    // one key, so caps and a locked Shift do not cancel the way caps and a
-    // latched Shift do. That combination is degenerate and left alone.
-    //
     // A shift-level cap wants the same thing by a different route, and the
     // same guard covers it: whatever is already holding Shift — the latch
     // wrapped above, or a lock that is genuinely down at the device — is
     // enough, and pressing it a second time would emit a `down` for a code the
     // helper is already holding.
     if (state.shift !== "latched" && state.shift !== "locked"
-            && (event.shift === true || shiftWanted(event, false))) {
+            && (event.shift === true || shiftWanted(state, event, false))) {
         wrap.push("shift")
     }
 
+    // Caps and Shift cancel for letters. A locked Shift is genuinely held at
+    // the device, so lift it around this press and restore it on release. Its
+    // semantic state remains locked throughout.
+    if (state.caps && event.letter && state.shift === "locked") {
+        restore.push("shift")
+    }
+
     var lines = []
+    for (var r = restore.length - 1; r >= 0; r--) {
+        lines.push("up " + POSITIONS[restore[r]])
+    }
     for (var d = 0; d < ORDER.length; d++) {
         if (wrap.indexOf(ORDER[d]) !== -1) lines.push("down " + POSITIONS[ORDER[d]])
     }
@@ -231,7 +244,7 @@ function press(state, event) {
     // repeat_rate (spec-v1 §6). A tap could only ever type once, and a panel
     // timer that made up the difference could not match the user's settings.
     lines.push("down " + position)
-    next.pending = { position: position, wrap: wrap }
+    next.pending = { position: position, wrap: wrap, restore: restore }
     return { state: next, lines: lines }
 }
 
@@ -239,7 +252,7 @@ function press(state, event) {
 /// it, in the reverse of the order they went down. A release with nothing
 /// pending emits nothing, which is what makes it safe to call from both
 /// `released` and `canceled`.
-function release(state) {
+function release(state, restoreHeld) {
     if (!state.pending) return unchanged(state)
     var next = copy(state)
     next.pending = null
@@ -249,15 +262,23 @@ function release(state) {
             lines.push("up " + POSITIONS[ORDER[u]])
         }
     }
+    if (restoreHeld !== false) {
+        var restore = state.pending.restore || []
+        for (var r = 0; r < ORDER.length; r++) {
+            if (restore.indexOf(ORDER[r]) !== -1) {
+                lines.push("down " + POSITIONS[ORDER[r]])
+            }
+        }
+    }
     return { state: next, lines: lines }
 }
 
-/// Whether this press should carry Shift, given what Caps Lock is doing.
+/// Whether this press should carry Shift, given what Caps is doing.
 /// `shiftLatched` says whether the caller is asking about the latched Shift
 /// (which Caps Lock cancels on a letter) or about Caps Lock alone.
-function shiftWanted(event, shiftLatched) {
+function shiftWanted(state, event, shiftLatched) {
     if (!event.letter) return shiftLatched
-    return event.caps ? !shiftLatched : shiftLatched
+    return state.caps ? !shiftLatched : shiftLatched
 }
 
 /// Lifts everything the device is holding for us and returns to idle. Used
@@ -267,9 +288,14 @@ function releaseAll(state) {
     // Whatever the mouse button is still down on goes first, with its own
     // wrap, before the locks: closing the panel mid-hold must not leave the
     // key repeating into whatever had focus.
-    var lines = release(state).lines
+    var alreadyUp = state.pending ? state.pending.restore || [] : []
+    var lines = release(state, false).lines
     for (var i = ORDER.length - 1; i >= 0; i--) {
-        if (state[ORDER[i]] === "locked") lines.push("up " + POSITIONS[ORDER[i]])
+        if (state[ORDER[i]] === "locked" && alreadyUp.indexOf(ORDER[i]) === -1) {
+            lines.push("up " + POSITIONS[ORDER[i]])
+        }
     }
-    return { state: initialState(), lines: lines }
+    var next = initialState()
+    next.caps = state.caps
+    return { state: next, lines: lines }
 }

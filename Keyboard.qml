@@ -107,10 +107,9 @@ Item {
     readonly property int keyFontSize: Math.max(1, Math.round(root.theme.fontBody * uiScale))
     readonly property int keySmallFontSize: Math.max(1, Math.round(root.theme.fontBodySmall * uiScale))
 
-    property bool capsOn: false
-    // Every modifier's idle/latched/locked state, owned by the reducer
-    // (spec-v1 §15, seam 2). The panel holds the value and draws it; the
-    // transitions and the protocol lines are the module's.
+    // Every modifier's idle/latched/locked state and Caps' dedicated boolean
+    // state, owned by the reducer (spec-v1 §15, seam 2). The panel holds the
+    // value and draws it; the transitions and protocol lines are the module's.
     property var modifierState: Modifiers.initialState()
     property string currentLayout: "us"
     property var languageCycle: ["us"]
@@ -480,13 +479,13 @@ Item {
     /// write. The only path modifier state changes on, so the panel cannot
     /// drift from what the seam's tests cover.
     ///
-    /// Refused outright while the helper is not ready, rather than advancing
-    /// the state over writes that go nowhere: a lock whose `down` was dropped
-    /// would leave the cap showing a modifier the compositor never received,
-    /// which is the one thing the indicator must not do. Nothing is typeable
-    /// in that state anyway.
+    /// Protocol-bearing events are refused while the helper is not ready,
+    /// rather than advancing state over writes that go nowhere: a lock whose
+    /// `down` was dropped would leave the cap showing a modifier the compositor
+    /// never received. Caps is the exception because it is a local semantic
+    /// toggle and emits no protocol line; reconnecting must not delay it.
     function applyModifierEvent(event) {
-        if (!inputReady) return
+        if (!inputReady && (!event || event.type !== "capsClick")) return
         var outcome = Modifiers.reduce(modifierState, event)
         modifierState = outcome.state
         for (var i = 0; i < outcome.lines.length; i++) {
@@ -507,7 +506,7 @@ Item {
     }
 
     function isUpper() {
-        return capsOn !== shiftActive()
+        return modifierState.caps !== shiftActive()
     }
 
     function isSymbolShiftActive() {
@@ -611,7 +610,11 @@ Item {
                         // do it without emitting the releases — sending `up`
                         // for a code nobody holds is a lie in the other
                         // direction.
-                        root.modifierState = Modifiers.initialState()
+                        // Caps is a semantic panel control, not a held key on
+                        // this connection, so a helper restart does not turn
+                        // it off. Only the real device-held modifiers reset.
+                        root.modifierState = Modifiers.reduce(
+                            root.modifierState, { type: "releaseAll" }).state
                         daemon.write("mods 0\n")
                         daemon.flush()
                         // A restarted helper is back at group 0 and has no idea
@@ -724,7 +727,6 @@ Item {
             type: "press",
             position: keyData.k,
             letter: isLetterKey(keyData),
-            caps: capsOn,
             // A symbols-page cap draws one level and has to type that level.
             // Same treatment as Caps Lock: a real Shift press around the key,
             // never a character the panel picked for itself.
@@ -748,7 +750,7 @@ Item {
         case "page": togglePage(); return
         case "caps":
             root.keyPressed()
-            capsOn = !capsOn
+            applyModifierEvent({ type: "capsClick" })
             return
         }
         if (Modifiers.isModifier(keyData.key)) {
@@ -768,10 +770,10 @@ Item {
         applyModifierEvent({ type: "press", position: position })
     }
 
-    /// "idle", "latched" or "locked" for anything that has those states, so the
-    /// cap can draw all three distinguishably rather than lit-or-not.
+    /// Caps has exactly "off" and "on"; the real modifiers have "idle",
+    /// "latched" and "locked" so all of their states remain distinguishable.
     function keyModifierState(keyData) {
-        if (keyData.key === "caps") return capsOn ? "locked" : "idle"
+        if (keyData.key === "caps") return modifierState.caps ? "on" : "off"
         if (!Modifiers.isModifier(keyData.key)) return "idle"
         return modifierState[keyData.key]
     }
@@ -823,20 +825,22 @@ Item {
                             property string modState: root.keyModifierState(keyData)
                             property bool latched: modState === "latched"
                             property bool locked: modState === "locked"
+                            property bool toggleOn: modState === "on"
                             property bool isDual: root.isDualKey(keyData)
                             // Whether this cap types, which is the same test
                             // `onPressed` makes: a character, or a keysym with
                             // a position behind it. The modifiers and the
-                            // command caps are neither, and act on the click.
+                            // command caps are neither. Caps acts on press;
+                            // the remaining commands act on click.
                             property bool types: !keyData.key
                                 || !!Layout.positionForKeysym(keyData.key)
 
-                            color: locked ? root.lockedFill
+                            color: (locked || toggleOn) ? root.lockedFill
                                 : latched ? root.latchedFill
                                 : mouseArea.pressed ? root.keyActiveBg
                                 : mouseArea.containsMouse ? root.keyHoverBg
                                 : root.keyBg
-                            border.color: (latched || locked) ? root.theme.accent
+                            border.color: (latched || locked || toggleOn) ? root.theme.accent
                                 : root.keyBorderColor
                             border.width: latched ? root.latchedBorderWidth : root.keyBorderWidth
 
@@ -846,7 +850,8 @@ Item {
                                 text: keyData.label
                                     ? keyData.label
                                     : root.resolvedTypedChar(keyData)
-                                color: keyRect.locked ? root.lockedText : root.textMain
+                                color: (keyRect.locked || keyRect.toggleOn)
+                                    ? root.lockedText : root.textMain
                                 font.family: root.keyboardFont
                                 font.pixelSize: root.keyFontSize
                             }
@@ -958,7 +963,8 @@ Item {
                                         return
                                     }
                                     if (Layout.positionForKeysym(keyData.key)
-                                            || Modifiers.isModifier(keyData.key)) {
+                                            || Modifiers.isModifier(keyData.key)
+                                            || keyData.key === "caps") {
                                         root.pressSpecial(keyData, false)
                                     }
                                 }
@@ -976,7 +982,7 @@ Item {
                                 onCanceled: if (keyRect.types) root.releaseKey()
 
                                 // What is left on the click is only the command
-                                // caps — close, emoji, lang, caps — where
+                                // caps — close, emoji, lang — where
                                 // acting on the way down would tear the panel
                                 // out from under the button that is still
                                 // held. They are deliberately not swept into
@@ -988,6 +994,7 @@ Item {
                                     if (!keyData.key) return
                                     if (Layout.positionForKeysym(keyData.key)) return
                                     if (Modifiers.isModifier(keyData.key)) return
+                                    if (keyData.key === "caps") return
                                     root.pressSpecial(keyData, false)
                                 }
 

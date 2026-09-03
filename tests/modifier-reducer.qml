@@ -327,8 +327,24 @@ QtObject {
         // ---- caps lock, which is emulated with Shift rather than the CAPS
         // position (grp:caps_toggle makes the real key a layout switch) ----
 
-        T.test("caps lock shifts a letter key on its own", function () {
-            var out = Reducer.reduce(idle, { type: "press", position: "AD01", letter: true, caps: true })
+        T.test("each Caps press toggles its two-state control immediately", function () {
+            var on = Reducer.reduce(idle, { type: "capsClick" })
+            T.equal(on.state.caps, true)
+            T.deepEqual(on.lines, [])
+
+            var ignoredGesture = Reducer.reduce(
+                on.state, { type: "doubleClick", modifier: "caps" })
+            T.equal(ignoredGesture.state.caps, true)
+            T.deepEqual(ignoredGesture.lines, [])
+
+            var off = Reducer.reduce(ignoredGesture.state, { type: "capsClick" })
+            T.equal(off.state.caps, false)
+            T.deepEqual(off.lines, [])
+        })
+
+        T.test("Caps-on state shifts a letter without a physical Caps position", function () {
+            var state = Reducer.reduce(idle, { type: "capsClick" }).state
+            var out = Reducer.reduce(state, { type: "press", position: "AD01", letter: true })
             T.deepEqual(out.lines, ["down LFSH", "down AD01"])
             T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
                         ["up AD01", "up LFSH"])
@@ -336,14 +352,47 @@ QtObject {
 
         T.test("caps lock and a latched Shift cancel on a letter, and the latch still clears", function () {
             var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
-            var out = Reducer.reduce(state, { type: "press", position: "AD01", letter: true, caps: true })
+            state = Reducer.reduce(state, { type: "capsClick" }).state
+            var out = Reducer.reduce(state, { type: "press", position: "AD01", letter: true })
             T.deepEqual(out.lines, ["down AD01"])
             T.equal(out.state.shift, "idle")
         })
 
+        T.test("caps lock and locked Shift type lowercase, then restore the lock", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "capsClick" }).state
+            var out = Reducer.reduce(state, { type: "press", position: "AD01", letter: true })
+            T.deepEqual(out.lines, ["up LFSH", "down AD01"])
+            var lifted = Reducer.reduce(out.state, { type: "release" })
+            T.deepEqual(lifted.lines, ["up AD01", "down LFSH"])
+            T.equal(lifted.state.shift, "locked")
+            T.equal(lifted.state.caps, true)
+        })
+
+        T.test("closing during Caps cancellation does not pulse locked Shift", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "capsClick" }).state
+            state = Reducer.reduce(state,
+                { type: "press", position: "AD01", letter: true }).state
+            var out = Reducer.reduce(state, { type: "releaseAll" })
+            T.deepEqual(out.lines, ["up AD01"])
+            T.equal(out.state.shift, "idle")
+            T.equal(out.state.caps, true)
+        })
+
         T.test("caps lock does not shift a non-letter key", function () {
-            var out = Reducer.reduce(idle, { type: "press", position: "AE01", letter: false, caps: true })
+            var state = Reducer.reduce(idle, { type: "capsClick" }).state
+            var out = Reducer.reduce(state, { type: "press", position: "AE01", letter: false })
             T.deepEqual(out.lines, ["down AE01"])
+        })
+
+        T.test("releasing held modifiers does not turn persistent Caps off", function () {
+            var state = Reducer.reduce(idle, { type: "capsClick" }).state
+            state = Reducer.reduce(state, { type: "doubleClick", modifier: "ctrl" }).state
+            var out = Reducer.reduce(state, { type: "releaseAll" })
+            T.equal(out.state.caps, true)
+            T.equal(out.state.ctrl, "idle")
+            T.deepEqual(out.lines, ["up LCTL"])
         })
 
         // ---- purity and housekeeping ----
