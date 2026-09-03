@@ -33,41 +33,47 @@ Item {
     // Zero means unconstrained (nothing has measured yet).
     property real availableWidth: 0
 
+    // The panel's Theme facade over Omarchy's shared style tokens (spec-v1
+    // §8). Passed in rather than reading `Color`/`Style` here, so that
+    // `follow_theme` is decided in one place and the grid cannot end up
+    // half-frozen.
+    required property Theme theme
+
     // ---- Design tokens, copied 1:1 from the reference HTML/CSS ----
-    readonly property real gapPx: Math.max(1, Math.round(Style.spacing.md * uiScale))
-    readonly property real keyHeight: Style.space(42) * uiScale
-    readonly property real keyRadius: Style.cornerRadius
+    readonly property real gapPx: Math.max(1, Math.round(root.theme.spacingMd * uiScale))
+    readonly property real keyHeight: root.theme.space(42) * uiScale
+    readonly property real keyRadius: root.theme.cornerRadius
     readonly property real containerMaxWidth: availableWidth > 0
-        ? Math.min(Style.space(820) * uiScale, availableWidth)
-        : Style.space(820) * uiScale
+        ? Math.min(root.theme.space(820) * uiScale, availableWidth)
+        : root.theme.space(820) * uiScale
     // Rows fill the same total width as the container minus its own
     // padding (which equals the gap), exactly like the CSS container's
     // `padding: var(--gap)` around `.keyboard-grid`.
     readonly property real rowWidth: containerMaxWidth - 2 * gapPx
 
-    readonly property color keyBg: Util.alpha(Color.foreground, Style.normalFillAlpha)
-    readonly property color keyHoverBg: Util.alpha(Color.foreground, Style.hoverFillAlpha)
-    readonly property color keyActiveBg: Util.alpha(Color.foreground, Style.pressedFillAlpha)
-    readonly property color keyBorderColor: Util.alpha(Color.foreground, Style.pressedFillAlpha)
-    readonly property color accentColor: Util.alpha(Color.accent, Style.pressedFillAlpha)
+    readonly property color keyBg: Util.alpha(root.theme.foreground, root.theme.normalFillAlpha)
+    readonly property color keyHoverBg: Util.alpha(root.theme.foreground, root.theme.hoverFillAlpha)
+    readonly property color keyActiveBg: Util.alpha(root.theme.foreground, root.theme.pressedFillAlpha)
+    readonly property color keyBorderColor: Util.alpha(root.theme.foreground, root.theme.pressedFillAlpha)
+    readonly property color accentColor: Util.alpha(root.theme.accent, root.theme.pressedFillAlpha)
     // The three modifier states, told apart by fill weight rather than by two
     // shades of one colour (spec-v1 §5): idle is the ordinary key, latched is
     // an accent tint under a thick accent outline, locked is solid accent with
     // the label knocked out.
-    readonly property color latchedFill: Style.selectedAccentFill
-    readonly property color lockedFill: Color.accent
-    readonly property color lockedText: Color.background
-    readonly property color textMain: Color.foreground
-    readonly property color textDim: Color.muted
-    readonly property color textHighlightColor: Color.foreground
-    readonly property string keyboardFont: Style.font.family
-    readonly property int keyBorderWidth: Style.normalBorderWidth
+    readonly property color latchedFill: root.theme.selectedAccentFill
+    readonly property color lockedFill: root.theme.accent
+    readonly property color lockedText: root.theme.background
+    readonly property color textMain: root.theme.foreground
+    readonly property color textDim: root.theme.muted
+    readonly property color textHighlightColor: root.theme.foreground
+    readonly property string keyboardFont: root.theme.fontFamily
+    readonly property int keyBorderWidth: root.theme.normalBorderWidth
     // Doubled rather than taken straight from focusBorderWidth, which falls
     // back to the normal width on themes that do not set it — a latched
     // outline the same thickness as an idle one is not a distinguishable state.
-    readonly property int latchedBorderWidth: Math.max(2 * keyBorderWidth, Style.focusBorderWidth)
-    readonly property int keyFontSize: Math.max(1, Math.round(Style.font.body * uiScale))
-    readonly property int keySmallFontSize: Math.max(1, Math.round(Style.font.bodySmall * uiScale))
+    readonly property int latchedBorderWidth: Math.max(2 * keyBorderWidth, root.theme.focusBorderWidth)
+    readonly property int keyFontSize: Math.max(1, Math.round(root.theme.fontBody * uiScale))
+    readonly property int keySmallFontSize: Math.max(1, Math.round(root.theme.fontBodySmall * uiScale))
 
     property bool capsOn: false
     // Every modifier's idle/latched/locked state, owned by the reducer
@@ -786,7 +792,7 @@ Item {
                                 : mouseArea.containsMouse ? root.keyHoverBg
                                 : root.keyBg
                             border.color: isLang ? (root.typedKeyboard ? root.accentColor : root.keyBorderColor)
-                                : (latched || locked) ? Color.accent
+                                : (latched || locked) ? root.theme.accent
                                 : root.keyBorderColor
                             border.width: latched ? root.latchedBorderWidth : root.keyBorderWidth
 

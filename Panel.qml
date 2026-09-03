@@ -69,6 +69,17 @@ Item {
     // resolved or when the theme has no such event.
     property string soundFile: ""
 
+    // Every colour, font, radius and spacing the panel draws with comes from
+    // here, and from nowhere else (spec-v1 §8). Following the theme is what a
+    // plain binding through it already does — the shell reassigns the shared
+    // tokens on a theme switch and the keyboard redraws where it stands, with
+    // no restart, no keymap compile and no reconnection, because none of that
+    // is on this path. `follow_theme: false` is the one thing that needs code.
+    Theme {
+        id: tokens
+        follow: root.followTheme
+    }
+
     function checkDependencies() {
         dependencyCheck.running = true
     }
@@ -244,6 +255,11 @@ Item {
     // never run.
     onOpenedChanged: {
         if (root.opened) {
+            // With `follow_theme: false` the tokens are held at whatever the
+            // theme was the first time the keyboard was shown; see Theme.qml
+            // for why the snapshot is taken here and not at load. A no-op
+            // once taken, and a no-op entirely while following.
+            if (!root.followTheme) tokens.freeze()
             root.suspendCursorHiding()
             root.moveToPointerScreen(function (pointer, pointerScreen) {
                 if (pointerScreen) panel.screen = pointerScreen
@@ -439,7 +455,7 @@ Item {
     // compositor sizes it, so the property is ignored there.
     readonly property real cardHeight: keyboard.implicitHeight + keyboard.gapPx * 2 + dragBar.height
         + (dependencyNotice.visible ? dependencyNotice.height + keyboard.gapPx : 0)
-        + Style.spacing.popupPadding / 2
+        + tokens.popupPadding / 2
 
     PanelWindow {
         id: panel
@@ -493,13 +509,13 @@ Item {
         BorderSurface {
             id: card
             width: root.mode === "docked" ? panel.width
-                : Math.min(panel.width - Style.spacing.popupPadding, keyboard.implicitWidth + keyboard.gapPx * 2) + Style.spacing.popupPadding
+                : Math.min(panel.width - tokens.popupPadding, keyboard.implicitWidth + keyboard.gapPx * 2) + tokens.popupPadding
             height: root.cardHeight
             x: (panel.width - width) / 2
-            y: panel.height - height - Style.spacing.lg
-            radius: root.mode === "docked" ? 0 : Style.cornerRadius
-            color: Color.popups.background
-            borderSpec: Border.hyprlandActiveSpec(Color.accent, 2)
+            y: panel.height - height - tokens.spacingLg
+            radius: root.mode === "docked" ? 0 : tokens.cornerRadius
+            color: tokens.popupsBackground
+            borderSpec: tokens.cardBorderSpec
 
             // Docked pins the card into the strip it fills. Re-asserted here
             // rather than bound inline, because dragging in floating mode
@@ -512,7 +528,7 @@ Item {
             Item {
                 id: dragBar
                 width: parent.width
-                height: Style.space(30) + keyboard.gapPx * 3
+                height: tokens.space(30) + keyboard.gapPx * 3
 
                 MouseArea {
                     id: dragArea
@@ -544,9 +560,9 @@ Item {
                     text: root.mode === "docked"
                         ? "\u2328 Docked \u00b7 Double press Shift/Ctrl/Alt/Super to lock"
                         : "\u2328 Drag to move \u00b7 Double press Shift/Ctrl/Alt/Super to lock"
-                    color: Color.muted
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.bodySmall
+                    color: tokens.muted
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBodySmall
                     z: 1
                 }
 
@@ -559,26 +575,26 @@ Item {
                         bottomMargin: keyboard.gapPx
                     }
                     width: langLabel.implicitWidth + keyboard.gapPx * 3
-                    height: Style.space(30)
-                    radius: Style.cornerRadius
+                    height: tokens.space(30)
+                    radius: tokens.cornerRadius
                     // Reads as disabled while the panel has no safe switch
                     // target (see refreshLayoutsFromHypr in Keyboard.qml):
                     // clicking still calls cycleLanguage, which refuses to
                     // guess rather than advance a device nobody typed on.
-                    color: !keyboard.typedKeyboard ? Util.alpha(Color.foreground, Style.normalFillAlpha)
-                        : languageArea.containsMouse ? (languageArea.pressed ? Color.accent : Util.alpha(Color.foreground, Style.hoverFillAlpha))
-                        : Util.alpha(Color.foreground, Style.normalFillAlpha)
-                    border.color: Util.alpha(Color.foreground, Style.pressedFillAlpha)
-                    border.width: Style.normalBorderWidth
+                    color: !keyboard.typedKeyboard ? Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                        : languageArea.containsMouse ? (languageArea.pressed ? tokens.accent : Util.alpha(tokens.foreground, tokens.hoverFillAlpha))
+                        : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                    border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                    border.width: tokens.normalBorderWidth
                     z: 2
 
                     Text {
                         id: langLabel
                         anchors.centerIn: parent
                         text: keyboard.currentLayoutName
-                        color: keyboard.typedKeyboard ? Color.foreground : Color.muted
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.bodySmall
+                        color: keyboard.typedKeyboard ? tokens.foreground : tokens.muted
+                        font.family: tokens.fontFamily
+                        font.pixelSize: tokens.fontBodySmall
                         font.bold: true
                     }
 
@@ -603,23 +619,23 @@ Item {
                         bottom: parent.bottom
                         bottomMargin: keyboard.gapPx
                     }
-                    width: Math.max(Style.space(30), sizeLabel.implicitWidth + keyboard.gapPx * 3)
-                    height: Style.space(30)
-                    radius: Style.cornerRadius
-                    color: sizeArea.pressed ? Color.accent
-                        : sizeArea.containsMouse ? Util.alpha(Color.foreground, Style.hoverFillAlpha)
-                        : Util.alpha(Color.foreground, Style.normalFillAlpha)
-                    border.color: sizeArea.containsMouse ? Util.alpha(Color.accent, Style.pressedFillAlpha) : Util.alpha(Color.foreground, Style.pressedFillAlpha)
-                    border.width: Style.normalBorderWidth
+                    width: Math.max(tokens.space(30), sizeLabel.implicitWidth + keyboard.gapPx * 3)
+                    height: tokens.space(30)
+                    radius: tokens.cornerRadius
+                    color: sizeArea.pressed ? tokens.accent
+                        : sizeArea.containsMouse ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
+                        : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                    border.color: sizeArea.containsMouse ? Util.alpha(tokens.accent, tokens.pressedFillAlpha) : Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                    border.width: tokens.normalBorderWidth
                     z: 2
 
                     Text {
                         id: sizeLabel
                         anchors.centerIn: parent
                         text: root.sizePresetLabels[root.sizePreset] || "M"
-                        color: Color.foreground
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.bodySmall
+                        color: tokens.foreground
+                        font.family: tokens.fontFamily
+                        font.pixelSize: tokens.fontBodySmall
                         font.bold: true
                     }
 
@@ -645,22 +661,22 @@ Item {
                         bottomMargin: keyboard.gapPx
                     }
                     width: modeLabel.implicitWidth + keyboard.gapPx * 3
-                    height: Style.space(30)
-                    radius: Style.cornerRadius
-                    color: modeArea.pressed ? Color.accent
-                        : modeArea.containsMouse ? Util.alpha(Color.foreground, Style.hoverFillAlpha)
-                        : Util.alpha(Color.foreground, Style.normalFillAlpha)
-                    border.color: modeArea.containsMouse ? Util.alpha(Color.accent, Style.pressedFillAlpha) : Util.alpha(Color.foreground, Style.pressedFillAlpha)
-                    border.width: Style.normalBorderWidth
+                    height: tokens.space(30)
+                    radius: tokens.cornerRadius
+                    color: modeArea.pressed ? tokens.accent
+                        : modeArea.containsMouse ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
+                        : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                    border.color: modeArea.containsMouse ? Util.alpha(tokens.accent, tokens.pressedFillAlpha) : Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                    border.width: tokens.normalBorderWidth
                     z: 2
 
                     Text {
                         id: modeLabel
                         anchors.centerIn: parent
                         text: root.mode === "docked" ? "Float" : "Dock"
-                        color: Color.foreground
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.bodySmall
+                        color: tokens.foreground
+                        font.family: tokens.fontFamily
+                        font.pixelSize: tokens.fontBodySmall
                         font.bold: true
                     }
 
@@ -680,23 +696,23 @@ Item {
                         bottom: parent.bottom
                         bottomMargin: keyboard.gapPx
                     }
-                    width: Style.space(30)
-                    height: Style.space(30)
-                    radius: Style.cornerRadius
-                    color: closeArea.pressed ? Color.urgent
-                        : closeArea.containsMouse ? Util.alpha(Color.urgent, Style.hoverFillAlpha)
-                        : Util.alpha(Color.foreground, Style.normalFillAlpha)
-                    border.color: closeArea.containsMouse ? Util.alpha(Color.urgent, Style.pressedFillAlpha) : Util.alpha(Color.foreground, Style.pressedFillAlpha)
-                    border.width: Style.normalBorderWidth
+                    width: tokens.space(30)
+                    height: tokens.space(30)
+                    radius: tokens.cornerRadius
+                    color: closeArea.pressed ? tokens.urgent
+                        : closeArea.containsMouse ? Util.alpha(tokens.urgent, tokens.hoverFillAlpha)
+                        : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                    border.color: closeArea.containsMouse ? Util.alpha(tokens.urgent, tokens.pressedFillAlpha) : Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                    border.width: tokens.normalBorderWidth
                     z: 2
 
                     Text {
                         id: closeLabel
                         anchors.centerIn: parent
                         text: "\u2715"
-                        color: closeArea.containsMouse ? Color.urgent : Color.foreground
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.bodySmall
+                        color: closeArea.containsMouse ? tokens.urgent : tokens.foreground
+                        font.family: tokens.fontFamily
+                        font.pixelSize: tokens.fontBodySmall
                     }
 
                     MouseArea {
@@ -710,11 +726,12 @@ Item {
 
             Keyboard {
                 id: keyboard
+                theme: tokens
                 uiScale: root.sizeScale
                 // Everything the card spends on its own padding is width the
                 // grid cannot have, so a large preset on a narrow output
                 // shrinks to fit rather than running off the card.
-                availableWidth: panel.width - Style.spacing.popupPadding - keyboard.gapPx * 2
+                availableWidth: panel.width - tokens.popupPadding - keyboard.gapPx * 2
                 anchors {
                     horizontalCenter: parent.horizontalCenter
                     top: parent.top
@@ -736,44 +753,44 @@ Item {
                     topMargin: keyboard.gapPx
                 }
                 width: keyboard.rowWidth
-                height: Style.space(36)
-                radius: Style.cornerRadius
-                color: Color.popups.background
-                border.color: Color.accent
-                border.width: Style.normalBorderWidth
+                height: tokens.space(36)
+                radius: tokens.cornerRadius
+                color: tokens.popupsBackground
+                border.color: tokens.accent
+                border.width: tokens.normalBorderWidth
 
                 Text {
                     anchors {
                         left: parent.left
-                        leftMargin: Style.spacing.md
+                        leftMargin: tokens.spacingMd
                         verticalCenter: parent.verticalCenter
                     }
                     text: dependencyInstall.running
                         ? "Installing keyboard dependencies..."
                         : "Keyboard dependencies are missing"
-                    color: Color.foreground
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.bodySmall
+                    color: tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBodySmall
                 }
 
                 Rectangle {
                     anchors {
                         right: parent.right
-                        rightMargin: Style.spacing.sm
+                        rightMargin: tokens.spacingSm
                         verticalCenter: parent.verticalCenter
                     }
-                    width: installLabel.implicitWidth + Style.spacing.lg
-                    height: Style.space(28)
-                    radius: Style.cornerRadius
-                    color: installArea.pressed ? Color.accent : Color.foreground
+                    width: installLabel.implicitWidth + tokens.spacingLg
+                    height: tokens.space(28)
+                    radius: tokens.cornerRadius
+                    color: installArea.pressed ? tokens.accent : tokens.foreground
 
                     Text {
                         id: installLabel
                         anchors.centerIn: parent
                         text: dependencyInstall.running ? "Working..." : "Install"
-                        color: Color.background
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.bodySmall
+                        color: tokens.background
+                        font.family: tokens.fontFamily
+                        font.pixelSize: tokens.fontBodySmall
                     }
 
                     MouseArea {

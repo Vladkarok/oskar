@@ -30,6 +30,7 @@ earns a place in autostart.
 | `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
 | `ModifierReducer.js` | the modifier state machine (pure, tested) |
 | `Config.js` | parse/serialize for the one config file |
+| `Theme.qml` | the panel's one reader of Omarchy's shared style tokens |
 | `BarWidget.qml` | bar icon that toggles the panel |
 | `daemon/` | Rust helper holding one virtual keyboard |
 | `tools/nested-session.sh` | runs a command against a throwaway nested Hyprland |
@@ -68,8 +69,12 @@ press through QtMultimedia — nothing is spawned per keystroke. It needs
 `qt6-multimedia` and `ffmpeg`; the theme's Vorbis file is transcoded to PCM
 once at startup (SoundEffect plays uncompressed WAV only), into
 `$XDG_RUNTIME_DIR`. Without them the keyboard works and stays silent.
-`follow_theme` follows the Omarchy theme today and does nothing else in v1;
-the independent colour schema is v2.
+Colours, fonts and corner radius all come from the shared Omarchy style tokens,
+so switching the theme redraws the keyboard where it stands — no restart of the
+shell or the plugin, and nothing on the typing path is touched. `follow_theme:
+false` stops it tracking theme changes: the keyboard keeps the theme that was in
+force when it was first opened. That is all it does in v1 — it is not a colour
+setting and turns nothing else on or off; the independent colour schema is v2.
 
 ## Why there is a helper at all
 
