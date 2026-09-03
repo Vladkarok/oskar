@@ -12,6 +12,7 @@ tests share one helper process and each one starts where the last left off.
 """
 
 import sys
+import time
 
 from harness import TypingTarget, run, test
 
@@ -241,6 +242,14 @@ def shift_capitalises_under_capslock_cancel(helper, keyboard):
     # Last in the file on purpose: it is the only case that needs a keymap
     # nothing else uses, and compiling one here rather than earlier keeps the
     # churn count above a statement about the paths that matter.
+    #
+    # The helper refuses a fifth keymap upload inside ten seconds, which is
+    # the churn guard doing its job rather than a fault — the four the tests
+    # above compiled all land inside that window when the session is quick.
+    # Wait it out instead of raising the cap: the cap is the thing that keeps
+    # a compile loop from freezing a desktop.
+    time.sleep(11)
+
     client = helper.connect()
     client.expect("hello 2", "hello 2")
     client.expect(CONFIGURE_CAPSLOCK_CANCEL, "configured")
