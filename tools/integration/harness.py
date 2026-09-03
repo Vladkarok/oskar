@@ -166,19 +166,37 @@ class TypingTarget:
         if os.path.exists(self.path):
             os.unlink(self.path)
         self._errors = open(os.path.join(runtime, "osk-typing-target.log"), "w+")
-        # A freshly built nested session sometimes refuses the first terminal
-        # it is asked for; a second attempt has always come up. Retrying here
-        # rather than letting the suite fail keeps a compositor hiccup from
-        # reading as a modifier regression.
+        # The nested compositor publishes its output some time after it
+        # accepts clients, and foot refuses to start without one ("no monitors
+        # available"). Every test before this one talks to the helper alone
+        # and never noticed. Wait for the monitor, then retry the terminal a
+        # few times anyway, so a compositor still settling does not read as a
+        # modifier regression.
+        self._wait_for_monitor()
         self._process = None
-        for attempt in range(3):
+        for attempt in range(5):
+            if attempt:
+                time.sleep(2)
             self._process = subprocess.Popen(
                 ["foot", "sh", "-c", f"cat > {self.path}"],
                 stdout=subprocess.DEVNULL,
                 stderr=self._errors,
             )
-            if self._wait_for_focus(last=attempt == 2):
+            if self._wait_for_focus(last=attempt == 4):
                 return
+
+    def _wait_for_monitor(self):
+        for _ in range(150):
+            out = subprocess.run(
+                ["hyprctl", "monitors", "-j"], capture_output=True, text=True
+            ).stdout
+            try:
+                if json.loads(out):
+                    return
+            except json.JSONDecodeError:
+                pass
+            time.sleep(0.2)
+        raise Failure("the nested compositor never published a monitor")
 
     def _wait_for_focus(self, last):
         """True once a foot window has focus; False if this attempt died."""
