@@ -45,10 +45,15 @@ THREE_GROUP = "configure\tevdev\tpc105\tus,ua,de\t\tgrp:caps_toggle\t\t0"
 # takes when the panel re-sends its configure after a compositor switch.
 THREE_GROUP_ON_DE = "configure\tevdev\tpc105\tus,ua,de\t\tgrp:caps_toggle\t\t2"
 
-# The owner's own option string. `shift:both_capslock_cancel` alongside
-# `grp:caps_toggle` is what lands <LFSH> in the Lock modifier map, which is
-# the difference between this suite's world and the session the panel
-# actually shipped into.
+# `shift:both_capslock_cancel` alongside `grp:caps_toggle` is what lands
+# <LFSH> in the Lock modifier map, and reading the modifier map instead of
+# asking xkb is what made held Shift produce lowercase letters (a730c99).
+#
+# This was the owner's option string until 2026-09-03, when it was reverted to
+# `compose:caps,grp:alt_shift_toggle` — `grp:caps_toggle` turned out to break
+# layout switching for fcitx5 clients. The fixture stays exactly as it is: it
+# is the regression guard for a730c99, and its value is that it is *not* the
+# session the panel ships into. Do not "update" it to match the owner.
 CONFIGURE_CAPSLOCK_CANCEL = (
     "configure\tevdev\tpc105\tus,ua\t\tshift:both_capslock_cancel,grp:caps_toggle\t\t0"
 )

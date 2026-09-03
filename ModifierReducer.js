@@ -160,8 +160,10 @@ function press(state, event) {
     }
 
     // Caps Lock is emulated with Shift rather than by tapping the CAPS
-    // position: on the owner's setup that position is the layout toggle
-    // (grp:caps_toggle), so pressing it would switch language instead. The
+    // position, because that position is rarely Caps Lock. Any `grp:caps_*`
+    // makes it the layout toggle and any `compose:caps` makes it Compose —
+    // between them they cover most setups worth supporting, and the owner has
+    // run both. Either way, tapping it would do something other than lock. The
     // emulation only reaches letter keys, since a shifted digit is a
     // different symbol rather than a capital.
     //
