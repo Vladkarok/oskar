@@ -334,27 +334,6 @@ var cyrillicCharMap = {
     Cyrillic_u_macron: "\u04ef"
 }
 
-function cloneKey(keyData) {
-    var out = {}
-    for (var field in keyData) {
-        out[field] = keyData[field]
-    }
-    return out
-}
-
-function cloneRows(sourceRows) {
-    var out = []
-    for (var r = 0; r < sourceRows.length; r++) {
-        var row = sourceRows[r]
-        var clonedRow = []
-        for (var c = 0; c < row.length; c++) {
-            clonedRow.push(cloneKey(row[c]))
-        }
-        out.push(clonedRow)
-    }
-    return out
-}
-
 function tokenToText(token, fallback) {
     var normalized = String(token || "").trim()
     if (normalized === "") return fallback
@@ -390,89 +369,96 @@ function drawsFixedLabel(keyData) {
 // mistaken for a failure.
 var UNRESOLVED = " unresolved"
 
-function applyLanguage(rowsSource, layoutCode, symbolMap) {
-    var layoutRows = cloneRows(rowsSource)
-    var label = String(layoutCode || "us").toUpperCase()
-    var fallbacks = []
+/// What the compiled keymap has to say about one cap, expressed as the fields
+/// to lay over it — never as an edit to the cap itself. Positions the keymap
+/// does not cover are appended to `misses` and left for the caller to report;
+/// a miss is a reporting matter, not an error (§11).
+function capOverlay(keyData, symbols, misses) {
+    var levels = Array.isArray(symbols) ? symbols : []
+    var textAt = function (index) {
+        return tokenToText(index < levels.length ? levels[index] : "", UNRESOLVED)
+    }
 
-    for (var r = 0; r < layoutRows.length; r++) {
-        for (var c = 0; c < layoutRows[r].length; c++) {
-            var keyData = layoutRows[r][c]
-            if (keyData.key === "lang") {
-                keyData.label = label
-                continue
-            }
-            if (!keyData.k) continue
-
-            var symbols = symbolMap ? symbolMap[keyData.k] : null
-            var haveSymbols = Array.isArray(symbols) && symbols.length > 0
-
-            // A symbols-page cap draws exactly one level and carries no
-            // built-in character, so there is nothing to fall back *to*: an
-            // unresolved level leaves the cap blank and is reported, which is
-            // the §11 rule with the silent substitution removed entirely.
-            if (keyData.lvl) {
-                var index = keyData.lvl - 1
-                var token = haveSymbols && index < symbols.length ? symbols[index] : ""
-                var resolved = tokenToText(token, UNRESOLVED)
-                if (resolved === UNRESOLVED) {
-                    keyData.t = ""
-                    fallbacks.push(keyData.k + (index > 0 ? "^" : "") + "="
-                        + (haveSymbols ? (String(token).trim() || "<no symbol at this level>")
-                                       : "<no keymap entry>"))
-                } else {
-                    keyData.t = resolved
-                }
-                // A latched or locked Shift applies to every press, including
-                // one on a base-level cap, so a base-level cap has to be able
-                // to show what Shift would actually produce — otherwise the
-                // page would draw `[` while typing `{`, which is the one thing
-                // this keyboard is for. It still draws as a single glyph (see
-                // isDualKey): the stacked pair belongs to the main page, and
-                // the shift level has a cap of its own here.
-                if (index === 0) {
-                    var paired = tokenToText(haveSymbols && symbols.length > 1 ? symbols[1] : "", UNRESOLVED)
-                    if (paired !== UNRESOLVED) keyData.s = paired
-                }
-                continue
-            }
-
-            if (!haveSymbols) {
-                if (!drawsFixedLabel(keyData)) fallbacks.push(keyData.k + "=<no keymap entry>")
-                continue
-            }
-
-            var base = tokenToText(symbols[0], UNRESOLVED)
-            if (base === UNRESOLVED) {
-                if (!drawsFixedLabel(keyData)) fallbacks.push(keyData.k + "=" + symbols[0])
-            } else {
-                keyData.t = base
-            }
-
-            if (symbols.length > 1 && String(symbols[1] || "").trim() !== "") {
-                var shifted = tokenToText(symbols[1], UNRESOLVED)
-                if (shifted === UNRESOLVED) {
-                    if (!drawsFixedLabel(keyData)) fallbacks.push(keyData.k + "^=" + symbols[1])
-                } else {
-                    keyData.s = shifted
-                }
-            }
+    // A symbols-page cap draws exactly one level and carries no built-in
+    // character, so there is nothing to fall back *to*: an unresolved level
+    // leaves the cap blank and is reported, which is the §11 rule with the
+    // silent substitution removed entirely.
+    if (keyData.lvl) {
+        var index = keyData.lvl - 1
+        var drawn = textAt(index)
+        var overlay = { t: drawn === UNRESOLVED ? "" : drawn }
+        if (drawn === UNRESOLVED) {
+            var token = index < levels.length ? String(levels[index]).trim() : ""
+            misses.push(keyData.k + (index > 0 ? "^" : "") + "="
+                + (levels.length > 0 ? (token || "<no symbol at this level>")
+                                     : "<no keymap entry>"))
         }
+        // A latched or locked Shift applies to every press, including one on a
+        // base-level cap, so a base-level cap has to be able to show what Shift
+        // would actually produce — otherwise the page would draw `[` while
+        // typing `{`, which is the one thing this keyboard is for. It still
+        // draws as a single glyph (see isDualKey): the stacked pair belongs to
+        // the main page, and the shift level has a cap of its own here.
+        if (index === 0) {
+            var paired = textAt(1)
+            if (paired !== UNRESOLVED) overlay.s = paired
+        }
+        return overlay
     }
 
-    // A silent substitution is the failure mode decisions.md §11 records: the
-    // awk program broke, the map came back empty, and the built-in US table
-    // stayed on screen for days while the label said "Ukrainian". One line per
-    // rebuild rather than one per key, so a wholly empty map is loud without
-    // being sixty lines of noise.
-    if (fallbacks.length > 0) {
-        var shown = fallbacks.slice(0, 12).join(" ")
-        if (fallbacks.length > 12) shown += " … and " + (fallbacks.length - 12) + " more"
-        console.error("[osk] keycap fallback to built-in table for " + layoutCode
-            + ": " + fallbacks.length + " cap(s): " + shown)
+    if (levels.length === 0) {
+        if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "=<no keymap entry>")
+        return {}
     }
 
-    return layoutRows
+    // A main-page cap keeps whichever of its two built-in characters the keymap
+    // failed to supply, so the overlay carries only the levels that resolved.
+    var pair = {}
+    var base = tokenToText(levels[0], UNRESOLVED)
+    if (base !== UNRESOLVED) pair.t = base
+    else if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "=" + levels[0])
+
+    if (levels.length > 1 && String(levels[1] || "").trim() !== "") {
+        var shifted = tokenToText(levels[1], UNRESOLVED)
+        if (shifted !== UNRESOLVED) pair.s = shifted
+        else if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "^=" + levels[1])
+    }
+    return pair
+}
+
+/// A silent substitution is the failure mode decisions.md §11 records: the awk
+/// program broke, the map came back empty, and the built-in US table stayed on
+/// screen for days while the label said "Ukrainian". One line per rebuild
+/// rather than one per key, so a wholly empty map is loud without being sixty
+/// lines of noise.
+function reportMisses(misses, layoutCode) {
+    if (misses.length === 0) return
+    var shown = misses.slice(0, 12).join(" ")
+    if (misses.length > 12) shown += " … and " + (misses.length - 12) + " more"
+    console.error("[osk] keycap fallback to built-in table for " + layoutCode
+        + ": " + misses.length + " cap(s): " + shown)
+}
+
+/// The page's declared rows, resolved against a compiled keymap.
+///
+/// `rows` and `symbolRows` are module-level declarations that outlive every
+/// layout change, so this returns a fresh cap for each one rather than writing
+/// into them: a pass that edited them in place would leave the previous
+/// language's characters on any cap the new keymap does not cover. Deep-copying
+/// the whole table first would also do that, but building each cap as source
+/// plus overlay means there is no copy to keep in step with the declaration.
+function applyLanguage(rowsSource, layoutCode, symbolMap) {
+    var misses = []
+    var resolved = rowsSource.map(function (row) {
+        return row.map(function (keyData) {
+            var overlay = keyData.k
+                ? capOverlay(keyData, symbolMap ? symbolMap[keyData.k] : null, misses)
+                : {}
+            return Object.assign({}, keyData, overlay)
+        })
+    })
+    reportMisses(misses, layoutCode)
+    return resolved
 }
 
 // The rows label special keys by keysym ("Return", "BackSpace"). The daemon

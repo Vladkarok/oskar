@@ -124,32 +124,38 @@ Item {
         applyModifierEvent({ type: "pageSwitch" })
     }
 
+    /// Both readers below are fed the same thing: a run of tab-delimited
+    /// records on a helper's stdout, one per line, blank lines meaning nothing.
+    /// Turning that into fields is the whole of what they have in common, so it
+    /// is written once here rather than twice with two chances to drift. Short
+    /// records survive on purpose — a record whose only field is its tag is
+    /// meaningful to one of the callers, so the arity guard belongs to whoever
+    /// needs it, not here.
+    function tabRecords(text) {
+        return String(text || "").split("\n")
+            .map(function (line) { return line.trim() })
+            .filter(function (line) { return line.length > 0 })
+            .map(function (line) { return line.split("\t") })
+    }
+
     function parseLayoutSymbolOutput(text) {
         var map = ({})
-        var lines = String(text || "").split("\n")
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i].trim()
-            if (!line) continue
-            var parts = line.split("\t")
-            if (parts.length < 2) continue
+        tabRecords(text).forEach(function (parts) {
+            if (parts.length < 2) return
             map[parts[0]] = [parts[1], parts.length > 2 ? parts[2] : ""]
-        }
+        })
         symbolMap = map
         updateLayoutRows()
     }
 
 
     function parseHyprLayoutOutput(text) {
-        var lines = String(text || "").split("\n")
         var active = ""
         var detected = []
         var names = ({})
         var configGroup = 0
 
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i].trim()
-            if (!line) continue
-            var parts = line.split("\t")
+        tabRecords(text).forEach(function (parts) {
             if (parts[0] === "DEVICE") {
                 // Cleared unconditionally: a refresh that finds no safe
                 // target must not leave the language button aiming at a
@@ -158,12 +164,12 @@ Item {
                 // trim, so this branch has to come before the field-count
                 // guard below.
                 typedKeyboard = String(parts[1] || "").trim()
-                continue
+                return
             }
-            if (parts.length < 2) continue
+            if (parts.length < 2) return
             if (parts[0] === "ACTIVE") {
                 active = String(parts[1] || "").trim()
-                continue
+                return
             }
             if (parts[0] === "CONFIG" && parts.length >= 8) {
                 xkbRules = parts[1]
@@ -173,7 +179,7 @@ Item {
                 xkbOptions = parts[5]
                 xkbFile = parts[6] === "[[EMPTY]]" ? "" : parts[6]
                 configGroup = parseInt(parts[7]) || 0
-                continue
+                return
             }
             if (parts[0] === "LAYOUT") {
                 detected.push(String(parts[1] || "").trim())
@@ -181,7 +187,7 @@ Item {
             if (parts[0] === "NAME" && parts.length >= 3) {
                 names[String(parts[1] || "").trim()] = String(parts[2] || "").trim()
             }
-        }
+        })
 
         detected = detected.filter(function(layout) { return layout.length > 0 })
         if (detected.length > 0) {
@@ -705,9 +711,8 @@ Item {
         switch (keyData.key) {
         case "close": closeRequested(); return
         case "emoji": Quickshell.execDetached(["omarchy-menu-emoji"]); return
-        case "lang": cycleLanguage(); return
-        // Not a keystroke, so no click sound, for the same reason close and
-        // lang are silent: nothing was typed.
+        // Not a keystroke, so no click sound, for the same reason close is
+        // silent: nothing was typed.
         case "page": togglePage(); return
         case "caps":
             root.keyPressed()
@@ -773,10 +778,6 @@ Item {
                             property string modState: root.keyModifierState(keyData)
                             property bool latched: modState === "latched"
                             property bool locked: modState === "locked"
-                            // The language key reads as disabled while the
-                            // panel has no safe switch target; see
-                            // refreshLayoutsFromHypr for why one may not exist.
-                            property bool isLang: keyData.key === "lang"
                             property bool isDual: root.isDualKey(keyData)
                             // Whether this cap types, which is the same test
                             // `onPressed` makes: a character, or a keysym with
@@ -785,14 +786,12 @@ Item {
                             property bool types: !keyData.key
                                 || !!Layout.positionForKeysym(keyData.key)
 
-                            color: isLang ? (root.typedKeyboard ? root.accentColor : root.keyBg)
-                                : locked ? root.lockedFill
+                            color: locked ? root.lockedFill
                                 : latched ? root.latchedFill
                                 : mouseArea.pressed ? root.keyActiveBg
                                 : mouseArea.containsMouse ? root.keyHoverBg
                                 : root.keyBg
-                            border.color: isLang ? (root.typedKeyboard ? root.accentColor : root.keyBorderColor)
-                                : (latched || locked) ? root.theme.accent
+                            border.color: (latched || locked) ? root.theme.accent
                                 : root.keyBorderColor
                             border.width: latched ? root.latchedBorderWidth : root.keyBorderWidth
 
@@ -802,9 +801,7 @@ Item {
                                 text: keyData.label
                                     ? keyData.label
                                     : root.resolvedTypedChar(keyData)
-                                color: keyRect.locked ? root.lockedText
-                                    : keyRect.isLang ? root.textHighlightColor
-                                    : root.textMain
+                                color: keyRect.locked ? root.lockedText : root.textMain
                                 font.family: root.keyboardFont
                                 font.pixelSize: root.keyFontSize
                             }
@@ -900,7 +897,7 @@ Item {
                                 // type: the modifiers, whose double press is a
                                 // second meaning a press alone cannot tell
                                 // apart, and the command caps (close, emoji,
-                                // lang, caps) where acting on the way down
+                                // page, caps) where acting on the way down
                                 // would tear the panel out from under the
                                 // button that is still held.
                                 onClicked: {
