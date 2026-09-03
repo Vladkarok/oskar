@@ -105,6 +105,12 @@ echo "--- running: $* ---"
 
 before_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 
+# The config is disposable along with the session, so the command under test
+# may rewrite it and `hyprctl reload` — which is the only way to change a
+# setting Hyprland applies to devices at config time, `hyprctl keyword` being
+# refused outright by the Lua parser.
+export OSK_NEST_CONFIG="$workdir/hypr.lua"
+
 WAYLAND_DISPLAY="$display" XDG_RUNTIME_DIR="$runtime" \
     HYPRLAND_INSTANCE_SIGNATURE="$signature" "$@"
 status=$?
