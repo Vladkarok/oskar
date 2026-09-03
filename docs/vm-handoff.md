@@ -93,6 +93,23 @@ cd ~/omarchy-osk && tools/nested-session.sh tools/smoke-daemon.sh
   was the share. Never from `/mnt/osk-src`: the script finds the daemon
   relative to the repo root, and the share is the host's tree, read-only
   and carrying the host's build output if any.
+- **The nested session comes up without an output perhaps a third of the
+  time in the guest**, and roughly as often does not come up at all. The
+  suite's typing target is the first test that needs one, so it is where
+  this shows: `the nested compositor never published a monitor`, or
+  foot's own `no monitors available`. It is the VM, not the helper —
+  re-run. Best guess is the guest's Virtual-1 having no viewer attached,
+  so a nested Hyprland's window sometimes never activates. Nothing else
+  in the suite needs an output, which is why it only appeared now.
+- Every SSH command needs the **live** instance signature, and
+  `ls -t $XDG_RUNTIME_DIR/hypr | head -1` no longer gives it: each nested
+  run leaves a directory behind and they are all newer than the session's
+  own — the live one is usually the oldest. Ask the sockets which one is
+  still answering (Hyprland's own environ does not carry it):
+
+```bash
+ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for d in $XDG_RUNTIME_DIR/hypr/*/; do printf "j/version" | socat - UNIX-CONNECT:"$d.socket.sock" >/dev/null 2>&1 && basename "$d"; done'
+```
 - Input zoo in the guest, deliberately messy: PS/2 keyboard, two USB
   keyboards, a USB tablet, a power-button pseudo-device, plus fcitx5's
   virtual keyboard holding `main:true` — a faithful replica of the host.
