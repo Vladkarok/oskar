@@ -16,7 +16,7 @@ Item {
 
     property var hostShell: null
     property var panelManifest: null
-    property bool shown: false
+    property bool opened: false  // Omarchy shell-IPC: isPluginOpen reads it
     property bool depsOk: true
 
     // ---- configuration ----
@@ -645,14 +645,14 @@ Item {
     // serialized lifecycle for probe, override and restore, so a close that
     // lands before the probe answers cannot leave a session override behind
     // (review finding R6). The binding drives it whatever writer flips
-    // `shown` — the bar toggle, close(), or the shell itself.
+    // `opened` — the bar toggle, close(), or the shell itself.
     CursorPolicy {
         id: cursorPolicy
-        targetOpened: root.shown
+        targetOpened: root.opened
     }
 
-    function open(payloadJson) {  // shell-IPC: the host panel toggle
-        root.shown = true
+    function open(payloadJson) {  // Omarchy shell-IPC: summon calls this
+        root.opened = true  // and isPluginOpen reads it back
     }
 
     // Ticket 30's local workaround, measured on the owner's host (scale 2):
@@ -730,12 +730,12 @@ Item {
         relayoutKickoff.restart()
     }
 
-    function hide() {
-        root.shown = false
+    function close() {  // Omarchy shell-IPC: hide calls this
+        root.opened = false  // the shell's toggle pairs the two
     }
 
     function flip() {
-        root.shown = !root.shown
+        root.opened = !root.opened  // local toggle (bar hotkey pairs via shell)
     }
 
     function setMode(newMode) {
@@ -896,11 +896,11 @@ Item {
         // stopping freezes the tokens at the look they then have, and
         // re-enabling releases that snapshot so a later stop freezes the
         // tokens as they are then — each stop holds its own moment, never a
-        // replay of an older look (Theme.release). The `shown` guard keeps
+        // replay of an older look (Theme.release). The `opened` guard keeps
         // any snapshot from being taken at load, before the shell has read
         // the theme's files (Theme.qml owns that reasoning); onOpenedChanged
         // covers the path where the panel opens already following-off.
-        if (root.shown) {
+        if (root.opened) {
             if (root.followTheme) tokens.release()
             else tokens.freeze()
         }
@@ -1041,10 +1041,10 @@ Item {
     }
 
     // Hooked to the state rather than to open/close/toggle, because the shell
-    // can raise the panel by setting `shown` directly and those hooks would
+    // can raise the panel by setting `opened` directly and those hooks would
     // never run.
-    onShownChanged: {
-        if (root.shown) {
+    onOpenedChanged: {
+        if (root.opened) {
             // With `follow_theme: false` the tokens are held at the look of
             // the moment that state began — a re-enable releases the held
             // snapshot, so this freezes fresh values again (Theme.qml owns
@@ -1129,7 +1129,7 @@ Item {
     // refresh because --watch does not always emit the current value.
     Process {
         id: clipboardWatch
-        running: root.shown
+        running: root.opened
         command: ["wl-paste", "--watch", "echo", "."]
         stdout: SplitParser {
             onRead: function () { root.refreshClipboardPreview() }
@@ -1467,7 +1467,7 @@ Item {
 
     PanelWindow {
         id: panel
-        visible: root.shown
+        visible: root.opened  // the shell contract's one surface flag
         // Docked releases the top edge so the window is exactly the strip at
         // the bottom and its height (and with it the reserved space) follows
         // the keyboard; floating keeps the full-screen transparent overlay
@@ -1839,7 +1839,7 @@ Item {
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
                         Accessible.name: "Close keyboard"
-                        onClicked: root.hide()
+                        onClicked: root.close()  // dismiss
                     }
                     HoverTooltip {
                         text: "Close keyboard"
@@ -1906,7 +1906,7 @@ Item {
                     top: parent.top
                     topMargin: dragBar.height + keyboard.cellGap
                 }
-                onDismissalAsked: root.hide()
+                onDismissalAsked: root.close()
                 // The click follows the press, wherever the press came from in
                 // the grid — letters, arrows, modifiers, caps. UI actions
                 // (close, language, emoji) are not keystrokes and stay quiet.
@@ -2075,7 +2075,7 @@ Item {
     // the band still receives clicks without a bounding-box over keys.
     PanelWindow {
         id: settingsLayer
-        visible: root.shown
+        visible: root.opened  // overlay window rides the same flag
         screen: panel.screen
         color: "#00000000"
         anchors { top: true; bottom: true; left: true; right: true }

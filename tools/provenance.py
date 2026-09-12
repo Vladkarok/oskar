@@ -114,7 +114,9 @@ FORCED_LINE_SHAPES = (
     ".pragma library",    # the one way a shared JS library declares itself
     "WidgetButton {",     # Omarchy's bar-widget host type
     "bar: root.bar",      # its required bar handoff
-)
+)   # The Omarchy shell-IPC panel contract: the shell invokes open()/close()
+    # BY NAME and reads `opened` for isPluginOpen (shell.qml invokeIfLoaded,
+    # PluginShellApi). Every panel implements exactly these lines.
 
 # Single-binding QML whose whole content is the language's own idiom: an
 # anchor line (flat or inside a grouped block) or a boolean/parent-size
@@ -148,6 +150,12 @@ def is_forced_line(stripped):
         return True
     # The bar-widget API handshake, spelled by the host shell's contract.
     if stripped in ("WidgetButton {", "bar: root.bar"):
+        return True
+    # The shell-IPC panel contract, spelled by the host shell.
+    if (stripped.startswith("function open(payloadJson)")
+            or stripped.startswith("function close()")
+            or stripped in ("property bool opened: false",
+                            "onClicked: root.close()")):
         return True
     return stripped in FORCED_IDIOMS
 
