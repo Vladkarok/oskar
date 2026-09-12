@@ -288,6 +288,131 @@ A real `activelayout` event replaces it, and the current-keyboard tier still
 wins. Hotplug is driven by one `udevadm monitor` event stream and fresh
 snapshots on add/remove; the former 30-second seat poll is gone. (`ticket 19`)
 
+## 16. Only Shift locks; Caps and Fn are semantic toggles
+
+Locking every modifier copied a useful one-handed mechanism too broadly.
+A locked Super turns ordinary letters into compositor shortcuts and can make
+the desktop appear broken; persistent Ctrl and Alt have the same class of
+risk with less benefit. Shift is the modifier whose persistent state is both
+visible in keycaps and routinely useful for consecutive typing.
+
+Shift therefore keeps immediate latch and double-click lock. Ctrl, Alt and
+Super are immediate one-shot latches whose second click cancels them. Caps is
+a persistent letters-only semantic toggle and emits no physical Caps
+position; Fn is a session-only display toggle. They do not enter the generic
+modifier lock state. This replaces the v1 §5 all-modifier lock rule.
+
+## 17. A curated symbols page does not widen the input boundary
+
+An arbitrary Unicode palette sounds like a display-only addition, but every
+unmapped symbol forces a new input mechanism. Temporary keymaps revive the
+keymap-churn failure in §3; toolkit Unicode chords are not portable; an input
+method competes with fcitx5 and misses XWayland; clipboard-paste mutates user
+state and adds an unacknowledged delivery protocol.
+
+Page 2 therefore has stable categories and placement but enables only symbols
+that resolve to a position and level in the complete active XKB keymap. It is
+shown only with at least eight available symbols. Unavailable entries are
+disabled or omitted. No clipboard, IME, Unicode-entry chord or keymap
+replacement is permitted. “Stable” describes the palette, not a promise that
+every glyph is synthesizable.
+
+## 18. Maintainer defaults, user overrides and panel state are separate roles
+
+The v1 single-file design made a persisted position and a deliberate user
+preference indistinguishable, and copying complete defaults into that file
+would freeze old release values forever. v1.1 separates complete maintained
+defaults, sparse user overrides and geometry/state. Effective appearance is
+override, live Omarchy token, then shipped fallback.
+
+File changes are event-driven and writes atomic; malformed external edits do
+not replace the last valid runtime state or get silently overwritten. The
+project is still in development, so no migration compatibility is promised:
+the old OSK config/state may be discarded rather than burdening the new model.
+
+## 19. The helper is supervised; readiness is visible but not polled
+
+An installed but disabled user unit is indistinguishable from a broken
+keyboard when the panel hides its connection state. Installation and
+development provisioning enable the helper for the graphical session, while
+systemd's existing restart policy owns crash recovery. The panel exposes its
+existing socket/handshake states and disables only input-producing caps.
+
+Retry may start the user unit. A protocol mismatch instead offers a copied
+install/update command and Retry; the panel does not silently compile,
+install, elevate or notify repeatedly. This adds no heartbeat or status poll:
+the existing gated socket-repair timer remains the sole recovery exception.
+
+## 20. Shared Style owns live theme-token refresh
+
+The OSK already has one Theme facade over Omarchy's shared Color and Style
+tokens. Reading Hyprland rounding independently inside the OSK would create a
+second authority and inconsistent refresh semantics. Live rounding and other
+shared-token refresh therefore belong in Omarchy's shared Style provider;
+the OSK only consumes those tokens and applies its own explicit overrides.
+This is a cross-repository dependency, not permission for a local workaround.
+
+## 21. Docking guarantees geometry, not another client's viewport policy
+
+A layer-shell exclusive zone can shrink the compositor work area and keep a
+tiled window's outer edge above the keyboard. It cannot tell an arbitrary
+client to retain its bottom scroll position, chat composer or caret when that
+client receives a smaller size. Docked mode guarantees exact reservation and
+restoration only. Client-internal visibility remains client-owned; floating
+mode is the escape hatch. App-specific resize or scrolling hacks are rejected.
+
+## 22. Every row is laid out on one shared grid pitch
+
+Per-row proportional flex — each row dividing the same width by its own sum
+of width units — made key size a property of the row it happened to sit on.
+Row sums ranged 13.95–17.25 units, so command-row keys and the arrows
+rendered about 20% narrower than the letters above them, and centering ↑
+over ↓ needed a 0.75-unit "compact" trailing Shift whose label clipped at
+the panel edge. Widths that change meaning from row to row also made the
+command row — the row the pointer returns to most — the worst place to aim.
+
+All rows are now declared to the same 15.5 units and the panel divides by
+one shared cell pitch, so every row is a grid of the same cell size: key
+sizes are uniform between rows (the Windows 11 touch keyboard's defining
+property, used as a look reference only), columns align across rows by
+construction, and ↑ sits exactly above ↓ because the cumulative units left
+of each are equal by arithmetic rather than by tuning. A rebuild-time guard
+reports any row whose widths miss 15.5, because under a shared pitch a
+short row stops short of the card edge instead of merely shrinking.
+(`4742b4b`)
+
+Round 5 read the owner's "chess-like" directive as integer widths on a
+15-unit row, so every row's gap lines fell on one shared lattice — and the
+owner rejected it: "you took the chess layout too literally," go by the
+Windows keyboard. Measured against the owner's high-resolution Windows
+reference, the real system is a half-unit lattice with the classic
+stagger. Every width is a multiple of 0.5, every row sums to 15.5, and
+adjacent rows' gap lines are offset by exactly half a unit — rows one and
+three land on whole units, rows two and four on halves, the command row
+whole across its modifier block and half across its arrow block — so a gap
+lands mid-key of the neighbouring rows instead of on top of one. The
+alignment the pointer cares about survives by arithmetic: 12.5 units sit
+left of ↑ and of ↓ on both pages, and Enter's left edge (2 + 11 = 13.0) is
+exactly ↑/↓'s middle — the relation the owner had been missing since the
+flex model. (`77b485d`, `8d6c836`)
+
+The same measurement directed two placements the panel would not have
+chosen alone, recorded here because both are owner-vetoable: the &123 page
+key moves from the middle of the command row to its bottom-right corner —
+Windows' ENG slot, the far end of the row the pointer returns to most —
+and Del joins the main page's second row, ending it as the reference's
+does. The command row's own contract is untouched: same caps, same widths,
+same place on both pages, the page key included. (`8d6c836`)
+
+Del came to the symbols page first, in the round-4 retuning, beside
+Home/End/Ins. It is pointer-unreachable like its neighbours — the reason
+nav caps exist — and the owner's round-3 directive ("rearranging is
+allowed, nothing is disallowed") covers it; it extends the symbols page's
+fixed-label exception to the keymap rule, which is why it is recorded
+here. All four nav caps now sit at 1.5 units (1.5 Tab + 8 punctuation +
+4 × 1.5 nav = 15.5) and the main page's Del takes the default unit width.
+(`4742b4b`, `77b485d`, `8d6c836`)
+
 ## Dead ends — do not retry
 
 - Subscribing to / mirroring the seat keymap (§3). Also: guarding its

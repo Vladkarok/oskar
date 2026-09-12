@@ -1,5 +1,8 @@
 # v1 spec — what the keyboard does
 
+> Historical baseline. [spec-v1.1.md](spec-v1.1.md) is the authoritative
+> current delta and explicitly replaces some requirements below.
+
 Written 2026-09-02 from the design session recorded in
 [decisions.md](decisions.md) and [orientation.md](orientation.md). This
 is the behaviour spec for the first complete version: what the keyboard
@@ -81,6 +84,13 @@ from the keymap's shift level.
 keyboard cannot reach in one press. Reached by a dedicated key, returns
 by pressing it again. Its caps come from the compiled keymap for the
 active group like every other cap; there is no fixed ASCII table.
+
+**Function layer (`Fn`)** — an immediate two-state display control in the
+bottom row. Off shows the page's ordinary top row, prefixed by `Esc`; on
+replaces that same row in place with `Esc`, grave, `F1`–`F12` and `Backspace`.
+It emits no key or modifier, works on both pages, and keeps its state only for
+the shell session. The swap never changes panel or docked exclusive-zone
+height.
 
 Arrow cluster: `←↑↓→` as a group, positioned so repeated clicks are easy
 to land on — arrow keys are the ones that get clicked most in a row.
@@ -241,8 +251,8 @@ cannot lose it:
 ## 12. Deferred to v2
 
 Chooser popup for three or more layouts. Independent theme colours.
-Context row (`.com` and friends). Dead-key accented characters. Function
-keys. Appearance extras beyond theme-following.
+Context row (`.com` and friends). Dead-key accented characters. Appearance
+extras beyond theme-following.
 
 Sitting untouched by choice, not oversight: sleep/wake on real hardware,
 and the upstream Hyprland work in

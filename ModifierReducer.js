@@ -8,15 +8,15 @@
 //
 // Why the states behave the way they do. One hand on a mouse cannot hold a
 // modifier and click a key, so a click latches the modifier for exactly the
-// next key press and a double click locks it until clicked again.
+// next key press. Shift alone can be double-clicked to lock until clicked
+// again; persistent Ctrl, Alt, or Super would turn ordinary typing into an
+// unsafe run of shortcuts.
 //
 // Latched and locked reach the compositor by different routes, and the
 // difference matters downstream. A latched modifier is pressed and released
 // around the one key it applies to, so nothing is left held between clicks. A
-// locked modifier is genuinely held down at the device from the moment it
-// locks — which is what makes the lock indicator true, and why the helper's
-// stuck-key cap exempts modifier codes (spec-v1 §6): a locked Ctrl is
-// deliberately down for minutes.
+// locked Shift is genuinely held down at the device from the moment it locks,
+// which is what makes the lock indicator true.
 //
 // A latch is consumed by the next non-modifier press whether or not the
 // compositor swallowed that press as a binding. The panel cannot know a bind
@@ -44,11 +44,14 @@ function initialState() {
         state[ORDER[i]] = "idle"
     }
     state.caps = false
+    // A local display mode, not an XKB modifier. It belongs here so switching
+    // the function row cannot accidentally consume or release a real modifier.
+    state.fn = false
     // The key the mouse button is currently down on, and the modifiers wrapped
     // around it, so the release can lift them in the right order. Null between
     // presses; see `press` for why a press is not self-contained any more.
     state.pending = null
-    // The two most recent clicks, newest in `lastClick`, each
+    // The two most recent Shift clicks, newest in `lastClick`, each
     // `{ modifier, before }`. A double click arrives after its own two clicks
     // have already been applied, so `doubleClick` needs to know where the
     // gesture started rather than where those clicks left it — see there.
@@ -86,16 +89,21 @@ function unchanged(state) {
 ///
 /// Events:
 ///   { type: "capsClick" }
+///   { type: "fnClick" }
 ///   { type: "click",        modifier }
 ///   { type: "doubleClick",  modifier }
-///   { type: "press",        position, letter, shift }
+///   { type: "press",        position, letter, shift, altgr }
 ///   { type: "release" }
 ///
 /// `shift` on a press means the cap draws the position's shift level and must
 /// type that level — the symbols page (spec-v1 §4). Like Caps Lock it is
 /// satisfied with a real Shift press around the key rather than by choosing a
 /// character, because the compositor resolves the position through its own
-/// layout and the panel does not get to decide what comes out.
+/// layout and the panel does not get to decide what comes out. `altgr` is the
+/// curated page's answer for the keymap's AltGr levels (spec-v1.1 §3): level
+/// 3 carries AltGr alone, level 4 AltGr and Shift — the same real-modifier
+/// press around the key, one boundary further into the keymap the user
+/// already has, and never a new input mechanism.
 ///   { type: "pageSwitch" }
 ///   { type: "languageSwitch" }
 ///   { type: "releaseAll" }
@@ -106,6 +114,10 @@ function reduce(state, event) {
         var next = copy(state)
         next.caps = !state.caps
         return { state: next, lines: [] }
+    case "fnClick":
+        var fnNext = copy(state)
+        fnNext.fn = !state.fn
+        return { state: fnNext, lines: [] }
     case "click":
         return click(state, event.modifier)
     case "doubleClick":
@@ -152,8 +164,13 @@ function click(state, modifier) {
     // the first rather than escalating it (spec-v1 §5).
     var target = state[modifier] === "idle" ? "latched" : "idle"
     var out = transition(state, modifier, target)
-    out.state.prevClick = state.lastClick
-    out.state.lastClick = { modifier: modifier, before: state[modifier] }
+    if (modifier === "shift") {
+        out.state.prevClick = state.lastClick
+        out.state.lastClick = { modifier: modifier, before: state[modifier] }
+    } else {
+        out.state.lastClick = null
+        out.state.prevClick = null
+    }
     return out
 }
 
@@ -183,6 +200,12 @@ function gestureOrigin(state, modifier) {
 
 function doubleClick(state, modifier) {
     if (!isModifier(modifier)) return unchanged(state)
+    if (modifier !== "shift") {
+        var canceled = transition(state, modifier, "idle")
+        canceled.state.lastClick = null
+        canceled.state.prevClick = null
+        return canceled
+    }
     var origin = gestureOrigin(state, modifier)
     var out = transition(state, modifier, origin === "locked" ? "idle" : "locked")
     // The gesture is spent. Leaving it behind would let the next single click
@@ -203,7 +226,14 @@ function press(state, event) {
         var modifier = ORDER[i]
         if (state[modifier] !== "latched") continue
         next[modifier] = "idle"
-        if (modifier === "shift" && !shiftWanted(state, event, true)) continue
+        // A level-explicit AltGr press (the curated page's levels 3 and 4)
+        // needs an exact Shift answer: level 3 must not carry the latched
+        // Shift, or the position would type level 4 — not the level the cap
+        // draws. Ordinary presses keep the old default, where a latched
+        // Shift wraps every non-letter press.
+        if (modifier === "shift"
+                && !(event.altgr === true ? event.shift === true
+                     : shiftWanted(state, event, true))) continue
         wrap.push(modifier)
     }
 
@@ -225,10 +255,28 @@ function press(state, event) {
         wrap.push("shift")
     }
 
+    // Level 3 or 4 needs AltGr held around the key the same way level 2
+    // needs Shift: a real press of the position's own modifier, never a
+    // character chosen by the panel. A latched AltGr is already in the wrap
+    // above; a locked one cannot happen (§16 — only Shift locks) and is
+    // left alone here regardless.
+    if (state.altgr !== "latched" && state.altgr !== "locked"
+            && event.altgr === true) {
+        wrap.push("altgr")
+    }
+
     // Caps and Shift cancel for letters. A locked Shift is genuinely held at
     // the device, so lift it around this press and restore it on release. Its
     // semantic state remains locked throughout.
     if (state.caps && event.letter && state.shift === "locked") {
+        restore.push("shift")
+    }
+
+    // Level 3 also needs Shift *not* down, and a locked Shift is genuinely
+    // down: lift it around the press and put it back after, exactly like the
+    // Caps+letter case above. Level 4 wants Shift down and a lock is already
+    // down, so it needs nothing.
+    if (event.altgr === true && event.shift !== true && state.shift === "locked") {
         restore.push("shift")
     }
 
@@ -297,5 +345,6 @@ function releaseAll(state) {
     }
     var next = initialState()
     next.caps = state.caps
+    next.fn = state.fn
     return { state: next, lines: lines }
 }

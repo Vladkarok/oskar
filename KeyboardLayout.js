@@ -1,7 +1,14 @@
 .pragma library
 
 // Each key: { t: base char, s: shifted char } for typed keys,
-// or { label, key: keysym/modifier-name, w: width factor } for special keys.
+// or { label, key: keysym/modifier-name, w: width units } for special keys.
+// Keys without w are one unit wide, every width is a multiple of 0.5, and
+// every row's widths sum to 15.5 exactly: the panel lays all rows out on one
+// shared cell pitch (Keyboard.qml) and loudly reports any row that misses
+// it, because under a shared pitch a short row stops short of the card edge
+// instead of merely shrinking. The widths sit on a half-unit lattice in the
+// owner-measured Windows stagger; what that buys is the grid comment in
+// Keyboard.qml, and this is not the place to say it twice.
 //
 // A third shape belongs to the symbols page: { k: position, lvl: 1 | 2 } draws
 // exactly one level of one position and types that level, rather than the
@@ -9,75 +16,96 @@
 // all, because a fixed ASCII table is the lie this project exists to avoid —
 // an unresolved level draws blank and is reported like any other fallback.
 var functionRow = [
-    { label: "esc", key: "Escape", w: 1.25 },
+    { label: "esc", key: "Escape", w: 1.0 },
+    { t: "`", s: "~", k: "TLDE" },
     { label: "F1", key: "F1" }, { label: "F2", key: "F2" }, { label: "F3", key: "F3" },
     { label: "F4", key: "F4" }, { label: "F5", key: "F5" }, { label: "F6", key: "F6" },
     { label: "F7", key: "F7" }, { label: "F8", key: "F8" }, { label: "F9", key: "F9" },
     { label: "F10", key: "F10" }, { label: "F11", key: "F11" }, { label: "F12", key: "F12" },
-    { label: "Delete", key: "Delete", w: 1.25 }
+    { label: "⌫", key: "BackSpace", w: 1.5 }
 ]
 
 // The row both pages end on, identical but for the page key's own label. It is
 // the row the pointer returns to most, so it is the one that must not move
 // between pages: same caps, same widths, same place (see the height pin in
-// Keyboard.qml).
+// Keyboard.qml) — the page key included, which has sat in the bottom-right
+// slot since owner round 6.
 function commandRow(pageLabel) {
     return [
-        { label: "Ctrl", key: "ctrl", w: 1.25 },
-        { label: "Super", key: "logo", w: 1.25 },
-        { label: "Alt", key: "alt", w: 1.25 },
-        { label: "", key: "emoji", w: 1.25 },
+        { label: "Ctrl", key: "ctrl" },
+        // Fn is a panel display control: it swaps the top row in place and
+        // never emits a key position or participates in modifier latching.
+        { label: "Fn", key: "fn" },
+        { label: "Super", key: "logo" },
+        { label: "Alt", key: "alt" },
+        { label: "", key: "emoji" },
+        { t: " ", label: "", w: 4.5, k: "SPCE" },
+        { label: "AltGr", key: "altgr" },
+        { label: "Ctrl", key: "ctrl" },
+        { label: "←", key: "Left" },
+        { label: "↓", key: "Down" },
+        { label: "→", key: "Right" },
         // The page switch (spec-v1 §4). A key, never a modifier: it changes
         // what can be seen and nothing about what is held, and the label names
-        // where the next press goes rather than where you are.
-        { label: pageLabel, key: "page", w: 1.25 },
-        { t: " ", label: "", w: 4.25, k: "SPCE" },
-        { label: "AltGr", key: "altgr", w: 1.25 },
-        { label: "Super", key: "logo", w: 1.25 },
-        { label: "Ctrl", key: "ctrl", w: 1.25 },
-        // The four arrows sit together at the end of the row and are ordinary
-        // full-height caps, not a nested cluster of half-height ones. Arrows
-        // are the keys clicked most times in a row, so each one has to be a
-        // target the pointer can hit five times without re-aiming; the stacked
-        // up/down pair this replaces was a little under half the height of
-        // every other key on the panel. Being ordinary caps also puts them on
-        // the delegate's `onPressed` path rather than their own `onClicked`
-        // MouseAreas, so they act on the way down like everything else.
-        { label: "◀", key: "Left" },
-        { label: "▲", key: "Up" },
-        { label: "▼", key: "Down" },
-        { label: "▶", key: "Right" }
+        // where the next press goes rather than where you are. It holds the
+        // bottom-right corner — Windows' ENG slot — since owner round 6.
+        { label: pageLabel, key: "page" }
     ]
 }
 
+// Half-unit lattice with the classic stagger (owner round 6, laid out like
+// the measured Windows reference): every width is a multiple of 0.5 and
+// adjacent rows' gap lines are offset by exactly half a unit, so every gap
+// falls mid-key of the neighbouring rows — rows 1 and 3 land their
+// boundaries on whole units, rows 2 and 4 on half units, and the command
+// row is whole across its left block and half across its right block.
+// Consequences: Caps Lock spans exactly Ctrl+Fn, ↑ sits exactly above ↓
+// (12.5 units left of each — see the fourth row), Enter's left edge
+// (2 + 11 = 13.0) lands exactly at ↑/↓'s middle, and the 2-unit right Shift
+// here, like symbols Enter on the other page, spans exactly → plus the page
+// key.
 var rows = [
-    functionRow,
     [
+        { label: "esc", key: "Escape", w: 1.0 },
         { t: "`", s: "~", k: "TLDE" }, { t: "1", s: "!", k: "AE01" }, { t: "2", s: "@", k: "AE02" }, { t: "3", s: "#", k: "AE03" },
         { t: "4", s: "$", k: "AE04" }, { t: "5", s: "%", k: "AE05" }, { t: "6", s: "^", k: "AE06" }, { t: "7", s: "&", k: "AE07" },
         { t: "8", s: "*", k: "AE08" }, { t: "9", s: "(", k: "AE09" }, { t: "0", s: ")", k: "AE10" }, { t: "-", s: "_", k: "AE11" },
-        { t: "=", s: "+", k: "AE12" }, { label: "Backspace", key: "BackSpace", w: 1.5 }
+        { t: "=", s: "+", k: "AE12" }, { label: "⌫", key: "BackSpace", w: 1.5 }
     ],
     [
-        { label: "Tab", key: "Tab", w: 1.4 },
+        { label: "Tab", key: "Tab", w: 1.5 },
         { t: "q", s: "Q", k: "AD01" }, { t: "w", s: "W", k: "AD02" }, { t: "e", s: "E", k: "AD03" }, { t: "r", s: "R", k: "AD04" },
         { t: "t", s: "T", k: "AD05" }, { t: "y", s: "Y", k: "AD06" }, { t: "u", s: "U", k: "AD07" }, { t: "i", s: "I", k: "AD08" },
         { t: "o", s: "O", k: "AD09" }, { t: "p", s: "P", k: "AD10" }, { t: "[", s: "{", k: "AD11" }, { t: "]", s: "}", k: "AD12" },
-        { t: "\\", s: "|", k: "BKSL" }
+        { t: "\\", s: "|", k: "BKSL" },
+        // Windows' reference ends this row in Del; the keysym mapping and the
+        // symbols-page cap below already existed.
+        { label: "Del", key: "Delete" }
     ],
     [
-        { label: "Caps Lock", key: "caps", w: 1.75 },
+        { label: "Caps Lock", key: "caps", w: 2.0 },
         { t: "a", s: "A", k: "AC01" }, { t: "s", s: "S", k: "AC02" }, { t: "d", s: "D", k: "AC03" }, { t: "f", s: "F", k: "AC04" },
         { t: "g", s: "G", k: "AC05" }, { t: "h", s: "H", k: "AC06" }, { t: "j", s: "J", k: "AC07" }, { t: "k", s: "K", k: "AC08" },
         { t: "l", s: "L", k: "AC09" }, { t: ";", s: ":", k: "AC10" }, { t: "'", s: "\"", k: "AC11" },
-        { label: "Enter", key: "Return", w: 1.75 }
+        { label: "Enter", key: "Return", w: 2.5 }
     ],
     [
-        { label: "Shift", key: "shift", w: 2.2 },
+        // Alignment invariant shared with the symbols page: the units left of
+        // ↑ (2.5 Shift + 10 letters here; 2.5 Shift + 8 punctuation + PgUp +
+        // PgDn there) come to 12.5, and so do the units left of ↓ on the
+        // command row (Ctrl+Fn+Super+Alt+emoji = 5, Space 4.5, AltGr + Ctrl +
+        // ← = 3). Under the panel's one shared cell pitch a cap's x depends
+        // only on the cumulative units before it, so ↑ sits exactly above ↓
+        // at every preset by arithmetic rather than by tuning.
+        { label: "Shift", key: "shift", w: 2.5 },
         { t: "z", s: "Z", k: "AB01" }, { t: "x", s: "X", k: "AB02" }, { t: "c", s: "C", k: "AB03" }, { t: "v", s: "V", k: "AB04" },
         { t: "b", s: "B", k: "AB05" }, { t: "n", s: "N", k: "AB06" }, { t: "m", s: "M", k: "AB07" }, { t: ",", s: "<", k: "AB08" },
         { t: ".", s: ">", k: "AB09" }, { t: "/", s: "?", k: "AB10" },
-        { label: "Shift", key: "shift", w: 2.2 }
+        { label: "↑", key: "Up" },
+        // Spans exactly → plus the page key on the row below (see the lattice
+        // note above). The 0.75 trailing Shift this row used to end on was a
+        // flex-model hack whose label clipped at the panel edge.
+        { label: "Shift", key: "shift", w: 2.0 }
     ],
     commandRow("&123")
 ]
@@ -107,30 +135,194 @@ function levelCaps(positions, level) {
     return out
 }
 
-var symbolRows = [
-    functionRow,
-    levelCaps(["TLDE", "AE01", "AE02", "AE03", "AE04", "AE05", "AE06", "AE07",
-               "AE08", "AE09", "AE10", "AE11", "AE12"], 2)
-        .concat([{ label: "Backspace", key: "BackSpace", w: 1.5 }]),
-    [{ label: "Tab", key: "Tab", w: 1.4 }]
+// A function of the page key's label rather than a fixed table, because the
+// label names the page the next press goes to: the main page when the curated
+// page does not exist, the curated page when it does. The rows themselves are
+// the declaration they always were.
+function symbolRows(pageLabel) {
+    return [
+    [{ label: "esc", key: "Escape", w: 1.0 }]
+        .concat(levelCaps(["TLDE", "AE01", "AE02", "AE03", "AE04", "AE05", "AE06", "AE07",
+               "AE08", "AE09", "AE10", "AE11", "AE12"], 2))
+        .concat([{ label: "⌫", key: "BackSpace", w: 1.5 }]),
+    [{ label: "Tab", key: "Tab", w: 1.5 }]
         .concat(levelCaps(punctuationPositions, 1))
         .concat([
-            { label: "Home", key: "Home" },
-            { label: "End", key: "End" },
-            { label: "Ins", key: "Insert" }
+            // Del is a nav cap like its neighbours: pointer-unreachable, and
+            // keysymPositions already maps Delete. It has stood on this row
+            // since round 4, and the owner's round-6 measured Windows
+            // reference puts Del at the end of the main page's second row
+            // too, where it now exists as a plain unit cap. All four nav
+            // caps here are 1.5 units wide: 1.5 Tab + 8 punctuation + 4 ×
+            // 1.5 nav is the 15.5 every row is declared to.
+            { label: "Del", key: "Delete", w: 1.5 },
+            { label: "Home", key: "Home", w: 1.5 },
+            { label: "End", key: "End", w: 1.5 },
+            { label: "Ins", key: "Insert", w: 1.5 }
         ]),
     // Shift is on this row because it is the one modifier the main page keeps
     // outside the command row, and a locked modifier has to stay *indicated* as
     // locked across a page switch, not merely stay held (spec-v1 §5).
-    [{ label: "Shift", key: "shift", w: 2.2 }]
+    [{ label: "Shift", key: "shift", w: 2.5 }]
         .concat(levelCaps(punctuationPositions, 2))
         .concat([
             { label: "PgUp", key: "Prior" },
             { label: "PgDn", key: "Next" },
-            { label: "Enter", key: "Return", w: 1.75 }
+            // Same units-left invariant as the main page's fourth row
+            // (2.5 + 8 + 1 + 1 = 12.5), so this ↑ also sits exactly above
+            // the command row's ↓.
+            { label: "↑", key: "Up" },
+            { label: "Enter", key: "Return", w: 2.0 }
         ]),
-    commandRow("ABC")
+        commandRow(pageLabel)
+    ]
+}
+
+// The curated page (spec-v1.1 §3, decisions §17). An entry is declared as a
+// keysym token, never a character: it is enabled only when some position and
+// level of the complete active keymap carries that token, and typing it is
+// the symbols page's own level-cap press with whatever real modifiers that
+// level asks for — AltGr for levels 3 and 4, the way level 2 uses Shift.
+// Nothing here widens the input boundary: no clipboard, no Unicode-entry
+// chord, no IME, no keymap of its own.
+//
+// "Stable" is the palette, not a promise of availability (the ticket's own
+// warning): the category sequence never reorders, and a symbol the active
+// keymap cannot produce is simply absent — on plain `us` that is most of
+// them, which is why the page exists only at eight or more available.
+//
+// Every name shipped here is a real keysym, checked against xkbcommon's
+// keysym header (libxkbcommon 1.13): `logicalnot` is spelled `notsign`,
+// `lessequal`/`greaterequal` are `lessthanequal`/`greaterthanequal`, and the
+// single angle quotes are `leftsingleanglequotemark`/`rightsingleanglequotemark`.
+// Plain `bullet` is not a keysym (the 0x0aXX legacy name for U+2022 is
+// `enfilledcircbullet`), so the typography category runs without it.
+// `rublesign` does not exist in xkbcommon 1.13 and is omitted. Hryvnia has
+// no Latin keysym name in xkbcommon's list at all; the keymap spells it
+// `U20B4` — keysym 0x10020b4 in xkbcommon's own Unicode-notation form,
+// which is exactly how the keycap pipeline reports it — so that is the
+// token declared here.
+var curatedTokens = [
+    // currency
+    "EuroSign", "sterling", "yen", "cent", "currency", "U20B4",
+    // mathematics
+    "plusminus", "multiply", "division", "degree", "notsign", "approximate",
+    "notequal", "lessthanequal", "greaterthanequal", "onehalf", "onequarter",
+    "threequarters", "twosuperior", "threesuperior", "infinity",
+    // typographic punctuation
+    "guillemotleft", "guillemotright", "emdash", "endash", "ellipsis",
+    "leftsinglequotemark", "rightsinglequotemark", "leftdoublequotemark",
+    "rightdoublequotemark",
+    // brackets: the single angle quotes
+    "leftsingleanglequotemark", "rightsingleanglequotemark",
+    // legal marks
+    "copyright", "registered", "trademark", "section", "numerosign",
+    // common
+    "mu", "brokenbar"
 ]
+
+// Show page 2 only at eight or more available symbols (spec-v1.1 §3).
+var curatedMinimum = 8
+
+/// token -> { position, level } over the keycap pipeline's own answer. The
+/// whole point of building it here, from symbolMap, is that availability is
+/// the keymap's claim about itself: a symbol is enabled because the keymap
+/// carries it somewhere, at whatever level that is — including the AltGr
+/// levels a main-page cap never shows. Empty levels and NoSymbol are nothing
+/// to index.
+function buildTokenIndex(symbolMap) {
+    var index = {}
+    for (var position in symbolMap) {
+        var levels = symbolMap[position]
+        if (!Array.isArray(levels)) continue
+        for (var i = 0; i < levels.length; i++) {
+            var token = String(levels[i] || "").trim()
+            if (token === "" || token === "NoSymbol") continue
+            // First occurrence wins: a token the keymap carries twice types
+            // the same either way, and one fixed answer keeps the cap stable.
+            if (index.hasOwnProperty(token)) continue
+            index[token] = { position: position, level: i + 1 }
+        }
+    }
+    return index
+}
+
+// The slot plan, sized for the full palette and never reshaped: the available
+// symbols fill the slots in curatedTokens' order, and a slot nothing resolves
+// to becomes an invisible spacer ({ w } alone) so the row still sums to the
+// grid without drawing a blank cap. A content row nothing at all resolves to
+// is left out entirely.
+//
+// Row shapes, on the shared 15.5-unit half-lattice: esc + 13 + ⌫ like every
+// page's first row; a free row of 15 closed by an invisible half-unit pad;
+// then Shift + 11 + Enter like the symbols page's third row — Shift
+// because a locked Shift must stay indicated across a page switch (spec-v1
+// §5), Enter because a symbols page without one strands the user.
+// 13 + 15 + 11 = 39 slots, one per curated token; the command row closes the
+// page as on every other page, labelled for the main page it returns to.
+var curatedShape = [
+    {
+        before: [{ label: "esc", key: "Escape", w: 1.0 }],
+        slots: 13,
+        after: [{ label: "⌫", key: "BackSpace", w: 1.5 }]
+    },
+    {
+        before: [],
+        slots: 15,
+        // Fifteen unit slots leave half a unit short of the grid; the pad
+        // keeps the row on it without widening any cap.
+        after: [{ w: 0.5 }]
+    },
+    {
+        before: [{ label: "Shift", key: "shift", w: 2.5 }],
+        slots: 11,
+        after: [{ label: "Enter", key: "Return", w: 2.0 }]
+    }
+]
+
+// The tallest this page can be: the full palette's three content rows plus
+// the command row. The panel pins its height to the tallest page — the
+// main page, four content rows plus the command row — so a page switch
+// never resizes the panel.
+var curatedMaxRows = curatedShape.length + 1
+
+/// The page's rows and its availability count, both derived from the keymap's
+/// own answer. Recomputed whenever symbolMap reloads — never per click.
+function curatedPageRows(symbolMap) {
+    var index = buildTokenIndex(symbolMap)
+    var caps = []
+    for (var i = 0; i < curatedTokens.length; i++) {
+        var hit = index[curatedTokens[i]]
+        if (hit) caps.push({ k: hit.position, lvl: hit.level })
+    }
+    var rows = []
+    var next = 0
+    for (var r = 0; r < curatedShape.length; r++) {
+        var row = curatedShape[r].before.slice()
+        var filled = 0
+        for (var s = 0; s < curatedShape[r].slots; s++) {
+            if (next < caps.length) {
+                row.push(caps[next])
+                next += 1
+                filled += 1
+            } else {
+                row.push({ w: 1 })
+            }
+        }
+        row = row.concat(curatedShape[r].after)
+        if (filled > 0) rows.push(row)
+    }
+    rows.push(commandRow("ABC"))
+    return { rows: rows, available: caps.length }
+}
+
+/// A spacer slot: width for the grid and nothing else — no key, no
+/// position, no character, no label — so the panel can leave it undrawn
+/// and inert.
+function isBlank(keyData) {
+    return !keyData.key && !keyData.k && !keyData.label
+        && !keyData.t && !keyData.s
+}
 
 
 var tokenCharMap = {
@@ -201,7 +393,37 @@ var tokenCharMap = {
     rightdoublequotemark: "\u201d",
     brokenbar: "\u00a6",
     currency: "\u00a4",
-    EuroSign: "\u20ac"
+    EuroSign: "\u20ac",
+    // The curated page's tokens (spec-v1.1 §3). A page-2 cap is only ever
+    // created because the keymap itself carries the token — see
+    // buildTokenIndex — so this table is the drawn half of the same claim:
+    // what the keymap resolved is what the cap must show.
+    sterling: "\u00a3",
+    yen: "\u00a5",
+    cent: "\u00a2",
+    plusminus: "\u00b1",
+    multiply: "\u00d7",
+    division: "\u00f7",
+    notsign: "\u00ac",
+    approximate: "\u2248",
+    notequal: "\u2260",
+    lessthanequal: "\u2264",
+    greaterthanequal: "\u2265",
+    onehalf: "\u00bd",
+    onequarter: "\u00bc",
+    threequarters: "\u00be",
+    twosuperior: "\u00b2",
+    threesuperior: "\u00b3",
+    infinity: "\u221e",
+    ellipsis: "\u2026",
+    leftsinglequotemark: "\u2018",
+    rightsinglequotemark: "\u2019",
+    leftsingleanglequotemark: "\u2039",
+    rightsingleanglequotemark: "\u203a",
+    copyright: "\u00a9",
+    registered: "\u00ae",
+    trademark: "\u2122",
+    mu: "\u00b5"
 }
 
 // X11 Cyrillic keysym names -> characters. Cyrillic layouts (ua, ru, bg,

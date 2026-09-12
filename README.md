@@ -29,7 +29,7 @@ earns a place in autostart.
 | `Keyboard.qml` | key grid, layout tracking, socket client |
 | `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
 | `ModifierReducer.js` | the modifier state machine (pure, tested) |
-| `Config.js` | parse/serialize for the one config file |
+| `Config.js` | maintained defaults plus override/state validation and serialization |
 | `Theme.qml` | the panel's one reader of Omarchy's shared style tokens |
 | `BarWidget.qml` | bar icon that toggles the panel |
 | `daemon/` | Rust helper holding one virtual keyboard |
@@ -51,18 +51,29 @@ fullscreen window ignores exclusive zones and is overlaid instead. **Floating**
 reserves nothing and is dragged by its bar. The mode button on the panel
 switches between them.
 
-Everything persists in one file, `$XDG_CONFIG_HOME/omarchy-osk/config.json`,
-which is both the documented config and the saved state — there is no second
-state file. A missing file or a missing or malformed key falls back to the
-defaults rather than failing to start.
+Maintained defaults ship in `Config.js`. Deliberate user choices are sparse in
+`$XDG_CONFIG_HOME/omarchy-osk/config.json`; floating geometry is separate in
+`$XDG_STATE_HOME/omarchy-osk/state.json`. Both files reload on change without
+polling and GUI writes replace them atomically. Invalid external text stays
+untouched while the panel keeps the last valid runtime value.
 
 | key | values | default |
 |---|---|---|
 | `mode` | `docked` \| `floating` | `docked` |
-| `position` | `{x, y}`, floating mode only | unset |
 | `size_preset` | preset name | `medium` |
 | `sound` | `true` \| `false` | `false` |
 | `follow_theme` | `true` \| `false` | `true` |
+| `key_radius` | non-negative number | `8` |
+| `panel_radius` | non-negative number | `12` |
+| `key_background` | colour string | `#303030` |
+| `panel_background` | colour string | `#202020` |
+| `text_color` | colour string | `#f5f5f5` |
+| `accent_color` | colour string | `#7aa2f7` |
+| `border_color` | colour string | `#5a5a5a` |
+
+`state.json` currently contains only floating `position` as `{x, y}` or
+`null`. An absent override follows the maintained value, so a later release
+can change its default without rewriting the user's sparse file.
 
 `sound: true` plays the freedesktop sound theme's `bell` event on each key
 press through QtMultimedia — nothing is spawned per keystroke. It needs

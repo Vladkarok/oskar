@@ -106,7 +106,31 @@ _Avoid_: sticky, one-shot, armed
 A modifier double-clicked, held until clicked again.
 _Avoid_: toggled, pinned, held
 
+**Semantic toggle**:
+A panel control whose on/off state changes what the panel presents or how a
+later key is interpreted, but is not itself a held keyboard modifier. Caps
+and Fn are semantic toggles.
+_Avoid_: locked modifier, sticky key
+
 **Mode**:
 The panel's geometry: docked, which reserves screen space at the bottom
 edge, or floating, which reserves none and remembers where it was put.
 _Avoid_: layout (which means xkb), position, style
+
+### Settings
+
+**Maintainer default**:
+A complete product setting supplied by the project and allowed to change in
+a later release.
+_Avoid_: user default, local setting
+
+**User override**:
+An explicit user choice that takes precedence over a maintainer default. An
+absent override means “follow the maintained value,” not “use a copied old
+default.”
+_Avoid_: preference snapshot, custom default
+
+**State**:
+Remembered panel placement or transient UI continuity that is not a user
+preference and does not override a maintainer default.
+_Avoid_: config, setting, mode
