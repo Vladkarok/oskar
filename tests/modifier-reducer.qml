@@ -1043,6 +1043,27 @@ QtObject {
                 T.deepEqual(Reducer.pasteChordForClass(classes[i]), chord)
         })
 
+        T.test("pasteChordForClass names Ctrl+V for Wine and Proton classes", function () {
+            // The owner's Proton report: Shift+Insert and Ctrl+Shift+V are
+            // unbound there; only Ctrl+V pastes. Game windows carry the
+            // Windows executable's name, the loader carries "wine".
+            var chord = { ctrl: true, shift: false, position: "AB04" }
+            var classes = [
+                "football.exe", "hl2.exe", "Portal2.exe", "football.EXE",
+                "wine64-preloader", "wine", "explorer.exe",
+                "com.usebottles.wine-game", "steam_proton", "steam_app_311210"
+            ]
+            for (var i = 0; i < classes.length; i++)
+                T.deepEqual(Reducer.pasteChordForClass(classes[i]), chord)
+            // The wine match is a substring of the lowered class — a name
+            // merely containing "wine" rides the Ctrl+V chord, and so does
+            // an .exe suffix even on a class that is otherwise a terminal.
+            T.deepEqual(Reducer.pasteChordForClass("wineskin"),
+                { ctrl: true, shift: false, position: "AB04" })
+            T.deepEqual(Reducer.pasteChordForClass("foot.exe"),
+                { ctrl: true, shift: false, position: "AB04" })
+        })
+
         T.test("pasteChordForClass prefers CLIPBOARD chord when class is empty", function () {
             T.deepEqual(Reducer.pasteChordForClass(""),
                 { ctrl: true, shift: true, position: "AB04" })

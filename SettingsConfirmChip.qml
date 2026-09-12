@@ -39,4 +39,8 @@ Rectangle {
         Accessible.name: chip.accessName
         onClicked: chip.confirmed()
     }
+    HoverTooltip {
+        text: chip.accessName
+        hovered: chipArea.containsMouse
+    }
 }

@@ -19,6 +19,7 @@ tests are for.
 import hashlib
 import json
 import os
+import re
 import signal
 import shutil
 import socket
@@ -468,6 +469,22 @@ class ElectronTarget:
                 return delta
             time.sleep(0.05)
         return ""
+
+    def delta_until_value(self, wanted):
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            current = self.title()
+            delta = current[len(self.last):]
+            snapshots = re.findall(r"V([^;]*);", delta)
+            received = "" if not snapshots else "".join(
+                chr(int(codepoint, 16))
+                for codepoint in snapshots[-1].split(",") if codepoint
+            )
+            if received == wanted:
+                self.last = current
+                return delta
+            time.sleep(0.05)
+        return self.title()[len(self.last):]
 
     def close(self):
         self._process.terminate()

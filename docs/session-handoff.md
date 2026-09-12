@@ -1,16 +1,129 @@
-# Handoff — 2026-09-10
+# Handoff — updated 2026-09-11
+
+**Start the next session with [release-readiness-plan.md](release-readiness-plan.md).**
+It consolidates this session's findings, implementation/review evidence, owner
+feedback (emoji now arrive in Codex; Proton remains broken), packaging options,
+unfinished cleanup and the ordered release gates. It also corrects stale counts
+and overstatements below; proposals are distinguished from approved behavior.
 
 Written for a **cold start**: no prior chat needed. Read this, then
-[decisions.md](decisions.md) §37–§39, then the ticket you are picking up.
+[decisions.md](decisions.md) §37–§40, then the ticket you are picking up.
+
+**2026-09-11:** the plan to a first release is
+[release-readiness-plan.md](release-readiness-plan.md). It synthesizes two code
+reviews, kept as its evidence appendices:
+[review-2026-09-11.md](review-2026-09-11.md) and
+[review-astra-2026-09-11.md](review-astra-2026-09-11.md). Start with its §1 and
+stage A; the two behaviour bugs it lists (R1, R2) come before the acceptance
+work below. Where this handoff and the plan disagree, the plan is newer.
+
+**2026-09-11 (stage A done):** the checkpoint is committed — `7baafee`
+(runtime, tests, assets) and `9c2cd97` (plan and reviews); the tree is clean.
+A2 followed (`3a2f55f`): board statuses reconciled with the cancelled
+external-picker directions closed as history, and the two behaviour bugs
+filed where they belong — **R1 on ticket 27** (a Recent tile re-applies the
+current skin tone: drawn `👍`, inserted `👍🏿`) and **R2 on ticket 25** (paste
+with the emoji search open goes to the focused external client). Both are
+stage B of the plan and gate their tickets' acceptance. The owner confirmed
+emoji arrive in Codex with the short `U+…` preedit acceptable (ticket 26);
+the Proton case stays open (plan §6).
+
+**2026-09-11 (stage B done):** R1 and R2 are fixed with regressions that are
+red on the pre-fix tree (`cca9d17`), plus the plan's small fixes: F5
+(protocol-4 dead err arms; `inputStatus` deleted — write-only; `sendText`'s
+comment now states the protocol-5 reply contract), delivery-failure feedback
+(a refused emoji pick raises the transient hint "Emoji could not be
+delivered"), F6 (`hello` is exactly `hello <u32>`, fixed-arity verbs refuse
+a third word; helper reinstalled via `./install.sh`) and F7 (README
+autostart wording). Independent fresh-context review: **Verdict: ship**;
+its two actionable LOWs fixed in `3723bcc`, the third (external probe does
+not re-derive its target at arrival, ≤500 ms window) recorded on ticket 25
+as an owner decision. Host: 286 QML/JS cases in ten suites, qml check
+clean, 40 helper tests, clippy clean.
+
+**2026-09-11 (stage C, automated half done):** R4 — the guest shell loads
+the current tree with zero QML errors; the panel, the emoji page and the
+settings card open and render (`evidence/13/r4/`). The nested suite grew
+to 33 legs — the two text routes' modifier isolation pinned on the
+observer's serialized mask, a focus split mid-Unicode-delivery, and a
+SIGTERM landing mid-delivery: F4's scenario, which found and fixed a real
+gap (the delivery now polls an atomic shutdown flag between scalars and
+aborts within one beat, so the release wins the race the 500 ms guard was
+losing; red on the pre-fix helper, green after; independent review
+Verdict: ship). Churn ceiling re-derived 74 → 142. Ticket 25's
+live/dead-owner recipe ran in the VM (`evidence/25/`). F11 measured:
+Electron under app id `code` receives U+F601 for U+1F601 via the `text`
+route (`evidence/13/f11/`).
+
+**2026-09-12 (review round + owner's second acceptance + stage D2
+started):** the owner's host try found the gaps the VM could not see:
+Proton's class is `steam_proton` (chord detection extended to
+proton/steam_app — tested), the panel was in FLOATING mode (nothing
+reserves space there — the owner moved to docked), and docked's real
+defect is Hyprland not relaying out stale tiles when the exclusive zone
+arrives or leaves (measured: zone registers, new tiles respect it, old
+tiles keep their bottoms behind the strip). The panel now forces one
+relayout on open and close via a guarded read-`+1`-restore of
+`general:gaps_out` (host-verified 749↔418, gaps back at the owner's 0);
+a read that fails to parse writes nothing. Independent review of the
+whole acceptance-day range returned **do not ship** — its HIGH finding
+was real: Hyprland 0.56.2 emits NO event for a click on the
+already-focused window, so the disarm could never fire for the owner's
+own gesture; the search field now TOGGLES (armed by default, a click
+hands the keys back, another re-arms), the publish-verify machine moved
+to pure `ClipboardPaste.publish*` (12 tests), the chord is gated on
+`inputReady`, and the relayout chain got a busy guard. Focused re-review:
+**Verdict: ship**. **D2:** R3 closed (CLAUDE.md is a regular
+`@AGENTS.md` import; a clean checkout passes `omarchy-plugin-validate`),
+R5 closed (startup failures exit 78 = EX_CONFIG, which the unit already
+refuses to retry; runtime keeps exit 1 — VM-verified), and the packaging
+skeleton landed: `make stage` lays out the plan-§7 file set (packaged
+unit, symlink-free runtime payload that passes the validator), a
+prototype PKGBUILD builds and its check() runs the full suites, and the
+VM smoke install→legacy-migration→protocol→removal→dev-restore passed —
+including the measured trap that removal must disable first or the
+enable symlink dangles (package notes fixed). Still open in D2: setup
+twice, upgrade, login cycle, teardown twice, reinstall; plugin
+registration from `/usr/share` is still only documented, not proven;
+release PKGBUILD needs a pinned tag and real checksums.
+
+**2026-09-11 (stage C closed by owner acceptance):** ticket 13 is
+**resolved** — the owner ran every owner leg and signed off ("r1 good,
+r2 good", "все работает", "закрывай"). The verdict also decided three
+things (decisions §41): the paste chip attempts unconditionally — ticket
+25's liveness probe, watchdog and gone-hint are removed from the
+external path, the R2 target determination and the panel-local read
+stay; the stage-B delivery-failure hint is removed (the lifecycle hint
+already covers a stopped helper); multilanguage emoji search is declined
+for now. New work opened by the same verdict: **ticket 28** —
+clipboard-compatibility emoji delivery (ZCode corrupts supplementary
+emoji to PUA U+F8F7–F8FA; the owner named Emote/omarchy-menu-emoji's
+clipboard route as the thing that works; release plan §6's proposed
+ticket, awaiting the owner's one-word answers on default/switch/per-app
+memory); **ticket 29** — the emoji search's visible active state and
+focus-following typing (owner request); **ticket 30** — docked mode
+hides the bottom edge of some windows (chats, TUI agents; investigation);
+**ticket 22 reopened** — the macOS ⌘ renders pixelated; fixed with
+layer MSAA on the Shape, needs the owner's eyes.
 
 ## Paste this
 
 > Read `docs/session-handoff.md` and continue. Ticket 24 is fully landed —
 > the panel's own emoji page, keyboard-driven search, delivery through the
-> helper's `text` command, external-picker machinery removed. What is left
-> needs the owner: feel acceptance of the page, the marks and the settings
-> colour squares, then ticket 13's mouse regression. Ticket 25 (paste chip
-> vs a dead clipboard owner) is ready-for-agent with the isolation done.
+> helper's `text` command, external-picker machinery removed. The owner accepts
+> the page generally and requested ticket 27's icon categories, tooltips and
+> one skin-tone selector. Tickets 25 and 27 are implemented and independently
+> reviewed `ship`, but each now carries an open behaviour bug from the second
+> review — R2 on 25 (paste with the search open goes to the external client)
+> and R1 on 27 (a Recent tile re-applies the current skin tone) — so fix those
+> (plan stage B) before pointer/eyes acceptance. The marks, colour squares
+> and ticket 13's combined mouse regression still need the owner.
+
+> Ticket 26 is implemented, VM-proven and independently reviewed `ship`:
+> Chromium-family clients route
+> through `text-unicode`, the page defaults to keep-open, has independent
+> M/L/XL sizes, and persists one Most Frequent row plus Recent rows. Protocol
+> is version 5. It awaits owner mouse/eyes.
 
 ## Where things are
 
@@ -26,8 +139,10 @@ The host plugin is a **symlink** to this repo: `omarchy restart shell`
 picks up QML and JS. The helper is a binary — `./install.sh` after any
 Rust change. The nested integration suite (`tools/smoke-daemon.sh` under
 `tools/nested-session.sh`, in the VM only) now carries three `text`
-delivery legs; its churn ceiling is re-derived at 74 (measured 44–52) —
-re-derive again if legs are added, per the script's own comment.
+delivery legs plus the Electron `text-unicode` leg; its churn ceiling is
+74, derived in the script's own comment from the seat identities the
+suite installs (ticket 26's 30-test VM run measured 68 rebuilds) —
+re-derive, never re-measure, if legs are added.
 
 ```sh
 rsync -a --delete --exclude '.git' --exclude 'daemon/target' --exclude '.scratch' \
@@ -57,8 +172,9 @@ UI proof, and `omarchy-shell shell toggle io.github.vladkarok.osk` needs
 - **22 — the Super mark is a setting.** Default is the word `Super`;
   word / Omarchy / Windows / macOS / penguin from the settings card. After
   the owner looked: sharp Windows panes, the macOS arm draws ⌘ (store value
-  `macos`), the penguin was redrawn with a face (§38 records the
-  amendment). Owner's eyes still pending.
+  `macos`); the penguin now uses the owner's original SVG geometry without
+  lettering, with fixed black/white colours and a white exterior outline
+  (§38 records the amendment). Owner's eyes still pending.
 - **24 — the panel's own emoji page, fully.** Steps 1–5: vendored CLDR
   catalogue (§37); the page on the settings card's mechanism, never
   covering the keys; search typed on our own keys — nothing reaches the
@@ -71,9 +187,28 @@ UI proof, and `omarchy-shell shell toggle io.github.vladkarok.osk` needs
   the owner reported under this ticket is isolated as **ticket 25** — a
   dead clipboard owner, not a chip defect, reproducible with plain
   `wl-clipboard`.
-- Nested suite: three delivery legs (foot byte-exact once + clipboard
-  hash, §35 invariants across a pick, x11cat byte-exact after the fix).
-  Cargo tests 36. QML suites 302 checks across nine files.
+- **26 — Chromium delivery and repeated-pick flow.** Chromium receives the
+  correct supplementary-plane keysym but its editor narrows it to U+Fxxx;
+  known Chromium-family classes now use a paced `text-unicode` route (§40),
+  proven byte-exact in Electron 43 for plain supplementary emoji, skin tone,
+  flag and ZWJ family with the clipboard unchanged. The picker defaults to
+  keep-open; settings add independent M/L/XL page sizes and close-after-pick;
+  a bounded persisted usage model draws one Most Frequent row and separated
+  Recent rows, updating only after helper `ok`. Protocol advanced to 5.
+- **25 — stale clipboard previews fail closed.** A paste-chip click first runs
+  a bounded liveness probe. Timeout force-kills the probe; selection generations
+  prevent a stale success from pasting newer content. Independently reviewed
+  `ship`; the real live/dead-owner recipe awaits owner/VM acceptance.
+- **27 — emoji categories, tooltips and skin tone.** Category tabs are emoji
+  icons with accessible hover names; ambiguous icon controls share one tooltip;
+  one persisted hand popup selects the default or five skin tones. Tone families
+  occupy one catalogue tile and resolve to exact existing Unicode sequences.
+  Independently reviewed `ship`; pointer feel and rendering await owner eyes.
+- Nested suite: three `text` delivery legs (foot byte-exact once + clipboard
+  hash, §35 invariants across a pick, x11cat byte-exact after the fix) plus
+  the Electron `text-unicode` leg — ticket 26's VM run: 30 passed, 68
+  compositor keymap rebuilds. Host suites after stage B: 286 QML/JS
+  cases across ten files, 40 helper tests, qml static check clean.
 
 ## Traps this project paid for again this session
 
@@ -100,14 +235,13 @@ UI proof, and `omarchy-shell shell toggle io.github.vladkarok.osk` needs
 1. **Owner acceptance** (mouse and eyes, host + VM): the emoji page feel,
    delivery into real apps, the Super marks at M/L/XL both themes, the
    colour-row squares, the external-app chip.
-2. **Ticket 25** — paste chip vs a dead clipboard owner; isolation and
-   recipe are in the ticket.
+2. **Tickets 25 and 27 acceptance** — live/dead clipboard recipe; category
+   tooltips, skin-tone popup and rendered emoji.
 3. **Ticket 13** — the combined mouse regression; its list grew by the
    page and the marks.
-4. **Maybe**: an electron43 `text` leg — the named three consumers are
-   covered, but the DomCode history makes Chromium's stack the suspicious
-   one; the ordinary letter positions and §33's chord measurements say it
-   should work.
-5. **A refactor, deliberately deferred** — `main.rs` is now ~2400 lines;
+4. **Ticket 26 acceptance:** Chromium/Codex delivery and picker workflow on
+   the host. Independent Sol review is complete with verdict `ship`; owner
+   acceptance remains a separate gate.
+5. **A refactor, deliberately deferred** — `main.rs` is now ~4600 lines;
    the agreed criterion stays "split by what can be tested at a seam",
    inside feature work that touches the files anyway.

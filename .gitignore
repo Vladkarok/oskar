@@ -3,3 +3,6 @@ core.*
 .scratch/
 __pycache__/
 .agents/
+/pkg/
+/src/
+*.pkg.tar.zst

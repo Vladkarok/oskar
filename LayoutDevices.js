@@ -48,6 +48,15 @@ function groupOf(device) {
     return typeof index === "number" && index >= 0 ? index : 0
 }
 
+/// The safe keyboards that share the reading device's layout list — the
+/// devices an absolute group index means the same thing on.
+function switchSetFor(reading, safe) {
+    var layout = String((reading && reading.layout) || "")
+    return safe.filter(function (device) {
+        return String(device.layout || "") === layout && String(device.name || "") !== ""
+    }).map(function (device) { return String(device.name) })
+}
+
 /// The group the safe set is on when its members disagree.
 ///
 /// The most common index, and the lowest of those when it is a tie. The old
@@ -71,7 +80,7 @@ function consensusGroup(devices) {
     return best < 0 ? 0 : best
 }
 
-/// (devices, anchor, safeNames)
+/// (devices, anchor, safeNames, fallbackGroup)
 ///   -> { reading, typing, switchSet, group }
 ///
 /// `anchor` is the keyboard the caller last saw the seat produce a key on.
@@ -88,7 +97,7 @@ function consensusGroup(devices) {
 /// `reading` and `switchSet` come from the SAME set. That is the invariant
 /// this module exists to hold: a group read off a device the language button
 /// never moves is a group the keyboard will not be typing in.
-function select(devices, namedDevice, safeNames) {
+function select(devices, namedDevice, safeNames, fallbackGroup) {
     var all = Array.isArray(devices) ? devices : []
     var names = Array.isArray(safeNames) ? safeNames : []
     var named = String(namedDevice || "")
@@ -103,10 +112,39 @@ function select(devices, namedDevice, safeNames) {
     // The seat's current keyboard first — HyprCtl prints IKeyboard::m_active
     // as `main`, and it is literally "where the next physical key comes from".
     // Then the device the last layout event named, which is what a deliberate
-    // switch produces. Then the set's own consensus.
+    // switch produces. Then the remembered group, then the set's own
+    // consensus.
     var current = safe.filter(function (device) { return device.main === true })[0]
     var namedMatch = safe.filter(function (device) { return device.name === named })[0]
     var reading = current || namedMatch || null
+
+    // The safe set DISAGREES with itself when Hyprland's group toggle has
+    // moved the keyboard the user types on while its sleeping siblings never
+    // receive it (the toggle is per-device). A majority of sleepers then
+    // votes the panel into the wrong group on every shell restart — the
+    // owner's desync: caps English while typing Ukrainian (2026-09-12). The
+    // panel's remembered group, persisted with the rest of its state, is the
+    // honest tie-breaker in that window; the helper's own device index
+    // cannot serve (Hyprland reports a virtual keyboard's layout slot, never
+    // the group its modifiers set — measured live).
+    var diverged = safe.length > 1 && safe.some(function (device) {
+        return groupOf(device) !== groupOf(safe[0])
+    })
+    var remembered = typeof fallbackGroup === "number"
+        && isFinite(fallbackGroup) && fallbackGroup >= 0
+        && fallbackGroup === Math.floor(fallbackGroup)
+        ? fallbackGroup : -1
+    if (!reading && diverged && remembered >= 0) {
+        var facts = safe.filter(function (device) {
+            return groupOf(device) === consensusGroup(safe)
+        })[0] || safe[0]
+        return {
+            reading: facts,
+            typing: "",
+            switchSet: switchSetFor(facts, safe),
+            group: remembered
+        }
+    }
     if (!reading) {
         var agreed = consensusGroup(safe)
         reading = safe.filter(function (device) { return groupOf(device) === agreed })[0]
@@ -115,10 +153,7 @@ function select(devices, namedDevice, safeNames) {
     // Same layout list as the reading device: a device with its own
     // `kb_layout` has its own group space, and an absolute index means
     // something different there.
-    var layout = String((reading && reading.layout) || "")
-    var switchSet = safe.filter(function (device) {
-        return String(device.layout || "") === layout && String(device.name || "") !== ""
-    }).map(function (device) { return String(device.name) })
+    var switchSet = switchSetFor(reading, safe)
 
     return {
         reading: reading,
@@ -142,4 +177,16 @@ function activeLayout(reading) {
     var layouts = String(reading.layout || "us").split(",")
     var group = groupOf(reading)
     return String(layouts[group] || layouts[0] || "").trim()
+}
+
+/// The layout CODE at an explicit group index — for the caller that knows
+/// the group by other means than the reading device's own index (the
+/// remembered-group fallback answers from a consensus device's facts while
+/// the group itself came from the panel's state).
+function activeLayoutForGroup(reading, group) {
+    if (!reading) return ""
+    var layouts = String(reading.layout || "us").split(",")
+    var index = typeof group === "number" && group >= 0
+        && group === Math.floor(group) ? group : -1
+    return String(layouts[index] || layouts[0] || "").trim()
 }

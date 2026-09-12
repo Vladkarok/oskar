@@ -48,8 +48,18 @@ the reasons; this file records required behaviour.
 - The emoji cap displays `☺` and opens the panel's own emoji page. The
   page is searched with the keyboard's own keys, in every configured
   layout, and never covers the keys (the settings card's rule, §5).
-  Choosing an entry delivers it to the focused client through the helper's
-  `text` command — once, and never by way of the clipboard. (2026-09-09
+  Choosing an entry delivers it to the focused client through the helper —
+  once. The default delivery is typing, never the clipboard: ordinary
+  clients use the `text` transient-keymap route; known Chromium-family
+  clients use the helper's `text-unicode` Linux Unicode-entry route
+  because Chromium otherwise narrows supplementary-plane characters to
+  U+Fxxx after receiving the correct keysym (decisions §40). (2026-09-12
+  amendment, ticket 28: an explicit user mode adds a third route —
+  clipboard compatibility, which publishes the exact picked sequence and
+  sends the paste chord, for the clients that drop both typed routes
+  (ZCode). It replaces the clipboard with the pick, is chosen from the
+  page's header, never runs by default, and never applies to ordinary
+  keys; decisions §42.) (2026-09-09
   amendment, ticket 24 step 5: the cap no longer launches a picker, and the
   external-picker machinery — the courtesy move, the managed session, the
   shell-overlay payload and the fitting — is removed; decisions §24
@@ -63,6 +73,26 @@ the reasons; this file records required behaviour.
   `emoji_app` override, and an override may name any app. A configured app
   missing from PATH, launched from the chip, raises the existing transient
   hint, naming the configured app.
+
+  The page stays open after a successful pick by default; a setting may close
+  it after each pick. Its independent M/L/XL viewport sizes default to M and
+  request 8×4, 10×6 and 12×8 cells before the existing small-output clamp;
+  they never resize the keyboard keys. Its usage landing page shows one
+  current-width Most Frequent row, then a larger separating gap and Recent
+  rows. At most 64 exact emoji sequences persist with count and last-use order;
+  failed deliveries do not update usage. (2026-09-10, ticket 26.)
+
+  Category navigation uses representative emoji icons; each icon retains the
+  catalogue group name for accessibility and exposes it on hover. Ambiguous
+  icon-only controls on the emoji page and in Settings have concise hover
+  labels, without adding noise to visible-text controls or keycaps. One hand
+  control chooses the default form or one of the five standard skin tones and
+  persists that choice in `state.json`, never `config.json`. Catalogue tone
+  families render as one unmodified tile; delivery selects an existing exact
+  qualified sequence for the chosen tone, including same-tone multi-person ZWJ
+  sequences. Unsupported, fixed-tone and flag sequences pass through unchanged.
+  Recent and Most Frequent continue to store and render the exact sequence that
+  the helper acknowledged. (2026-09-11, ticket 27.)
 
 ## 2. Modifier semantics
 

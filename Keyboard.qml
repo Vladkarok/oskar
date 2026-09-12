@@ -39,13 +39,14 @@ Item {
     // the character the cap drew (Layout.resolvedTypedChar, so what you see
     // is what the search gets, in every configured layout and group),
     // "backspace", "space", or "escape" from the Esc cap. The panel applies
-    // it to the page's query; Escape closes the page. The daemon receives
+    // it to the page's query; Escape closes the page. The helper receives
     // nothing for an intercepted press (ticket 24, step 3).
     signal searchInput(string action, string text)
     // The panel's emoji-page state, mirrored. Binding, not assignment: the
     // page closing by any route — cap, Escape, leftover click, gear, the
     // panel itself — ends the interception with it.
     property bool searchMode: false
+    property var pendingTextReplies: []
 
     // The size preset's multiplier on top of the theme's own scaling
     // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
@@ -206,6 +207,14 @@ Item {
     // on the seat, including pseudo-keyboards that never advance on their own,
     // which is how they end up sitting on different layouts from each other.
     property string typedKeyboardName: ""
+    // The persisted identity of the keyboard the seat last typed on. Seeded
+    // into typedKeyboardName before the first refresh: a shell restart makes
+    // Hyprland re-pick `main` by enumeration order (measured: at-translated,
+    // group 0, while the owner's real keyboard sat on group 1) — the named
+    // tier then reads the LIVE index of the REAL device instead of a
+    // re-enumerated flag.
+    property string rememberedLayoutDevice: ""
+    signal layoutDeviceNamed(string name)
     // Every device carrying the same layout list. A language-button click
     // moves this set to one absolute group, matching the shell's layout
     // widget and converging a seat whose per-device groups drifted apart.
@@ -459,6 +468,10 @@ Item {
         // pops the same entry, so capture its facts first.
         var entry = session.queue.length > 0 ? session.queue[0] : null
         session = Session.reduce(session, { type: "configureAck", gen: gen })
+        // The ack is the truthful moment the helper's world — group
+        // included — matches the panel's; persist it for the restart
+        // fallback (LayoutDevices).
+        root.groupConfirmed(session.group)
         if (!entry) return
         if (!entry.changed) return
         modifierState = Modifiers.reduce(modifierState,
@@ -590,7 +603,8 @@ Item {
         for (var k in names) merged[k] = names[k]
         layoutNameMap = merged
 
-        var picked = LayoutDevices.select(devices, typedKeyboardName, startupKeyboards)
+        var picked = LayoutDevices.select(devices, typedKeyboardName,
+            startupKeyboards, root.rememberedLayoutGroup)
         // Cleared unconditionally: a refresh that finds no safe target must
         // not leave the language button aiming at a device that has gone
         // missing or was never safe to advance.
@@ -598,7 +612,11 @@ Item {
         // Sticky, and only from the seat's own flag. The flag lands on the
         // helper's virtual keyboard for a moment after every OSK keystroke,
         // so "no answer" has to mean "keep what we knew", not "forget".
-        if (picked.typing) typedKeyboardName = picked.typing
+        if (picked.typing) {
+            if (picked.typing !== typedKeyboardName)
+                root.layoutDeviceNamed(picked.typing)
+            typedKeyboardName = picked.typing
+        }
         if (!picked.reading) return
 
         var reading = picked.reading
@@ -608,8 +626,14 @@ Item {
         if (detected.length > 0) {
             languageCycle = detected
         }
-        var active = LayoutDevices.activeLayout(reading)
-        var configGroup = reading.active_layout_index || 0
+        var configGroup = (typeof picked.group === "number" && picked.group >= 0)
+            ? picked.group : (reading.active_layout_index || 0)
+        console.log("[osk] layout reading:", reading.name, "group:", configGroup,
+            "named:", typedKeyboardName || "(none)",
+            "remembered:", root.rememberedLayoutGroup)
+        var active = (configGroup !== (reading.active_layout_index || 0))
+            ? LayoutDevices.activeLayoutForGroup(reading, configGroup)
+            : LayoutDevices.activeLayout(reading)
         xkbRules = String(reading.rules || "")
         xkbModel = String(reading.model || "")
         xkbLayouts = String(reading.layout || "")
@@ -675,7 +699,6 @@ Item {
             // trip, which is the flicker the user sees on every switch.
             if (Session.identityOf(configure) !== Session.installed(session)) {
                 inputReady = false
-                inputStatus = "configuring"
             }
             sendConfigure(configure)
         }
@@ -764,7 +787,11 @@ Item {
         Quickshell.execDetached(command)
     }
 
-    Component.onCompleted: refreshLayoutsFromHypr()
+    Component.onCompleted: {
+        if (root.rememberedLayoutDevice !== "")
+            root.typedKeyboardName = root.rememberedLayoutDevice
+        refreshLayoutsFromHypr()
+    }
 
     Process {
         id: layoutDetectProcess
@@ -867,7 +894,7 @@ Item {
     /// there is nothing to write and nothing is owed — the helper's
     /// disconnect release has already lifted every claim the connection
     /// held.
-    function applyModifierEvent(event) {
+    function applyModifierEvent(event, lineSink) {
         var alwaysLive = event && (event.type === "capsClick"
             || event.type === "fnClick"
             || event.type === "release"
@@ -880,14 +907,17 @@ Item {
         // device world became. A `configured` settles the drain (the
         // changed configure really lifted the holds); a refusal lands in
         // the err branch, which reads the still-live locked modifiers and
-        // lifts them for real. Settling speculatively here would erase the
-        // lock before the refusal could name it, and the helper's held set
-        // would re-assert the modifier after `mods 0`.
+        // lifts them for real. Settling speculatively here would erase
+        // the lock before the refusal could name it, and the helper's held
+        // set would re-assert the modifier after `mods 0`.
         var outcome = Modifiers.reduce(modifierState, dropRestore
             ? { type: "release", dropRestore: true } : event)
         modifierState = outcome.state
         for (var i = 0; i < outcome.lines.length; i++) {
-            sendCommandUnchecked(outcome.lines[i])
+            if (lineSink)
+                lineSink(outcome.lines[i])
+            else
+                sendCommandUnchecked(outcome.lines[i])
         }
     }
 
@@ -896,30 +926,75 @@ Item {
     /// `wmClass` selects the CLIPBOARD chord (terminals: Ctrl+Shift+V; else
     /// Shift+Insert). Empty class uses the terminal chord so PRIMARY is not
     /// sent into a terminal the lookup failed to name.
+    // The wine chord's delivery: one line per tick, never a burst. Wine
+    // polls its keyboard a frame at a time, and a chord whose lines all
+    // land in the same instant can be sampled with V visible before Ctrl
+    // — a manual Ctrl+V never has the problem, because hands have
+    // latency. The state settles immediately (the reducer ran); only the
+    // writes are paced, and a second paste while one is pacing is
+    // refused rather than interleaved.
+    property bool pastePacing: false
+    property var pastePacedLines: []
+    Timer {
+        id: pastePacedTick
+        interval: 35
+        repeat: false
+        onTriggered: {
+            if (root.pastePacedLines.length === 0) {
+                root.pastePacing = false
+                return
+            }
+            sendCommandUnchecked(root.pastePacedLines.shift())
+            if (root.pastePacedLines.length > 0) restart()
+            else root.pastePacing = false
+        }
+    }
+
     function pasteCurrent(wmClass) {
-        var chord = Modifiers.pasteChordForClass(wmClass)
-        applyModifierEvent({
+        var cls = String(wmClass || "")
+        var chord = Modifiers.pasteChordForClass(cls)
+        console.log("[osk] paste chord for", cls === "" ? "(unknown class)" : cls,
+            "->", (chord.ctrl ? "Ctrl+" : "") + (chord.shift ? "Shift+" : "")
+            + chord.position)
+        var event = {
             type: "paste",
             ctrl: chord.ctrl === true,
             shift: chord.shift === true,
             position: chord.position
-        })
+        }
+        if (Modifiers.usesWinePasteChord(cls.toLowerCase()) && !root.pastePacing) {
+            root.pastePacing = true
+            root.pastePacedLines = []
+            applyModifierEvent(event, function (line) {
+                root.pastePacedLines.push(line)
+            })
+            pastePacedTick.restart()
+            return
+        }
+        applyModifierEvent(event)
     }
 
     /// One emoji's sequence to the focused client (ticket 24, step 4): the
-    /// helper's `text` command over the same socket and the same unchecked
-    /// write every command uses. Gated like a tap — with the helper not
-    /// ready the caps draw gated and the send is a silent no-op, so an
-    /// emoji click with the service down spends the page and nothing else.
-    /// The reply needs nothing here: replies are matched by shape, `ok` is
-    /// the same unheard reply every tap earns, and the command's own
-    /// refusals are owned by the err arm's text case below — none of them
-    /// disturbs the configure ledger, which only `configured` and
+    /// helper's `text`/`text-unicode` command over the same socket and the
+    /// same unchecked write every command uses. Gated like a tap — with the
+    /// helper not ready the caps draw gated and the send is a silent no-op,
+    /// so an emoji click with the service down spends the page and nothing
+    /// else. Protocol 5 gave text its own replies: `text-ok` settles the
+    /// first queued callback with success, `text-err …` with failure, so
+    /// usage and page-close wait for the helper's acknowledgement — and a
+    /// refusal reaches the caller instead of passing unnoticed. None of
+    /// them disturbs the configure ledger, which only `configured` and
     /// `err cannot configure keymap` can move.
-    function sendText(s) {
-        if (!root.inputReady) return
+    function sendText(s, completed, unicodeEntry) {
+        if (!root.inputReady) return false
         var line = Session.textLine(s)
-        if (line !== "") sendCommandUnchecked(line)
+        if (line === "") return false
+        if (unicodeEntry) line = "text-unicode " + s
+        if (!sendCommandUnchecked(line)) return false
+        var queue = root.pendingTextReplies.slice()
+        queue.push(completed || null)
+        root.pendingTextReplies = queue
+        return true
     }
 
     /// Lifts locked Shift and returns every modifier to idle. The panel closing
@@ -981,7 +1056,13 @@ Item {
     // keys never reached Proton games or Electron apps, and each spawn cost
     // tens of milliseconds.
     property bool inputReady: false
-    property string inputStatus: "connecting"
+    // The panel's remembered layout group (LayoutDevices' restart
+    // fallback): bound from the persisted state by the panel, so a shell
+    // restart with no live device evidence does not fall to a majority of
+    // sleeping keyboards. Confirmed groups are reported back for
+    // persistence through groupConfirmed.
+    property int rememberedLayoutGroup: 0
+    signal groupConfirmed(int group)
     // Panel-status facts over the socket client's own states (spec-v1.1 §6),
     // read by the panel's hint line. `serviceConnected` mirrors the live
     // socket: false before the first dial, while the loader rebuilds it, and
@@ -1008,7 +1089,7 @@ Item {
     property bool socketReconnected: false
     // The helper socket, created by the loader below. Root-scope alias because
     // the component's own id does not reach the functions out here.
-    property QtObject daemonSocket: daemonLoader.item
+    property QtObject daemonSocket: helperLoader.item
 
     // The helper may start after the shell: systemd orders the service
     // against graphical-session.target, not against the shell, so the panel's
@@ -1022,16 +1103,16 @@ Item {
     // targetConnected redials on its own. One rebuild per two seconds while
     // the helper is down; a completed handshake stops the timer.
     Loader {
-        id: daemonLoader
+        id: helperLoader
         active: true
-        sourceComponent: daemonComponent
+        sourceComponent: helperComponent
     }
 
     Component {
-        id: daemonComponent
+        id: helperComponent
 
         Socket {
-            id: daemon
+            id: helper
             path: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"
             connected: true
 
@@ -1049,7 +1130,7 @@ Item {
                     helloTimer.restart()
                 } else {
                     root.inputReady = false
-                    root.inputStatus = "reconnecting"
+                    root.pendingTextReplies = []
                     // The handshake no longer holds on this dead socket; the
                     // queue and facts stay until a new connection's fresh
                     // hello restarts them (a live helper may still answer for
@@ -1071,7 +1152,6 @@ Item {
                     if (reply === "hello " + Session.PROTOCOL_VERSION) {
                         root.serviceIncompatible = false
                         root.inputReady = false
-                        root.inputStatus = "configuring"
                         // On a genuinely NEW connection the helper released
                         // everything the old one held when that socket
                         // closed, so a locked modifier did not survive the
@@ -1103,15 +1183,15 @@ Item {
                             // for a transaction a predecessor was holding.
                             root.session = Session.reduce(root.session,
                                 { type: "helloAcked", fresh: true })
-                            daemon.write("mods 0\n")
+                            helper.write("mods 0\n")
                         } else {
                             // The repair timer's re-hello of a live socket:
                             // the handshake holds, nothing resets.
                             root.session = Session.reduce(root.session,
                                 { type: "helloAcked", fresh: false })
                         }
-                        daemon.write("keyboards\n")
-                        daemon.flush()
+                        helper.write("keyboards\n")
+                        helper.flush()
                         // A restarted helper is back at group 0 and has no idea
                         // which layout is current. Re-reading the compositor
                         // sends the right group; using layoutCycleIndex here
@@ -1130,6 +1210,12 @@ Item {
                                 root.typedKeyboardName = root.startupKeyboardName
                         }
                         root.refreshLayoutsFromHypr()
+                    } else if (reply === "text-ok"
+                            && root.pendingTextReplies.length > 0) {
+                        var successes = root.pendingTextReplies.slice()
+                        var succeeded = successes.shift()
+                        root.pendingTextReplies = successes
+                        if (succeeded) succeeded(true)
                     } else if (reply.indexOf("configured") === 0) {
                         // Mirror the helper's own configure behaviour, for
                         // THE ENTRY THIS REPLY SETTLES — the oldest
@@ -1162,7 +1248,6 @@ Item {
                         if (!isFinite(gen) || gen <= 0) {
                             root.serviceIncompatible = true
                             root.inputReady = false
-                            root.inputStatus = "configured without a keymap generation"
                         } else {
                             root.settleConfigureReply(gen)
                             // Readiness waits for the WHOLE queue: an older
@@ -1191,7 +1276,6 @@ Item {
                                     sendCommandUnchecked(capsRequestLine(missing[mg]))
                             }
                             root.inputReady = Session.typingReady(root.session)
-                            root.inputStatus = root.inputReady ? "ready" : "configuring"
                         }
                     } else if (reply.indexOf("caps\t") === 0) {
                         // The helper's keycap facts for the world it has
@@ -1209,7 +1293,6 @@ Item {
                             console.error("[osk] unreadable keycap facts reply")
                             root.capsFactsFailed = true
                             root.inputReady = false
-                            root.inputStatus = "unreadable keycap facts"
                         } else {
                             var applied = Session.applyCapsReply(root.session, parsed)
                             root.session = applied.state
@@ -1218,10 +1301,17 @@ Item {
                                 root.shareKeymapWithCompositor()
                                 if (Session.typingReady(root.session)) {
                                     root.inputReady = true
-                                    root.inputStatus = "ready"
                                 }
                             }
                         }
+                    } else if (reply.indexOf("text-err") === 0) {
+                        if (root.pendingTextReplies.length > 0) {
+                            var failures = root.pendingTextReplies.slice()
+                            var failed = failures.shift()
+                            root.pendingTextReplies = failures
+                            if (failed) failed(false)
+                        }
+                        console.warn("[osk] text delivery refused:", reply)
                     } else if (reply.indexOf("err") === 0) {
                         if (reply.indexOf("err protocol") === 0) {
                             // The helper answered hello with the version it
@@ -1232,7 +1322,6 @@ Item {
                             // §6); the offer is the copied install command.
                             root.serviceIncompatible = true
                             root.inputReady = false
-                            root.inputStatus = reply
                         } else if (reply === "err not ready") {
                             // A helper fresh out of systemd start answers err
                             // until its default keymap is installed; it cannot
@@ -1244,10 +1333,9 @@ Item {
                             // Ownership refusals mean the helper's hold state
                             // is ahead of ours; the device is fine and typing
                             // stays enabled. The panel's chords never produce
-                            // them, so one appearing is a client bug worth
-                            // surfacing in the status without bricking the
-                            // keyboard.
-                            root.inputStatus = reply
+                            // them, so one appearing is a client bug worth a
+                            // journal line without bricking the keyboard.
+                            console.warn("[osk] ownership refusal:", reply)
                         } else if (reply === "err bad group") {
                             // Only a caps request can earn this: the helper
                             // refused to answer facts for a group its keymap
@@ -1264,7 +1352,6 @@ Item {
                             root.capsFactsFailed = !Session.capsCurrent(root.session)
                             if (root.capsFactsFailed) {
                                 root.inputReady = false
-                                root.inputStatus = reply
                             } else {
                                 console.error("[osk] helper has no facts for a"
                                     + " pre-fetched group; that group will"
@@ -1320,31 +1407,19 @@ Item {
                                 sendCommandUnchecked("up " + lockedPositions[u])
                             sendCommandUnchecked("mods 0")
                             root.inputReady = false
-                            root.inputStatus = reply
-                        } else if (reply === "err unknown command"
-                                || reply === "err empty text"
-                                || reply === "err text too long"
-                                || reply === "err no slots"
-                                || reply === "err no level keys"
-                                || reply === "err keymap") {
-                            // The text delivery's own refusals (ticket 24,
-                            // step 4) — the only commands that can earn them
-                            // are `text` and whatever arrives after it. None
-                            // says anything about the device world: the old
-                            // helper's parse never saw the verb, the empty
-                            // and oversized refusals are the sender's bug,
-                            // and a slot or level refusal is one emoji
-                            // undelivered with the installed keymap exactly
-                            // as it was (the helper's own contract). So none
-                            // may gate typing, the way the ownership
-                            // refusals above stay status-only: a refused
-                            // emoji must not brick the keyboard until a
-                            // re-handshake.
-                            console.warn("[osk] text delivery refused:", reply)
-                            root.inputStatus = reply
+                        } else if (reply === "err unknown command") {
+                            // Protocol 5 rewrote every text/text-unicode
+                            // refusal into `text-err …`, settled by the arm
+                            // above; `err unknown command` is the one
+                            // refusal any verb can still earn, and it says
+                            // the installed helper predates this panel's
+                            // verbs — status-only, never a typing gate.
+                            console.warn("[osk] helper refused a command:", reply)
                         } else {
+                            // An unrecognized reply can only be protocol
+                            // drift; fail closed and leave a trace.
                             root.inputReady = false
-                            root.inputStatus = reply
+                            console.warn("[osk] unrecognized reply:", reply)
                         }
                     } else if (reply.indexOf("hello ") === 0) {
                         // A hello naming another version than the one this
@@ -1353,7 +1428,6 @@ Item {
                         // errs instead of greeting across versions.
                         root.serviceIncompatible = true
                         root.inputReady = false
-                        root.inputStatus = reply
                     }
                 }
             }
@@ -1373,10 +1447,9 @@ Item {
             onError: {
                 if (!connected) return
                 root.inputReady = false
-                root.inputStatus = "reconnecting"
                 Qt.callLater(function () {
-                    daemonLoader.active = false
-                    daemonLoader.active = true
+                    helperLoader.active = false
+                    helperLoader.active = true
                 })
             }
         }
@@ -1410,8 +1483,8 @@ Item {
             // Rebuilding a live connection would drop it mid-handshake.
             var item = root.daemonSocket
             if (exitCode === 0 && !root.inputReady && !(item && item.connected)) {
-                daemonLoader.active = false
-                daemonLoader.active = true
+                helperLoader.active = false
+                helperLoader.active = true
             }
         }
     }
@@ -1828,7 +1901,12 @@ Item {
                                     Shape {
                                         anchors.fill: parent
                                         Accessible.name: "Super"
-                                        preferredRendererType: Shape.GeometryRenderer
+                                        // CurveRenderer antialiases stroked
+                                        // curves itself; GeometryRenderer
+                                        // aliased the loops at key size (the
+                                        // owner's pixelated-⌘ report), and an
+                                        // MSAA layer broke the mark entirely.
+                                        preferredRendererType: Shape.CurveRenderer
 
                                         transform: Scale {
                                             xScale: commandMarkLoader.width / 100
@@ -1884,116 +1962,34 @@ Item {
                                 }
                             }
 
-                            // The Penguin arm: Tux read at cap size — the
-                            // body silhouette with the face as an OddEvenFill
-                            // subpath, the eyes and beak refilled where they
-                            // sit inside that hole, and the belly as its own
-                            // cutout subpath; flippers and feet paint over
-                            // the body in a second path, disjoint subpaths
-                            // so nothing cancels. Coordinates lifted
-                            // verbatim from the owner render the choice was
-                            // made on.
-                            Loader {
-                                id: penguinMarkLoader
-                                active: !keyRect.isDual && keyRect.isSuper
+                            // Exact user-supplied monochrome Tux. Its SVG owns
+                            // fixed black/white paint, including the white
+                            // backing that makes the source path's transparent
+                            // cutouts opaque and outlines it on dark caps.
+                            Image {
+                                id: penguinMark
+                                readonly property bool selected: !keyRect.isDual
+                                    && keyRect.isSuper
                                     && root.superMarkArm === "penguin"
+                                visible: selected && status === Image.Ready
                                 anchors.centerIn: parent
                                 width: root.superLogoSize
                                 height: root.superLogoSize
-                                sourceComponent: Component {
-                                    Shape {
-                                        anchors.fill: parent
-                                        Accessible.name: "Super"
-                                        preferredRendererType: Shape.GeometryRenderer
-
-                                        transform: Scale {
-                                            xScale: penguinMarkLoader.width / 100
-                                            yScale: penguinMarkLoader.height / 100
-                                        }
-
-                                        // Body, face, eyes, beak, belly: one
-                                        // path, alternating in and out under
-                                        // OddEvenFill — body filled, face
-                                        // holed, eyes and beak refilled
-                                        // inside the hole, belly holed.
-                                        ShapePath {
-                                            fillColor: keyRect.superInk
-                                            strokeColor: "transparent"
-                                            fillRule: ShapePath.OddEvenFill
-                                            startX: 50; startY: 6
-                                            PathCubic { control1X: 38; control1Y: 6; control2X: 30; control2Y: 12; x: 29; y: 22 }
-                                            PathCubic { control1X: 28.4; control1Y: 28; control2X: 27; control2Y: 33; x: 26; y: 37 }
-                                            PathCubic { control1X: 25; control1Y: 46; control2X: 24; control2Y: 56; x: 24; y: 64 }
-                                            PathCubic { control1X: 24; control1Y: 80; control2X: 35; control2Y: 88; x: 50; y: 88 }
-                                            PathCubic { control1X: 65; control1Y: 88; control2X: 76; control2Y: 80; x: 76; y: 64 }
-                                            PathCubic { control1X: 76; control1Y: 56; control2X: 75; control2Y: 46; x: 74; y: 37 }
-                                            PathCubic { control1X: 73; control1Y: 33; control2X: 71.6; control2Y: 28; x: 71; y: 22 }
-                                            PathCubic { control1X: 70; control1Y: 12; control2X: 62; control2Y: 6; x: 50; y: 6 }
-                                            PathMove { x: 43; y: 16 }
-                                            PathCubic { control1X: 37.5; control1Y: 16; control2X: 33.5; control2Y: 20; x: 33.5; y: 25.5 }
-                                            PathCubic { control1X: 33.5; control1Y: 31; control2X: 37; control2Y: 36.5; x: 42; y: 38.5 }
-                                            PathCubic { control1X: 46.5; control1Y: 39.6; control2X: 53.5; control2Y: 39.6; x: 58; y: 38.5 }
-                                            PathCubic { control1X: 63; control1Y: 36.5; control2X: 66.5; control2Y: 31; x: 66.5; y: 25.5 }
-                                            PathCubic { control1X: 66.5; control1Y: 20; control2X: 62.5; control2Y: 16; x: 57; y: 16 }
-                                            PathCubic { control1X: 54.8; control1Y: 16; control2X: 52.8; control2Y: 17.6; x: 52; y: 19 }
-                                            PathCubic { control1X: 50.8; control1Y: 20.2; control2X: 49.2; control2Y: 20.2; x: 48; y: 19 }
-                                            PathCubic { control1X: 47.2; control1Y: 17.6; control2X: 45.2; control2Y: 16; x: 43; y: 16 }
-                                            PathMove { x: 43; y: 23 }
-                                            PathCubic { control1X: 45.7; control1Y: 23; control2X: 46.9; control2Y: 25.6; x: 45.7; y: 28.1 }
-                                            PathCubic { control1X: 44.5; control1Y: 30.6; control2X: 41.5; control2Y: 30.6; x: 40.3; y: 28.1 }
-                                            PathCubic { control1X: 39.1; control1Y: 25.6; control2X: 40.3; control2Y: 23; x: 43; y: 23 }
-                                            PathMove { x: 57; y: 23 }
-                                            PathCubic { control1X: 59.7; control1Y: 23; control2X: 60.9; control2Y: 25.6; x: 59.7; y: 28.1 }
-                                            PathCubic { control1X: 58.5; control1Y: 30.6; control2X: 55.5; control2Y: 30.6; x: 54.3; y: 28.1 }
-                                            PathCubic { control1X: 53.1; control1Y: 25.6; control2X: 54.3; control2Y: 23; x: 57; y: 23 }
-                                            PathMove { x: 44; y: 29.5 }
-                                            PathCubic { control1X: 48; control1Y: 28.6; control2X: 52; control2Y: 28.6; x: 56; y: 29.5 }
-                                            PathCubic { control1X: 55.5; control1Y: 33.5; control2X: 53; control2Y: 36.2; x: 50; y: 36.2 }
-                                            PathCubic { control1X: 47; control1Y: 36.2; control2X: 44.5; control2Y: 33.5; x: 44; y: 29.5 }
-                                            PathMove { x: 50; y: 43 }
-                                            PathCubic { control1X: 42; control1Y: 43; control2X: 36.5; control2Y: 51; x: 36.5; y: 60 }
-                                            PathCubic { control1X: 36.5; control1Y: 71.5; control2X: 42; control2Y: 79; x: 50; y: 79 }
-                                            PathCubic { control1X: 58; control1Y: 79; control2X: 63.5; control2Y: 71.5; x: 63.5; y: 60 }
-                                            PathCubic { control1X: 63.5; control1Y: 51; control2X: 58; control2Y: 43; x: 50; y: 43 }
-                                        }
-
-                                        // Flippers and feet, painted over the
-                                        // body: two side flippers and two feet
-                                        // below it, disjoint subpaths so the
-                                        // fill never cancels itself.
-                                        ShapePath {
-                                            fillColor: keyRect.superInk
-                                            strokeColor: "transparent"
-                                            fillRule: ShapePath.OddEvenFill
-                                            startX: 25.5; startY: 42
-                                            PathCubic { control1X: 18.5; control1Y: 44; control2X: 14.5; control2Y: 51; x: 15.5; y: 58 }
-                                            PathCubic { control1X: 16.3; control1Y: 63.5; control2X: 20; control2Y: 67; x: 25; y: 65.5 }
-                                            PathCubic { control1X: 27.5; control1Y: 64.7; control2X: 28; control2Y: 61; x: 27.2; y: 56 }
-                                            PathCubic { control1X: 26.6; control1Y: 51; control2X: 26.4; control2Y: 46; x: 25.5; y: 42 }
-                                            PathMove { x: 74.5; y: 42 }
-                                            PathCubic { control1X: 81.5; control1Y: 44; control2X: 85.5; control2Y: 51; x: 84.5; y: 58 }
-                                            PathCubic { control1X: 83.7; control1Y: 63.5; control2X: 80; control2Y: 67; x: 75; y: 65.5 }
-                                            PathCubic { control1X: 72.5; control1Y: 64.7; control2X: 72; control2Y: 61; x: 72.8; y: 56 }
-                                            PathCubic { control1X: 73.4; control1Y: 51; control2X: 73.6; control2Y: 46; x: 74.5; y: 42 }
-                                            PathMove { x: 19; y: 93 }
-                                            PathCubic { control1X: 19; control1Y: 88.5; control2X: 27; control2Y: 86.5; x: 35; y: 87.5 }
-                                            PathCubic { control1X: 43; control1Y: 88.5; control2X: 46.5; control2Y: 91; x: 45.5; y: 94.5 }
-                                            PathCubic { control1X: 44.5; control1Y: 98; control2X: 37; control2Y: 100; x: 28.5; y: 99 }
-                                            PathCubic { control1X: 23; control1Y: 98.3; control2X: 19; control2Y: 96.5; x: 19; y: 93 }
-                                            PathMove { x: 54.5; y: 94.5 }
-                                            PathCubic { control1X: 53.5; control1Y: 91; control2X: 57; control2Y: 88.5; x: 65; y: 87.5 }
-                                            PathCubic { control1X: 73; control1Y: 86.5; control2X: 81; control2Y: 88.5; x: 81; y: 93 }
-                                            PathCubic { control1X: 81; control1Y: 96.5; control2X: 77; control2Y: 98.3; x: 71.5; y: 99 }
-                                            PathCubic { control1X: 63; control1Y: 100; control2X: 55.5; control2Y: 98; x: 54.5; y: 94.5 }
-                                        }
-                                    }
-                                }
+                                source: selected ? "assets/monochrome-tux.svg" : ""
+                                sourceSize: Qt.size(Math.max(1, Math.ceil(width)),
+                                    Math.max(1, Math.ceil(height)))
+                                fillMode: Image.PreserveAspectFit
+                                smooth: true
+                                mipmap: true
+                                Accessible.name: "Super"
                             }
 
                             Text {
                                 visible: !keyRect.isDual
                                     && (!keyRect.isSuper
-                                        || root.superMarkArm === "word")
+                                        || root.superMarkArm === "word"
+                                        || (root.superMarkArm === "penguin"
+                                            && penguinMark.status !== Image.Ready))
                                 anchors.centerIn: parent
                                 text: keyData.label
                                     ? keyData.label

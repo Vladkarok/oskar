@@ -347,7 +347,7 @@ def main():
         sys.exit(42)
 
     helper = Helper(os.path.join(runtime, "omarchy-osk/control.sock"))
-    say(f".... helper: {helper.send('hello 4')}")
+    say(f".... helper: {helper.send('hello 5')}")
     configure(helper)
 
     if LEG == "foot":

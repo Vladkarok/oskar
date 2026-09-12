@@ -42,18 +42,19 @@ while the panel and the bar both correctly report the second. See
 | `tools/` | nested-session polygon, daemon smoke, VM launcher + provision |
 
 Panel talks to the helper over `$XDG_RUNTIME_DIR/omarchy-osk/control.sock`,
-line protocol, version 4:
+line protocol, version 5:
 
 ```
-hello 4                                   -> hello 4 | err not ready | err protocol …
+hello 5                                   -> hello 5 | err not ready | err protocol …
 keyboards                                 -> keyboards\t<safe physical name>…
 configure\t<rules>\t<model>\t<layouts>\t<variants>\t<options>\t<kb_file>\t<group>
 caps <group> [positions…]                 -> keycap facts for the named group
 group <n> | tap <AD01|code> | down … | up … | mods <mask> | ping
-text <utf8>                               -> ok | err … (a transient keymap swap; decisions §39)
+text <utf8>                               -> text-ok | text-err … (a transient keymap swap; decisions §39)
+text-unicode <utf8>                       -> text-ok | text-err … (Chromium Unicode entry; decisions §40)
 ```
 
-Replies are `ok`, `configured\t<generation>`,
+Replies are `ok`, `text-ok`, `text-err …`, `configured\t<generation>`,
 `caps\t<generation>\t<group>\t<records>`, `pong`, or `err …`. Version 4's
 generation (decisions §23) is what the panel correlates keycap facts against;
 a same-keymap reconfigure keeps it, a changed keymap bumps it. Everything
@@ -98,6 +99,9 @@ upstream Hyprland/Omarchy work.
 - Keep sessions short; context is re-billed every turn.
 
 ## Suggested next steps
+
+For the consolidated 2026-09-11 release roadmap, current evidence and outstanding
+decisions, read [release-readiness-plan.md](release-readiness-plan.md).
 
 Continuing a session starts at [session-handoff.md](session-handoff.md): what
 is done, what is next, and the traps this project has already paid for. For
