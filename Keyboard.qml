@@ -9,47 +9,107 @@ import "ModifierReducer.js" as Modifiers
 Item {
     id: root
     implicitWidth: grid.implicitWidth
-    implicitHeight: grid.implicitHeight
+    // Pinned to the taller of the two pages rather than to whichever is on
+    // screen. Docked mode reserves this height (§7), so letting it follow the
+    // current page would shove every window on the output up and down each time
+    // &123 is pressed. The grid is anchored to the bottom, so the command row —
+    // modifiers, space, arrows, and the page key itself — stays under the
+    // pointer across a switch and the slack appears at the top.
+    readonly property int maxPageRows: Math.max(Layout.rows.length, Layout.symbolRows.length)
+    implicitHeight: maxPageRows * keyHeight + (maxPageRows - 1) * gapPx
     signal closeRequested()
+    // Emitted for every keystroke-shaped press — letters, arrows, modifier
+    // clicks, Caps Lock — and never for the panel's own UI actions. The panel
+    // plays the key click sound on it (spec-v1 §10).
+    signal keyPressed()
+
+    // The size preset's multiplier on top of the theme's own scaling
+    // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
+    // a preset changes the whole keyboard proportionally — key height, gaps and
+    // glyphs together — rather than stretching keys into letterboxes.
+    property real uiScale: 1.0
+    // How much width the panel can actually give the grid. A preset larger than
+    // the output shrinks to fit instead of overflowing the card off-screen.
+    // Zero means unconstrained (nothing has measured yet).
+    property real availableWidth: 0
+
+    // The panel's Theme facade over Omarchy's shared style tokens (spec-v1
+    // §8). Passed in rather than reading `Color`/`Style` here, so that
+    // `follow_theme` is decided in one place and the grid cannot end up
+    // half-frozen.
+    required property Theme theme
 
     // ---- Design tokens, copied 1:1 from the reference HTML/CSS ----
-    readonly property real gapPx: Style.spacing.md
-    readonly property real keyHeight: Style.space(42)
-    readonly property real keyRadius: Style.cornerRadius
-    readonly property real containerMaxWidth: Style.space(820)
+    readonly property real gapPx: Math.max(1, Math.round(root.theme.spacingMd * uiScale))
+    readonly property real keyHeight: root.theme.space(42) * uiScale
+    readonly property real keyRadius: root.theme.cornerRadius
+    readonly property real containerMaxWidth: availableWidth > 0
+        ? Math.min(root.theme.space(820) * uiScale, availableWidth)
+        : root.theme.space(820) * uiScale
     // Rows fill the same total width as the container minus its own
     // padding (which equals the gap), exactly like the CSS container's
     // `padding: var(--gap)` around `.keyboard-grid`.
     readonly property real rowWidth: containerMaxWidth - 2 * gapPx
 
-    readonly property color keyBg: Util.alpha(Color.foreground, Style.normalFillAlpha)
-    readonly property color keyHoverBg: Util.alpha(Color.foreground, Style.hoverFillAlpha)
-    readonly property color keyActiveBg: Util.alpha(Color.foreground, Style.pressedFillAlpha)
-    readonly property color keyBorderColor: Util.alpha(Color.foreground, Style.pressedFillAlpha)
-    readonly property color accentColor: Util.alpha(Color.accent, Style.pressedFillAlpha)
+    // ---- Hit geometry (ticket 15) ----
+    //
+    // The gaps are visual only. A cap is drawn at its own size, but the area
+    // that answers the mouse reaches to the midpoint of the gap on every side
+    // it shares with a neighbour, so the grid tiles and a click between two
+    // caps lands on one of them instead of nowhere. This is a mouse-driven
+    // keyboard; a miss costs a correction.
+    //
+    // Non-overlap is by construction, not by hope, and that is the whole of
+    // the design. Neighbours in a row are exactly `gapPx` apart and each
+    // claims `gapPx / 2` of it, so the two areas meet on a line and share no
+    // area. Rows are `gapPx` apart in the Column and split it the same way,
+    // which makes the row bands disjoint in y before the caps inside them are
+    // considered at all. So the grid is a partition: a row band, then a column
+    // within it. The line itself is not a tie either — `QQuickItem::contains`
+    // is half-open, excluding the far edge, so a coordinate exactly on a
+    // boundary belongs to the right (or lower) neighbour and to nothing else.
+    // Nothing here is decided by stacking order, which is the failure this has
+    // to avoid: two areas over one point would pick a winner by sibling order
+    // and read as a random wrong character.
+    //
+    // Hover follows the hit area, so the cap that owns a gap lights up while
+    // the pointer is in it. That is the intent, not a side effect: it is how
+    // the user sees where the boundary is.
+    readonly property real halfGap: gapPx / 2
+    // What the outermost caps claim on their outward side. The card's padding
+    // around the grid equals the gap (see `rowWidth` above), so this hands the
+    // border strip to the caps against it and stops exactly where the card's
+    // own chrome starts — the drag bar sits `gapPx` above the top row, so the
+    // top row's area meets it rather than stealing from it.
+    readonly property real edgeOutset: gapPx
+
+    readonly property color keyBg: Util.alpha(root.theme.foreground, root.theme.normalFillAlpha)
+    readonly property color keyHoverBg: Util.alpha(root.theme.foreground, root.theme.hoverFillAlpha)
+    readonly property color keyActiveBg: Util.alpha(root.theme.foreground, root.theme.pressedFillAlpha)
+    readonly property color keyBorderColor: Util.alpha(root.theme.foreground, root.theme.pressedFillAlpha)
+    readonly property color accentColor: Util.alpha(root.theme.accent, root.theme.pressedFillAlpha)
     // The three modifier states, told apart by fill weight rather than by two
     // shades of one colour (spec-v1 §5): idle is the ordinary key, latched is
     // an accent tint under a thick accent outline, locked is solid accent with
     // the label knocked out.
-    readonly property color latchedFill: Style.selectedAccentFill
-    readonly property color lockedFill: Color.accent
-    readonly property color lockedText: Color.background
-    readonly property color textMain: Color.foreground
-    readonly property color textDim: Color.muted
-    readonly property color textHighlightColor: Color.foreground
-    readonly property string keyboardFont: Style.font.family
-    readonly property int keyBorderWidth: Style.normalBorderWidth
+    readonly property color latchedFill: root.theme.selectedAccentFill
+    readonly property color lockedFill: root.theme.accent
+    readonly property color lockedText: root.theme.background
+    readonly property color textMain: root.theme.foreground
+    readonly property color textDim: root.theme.muted
+    readonly property color textHighlightColor: root.theme.foreground
+    readonly property string keyboardFont: root.theme.fontFamily
+    readonly property int keyBorderWidth: root.theme.normalBorderWidth
     // Doubled rather than taken straight from focusBorderWidth, which falls
     // back to the normal width on themes that do not set it — a latched
     // outline the same thickness as an idle one is not a distinguishable state.
-    readonly property int latchedBorderWidth: Math.max(2 * keyBorderWidth, Style.focusBorderWidth)
-    readonly property int keyFontSize: Style.font.body
-    readonly property int keySmallFontSize: Style.font.bodySmall
+    readonly property int latchedBorderWidth: Math.max(2 * keyBorderWidth, root.theme.focusBorderWidth)
+    readonly property int keyFontSize: Math.max(1, Math.round(root.theme.fontBody * uiScale))
+    readonly property int keySmallFontSize: Math.max(1, Math.round(root.theme.fontBodySmall * uiScale))
 
-    property bool capsOn: false
-    // Every modifier's idle/latched/locked state, owned by the reducer
-    // (spec-v1 §15, seam 2). The panel holds the value and draws it; the
-    // transitions and the protocol lines are the module's.
+    // Every modifier's idle/latched/locked state and Caps' dedicated boolean
+    // state, owned by the reducer (spec-v1 §15, seam 2). The panel holds the
+    // value and draws it; the transitions and protocol lines are the module's.
     property var modifierState: Modifiers.initialState()
     property string currentLayout: "us"
     property var languageCycle: ["us"]
@@ -60,6 +120,11 @@ Item {
     // which is how they end up sitting on different layouts from each other.
     property string typedKeyboard: ""
     property string typedKeyboardName: ""
+    // Names positively identified from the kernel/udev snapshot. A mouse's
+    // keyboard-shaped HID interface is rejected before it reaches this list.
+    property var startupKeyboards: []
+    property string startupKeyboardName: ""
+    property bool startupInventorySeen: false
     property string xkbRules: ""
     property string xkbModel: ""
     property string xkbLayouts: "us"
@@ -71,38 +136,62 @@ Item {
         return name ? name : currentLayout.toUpperCase()
     }
     property var symbolMap: ({})
+    // Which page is drawn (spec-v1 §4). A page is not a mode and not a
+    // modifier: it changes what can be seen and nothing else — not the keymap,
+    // not the group, not what any modifier is holding.
+    property string page: "main"
     property var layoutRows: Layout.applyLanguage(Layout.rows, currentLayout, symbolMap)
 
+    function pageRows() {
+        return page === "symbols" ? Layout.symbolRows : Layout.rows
+    }
+
     function updateLayoutRows() {
-        layoutRows = Layout.applyLanguage(Layout.rows, currentLayout, symbolMap)
+        layoutRows = Layout.applyLanguage(pageRows(), currentLayout, symbolMap)
+    }
+
+    /// The one key in and the same key out. The reducer is told, so that what
+    /// the modifiers do across a switch is decided in the one place the seam
+    /// covers rather than here; it holds everything where it was, which is why
+    /// a locked modifier is still locked and still drawn locked on the far side.
+    function togglePage() {
+        page = page === "symbols" ? "main" : "symbols"
+        updateLayoutRows()
+        applyModifierEvent({ type: "pageSwitch" })
+    }
+
+    /// Both readers below are fed the same thing: a run of tab-delimited
+    /// records on a helper's stdout, one per line, blank lines meaning nothing.
+    /// Turning that into fields is the whole of what they have in common, so it
+    /// is written once here rather than twice with two chances to drift. Short
+    /// records survive on purpose — a record whose only field is its tag is
+    /// meaningful to one of the callers, so the arity guard belongs to whoever
+    /// needs it, not here.
+    function tabRecords(text) {
+        return String(text || "").split("\n")
+            .map(function (line) { return line.trim() })
+            .filter(function (line) { return line.length > 0 })
+            .map(function (line) { return line.split("\t") })
     }
 
     function parseLayoutSymbolOutput(text) {
         var map = ({})
-        var lines = String(text || "").split("\n")
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i].trim()
-            if (!line) continue
-            var parts = line.split("\t")
-            if (parts.length < 2) continue
+        tabRecords(text).forEach(function (parts) {
+            if (parts.length < 2) return
             map[parts[0]] = [parts[1], parts.length > 2 ? parts[2] : ""]
-        }
+        })
         symbolMap = map
         updateLayoutRows()
     }
 
 
     function parseHyprLayoutOutput(text) {
-        var lines = String(text || "").split("\n")
         var active = ""
         var detected = []
         var names = ({})
         var configGroup = 0
 
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i].trim()
-            if (!line) continue
-            var parts = line.split("\t")
+        tabRecords(text).forEach(function (parts) {
             if (parts[0] === "DEVICE") {
                 // Cleared unconditionally: a refresh that finds no safe
                 // target must not leave the language button aiming at a
@@ -111,12 +200,12 @@ Item {
                 // trim, so this branch has to come before the field-count
                 // guard below.
                 typedKeyboard = String(parts[1] || "").trim()
-                continue
+                return
             }
-            if (parts.length < 2) continue
+            if (parts.length < 2) return
             if (parts[0] === "ACTIVE") {
                 active = String(parts[1] || "").trim()
-                continue
+                return
             }
             if (parts[0] === "CONFIG" && parts.length >= 8) {
                 xkbRules = parts[1]
@@ -126,7 +215,7 @@ Item {
                 xkbOptions = parts[5]
                 xkbFile = parts[6] === "[[EMPTY]]" ? "" : parts[6]
                 configGroup = parseInt(parts[7]) || 0
-                continue
+                return
             }
             if (parts[0] === "LAYOUT") {
                 detected.push(String(parts[1] || "").trim())
@@ -134,7 +223,7 @@ Item {
             if (parts[0] === "NAME" && parts.length >= 3) {
                 names[String(parts[1] || "").trim()] = String(parts[2] || "").trim()
             }
-        }
+        })
 
         detected = detected.filter(function(layout) { return layout.length > 0 })
         if (detected.length > 0) {
@@ -179,8 +268,10 @@ Item {
         // reading from going stale after the user switches devices.
         //
         // The switch target ("DEVICE", the device the language button
-        // advances) only comes from those first two tiers. Advancing a
-        // guessed device is what poisoned the seat before: a mouse advanced
+        // advances) comes from those same two tiers. At startup the named tier
+        // is seeded by the helper's positive physical-device snapshot; a real
+        // layout event replaces it. Advancing a guessed device is what
+        // poisoned the seat before: a mouse advanced
         // once, the indicator read it forever after, and the label stopped
         // saying what typing produced. Until there is positive evidence, the
         // language button does nothing.
@@ -203,13 +294,19 @@ Item {
         // per-device keymaps (device:name { kb_layout }).
         layoutDetectProcess.command = ["bash", "-lc",
             "devices=$(hyprctl devices -j 2>/dev/null); "
-            + "keyboard=$(printf '%s' \"$devices\" | jq -c --arg named \"$1\" '"
+            + "selection=$(printf '%s' \"$devices\" | jq -c --arg named \"$1\" --arg safe \"$2\" '"
             + "[.keyboards[] | select((.name | test(\"^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)|omarchy-osk\"; \"i\")) | not)] as $typed | "
-        + "($typed | map(select(.main == true))[0] // ($typed | map(select(.name == $named))[0]) // ($typed | max_by(.active_layout_index // 0)) // empty)' 2>/dev/null); "
+        + "def safe_name($name): $safe | split(\"\\n\") | any(. as $base | $base != \"\" and ($name == $base or (($name | startswith($base + \"-\")) and ($name[($base | length) + 1:] | test(\"^[0-9]+$\"))))); "
+        + "[$typed[] | select(safe_name(.name))] as $safe_typed | "
+        + "($typed | map(select(.main == true)) | .[0]) as $current | "
+        + "($typed | map(select(.name == $named)) | .[0]) as $named_device | "
+        + "($safe_typed | map(select(.main == true)) | .[0]) as $safe_current | "
+        + "($safe_typed | map(select(.name == $named)) | .[0]) as $safe_named | "
+        + "{keyboard: ($current // $named_device // ($typed | max_by(.active_layout_index // 0)) // null), "
+        + "switchable: (($safe_current // $safe_named // {name: \"\"}) | .name)}' 2>/dev/null); "
+        + "keyboard=$(printf '%s' \"$selection\" | jq -c '.keyboard // empty'); "
         + "[[ -n \"$keyboard\" ]] || exit 1; "
-        + "switchable=$(printf '%s' \"$devices\" | jq -r --arg named \"$1\" '"
-        + "[.keyboards[] | select((.name | test(\"^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)|omarchy-osk\"; \"i\")) | not)] as $typed | "
-        + "($typed | map(select(.main == true))[0] // ($typed | map(select(.name == $named))[0]) // {name: \"\"}) | .name' 2>/dev/null); "
+        + "switchable=$(printf '%s' \"$selection\" | jq -r '.switchable // \"\"'); "
             + "layouts_csv=$(printf '%s' \"$keyboard\" | jq -r '.layout // \"us\"'); "
             + "group=$(printf '%s' \"$keyboard\" | jq -r '.active_layout_index // 0'); "
             + "active=$(printf '%s' \"$layouts_csv\" | cut -d, -f$((group + 1))); "
@@ -225,7 +322,7 @@ Item {
             + "echo \"$layouts\" | while read code; do "
             + "  name=$(awk -v c=\"$code\" 'BEGIN{s=0} /^! layout/{s=1;next} /^!/{if(s) exit} s && NF>=2 && $1==c { $1=\"\"; sub(/^ +/,\"\",$0); print $0; exit }' /usr/share/X11/xkb/rules/base.lst 2>/dev/null); "
             + "  [[ -n \"$name\" ]] && printf 'NAME\\t%s\\t%s\\n' \"$code\" \"$name\"; "
-            + "done", "onscreen-keyboard", typedKeyboardName]
+            + "done", "onscreen-keyboard", typedKeyboardName, startupKeyboards.join("\n")]
         layoutDetectProcess.running = true
     }
 
@@ -380,28 +477,32 @@ Item {
         }
     }
 
-    // A device appearing or leaving raises no event of its own, and a query
-    // that failed at login would otherwise never be retried. Slow on purpose:
-    // the events above carry the switches, this only repairs.
-    Timer {
-        id: layoutSyncTimer
-        interval: 30000
-        repeat: true
+    // Hyprland's IPC has no input-device hotplug event. udev does, so one
+    // event stream requests fresh helper/compositor snapshots on add/remove.
+    // It wakes for events only; there is no seat poll or heartbeat.
+    Process {
+        id: inputDeviceMonitor
+        command: ["udevadm", "monitor", "--udev", "--subsystem-match=input", "--property"]
         running: true
-        onTriggered: root.refreshLayoutsFromHypr()
+        stdout: SplitParser {
+            onRead: function(line) {
+                if (line === "ACTION=add" || line === "ACTION=remove")
+                    root.sendCommandUnchecked("keyboards")
+            }
+        }
     }
 
     /// Runs one event through the reducer and writes whatever it says to
     /// write. The only path modifier state changes on, so the panel cannot
     /// drift from what the seam's tests cover.
     ///
-    /// Refused outright while the helper is not ready, rather than advancing
-    /// the state over writes that go nowhere: a lock whose `down` was dropped
-    /// would leave the cap showing a modifier the compositor never received,
-    /// which is the one thing the indicator must not do. Nothing is typeable
-    /// in that state anyway.
+    /// Protocol-bearing events are refused while the helper is not ready,
+    /// rather than advancing state over writes that go nowhere: a lock whose
+    /// `down` was dropped would leave the cap showing a modifier the compositor
+    /// never received. Caps is the exception because it is a local semantic
+    /// toggle and emits no protocol line; reconnecting must not delay it.
     function applyModifierEvent(event) {
-        if (!inputReady) return
+        if (!inputReady && (!event || event.type !== "capsClick")) return
         var outcome = Modifiers.reduce(modifierState, event)
         modifierState = outcome.state
         for (var i = 0; i < outcome.lines.length; i++) {
@@ -422,7 +523,7 @@ Item {
     }
 
     function isUpper() {
-        return capsOn !== shiftActive()
+        return modifierState.caps !== shiftActive()
     }
 
     function isSymbolShiftActive() {
@@ -451,8 +552,10 @@ Item {
 
     // Punctuation/number keys show both symbols stacked (like the
     // reference's `.key.dual`); plain letter keys just swap case.
+    // A symbols-page cap is never dual: it stands for one level, and the level
+    // above it has its own cap on the row below.
     function isDualKey(keyData) {
-        return !!keyData.s && !isLetterKey(keyData)
+        return !keyData.lvl && !!keyData.s && !isLetterKey(keyData)
     }
 
     // Input goes to the helper daemon over a unix socket; the panel never
@@ -514,7 +617,7 @@ Item {
             parser: SplitParser {
                 onRead: function (line) {
                     var reply = String(line).trim()
-                    if (reply === "hello 2") {
+                    if (reply === "hello 3") {
                         root.inputReady = false
                         root.inputStatus = "configuring"
                         // The helper released everything this panel's old
@@ -524,8 +627,13 @@ Item {
                         // do it without emitting the releases — sending `up`
                         // for a code nobody holds is a lie in the other
                         // direction.
-                        root.modifierState = Modifiers.initialState()
+                        // Caps is a semantic panel control, not a held key on
+                        // this connection, so a helper restart does not turn
+                        // it off. Only the real device-held modifiers reset.
+                        root.modifierState = Modifiers.reduce(
+                            root.modifierState, { type: "releaseAll" }).state
                         daemon.write("mods 0\n")
+                        daemon.write("keyboards\n")
                         daemon.flush()
                         // A restarted helper is back at group 0 and has no idea
                         // which layout is current. Re-reading the compositor
@@ -533,6 +641,17 @@ Item {
                         // would send whatever it held before the first sync,
                         // which is 0 on a fresh panel and would force the
                         // first layout.
+                    } else if (reply === "keyboards" || reply.indexOf("keyboards\t") === 0) {
+                        var names = reply.split("\t").slice(1).filter(function(name) {
+                            return name.length > 0
+                        })
+                        root.startupKeyboards = names
+                        if (!root.startupInventorySeen) {
+                            root.startupInventorySeen = true
+                            root.startupKeyboardName = names.length > 0 ? names[0] : ""
+                            if (!root.typedKeyboardName)
+                                root.typedKeyboardName = root.startupKeyboardName
+                        }
                         root.refreshLayoutsFromHypr()
                     } else if (reply === "configured") {
                         root.inputReady = true
@@ -572,7 +691,7 @@ Item {
         repeat: false
         onTriggered: {
             if (root.daemonSocket) {
-                root.daemonSocket.write("hello 2\n")
+                root.daemonSocket.write("hello 3\n")
                 root.daemonSocket.flush()
             }
         }
@@ -632,22 +751,42 @@ Item {
     // reducer decides both, from the same `letter` and `caps` facts.
     function pressChar(keyData) {
         if (!keyData.k) return
+        root.keyPressed()
         applyModifierEvent({
             type: "press",
             position: keyData.k,
             letter: isLetterKey(keyData),
-            caps: capsOn
+            // A symbols-page cap draws one level and has to type that level.
+            // Same treatment as Caps Lock: a real Shift press around the key,
+            // never a character the panel picked for itself.
+            shift: keyData.lvl === 2
         })
+    }
+
+    /// The release half of every cap that types. The key stayed down for as
+    /// long as the mouse button did, which is what let the compositor repeat
+    /// it; this lifts it, and the modifiers that were wrapped around it.
+    function releaseKey() {
+        applyModifierEvent({ type: "release" })
     }
 
     function pressSpecial(keyData, doubleClick) {
         switch (keyData.key) {
         case "close": closeRequested(); return
         case "emoji": Quickshell.execDetached(["omarchy-menu-emoji"]); return
-        case "lang": cycleLanguage(); return
-        case "caps": capsOn = !capsOn; return
+        // Not a keystroke, so no click sound, for the same reason close is
+        // silent: nothing was typed.
+        case "page": togglePage(); return
+        case "caps":
+            root.keyPressed()
+            applyModifierEvent({ type: "capsClick" })
+            return
         }
         if (Modifiers.isModifier(keyData.key)) {
+            // One click per physical press, and a lock is two presses, not
+            // three: `doubleClick` arrives on top of the second press's own
+            // click (issue 17) and would otherwise sound a third time.
+            if (!doubleClick) root.keyPressed()
             applyModifierEvent({
                 type: doubleClick ? "doubleClick" : "click",
                 modifier: keyData.key
@@ -656,19 +795,21 @@ Item {
         }
         var position = Layout.positionForKeysym(keyData.key)
         if (!position) return
+        root.keyPressed()
         applyModifierEvent({ type: "press", position: position })
     }
 
-    /// "idle", "latched" or "locked" for anything that has those states, so the
-    /// cap can draw all three distinguishably rather than lit-or-not.
+    /// Caps has exactly "off" and "on"; the real modifiers have "idle",
+    /// "latched" and "locked" so all of their states remain distinguishable.
     function keyModifierState(keyData) {
-        if (keyData.key === "caps") return capsOn ? "locked" : "idle"
+        if (keyData.key === "caps") return modifierState.caps ? "on" : "off"
         if (!Modifiers.isModifier(keyData.key)) return "idle"
         return modifierState[keyData.key]
     }
 
     Column {
         id: grid
+        anchors.bottom: parent.bottom
         spacing: root.gapPx
 
         Repeater {
@@ -677,6 +818,12 @@ Item {
                 id: rowItem
                 spacing: root.gapPx
                 readonly property var rowModel: modelData
+                // `index` is the Repeater's, and the inner delegate's own
+                // `index` shadows it, so the row's position is carried here.
+                readonly property int rowIndex: index
+                readonly property real hitTop: rowIndex === 0 ? root.edgeOutset : root.halfGap
+                readonly property real hitBottom: rowIndex === root.layoutRows.length - 1
+                    ? root.edgeOutset : root.halfGap
                 readonly property real flexSum: rowModel.reduce(function (acc, item) {
                     return acc + (item.w || 1)
                 }, 0)
@@ -689,11 +836,14 @@ Item {
                         property var keyData: modelData
                         width: rowItem.innerWidth * (keyData.w || 1) / rowItem.flexSum
                         height: root.keyHeight
+                        readonly property real hitLeft: index === 0
+                            ? root.edgeOutset : root.halfGap
+                        readonly property real hitRight: index === rowItem.rowModel.length - 1
+                            ? root.edgeOutset : root.halfGap
 
                         Rectangle {
                             id: keyRect
                             anchors.fill: parent
-                            visible: keyData.cluster !== "arrows"
                             radius: root.keyRadius
 
                             // Three states have to be told apart at a glance
@@ -704,20 +854,22 @@ Item {
                             property string modState: root.keyModifierState(keyData)
                             property bool latched: modState === "latched"
                             property bool locked: modState === "locked"
-                            // The language key reads as disabled while the
-                            // panel has no safe switch target; see
-                            // refreshLayoutsFromHypr for why one may not exist.
-                            property bool isLang: keyData.key === "lang"
+                            property bool toggleOn: modState === "on"
                             property bool isDual: root.isDualKey(keyData)
+                            // Whether this cap types, which is the same test
+                            // `onPressed` makes: a character, or a keysym with
+                            // a position behind it. The modifiers and the
+                            // command caps are neither. Caps acts on press;
+                            // the remaining commands act on click.
+                            property bool types: !keyData.key
+                                || !!Layout.positionForKeysym(keyData.key)
 
-                            color: isLang ? (root.typedKeyboard ? root.accentColor : root.keyBg)
-                                : locked ? root.lockedFill
+                            color: (locked || toggleOn) ? root.lockedFill
                                 : latched ? root.latchedFill
                                 : mouseArea.pressed ? root.keyActiveBg
                                 : mouseArea.containsMouse ? root.keyHoverBg
                                 : root.keyBg
-                            border.color: isLang ? (root.typedKeyboard ? root.accentColor : root.keyBorderColor)
-                                : (latched || locked) ? Color.accent
+                            border.color: (latched || locked || toggleOn) ? root.theme.accent
                                 : root.keyBorderColor
                             border.width: latched ? root.latchedBorderWidth : root.keyBorderWidth
 
@@ -727,9 +879,8 @@ Item {
                                 text: keyData.label
                                     ? keyData.label
                                     : root.resolvedTypedChar(keyData)
-                                color: keyRect.locked ? root.lockedText
-                                    : keyRect.isLang ? root.textHighlightColor
-                                    : root.textMain
+                                color: (keyRect.locked || keyRect.toggleOn)
+                                    ? root.lockedText : root.textMain
                                 font.family: root.keyboardFont
                                 font.pixelSize: root.keyFontSize
                             }
@@ -763,159 +914,122 @@ Item {
 
                             MouseArea {
                                 id: mouseArea
+                                // Deliberately larger than the cap it belongs
+                                // to: negative margins push it out to the
+                                // midpoint of each gap (and to the card's
+                                // padding at the grid's edges), so the areas
+                                // tile the grid while the drawn caps keep the
+                                // spacing they have always had. Nothing here
+                                // clips — neither the Rectangle, nor the
+                                // delegate Item, nor the Row and Column
+                                // positioners — so Qt still delivers presses
+                                // that land outside the cap's own rectangle.
                                 anchors.fill: parent
+                                anchors.leftMargin: -keyDelegate.hitLeft
+                                anchors.rightMargin: -keyDelegate.hitRight
+                                anchors.topMargin: -rowItem.hitTop
+                                anchors.bottomMargin: -rowItem.hitBottom
                                 hoverEnabled: true
 
-                                Timer {
-                                    id: modifierSingleClickDelay
-                                    interval: 250
-                                    repeat: false
-                                    property var pendingKeyData: null
-                                    onTriggered: {
-                                        if (!pendingKeyData) return
-                                        root.pressSpecial(pendingKeyData, false)
-                                        pendingKeyData = null
-                                    }
-                                }
-
-                                // Ordinary keys fire on press, not on click. A
-                                // click only completes when the button comes
+                                // Everything that types fires on press, not on
+                                // click. Two reasons, and the second one is
+                                // the load-bearing one.
+                                //
+                                // A click only completes when the button comes
                                 // back up, so waiting for it charges every
                                 // keystroke the length of the press — which
                                 // reads as lag even though nothing is slow.
                                 // Real keyboards act on the way down.
+                                //
+                                // And `clicked` is not emitted at all for the
+                                // second press of a double click: the delegate
+                                // has an `onDoubleClicked`, so Qt marks that
+                                // press consumed and the sequence a cap sees
+                                // for two fast taps is press, click, press,
+                                // doubleClick. A cap driven from `onClicked`
+                                // therefore loses every other tap once the
+                                // taps fall inside the double-click interval —
+                                // five fast Backspaces deleted three. `pressed`
+                                // is emitted for both, which is why letter caps
+                                // never showed the loss.
+                                //
+                                // The modifiers are here too now (issue 17).
+                                // They used to wait for the click and then a
+                                // further 250 ms, in case a second click was
+                                // coming that would make it a lock — which the
+                                // owner felt, correctly, as a quarter-second
+                                // of lag on every Shift. They latch on the way
+                                // down instead and the lock upgrades them,
+                                // which costs nothing and waits for nothing.
+                                // What makes that safe is the measured order
+                                // of the signals: for two fast taps a real
+                                // MouseArea emits
+                                //
+                                //   pressed, released, clicked,
+                                //   pressed, doubleClicked, released
+                                //
+                                // so `doubleClicked` arrives on the way *down*
+                                // of the second press, before its own
+                                // `released`. The second press is therefore
+                                // seen first as a click on a latched modifier
+                                // — which §5 says returns it to idle, never to
+                                // locked — and the reducer rolls that back
+                                // when the lock lands a moment later.
+                                //
+                                // The window in which the cap holds that
+                                // intermediate idle is one event delivery, not
+                                // a timer, so the worst it can cost is a
+                                // single frame of the idle fill during a
+                                // double click. That it is *zero* frames was
+                                // not established: QTest injects the whole
+                                // sequence in one pass and so cannot measure
+                                // what the compositor's own delivery does.
+                                // The bound is what is claimed here, and it is
+                                // the residual the by-hand retest looks for.
                                 onPressed: {
-                                    if (!keyData.key) root.pressChar(keyData)
-                                }
-
-                                // Keys with a double-press meaning still need
-                                // the click, since a press alone cannot tell a
-                                // tap from the first half of a double.
-                                onClicked: {
-                                    if (!keyData.key) return
-                                    if (!Modifiers.isModifier(keyData.key)) {
-                                        root.pressSpecial(keyData, false)
+                                    if (!keyData.key) {
+                                        root.pressChar(keyData)
                                         return
                                     }
-                                    modifierSingleClickDelay.pendingKeyData = keyData
-                                    modifierSingleClickDelay.restart()
+                                    if (Layout.positionForKeysym(keyData.key)
+                                            || Modifiers.isModifier(keyData.key)
+                                            || keyData.key === "caps") {
+                                        root.pressSpecial(keyData, false)
+                                    }
+                                }
+
+                                // The key is held for as long as the button
+                                // is, so the compositor repeats it at the
+                                // user's own repeat_delay and repeat_rate
+                                // (spec-v1 §6) and the panel runs no repeat
+                                // timer of its own. `canceled` matters as much
+                                // as `released`: a grab lost to a popup or to
+                                // the panel closing has to lift the key too,
+                                // or it repeats into the focused window until
+                                // the helper's cap notices.
+                                onReleased: if (keyRect.types) root.releaseKey()
+                                onCanceled: if (keyRect.types) root.releaseKey()
+
+                                // What is left on the click is only the command
+                                // caps — close, emoji, lang — where
+                                // acting on the way down would tear the panel
+                                // out from under the button that is still
+                                // held. They are deliberately not swept into
+                                // the press path with the modifiers. They also
+                                // pay Qt's second-press suppression (issue 13)
+                                // for it, which is survivable here because
+                                // nobody double-clicks Close to close twice.
+                                onClicked: {
+                                    if (!keyData.key) return
+                                    if (Layout.positionForKeysym(keyData.key)) return
+                                    if (Modifiers.isModifier(keyData.key)) return
+                                    if (keyData.key === "caps") return
+                                    root.pressSpecial(keyData, false)
                                 }
 
                                 onDoubleClicked: {
                                     if (!keyData.key || !Modifiers.isModifier(keyData.key)) return
-                                    modifierSingleClickDelay.pendingKeyData = null
-                                    modifierSingleClickDelay.stop()
                                     root.pressSpecial(keyData, true)
-                                }
-                            }
-                        }
-
-                        Row {
-                            id: arrowRow
-                            anchors.fill: parent
-                            visible: keyData.cluster === "arrows"
-                            spacing: root.gapPx
-                            readonly property real subWidth: (width - 2 * root.gapPx) / 3
-
-                            Rectangle {
-                                width: arrowRow.subWidth
-                                height: parent.height
-                                radius: root.keyRadius
-                                border.width: root.keyBorderWidth
-                                border.color: root.keyBorderColor
-                                color: leftArrowArea.pressed ? root.keyActiveBg
-                                    : leftArrowArea.containsMouse ? root.keyHoverBg
-                                    : root.keyBg
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "\u25c0"
-                                    color: root.textMain
-                                    font.family: root.keyboardFont
-                                    font.pixelSize: root.keyFontSize
-                                }
-                                MouseArea {
-                                    id: leftArrowArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: root.pressSpecial({ key: "Left" })
-                                }
-                            }
-
-                            Column {
-                                width: arrowRow.subWidth
-                                height: parent.height
-                                spacing: root.gapPx
-
-                                Rectangle {
-                                    width: parent.width
-                                    height: (parent.height - parent.spacing) / 2
-                                    radius: root.keyRadius
-                                    border.width: root.keyBorderWidth
-                                    border.color: root.keyBorderColor
-                                    color: upArrowArea.pressed ? root.keyActiveBg
-                                        : upArrowArea.containsMouse ? root.keyHoverBg
-                                        : root.keyBg
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "\u25b2"
-                                        color: root.textMain
-                                        font.family: root.keyboardFont
-                                        font.pixelSize: root.keySmallFontSize
-                                    }
-                                    MouseArea {
-                                        id: upArrowArea
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        onClicked: root.pressSpecial({ key: "Up" })
-                                    }
-                                }
-
-                                Rectangle {
-                                    width: parent.width
-                                    height: (parent.height - parent.spacing) / 2
-                                    radius: root.keyRadius
-                                    border.width: root.keyBorderWidth
-                                    border.color: root.keyBorderColor
-                                    color: downArrowArea.pressed ? root.keyActiveBg
-                                        : downArrowArea.containsMouse ? root.keyHoverBg
-                                        : root.keyBg
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "\u25bc"
-                                        color: root.textMain
-                                        font.family: root.keyboardFont
-                                        font.pixelSize: root.keySmallFontSize
-                                    }
-                                    MouseArea {
-                                        id: downArrowArea
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        onClicked: root.pressSpecial({ key: "Down" })
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                width: arrowRow.subWidth
-                                height: parent.height
-                                radius: root.keyRadius
-                                border.width: root.keyBorderWidth
-                                border.color: root.keyBorderColor
-                                color: rightArrowArea.pressed ? root.keyActiveBg
-                                    : rightArrowArea.containsMouse ? root.keyHoverBg
-                                    : root.keyBg
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "\u25b6"
-                                    color: root.textMain
-                                    font.family: root.keyboardFont
-                                    font.pixelSize: root.keyFontSize
-                                }
-                                MouseArea {
-                                    id: rightArrowArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: root.pressSpecial({ key: "Right" })
                                 }
                             }
                         }

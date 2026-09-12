@@ -17,6 +17,7 @@ tests are for.
 """
 
 import json
+import os
 import socket
 import subprocess
 import time
@@ -143,6 +144,117 @@ class VirtualKeyboard:
         actual = self.layout()
         if actual != wanted:
             raise Failure(f"device layout is {actual!r}, expected {wanted!r}")
+
+
+class TypingTarget:
+    """A real client with keyboard focus, and the text it actually received.
+
+    The fourth source of truth, and the only one that can see a *modified*
+    keystroke: a protocol reply says a key went out, `hyprctl devices` says
+    which group the device is in, and neither says what character arrived.
+    So a foot terminal runs `cat` into a file and the assertion is on what
+    a focused client read — the same thing a human reads off the screen,
+    which is where the missing-modifier bug was found by hand.
+
+    Canonical mode is the flush: the terminal hands `cat` a line when RTRN
+    is typed, so every expectation below ends with one.
+    """
+
+    def __init__(self):
+        runtime = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+        self.path = os.path.join(runtime, "osk-typed.txt")
+        if os.path.exists(self.path):
+            os.unlink(self.path)
+        self._errors = open(os.path.join(runtime, "osk-typing-target.log"), "w+")
+        # The nested compositor publishes its output some time after it
+        # accepts clients, and foot refuses to start without one ("no monitors
+        # available"). Every test before this one talks to the helper alone
+        # and never noticed. Wait for the monitor, then retry the terminal a
+        # few times anyway, so a compositor still settling does not read as a
+        # modifier regression.
+        self._wait_for_monitor()
+        self._process = None
+        for attempt in range(5):
+            if attempt:
+                time.sleep(2)
+            self._process = subprocess.Popen(
+                ["foot", "sh", "-c", f"cat > {self.path}"],
+                stdout=subprocess.DEVNULL,
+                stderr=self._errors,
+            )
+            if self._wait_for_focus(last=attempt == 4):
+                return
+
+    def _wait_for_monitor(self):
+        for _ in range(150):
+            out = subprocess.run(
+                ["hyprctl", "monitors", "-j"], capture_output=True, text=True
+            ).stdout
+            try:
+                if json.loads(out):
+                    return
+            except json.JSONDecodeError:
+                pass
+            time.sleep(0.2)
+        raise Failure("the nested compositor never published a monitor")
+
+    def _wait_for_focus(self, last):
+        """True once a foot window has focus; False if this attempt died."""
+        # Generous: a cold foot in a nested compositor has been seen taking
+        # several seconds to map, and a timeout here reads as a failure of
+        # whatever was being typed.
+        for _ in range(300):
+            out = subprocess.run(
+                ["hyprctl", "activewindow", "-j"], capture_output=True, text=True
+            ).stdout
+            try:
+                window = json.loads(out)
+            except json.JSONDecodeError:
+                window = {}
+            if window.get("class") == "foot":
+                # The window is mapped and focused; the keyboard enter it is
+                # about to get is what makes the first keystroke land.
+                time.sleep(0.5)
+                return True
+            if self._process.poll() is not None:
+                if not last:
+                    return False
+                raise Failure(
+                    f"foot exited with {self._process.returncode} instead of taking "
+                    f"focus: {self._diagnosis()}"
+                )
+            time.sleep(0.1)
+        raise Failure("no focused foot window to type into")
+
+    def _diagnosis(self):
+        self._errors.flush()
+        self._errors.seek(0)
+        return self._errors.read().strip() or "it printed nothing"
+
+    def text(self):
+        try:
+            with open(self.path, encoding="utf-8", errors="replace") as handle:
+                return handle.read()
+        except FileNotFoundError:
+            return ""
+
+    def expect_text(self, wanted):
+        """Wait for the client's text to reach `wanted`, then require it."""
+        for _ in range(40):
+            if self.text() == wanted:
+                return
+            time.sleep(0.1)
+        raise Failure(f"focused client read {self.text()!r}, expected {wanted!r}")
+
+    def close(self):
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+        self._errors.close()
+        if os.path.exists(self.path):
+            os.unlink(self.path)
 
 
 _TESTS = []

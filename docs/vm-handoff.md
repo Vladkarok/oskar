@@ -93,6 +93,29 @@ cd ~/omarchy-osk && tools/nested-session.sh tools/smoke-daemon.sh
   was the share. Never from `/mnt/osk-src`: the script finds the daemon
   relative to the repo root, and the share is the host's tree, read-only
   and carrying the host's build output if any.
+- **`smoke-daemon.sh` runs the binary it finds, and never builds one.** A
+  `git pull` in the guest changes the source and nothing else, so the
+  suite silently keeps testing the previous build. Run `cargo build
+  --release --manifest-path daemon/Cargo.toml` after every pull that
+  touched `daemon/`. A daemon fix that reads as still-broken here, with
+  the suite otherwise healthy, is this first.
+- **The nested session comes up without an output perhaps a third of the
+  time in the guest**, and roughly as often does not come up at all. The
+  suite's typing target is the first test that needs one, so it is where
+  this shows: `the nested compositor never published a monitor`, or
+  foot's own `no monitors available`. It is the VM, not the helper —
+  re-run. Best guess is the guest's Virtual-1 having no viewer attached,
+  so a nested Hyprland's window sometimes never activates. Nothing else
+  in the suite needs an output, which is why it only appeared now.
+- Every SSH command needs the **live** instance signature, and
+  `ls -t $XDG_RUNTIME_DIR/hypr | head -1` no longer gives it: each nested
+  run leaves a directory behind and they are all newer than the session's
+  own — the live one is usually the oldest. Ask the sockets which one is
+  still answering (Hyprland's own environ does not carry it):
+
+```bash
+ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for d in $XDG_RUNTIME_DIR/hypr/*/; do printf "j/version" | socat - UNIX-CONNECT:"$d.socket.sock" >/dev/null 2>&1 && basename "$d"; done'
+```
 - Input zoo in the guest, deliberately messy: PS/2 keyboard, two USB
   keyboards, a USB tablet, a power-button pseudo-device, plus fcitx5's
   virtual keyboard holding `main:true` — a faithful replica of the host.
@@ -114,15 +137,24 @@ cd ~/omarchy-osk && tools/nested-session.sh tools/smoke-daemon.sh
 - Keycap pipeline green after `8c8546c` (Ukrainian symbols collected).
 - The integration seam runs in the guest, from a clone of
   `spec/v1-keyboard`: 5 passed, four compositor keymap rebuilds.
+- Three-group cycling (ticket 10): with `kb_layout = us,ua,de` and the
+  physical Caps Lock, the caps walked us → de → us (wrapped) → ua with
+  the panel untouched, the helper's device following each switch and
+  zero compiles after the config change. The de caps matched a plain
+  `xkbcli compile-keymap --layout de` for AD01–AD11, AC10, AC11, BKSL,
+  AE11 and AB01. A real click on the language button advanced the
+  physical device (1 → 2) with the caps following; with `main` on the
+  helper's own virtual keyboard after a shell restart the button drew
+  muted and clicking it moved nothing. Physical devices and the
+  `power-button` pseudo-device never left group 0 unless a switch
+  targeted them.
 
 ## Still to do here
 
 1. Actual daily use — open the panel, click keys, work in it for a while.
-2. Language button on the panel: must advance the physical device (the
-   bar indicator should agree) and grey out when there is no safe target.
-3. XWayland target: type into an XWayland window (xterm under XWAYLAND).
-4. fcitx5 running vs stopped, both ways.
-5. Longer hotplug storms while typing.
+2. XWayland target: type into an XWayland window (xterm under XWAYLAND).
+3. fcitx5 running vs stopped, both ways.
+4. Longer hotplug storms while typing.
 
 ## Upstream queue
 

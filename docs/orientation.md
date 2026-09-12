@@ -19,9 +19,15 @@ layout is the single source of truth in both directions — switch with
 Caps Lock and the caps follow; switch from the panel and the physical
 keyboard follows.
 
-Owner's setup: `us,ua` with `grp:caps_toggle`. It must generalise to any
-number of layouts — two toggle, three or more should get a small
-Windows-style chooser popup (not built yet).
+Owner's setup: `us,ua` with `compose:caps,grp:alt_shift_toggle`. It must
+generalise to any number of layouts — two toggle, three or more should
+get a small Windows-style chooser popup (not built yet).
+
+`grp:caps_toggle` was the owner's setup between 2026-08-28 and
+2026-09-03 and must not be recommended: it silently breaks layout
+switching for every client behind fcitx5, which types the first layout
+while the panel and the bar both correctly report the second. See
+`.scratch/v1-keyboard/issues/16-layout-switch-misses-fcitx5-apps.md`.
 
 ## Where the pieces are
 
@@ -35,10 +41,11 @@ Windows-style chooser popup (not built yet).
 | `tools/` | nested-session polygon, daemon smoke, VM launcher + provision |
 
 Panel talks to the helper over `$XDG_RUNTIME_DIR/omarchy-osk/control.sock`,
-line protocol, version 2:
+line protocol, version 3:
 
 ```
-hello 2                                   -> hello 2 | err not ready | err protocol …
+hello 3                                   -> hello 3 | err not ready | err protocol …
+keyboards                                 -> keyboards\t<safe physical name>…
 configure\t<rules>\t<model>\t<layouts>\t<variants>\t<options>\t<kb_file>\t<group>
 group <n> | tap <AD01|code> | down … | up … | mods <mask> | ping
 ```

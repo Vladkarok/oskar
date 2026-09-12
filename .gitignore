@@ -2,3 +2,4 @@ daemon/target/
 core.*
 .scratch/
 __pycache__/
+.agents/

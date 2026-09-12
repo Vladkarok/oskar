@@ -25,17 +25,56 @@ earns a place in autostart.
 | path | what it is |
 |---|---|
 | `manifest.json` | plugin manifest (`io.github.vladkarok.osk`) |
-| `Panel.qml` | the floating keyboard window |
+| `Panel.qml` | the keyboard window: a docked full-width strip or a floating overlay |
 | `Keyboard.qml` | key grid, layout tracking, socket client |
 | `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
+| `ModifierReducer.js` | the modifier state machine (pure, tested) |
+| `Config.js` | parse/serialize for the one config file |
+| `Theme.qml` | the panel's one reader of Omarchy's shared style tokens |
 | `BarWidget.qml` | bar icon that toggles the panel |
 | `daemon/` | Rust helper holding one virtual keyboard |
 | `tools/nested-session.sh` | runs a command against a throwaway nested Hyprland |
 | `tools/smoke-daemon.sh` | end-to-end check of the helper |
 | `tools/integration/` | the assertions that check runs, and their plumbing |
+| `tools/provenance.py` | measures what the shell layer still shares with upstream |
 | `docs/orientation.md` | what this is, current state, how the work runs |
 | `docs/decisions.md` | why the design looks like this, and the dead ends |
 | `docs/vm-handoff.md` | the dogfooding VM: operating manual and queue |
+
+## Modes and configuration
+
+The panel has two geometries. **Docked** (the default on first run) sits
+flush along the bottom edge at full width and reserves that space through
+the layer-shell exclusive zone, so windows move up while it is open and
+return when it closes — the way the Windows touch keyboard behaves. A
+fullscreen window ignores exclusive zones and is overlaid instead. **Floating**
+reserves nothing and is dragged by its bar. The mode button on the panel
+switches between them.
+
+Everything persists in one file, `$XDG_CONFIG_HOME/omarchy-osk/config.json`,
+which is both the documented config and the saved state — there is no second
+state file. A missing file or a missing or malformed key falls back to the
+defaults rather than failing to start.
+
+| key | values | default |
+|---|---|---|
+| `mode` | `docked` \| `floating` | `docked` |
+| `position` | `{x, y}`, floating mode only | unset |
+| `size_preset` | preset name | `medium` |
+| `sound` | `true` \| `false` | `false` |
+| `follow_theme` | `true` \| `false` | `true` |
+
+`sound: true` plays the freedesktop sound theme's `bell` event on each key
+press through QtMultimedia — nothing is spawned per keystroke. It needs
+`qt6-multimedia` and `ffmpeg`; the theme's Vorbis file is transcoded to PCM
+once at startup (SoundEffect plays uncompressed WAV only), into
+`$XDG_RUNTIME_DIR`. Without them the keyboard works and stays silent.
+Colours, fonts and corner radius all come from the shared Omarchy style tokens,
+so switching the theme redraws the keyboard where it stands — no restart of the
+shell or the plugin, and nothing on the typing path is touched. `follow_theme:
+false` stops it tracking theme changes: the keyboard keeps the theme that was in
+force when it was first opened. That is all it does in v1 — it is not a colour
+setting and turns nothing else on or off; the independent colour schema is v2.
 
 ## Why there is a helper at all
 
@@ -98,6 +137,27 @@ implementation found that follows the system layout at all.
    never claimed the code is refused, a tap cannot lift another connection's
    hold, and a disconnect releases only that connection's claims (smoke
    covered, including two clients sharing one hold).
+
+## Provenance
+
+The shell layer is derived from abdxdev's panel and is being reimplemented
+against [spec-v1](docs/spec-v1.md) until no substantive logic is shared with
+upstream — measured against `e3771b6`, the last commit there before our own
+PR merged into it. One script keeps the answer a number instead of an
+argument:
+
+```sh
+tools/provenance.py
+```
+
+It prints shared substantive lines per file and a total. Substantive
+excludes blank lines, lone braces, comments, and lines of twelve characters
+or fewer — the boilerplate independently written QML still coincides on,
+which should not be counted. The upstream checkout is verified against the
+exact commit and the measurement is refused against anything else; pass
+`--upstream DIR` to use an existing checkout, `--verbose` to list the shared
+lines. The script exits `1` while the total is above zero, so the licence
+change to a sole copyright can gate on it reading zero.
 
 ## Testing
 

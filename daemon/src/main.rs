@@ -22,22 +22,31 @@
 //! thing that talks to the compositor about layouts.
 //!
 //! Protocol, one command per line on a unix socket:
-//!   hello <version>   readiness gate, replies `ready <version>`
+//!   hello <version>   readiness gate, replies `hello <version>`
 //!   ping              replies `pong`
+//!   keyboards         snapshot positively identified physical keyboards
 //!   tap <key>         press and release; <key> is an xkb name (AD01) or an
 //!                     evdev code (16)
 //!   down <key>        press
 //!   up <key>          release
-//!   mods <mask>       set the modifier mask
+//!   mods <mask>       set the modifier mask by hand; the helper maintains it
+//!                     from the keys held, so the next down/up supersedes this
 //!   group <n>         select which compiled layout to type in
 //!   configure<TAB>rules<TAB>model<TAB>layouts<TAB>variants<TAB>options
 //!             <TAB>kb_file<TAB>group
-//! Replies are `ok`, `ready <n>`, `pong`, or `err <reason>`.
+//! Replies are `ok`, `hello <n>`, `configured`, `pong`,
+//! `keyboards<TAB>name...`, or `err <reason>`.
+//!
+//! Key repeat belongs to the compositor: a press is `down`, a release is `up`,
+//! and nothing here or in the panel repeats anything. What the helper does add
+//! is a cap — a non-modifier code held past fifteen seconds is lifted and
+//! logged, because the only way that happens is a panel that is alive but
+//! wedged. Modifier codes are exempt; a locked Ctrl is deliberately held.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -52,7 +61,34 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 
 /// Bumped whenever the command set changes, so a plugin updated without
 /// reinstalling the helper says so instead of failing silently.
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
+
+/// How long a non-modifier code may stay held before the helper lifts it
+/// (spec-v1 §6). Fifteen seconds of held backspace is about six hundred
+/// repeats; nobody does that with a mouse button, so a hold that long means
+/// the panel is alive but wedged.
+const DEFAULT_HOLD_CAP: Duration = Duration::from_secs(15);
+
+/// The cap, overridable so the integration seam can assert on it without
+/// sleeping fifteen seconds. Read once: a value that changed under a live
+/// hold would make the deadline already armed on a client thread a lie.
+fn hold_cap() -> Duration {
+    static CAP: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("OMARCHY_OSK_HOLD_CAP_MS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .filter(|ms| *ms > 0)
+            .map_or(DEFAULT_HOLD_CAP, Duration::from_millis)
+    })
+}
+
+/// The compositor only orders key events by this stamp, so a counter is enough
+/// and saves a clock syscall per keystroke.
+fn stamp() -> u32 {
+    static COUNTER: AtomicU32 = AtomicU32::new(1);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Until the panel reports the real list. Any layout compiles; this one just
 /// gives the helper a valid keymap to be ready with.
@@ -178,6 +214,67 @@ fn parse_keycodes(keymap: &str) -> std::collections::HashMap<String, u32> {
     codes
 }
 
+/// Which evdev codes carry which modifier bit, read out of the keymap in hand.
+///
+/// A wlroots compositor takes a virtual keyboard's modifier state from the
+/// `modifiers` request alone; it does not watch key events and work it out.
+/// So the helper has to say what is held, and to say it, it has to know which
+/// positions are modifiers — a fact that belongs to the keymap and to nothing
+/// else. Which position carries which modifier is an option away from
+/// changing — `altwin:swap_lalt_lwin` moves LALT from Mod1 to Mod4 — and a
+/// hard-coded table would be wrong for every setup but the one it was
+/// written against.
+///
+/// The bit for a real modifier is its index in the order xkb fixes: Shift,
+/// Lock, Control, Mod1..Mod5.
+///
+/// Asked of a real xkb state rather than read out of `modifier_map`, because
+/// the modifier map is not what a keypress means. It is the union of every
+/// modifier a position can reach on any level, and xkb resolves a press
+/// through the action on the level actually selected. `shift:both_capslock_
+/// cancel` is the case that broke: it puts Caps_Lock on the Shift keys'
+/// second level, so with `grp:caps_toggle` also in play the keymap says
+/// `modifier_map Lock { <LFSH> }`, and a union said a held Shift meant
+/// Shift+Lock. Shift+Lock on an ALPHABETIC key is level 1 — the letters came
+/// out lowercase while the TWO_LEVEL number row, which ignores Lock, shifted
+/// correctly.
+///
+/// Pressing the position in a clean state and serializing what comes out is
+/// what the compositor would do for a physical keyboard, so it agrees by
+/// construction — and it picks up the positions that become modifiers through
+/// a compat interpret rather than a modifier map, which the old reading
+/// admitted it could not see.
+fn modifier_masks_for_keymap(
+    keymap: &str,
+    codes: &std::collections::HashMap<String, u32>,
+) -> std::collections::HashMap<u32, u32> {
+    use xkbcommon::xkb;
+
+    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+    let Some(compiled) = xkb::Keymap::new_from_string(
+        &context,
+        keymap.to_string(),
+        xkb::KEYMAP_FORMAT_TEXT_V1,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    ) else {
+        return std::collections::HashMap::new();
+    };
+
+    let mut masks = std::collections::HashMap::new();
+    for code in codes.values() {
+        // A fresh state per position rather than press-then-release: a key
+        // carrying LockMods (Caps Lock) does not undo itself on release, and
+        // would leave its bit set for every position probed after it.
+        let mut state = xkb::State::new(&compiled);
+        state.update_key(xkb::Keycode::from(code + 8), xkb::KeyDirection::Down);
+        let mask = state.serialize_mods(xkb::STATE_MODS_EFFECTIVE);
+        if mask != 0 {
+            masks.insert(*code, mask);
+        }
+    }
+    masks
+}
+
 /// A key is named the way xkb names it (`AD01`) or given as a raw evdev code.
 enum Key {
     Code(u32),
@@ -195,6 +292,14 @@ enum Command {
     Configure(XkbConfig),
 }
 
+/// One logical press: who is claiming it, and when the device first saw it go
+/// down. The instant belongs to the press rather than to any one claim, since
+/// the device only holds the key once however many connections want it.
+struct Hold {
+    claimants: std::collections::HashSet<u64>,
+    since: Instant,
+}
+
 /// What the socket threads need. Wayland proxies are Send + Sync and the
 /// connection serialises requests internally, so client threads drive the
 /// keyboard directly. That leaves the main thread free to sit in poll.
@@ -205,6 +310,8 @@ struct Shared {
     ready: bool,
     /// xkb key name -> evdev code, taken from the keymap in use.
     codes: std::collections::HashMap<String, u32>,
+    /// evdev code -> modifier bit, for the codes the keymap calls modifiers.
+    modifier_masks: std::collections::HashMap<u32, u32>,
     /// Which compiled layout is active.
     group: u32,
     config: Option<XkbConfig>,
@@ -212,7 +319,7 @@ struct Shared {
     /// The device is shared, so a code is one logical press with many
     /// claimants: it goes down with the first claim and up with the last
     /// release, and a claim is what authorizes a release.
-    held: std::collections::HashMap<u32, std::collections::HashSet<u64>>,
+    held: std::collections::HashMap<u32, Hold>,
     uploads: std::collections::VecDeque<Instant>,
 }
 
@@ -220,6 +327,16 @@ impl Shared {
     /// Everything that must be true before a key can actually land.
     fn is_ready(&self) -> bool {
         self.keyboard.is_some() && self.ready && !self.codes.is_empty()
+    }
+
+    /// The modifier mask the device should be reporting: every bit carried by
+    /// a code some connection currently holds. Derived from `held` rather than
+    /// accumulated, so it cannot drift out of step with what is pressed.
+    fn modifier_mask(&self) -> u32 {
+        self.held
+            .keys()
+            .filter_map(|code| self.modifier_masks.get(code))
+            .fold(0, |mask, bit| mask | bit)
     }
 
     /// Compiles `layouts` and installs the result. Held by the caller's lock so
@@ -231,13 +348,13 @@ impl Shared {
             .is_some_and(|current| current.same_keymap(config))
         {
             // A same-keymap reconfigure is only ever a group change: the
-            // device state was never reset, so the mask needs no re-assert —
-            // and zeroing it here would clobber whatever a client's chord
-            // holds across the swap.
+            // device state was never reset, so whatever a client's chord
+            // holds must survive the swap. The group rides on the same
+            // request as the mask, so the mask goes back out with it.
             if self.group != config.group {
                 self.group = config.group;
                 if let Some(keyboard) = self.keyboard.as_ref() {
-                    keyboard.modifiers(0, 0, 0, self.group);
+                    keyboard.modifiers(self.modifier_mask(), 0, 0, self.group);
                 }
             }
             self.config = Some(config.clone());
@@ -277,6 +394,7 @@ impl Shared {
         self.group = config.group;
         keyboard.modifiers(0, 0, 0, self.group);
         self.codes = parse_keycodes(&text);
+        self.modifier_masks = modifier_masks_for_keymap(&text, &self.codes);
         self.ready = !self.codes.is_empty();
         self.config = Some(config.clone());
         self.uploads.push_back(now);
@@ -386,6 +504,142 @@ fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(dir.join("control.sock"))
 }
 
+/// The names Hyprland gives kernel input devices that udev identifies as
+/// keyboards, excluding any libinput device group that also owns a pointer.
+/// A gaming mouse often exposes a full keyboard-shaped HID interface; the
+/// shared device group is the positive evidence that it is not a keyboard we
+/// may safely advance. Missing metadata produces no candidate, never a guess.
+fn physical_keyboard_names(input_root: &Path, udev_root: &Path) -> Vec<String> {
+    struct Device {
+        name: String,
+        group: String,
+        keyboard: bool,
+        physical: bool,
+        typing_keys: bool,
+        pointer: bool,
+    }
+
+    let has_key = |bitmap: &str, code: usize| {
+        bitmap
+            .split_whitespace()
+            .rev()
+            .nth(code / u64::BITS as usize)
+            .and_then(|word| u64::from_str_radix(word, 16).ok())
+            .is_some_and(|word| word & (1 << (code % u64::BITS as usize)) != 0)
+    };
+
+    let Ok(entries) = std::fs::read_dir(input_root) else {
+        return Vec::new();
+    };
+    let mut devices = Vec::new();
+    for entry in entries.flatten() {
+        let event = entry.file_name();
+        if !event.to_string_lossy().starts_with("event") {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(name) = std::fs::read_to_string(path.join("device/name")) else {
+            continue;
+        };
+        let Ok(dev) = std::fs::read_to_string(path.join("dev")) else {
+            continue;
+        };
+        let Ok(properties) = std::fs::read_to_string(udev_root.join(format!("c{}", dev.trim())))
+        else {
+            continue;
+        };
+        let property = |wanted: &str| {
+            properties.lines().find_map(|line| {
+                line.strip_prefix("E:")?
+                    .split_once('=')
+                    .filter(|(key, _)| *key == wanted)
+                    .map(|(_, value)| value)
+            })
+        };
+        let group = property("LIBINPUT_DEVICE_GROUP").unwrap_or("").to_string();
+        if group.is_empty() {
+            continue;
+        }
+        let keys =
+            std::fs::read_to_string(path.join("device/capabilities/key")).unwrap_or_default();
+        let typing_positions = (2..=11)
+            .chain(16..=25)
+            .chain(30..=38)
+            .chain(44..=50)
+            .chain([28, 57]);
+        devices.push(Device {
+            name: name.trim().to_string(),
+            group,
+            keyboard: property("ID_INPUT_KEYBOARD") == Some("1"),
+            physical: property("ID_BUS").is_some() && property("ID_PATH").is_some(),
+            typing_keys: typing_positions
+                .into_iter()
+                .all(|code| has_key(&keys, code)),
+            pointer: [
+                "ID_INPUT_MOUSE",
+                "ID_INPUT_TOUCHPAD",
+                "ID_INPUT_TOUCHSCREEN",
+                "ID_INPUT_TABLET",
+            ]
+            .iter()
+            .any(|key| property(key) == Some("1")),
+        });
+    }
+
+    let pointer_groups: std::collections::HashSet<&str> = devices
+        .iter()
+        .filter(|device| device.pointer)
+        .map(|device| device.group.as_str())
+        .collect();
+    let mut names: Vec<String> = devices
+        .iter()
+        .filter(|device| {
+            device.keyboard
+                && device.physical
+                && device.typing_keys
+                && !pointer_groups.contains(device.group.as_str())
+        })
+        .map(|device| {
+            device
+                .name
+                .chars()
+                .flat_map(char::to_lowercase)
+                .map(|character| {
+                    if character.is_whitespace() {
+                        '-'
+                    } else {
+                        character
+                    }
+                })
+                .collect()
+        })
+        .filter(|name: &String| {
+            ![
+                "hl-virtual-keyboard",
+                "power-button",
+                "sleep-button",
+                "lid-switch",
+                "video-bus",
+                "omarchy-osk",
+            ]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn startup_keyboard_reply() -> String {
+    let names = physical_keyboard_names(Path::new("/sys/class/input"), Path::new("/run/udev/data"));
+    if names.is_empty() {
+        "keyboards".to_string()
+    } else {
+        format!("keyboards\t{}", names.join("\t"))
+    }
+}
+
 fn parse(line: &str) -> Option<Command> {
     if let Some(raw) = line.strip_prefix("configure\t") {
         let fields: Vec<&str> = raw.split('\t').collect();
@@ -457,7 +711,45 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
     static CONNECTION: AtomicU64 = AtomicU64::new(1);
     let conn_id = CONNECTION.fetch_add(1, Ordering::Relaxed);
 
-    for line in BufReader::new(stream).lines().map_while(Result::ok) {
+    let mut reader = BufReader::new(match stream.try_clone() {
+        Ok(handle) => handle,
+        Err(_) => return,
+    });
+    let mut pending = String::new();
+    loop {
+        // The only thing this connection ever waits on is its own next line.
+        // Arming that wait with the cap's deadline is what enforces the cap
+        // without a timer thread: no hold means no deadline and the read
+        // blocks the way it always did, and a hold means exactly one wakeup,
+        // at the moment the key is due to be lifted.
+        let timeout = hold_deadline(&shared, conn_id).map(|deadline| {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .max(Duration::from_millis(1))
+        });
+        if stream.set_read_timeout(timeout).is_err() {
+            break;
+        }
+        match reader.read_line(&mut pending) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                // The deadline came due with nothing to read, which is the
+                // wedged panel this cap exists for. `pending` keeps whatever
+                // part of a line did arrive; the next read appends to it.
+                for code in expire_stuck_keys(&shared, &connection) {
+                    held.retain(|entry| *entry != code);
+                }
+                continue;
+            }
+            Err(_) => break,
+        }
+        let line = std::mem::take(&mut pending);
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -481,6 +773,10 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             let _ = writeln!(out, "pong");
             continue;
         }
+        if line == "keyboards" {
+            let _ = writeln!(out, "{}", startup_keyboard_reply());
+            continue;
+        }
         let reply = match parse(line) {
             Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
             None => "err unknown command",
@@ -501,11 +797,72 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
 fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>, conn_id: u64) {
     let mut shared = shared.lock().unwrap();
     for code in held {
-        apply_locked(&mut shared, connection, Command::Up(Key::Code(code)), None, conn_id);
+        apply_locked(
+            &mut shared,
+            connection,
+            Command::Up(Key::Code(code)),
+            None,
+            conn_id,
+        );
     }
     if shared.held.is_empty() {
         apply_locked(&mut shared, connection, Command::Mods(0), None, conn_id);
     }
+}
+
+/// When the client thread must next wake to enforce the cap: the earliest
+/// expiry among the non-modifier codes this connection is claiming, or `None`
+/// when it holds nothing capped. `None` means the read blocks with no deadline
+/// at all, which is what keeps this from being a poll — an idle connection
+/// wakes zero times, and a holding one wakes once.
+fn hold_deadline(shared: &SharedRef, conn_id: u64) -> Option<Instant> {
+    let shared = shared.lock().unwrap();
+    let cap = hold_cap();
+    shared
+        .held
+        .iter()
+        .filter(|(code, hold)| {
+            hold.claimants.contains(&conn_id) && !shared.modifier_masks.contains_key(*code)
+        })
+        .map(|(_, hold)| hold.since + cap)
+        .min()
+}
+
+/// Lifts every non-modifier code held past the cap and says so in the log.
+/// Modifier codes are exempt: a locked Ctrl (spec-v1 §5) is deliberately held
+/// for minutes, and releasing it would make the lock indicator lie.
+///
+/// The release is unconditional rather than per-claim — the device holds the
+/// key once, so lifting it means dropping every claim on it. Returns the codes
+/// it released so the caller can forget them too.
+fn expire_stuck_keys(shared: &SharedRef, connection: &Connection) -> Vec<u32> {
+    let mut shared = shared.lock().unwrap();
+    let cap = hold_cap();
+    let now = Instant::now();
+    let expired: Vec<u32> = shared
+        .held
+        .iter()
+        .filter(|(code, hold)| {
+            !shared.modifier_masks.contains_key(*code) && now.duration_since(hold.since) >= cap
+        })
+        .map(|(code, _)| *code)
+        .collect();
+    if expired.is_empty() {
+        return expired;
+    }
+    let Some(keyboard) = shared.keyboard.clone() else {
+        return Vec::new();
+    };
+    for code in &expired {
+        shared.held.remove(code);
+        keyboard.key(stamp(), *code, 0);
+        eprintln!(
+            "releasing stuck key {code} held past {} ms",
+            cap.as_millis()
+        );
+    }
+    let _ = connection.flush();
+    expired
 }
 
 fn apply(
@@ -548,11 +905,6 @@ fn apply_locked(
     // arm already does this.
     let keyboard = keyboard.clone();
 
-    // The compositor only orders events by this stamp, so a counter is enough
-    // and saves a clock syscall per keystroke.
-    static COUNTER: AtomicU32 = AtomicU32::new(1);
-    let stamp = || COUNTER.fetch_add(1, Ordering::Relaxed);
-
     // Codes go out as evdev numbers, the xkb keycode minus 8.
     let resolve = |key: &Key| match key {
         Key::Code(code) => Some(*code),
@@ -586,12 +938,18 @@ fn apply_locked(
                 // re-claim after a keymap swap drained the claims out from
                 // under it — its list still shows the code, but the device
                 // press is genuinely new again.
-                let claimants = shared.held.entry(code).or_default();
-                let was_first = claimants.is_empty();
-                if !claimants.contains(&conn_id) {
-                    claimants.insert(conn_id);
+                let hold = shared.held.entry(code).or_insert_with(|| Hold {
+                    claimants: std::collections::HashSet::new(),
+                    since: Instant::now(),
+                });
+                let was_first = hold.claimants.is_empty();
+                if !hold.claimants.contains(&conn_id) {
+                    hold.claimants.insert(conn_id);
                 }
                 if was_first {
+                    // The stuck-key cap measures the device press, so a
+                    // re-press after the last claim went restarts the clock.
+                    hold.since = Instant::now();
                     keyboard.key(stamp(), code, 1);
                 }
                 pressed = Some(code);
@@ -609,11 +967,11 @@ fn apply_locked(
                 // view of its own state after a mid-hold keymap swap
                 // released everything behind its back.
                 let send_release = match shared.held.get_mut(&code) {
-                    Some(claimants) => {
-                        if !claimants.remove(&conn_id) {
+                    Some(hold) => {
+                        if !hold.claimants.remove(&conn_id) {
                             return "err not holding";
                         }
-                        let last = claimants.is_empty();
+                        let last = hold.claimants.is_empty();
                         if last {
                             shared.held.remove(&code);
                         }
@@ -631,12 +989,27 @@ fn apply_locked(
         // The group rides along with every modifier update: dropping it would
         // silently reset the device to the first layout.
         Command::Mods(mask) => keyboard.modifiers(mask, 0, 0, shared.group),
+        // A language switch mid-chord must not drop what is held, so the
+        // group goes out alongside the mask the held keys imply rather than
+        // alongside a zero.
         Command::Group(group) => {
             let keyboard = keyboard.clone();
             shared.group = group;
-            keyboard.modifiers(0, 0, 0, group);
+            keyboard.modifiers(shared.modifier_mask(), 0, 0, group);
         }
         Command::Configure(_) => unreachable!("handled above"),
+    }
+
+    // A key event carries no modifier state of its own. The compositor learns
+    // what is held from `modifiers` and from nothing else, so a chord that was
+    // only ever pressed and released arrives modifierless: `down LFSH / tap
+    // AD01 / up LFSH` typed `q`, which is how this shipped broken. Re-assert
+    // the mask whenever a modifier code goes down or comes up, and the tap in
+    // between lands under it.
+    if let Some(code) = pressed.or(released) {
+        if shared.modifier_masks.contains_key(&code) {
+            keyboard.modifiers(shared.modifier_mask(), 0, 0, shared.group);
+        }
     }
 
     if let Some(held) = held.as_deref_mut() {
@@ -734,6 +1107,72 @@ mod tests {
     use super::*;
 
     #[test]
+    fn startup_inventory_rejects_a_mouse_keyboard_interface() {
+        let root =
+            std::env::temp_dir().join(format!("omarchy-osk-device-test-{}", std::process::id()));
+        let input = root.join("input");
+        let udev = root.join("udev");
+        std::fs::create_dir_all(&udev).unwrap();
+
+        let device = |event: &str, dev: &str, name: &str, properties: &str, keys: &str| {
+            let path = input.join(event);
+            std::fs::create_dir_all(path.join("device/capabilities")).unwrap();
+            std::fs::write(path.join("device/name"), name).unwrap();
+            std::fs::write(path.join("device/capabilities/key"), keys).unwrap();
+            std::fs::write(path.join("dev"), dev).unwrap();
+            std::fs::write(udev.join(format!("c{dev}")), properties).unwrap();
+        };
+        device(
+            "event1",
+            "13:1",
+            "QEMU USB Keyboard",
+            "E:ID_INPUT_KEYBOARD=1\nE:ID_BUS=usb\nE:ID_PATH=pci-keyboard\nE:LIBINPUT_DEVICE_GROUP=keyboard\n",
+            "ffffffffffffffff",
+        );
+        device(
+            "event2",
+            "13:2",
+            "Gaming Mouse Keyboard",
+            "E:ID_INPUT_KEYBOARD=1\nE:ID_BUS=usb\nE:ID_PATH=pci-mouse\nE:LIBINPUT_DEVICE_GROUP=mouse\n",
+            "ffffffffffffffff",
+        );
+        device(
+            "event3",
+            "13:3",
+            "Gaming Mouse",
+            "E:ID_INPUT_MOUSE=1\nE:ID_BUS=usb\nE:ID_PATH=pci-mouse\nE:LIBINPUT_DEVICE_GROUP=mouse\n",
+            "0",
+        );
+        device(
+            "event4",
+            "13:4",
+            "Power Button",
+            "E:ID_INPUT_KEY=1\nE:LIBINPUT_DEVICE_GROUP=power\n",
+            "ffffffffffffffff",
+        );
+        device(
+            "event5",
+            "13:5",
+            "uinput pseudo keyboard",
+            "E:ID_INPUT_KEYBOARD=1\nE:LIBINPUT_DEVICE_GROUP=pseudo\n",
+            "ffffffffffffffff",
+        );
+        device(
+            "event6",
+            "13:6",
+            "Laptop Hotkeys Keyboard",
+            "E:ID_INPUT_KEYBOARD=1\nE:ID_BUS=platform\nE:ID_PATH=platform-hotkeys\nE:LIBINPUT_DEVICE_GROUP=hotkeys\n",
+            "8000",
+        );
+
+        assert_eq!(
+            physical_keyboard_names(&input, &udev),
+            vec!["qemu-usb-keyboard"]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn compiles_a_multi_layout_keymap_with_a_group_per_layout() {
         let text = compile_keymap(&XkbConfig {
             layouts: "us,ua".into(),
@@ -775,6 +1214,109 @@ mod tests {
         // AD01 is the Q position; evdev numbers it 16, xkb 24.
         assert_eq!(codes.get("AD01"), Some(&16));
         assert_eq!(codes.get("SPCE"), Some(&57));
+    }
+
+    #[test]
+    fn reads_modifier_bits_out_of_a_compiled_keymap() {
+        let text = compile_keymap(&XkbConfig::default()).expect("us should compile");
+        let codes = parse_keycodes(&text);
+        let masks = modifier_masks_for_keymap(&text, &codes);
+        // xkb fixes the order of the real modifiers, so Shift is bit 0,
+        // Control bit 2 and Mod4 — which is where `us` puts Super — bit 6.
+        assert_eq!(masks.get(&codes["LFSH"]), Some(&0b1));
+        assert_eq!(masks.get(&codes["RTSH"]), Some(&0b1));
+        assert_eq!(masks.get(&codes["LCTL"]), Some(&0b100));
+        assert_eq!(masks.get(&codes["LWIN"]), Some(&0b100_0000));
+        // An ordinary letter carries no modifier bit at all, which is what
+        // keeps the mask from being re-asserted on every keystroke.
+        assert_eq!(masks.get(&codes["AD01"]), None);
+        // Plain `us` puts RALT on Mod1, alongside LALT.
+        assert_eq!(masks.get(&codes["RALT"]), Some(&0b1000));
+    }
+
+    #[test]
+    fn a_position_carries_whichever_modifier_the_options_gave_it() {
+        // The reason the table is read from the keymap instead of written
+        // down: an option moves a position from one modifier to another.
+        // With alt and super swapped, LALT is Mod4 and LWIN is Mod1 — the
+        // exact reverse of the assertions above, and a hard-coded table
+        // would send Alt where the user pressed Super.
+        let text = compile_keymap(&XkbConfig {
+            options: "altwin:swap_lalt_lwin".into(),
+            ..XkbConfig::default()
+        })
+        .expect("us with altwin:swap_lalt_lwin should compile");
+        let codes = parse_keycodes(&text);
+        let masks = modifier_masks_for_keymap(&text, &codes);
+        assert_eq!(masks.get(&codes["LALT"]), Some(&0b100_0000));
+        assert_eq!(masks.get(&codes["LWIN"]), Some(&0b1000));
+        // And the modifiers the option does not touch are unmoved.
+        assert_eq!(masks.get(&codes["LFSH"]), Some(&0b1));
+    }
+
+    #[test]
+    fn a_position_that_is_a_modifier_only_by_interpret_still_carries_its_bit() {
+        // The limit the old modifier-map reading admitted to: under
+        // `lv3:ralt_switch` AltGr emits ISO_Level3_Shift and reaches Mod5
+        // through a compat interpret, with no modifier-map entry to read.
+        let text = compile_keymap(&XkbConfig {
+            options: "lv3:ralt_switch".into(),
+            ..XkbConfig::default()
+        })
+        .expect("us with lv3:ralt_switch should compile");
+        let codes = parse_keycodes(&text);
+        let masks = modifier_masks_for_keymap(&text, &codes);
+        assert_eq!(masks.get(&codes["RALT"]), Some(&0b1000_0000));
+    }
+
+    /// Asserts on the characters a client would read, not on a bit pattern:
+    /// the mask was wrong in a way that still looked plausible, and only the
+    /// letter came out wrong.
+    ///
+    /// The owner's options are the case that broke.
+    /// `shift:both_capslock_cancel` puts Caps_Lock on the second level of the
+    /// Shift keys and `grp:caps_toggle` takes CAPS out of Lock, so the
+    /// compiled keymap ends up with `modifier_map Lock { <LFSH> }` alongside
+    /// `modifier_map Shift { <LFSH>, <RTSH> }`. A mask OR-ed straight out of
+    /// the modifier map therefore reported Shift+Lock for a held Shift — and
+    /// Shift+Lock on an ALPHABETIC key selects level 1, a lowercase letter.
+    /// The number row is TWO_LEVEL and ignores Lock, which is exactly why
+    /// digits shifted while letters did not.
+    #[test]
+    fn a_held_shift_types_a_capital_under_the_owners_options() {
+        use xkbcommon::xkb;
+
+        let text = compile_keymap(&XkbConfig {
+            layouts: "us,ua".into(),
+            options: "shift:both_capslock_cancel,grp:caps_toggle".into(),
+            ..XkbConfig::default()
+        })
+        .expect("the owner's RMLVO should compile");
+        let codes = parse_keycodes(&text);
+        let masks = modifier_masks_for_keymap(&text, &codes);
+        let mask = masks
+            .get(&codes["LFSH"])
+            .copied()
+            .expect("Shift must carry a modifier bit");
+
+        // Stand in for the compositor: a fresh state told what the helper
+        // says is held, then asked what the key positions produce.
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_string(
+            &context,
+            text,
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .expect("the helper's own keymap text should compile");
+        let mut state = xkb::State::new(&keymap);
+        state.update_mask(mask, 0, 0, 0, 0, 0);
+
+        let typed = |name: &str| state.key_get_utf8(xkb::Keycode::from(codes[name] + 8));
+        assert_eq!(typed("AD01"), "Q", "a held Shift must capitalise a letter");
+        // The half that kept working, asserted so a fix that breaks it fails
+        // here rather than on the next hand test.
+        assert_eq!(typed("AE01"), "!", "a held Shift must shift the number row");
     }
 
     #[test]
