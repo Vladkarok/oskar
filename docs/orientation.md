@@ -42,17 +42,22 @@ while the panel and the bar both correctly report the second. See
 | `tools/` | nested-session polygon, daemon smoke, VM launcher + provision |
 
 Panel talks to the helper over `$XDG_RUNTIME_DIR/omarchy-osk/control.sock`,
-line protocol, version 3:
+line protocol, version 4:
 
 ```
-hello 3                                   -> hello 3 | err not ready | err protocol …
+hello 4                                   -> hello 4 | err not ready | err protocol …
 keyboards                                 -> keyboards\t<safe physical name>…
 configure\t<rules>\t<model>\t<layouts>\t<variants>\t<options>\t<kb_file>\t<group>
+caps <group> [positions…]                 -> keycap facts for the named group
 group <n> | tap <AD01|code> | down … | up … | mods <mask> | ping
 ```
 
-Replies are `ok`, `configured`, `pong`, or `err …`. Everything else about
-the protocol lives in `parse()`/`apply_locked()` in `daemon/src/main.rs`.
+Replies are `ok`, `configured\t<generation>`,
+`caps\t<generation>\t<group>\t<records>`, `pong`, or `err …`. Version 4's
+generation (decisions §23) is what the panel correlates keycap facts against;
+a same-keymap reconfigure keeps it, a changed keymap bumps it. Everything
+else about the protocol lives in `parse()`/`apply_locked()` in
+`daemon/src/main.rs`.
 
 ## State as of 2026-09-02
 
@@ -75,13 +80,8 @@ upstream Hyprland/Omarchy work.
 
 ## How we work (standing directives from the owner)
 
-- **Codex reviews before anything is called done.** Send a full context
-  brief — the idea, the problem, the constraints, *why* the change was
-  made — not just the diff. Codex reviews, we implement. Run a parallel
-  review subagent on the same brief. Resolve the findings, record the
-  verdict, repeat rounds until it says ship. This loop has caught real
-  HIGH bugs in our own fixes every time; two of the last three rounds
-  said "do not ship".
+- **Agent execution and reviews:** follow [agents/workflow.md](agents/workflow.md)
+  (Astra orchestrates, Sol implements and independently reviews).
 - **Local-first.** Build it, install it, use it, prove it in the VM.
   Temporary local patches rather than waiting on upstream merges.
   Upstream PRs only after local proof, and never at the cost of breaking
@@ -92,11 +92,17 @@ upstream Hyprland/Omarchy work.
   share nothing with it; the QML still does, and is being reimplemented
   against [spec-v1.md](spec-v1.md#13-provenance) until it does not.
 - **Never run the helper against the session you are working in** — see
-  the keymap storm in decisions.md. Use `tools/nested-session.sh` or the VM.
+  the keymap storm in decisions.md. Run `tools/nested-session.sh` inside the VM; host suites are offscreen.
 - Ask when uncertain rather than guessing; discuss conflicts item by item.
 - Keep sessions short; context is re-billed every turn.
 
 ## Suggested next steps
+
+For the 2026-09-06 review and owner-requested settings, picker, and compact-row
+planning, read [next-iteration-plan.md](next-iteration-plan.md). It indexes the
+draft `.scratch/next-iteration/` board; it is not an implementation instruction.
+For a fresh runner executing that board, use
+[next-iteration-handoff.md](next-iteration-handoff.md) together with `/board`.
 
 1. Implement the local v1.1 board derived from [spec-v1.1.md](spec-v1.1.md).
 2. Land the shared Omarchy Style refresh needed for live rounding updates.

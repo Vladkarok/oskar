@@ -31,7 +31,9 @@ Read the file at the referenced path. The user will normally pass the path or th
 
 ## Wayfinding operations
 
-Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
+This section applies only to `/wayfinder` research maps, not implementation
+boards such as `next-iteration`, which use the triage roles linked above.
+The **map** is a file with one **child** file per ticket.
 
 - **Map**: `.scratch/<effort>/map.md` (the Notes / Decisions-so-far / Fog body).
 - **Child ticket**: `.scratch/<effort>/issues/NN-<slug>.md`, numbered from `01`, with the question in the body. A `Type:` line records the ticket type (`research`/`prototype`/`grilling`/`task`); a `Status:` line records `claimed`/`resolved`.

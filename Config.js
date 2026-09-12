@@ -317,7 +317,10 @@ function colorByte(value) {
 function toHex(color) {
     if (!color || typeof color !== "object") return ""
     var out = "#"
-    if (typeof color.a === "number" && color.a < 1) out += colorByte(color.a)
+    // Float channels land just under 1; treat that as opaque so Apply does
+    // not write #FE… / reject a colour the HS square just produced.
+    var a = typeof color.a === "number" ? color.a : 1
+    if (a < 254.5 / 255) out += colorByte(a)
     out += colorByte(color.r) + colorByte(color.g) + colorByte(color.b)
     return out
 }
@@ -369,6 +372,276 @@ function normalizeHexDraft(text) {
     if (candidate.length > 0 && candidate.charAt(0) !== "#")
         candidate = "#" + candidate
     return { ok: isColor(candidate), value: candidate }
+}
+
+// Enter and Apply share this decision so a keypress cannot bypass the
+// malformed-file guard the buttons carry. `reject` leaves the field
+// editable with an error; `hold` keeps a valid draft uncommitted;
+// `commit` is the only write.
+function commitHexDraft(text, configHealthy) {
+    var result = normalizeHexDraft(text)
+    if (!result.ok) return { action: "reject", value: result.value }
+    if (!configHealthy) return { action: "hold", value: result.value }
+    return { action: "commit", value: result.value }
+}
+
+// Spec-v1.1 §5: ending the typed-hex exception. The surface returns to
+// WlrKeyboardFocus.None, and item focus must be dropped onto a
+// non-TextInput: a still-focused hex field is what lets hide hand Qt
+// focus to a row field (recapture) or leaves a caret after the pad is
+// gone (keystrokes to the previous app). Custom, Cancel and outside
+// clicks are dismissals too.
+function hexEditRelease() {
+    return { hexEditing: false, hexEditField: "", dropItemFocus: true }
+}
+
+// Key hover/press are a mix of the resting cap toward the theme foreground,
+// never a translucent replacement fill that IS the foreground. The theme's
+// hover/press alphas are overlay weights for small chrome; used as the key
+// fill they bleach a follow-theme cap to near-white. Clamp so hover stays a
+// modest lift, press is stronger, and neither approaches white.
+function keyHoverMix(themeHoverAlpha) {
+    var a = Number(themeHoverAlpha)
+    if (!isFinite(a) || a < 0) a = 0.12
+    if (a < 0.08) a = 0.08
+    if (a > 0.16) a = 0.16
+    return a
+}
+
+function keyPressMix(themePressAlpha, hoverMix) {
+    var a = Number(themePressAlpha)
+    if (!isFinite(a) || a < 0) a = 0.24
+    var floor = Number(hoverMix)
+    if (!isFinite(floor) || floor < 0) floor = 0.08
+    if (a < floor + 0.08) a = floor + 0.08
+    if (a > 0.32) a = 0.32
+    return a
+}
+
+// #RGB / #RGBA / #RRGGBB / #AARRGGBB (alpha-first, same as toHex).
+function hexToRgb(hex) {
+    var s = String(hex || "").trim()
+    if (s.charAt(0) === "#") s = s.slice(1)
+    var n = s.length
+    if (n !== 3 && n !== 4 && n !== 6 && n !== 8) return null
+    function pair(i) {
+        return parseInt(s.slice(i, i + 2), 16) / 255
+    }
+    function nibble(i) {
+        var c = s.charAt(i)
+        return parseInt(c + c, 16) / 255
+    }
+    if (n === 3 || n === 4)
+        return {
+            r: nibble(0), g: nibble(1), b: nibble(2),
+            a: n === 4 ? nibble(3) : 1
+        }
+    if (n === 6)
+        return { r: pair(0), g: pair(2), b: pair(4), a: 1 }
+    return { a: pair(0), r: pair(2), g: pair(4), b: pair(6) }
+}
+
+function colorChannels(value) {
+    if (typeof value === "string") {
+        var parsed = normalizeHexDraft(value)
+        return hexToRgb(parsed.ok ? parsed.value : value)
+    }
+    if (!value || typeof value !== "object") return null
+    var r = Number(value.r), g = Number(value.g), b = Number(value.b)
+    if (!isFinite(r) || !isFinite(g) || !isFinite(b)) return null
+    var a = typeof value.a === "number" ? Number(value.a) : 1
+    if (!isFinite(a)) a = 1
+    return { r: r, g: g, b: b, a: a }
+}
+
+// Paint `overlay` (possibly translucent, or a hex string from setOverride)
+// onto opaque `base`. A hex string has no .r/.g/.b — treating it as a colour
+// object produced #000000 in the settings row after Custom Apply.
+function compositeOnto(base, overlay) {
+    var under = colorChannels(base) || { r: 0, g: 0, b: 0, a: 1 }
+    var over = colorChannels(overlay)
+    if (!over) return { r: under.r, g: under.g, b: under.b, a: 1 }
+    var oa = over.a
+    if (oa < 0) oa = 0
+    if (oa > 1) oa = 1
+    if (oa >= 1) return { r: over.r, g: over.g, b: over.b, a: 1 }
+    if (oa <= 0) return { r: under.r, g: under.g, b: under.b, a: 1 }
+    return {
+        r: over.r * oa + under.r * (1 - oa),
+        g: over.g * oa + under.g * (1 - oa),
+        b: over.b * oa + under.b * (1 - oa),
+        a: 1
+    }
+}
+
+// Opaque RGB mix of `base` toward `target` at `amount` (0–1). QML colors and
+// {r,g,b} objects both carry 0..1 channels. The result is always opaque so
+// a follow-theme cap cannot composite to a white square.
+function mixRgb(base, target, amount) {
+    var a = Number(amount)
+    if (!isFinite(a) || a < 0) a = 0
+    if (a > 1) a = 1
+    var br = Number(base && base.r)
+    var bg = Number(base && base.g)
+    var bb = Number(base && base.b)
+    var tr = Number(target && target.r)
+    var tg = Number(target && target.g)
+    var tb = Number(target && target.b)
+    if (!isFinite(br)) br = 0
+    if (!isFinite(bg)) bg = 0
+    if (!isFinite(bb)) bb = 0
+    if (!isFinite(tr)) tr = 0
+    if (!isFinite(tg)) tg = 0
+    if (!isFinite(tb)) tb = 0
+    return {
+        r: tr * a + br * (1 - a),
+        g: tg * a + bg * (1 - a),
+        b: tb * a + bb * (1 - a),
+        a: 1
+    }
+}
+
+// Size-preset multipliers (spec-v1.1 §4). Key radius is stored as a 0–24
+// proportion of a medium key; the drawn radius is stored × this scale so
+// 24 stays a circle at L and XL. Panel radius does not use this.
+var SIZE_PRESET_SCALES = { "medium": 1.0, "large": 1.2, "x-large": 1.45 }
+
+function effectiveKeyRadius(stored, scale) {
+    var n = Number(stored)
+    var s = Number(scale)
+    if (!isFinite(n) || n < 0) n = 0
+    if (!isFinite(s) || s <= 0) s = 1
+    return n * s
+}
+
+// wl-paste --list-types classification for the header paste chip. Empty
+// CLIPBOARD hides the chip; text shows a preview; anything else keeps the
+// glyph. `text/html` without text/plain is not a preview (no bogus markup).
+function clipboardKind(typesText, exitCode) {
+    var raw = String(typesText || "")
+    if (exitCode && exitCode !== 0 && raw.replace(/^\s+|\s+$/g, "") === "")
+        return "empty"
+    var lines = raw.split(/\r?\n/)
+    var hasAny = false
+    var hasText = false
+    var hasImage = false
+    for (var i = 0; i < lines.length; i++) {
+        var t = lines[i].replace(/^\s+|\s+$/g, "")
+        if (!t) continue
+        if (/^nothing is copied/i.test(t)) continue
+        hasAny = true
+        var lower = t.toLowerCase()
+        if (lower.indexOf("image/") === 0)
+            hasImage = true
+        if (lower === "text/plain" || lower.indexOf("text/plain;") === 0
+            || lower === "text" || lower === "string"
+            || lower === "utf8_string" || lower === "text/uri-list")
+            hasText = true
+    }
+    if (!hasAny) return "empty"
+    // Screenshots often advertise text/plain plus image/png; the text
+    // offer is empty or garbage. Prefer the glyph over a broken preview.
+    if (hasImage) return "other"
+    return hasText ? "text" : "other"
+}
+
+// Beginning of CLIPBOARD as a single line. Visual ellipsis is the chip's
+// ElideRight; this only flattens breaks and caps a huge payload.
+function pastePreviewText(raw) {
+    var s = String(raw === null || raw === undefined ? "" : raw)
+    s = s.replace(/[\r\n\t]+/g, " ").replace(/^\s+|\s+$/g, "")
+    if (s.length > 240) s = s.slice(0, 240)
+    return s
+}
+
+// Chip kind from types classification, the preview string, and whether
+// wl-paste --no-newline succeeded. Empty and other apply immediately;
+// text stays empty (hidden) until a non-empty preview exists.
+function pasteChipKind(typesKind, preview, textExitOk) {
+    if (typesKind === "other") return "other"
+    if (typesKind !== "text") return "empty"
+    if (!textExitOk) return "empty"
+    return pastePreviewText(preview) ? "text" : "empty"
+}
+
+function clamp01(value) {
+    var n = Number(value)
+    if (!isFinite(n) || n < 0) return 0
+    if (n > 1) return 1
+    return n
+}
+
+// HSV and RGB channels are 0–1. Hue wraps; a grey reports h = 0.
+function hsvToRgb(h, s, v) {
+    var hue = Number(h)
+    if (!isFinite(hue)) hue = 0
+    hue = ((hue % 1) + 1) % 1
+    s = clamp01(s)
+    v = clamp01(v)
+    var i = Math.floor(hue * 6)
+    var f = hue * 6 - i
+    var p = v * (1 - s)
+    var q = v * (1 - f * s)
+    var t = v * (1 - (1 - f) * s)
+    var r, g, b
+    switch (i % 6) {
+    case 0: r = v; g = t; b = p; break
+    case 1: r = q; g = v; b = p; break
+    case 2: r = p; g = v; b = t; break
+    case 3: r = p; g = q; b = v; break
+    case 4: r = t; g = p; b = v; break
+    default: r = v; g = p; b = q; break
+    }
+    return { r: r, g: g, b: b, a: 1 }
+}
+
+function rgbToHsv(r, g, b) {
+    r = clamp01(r)
+    g = clamp01(g)
+    b = clamp01(b)
+    var max = Math.max(r, g, b), min = Math.min(r, g, b)
+    var d = max - min
+    var h = 0
+    var s = max === 0 ? 0 : d / max
+    if (d > 0) {
+        if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6
+        else if (max === g) h = ((b - r) / d + 2) / 6
+        else h = ((r - g) / d + 4) / 6
+    }
+    return { h: h, s: s, v: max }
+}
+
+// Integer channel for the RGB/HSV fields. `max` is 255, 360 or 100.
+function parseChannel(text, max) {
+    var raw = String(text === null || text === undefined ? "" : text).trim()
+    if (raw === "" || !/^\d+$/.test(raw)) return { ok: false, value: 0 }
+    var n = parseInt(raw, 10)
+    var ceiling = Number(max)
+    if (!isFinite(n) || !isFinite(ceiling) || n < 0 || n > ceiling)
+        return { ok: false, value: n }
+    return { ok: true, value: n }
+}
+
+function channelUnit(value, max) {
+    var ceiling = Number(max)
+    if (!isFinite(ceiling) || ceiling <= 0) return 0
+    return clamp01(Number(value) / ceiling)
+}
+
+// Draft insert used by current-content paste into a focused colour field.
+// Operates on a TextInput-shaped object so the host suite can drive it.
+function fieldInsert(field, text) {
+    if (!field || !text) return
+    var start = field.selectionStart, end = field.selectionEnd
+    if (start >= 0 && end > start) field.remove(start, end)
+    var room = field.maximumLength > 0 ? field.maximumLength - field.length : -1
+    if (room === 0) return
+    if (room > 0 && text.length > room) text = text.slice(0, room)
+    field.insert(field.cursorPosition, text)
+}
+
+function fieldSelectAll(field) {
+    if (field && field.selectAll) field.selectAll()
 }
 
 function serializeState(state) {

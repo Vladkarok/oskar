@@ -301,6 +301,8 @@ QtObject {
             // the file would not restore.
             T.equal(Config.toHex({ r: 0, g: 0, b: 0, a: 0 }), "#00000000")
             T.equal(Config.toHex({ r: 1, g: 1, b: 1 }), "#ffffff")
+            T.equal(Config.toHex({ r: 0.102, g: 0.106, b: 0.149, a: 0.999 }),
+                "#1a1b26")
             T.equal(Config.toHex(null), "")
             T.equal(Config.toHex("#ff8000"), "")
         })
@@ -337,115 +339,21 @@ QtObject {
         // identity is geometry, and geometry is host/guest evidence owned by
         // ticket 08 (spec-v1.1 §8, §15), not configuration parsing.
 
-        T.test("the reverse index maps a token to its first position and level", function () {
-            var index = Layout.buildTokenIndex({
-                AE01: ["one", "EuroSign"],
-                AE10: ["", "EuroSign"],
-                AB01: ["mu", "NoSymbol"],
-                AD01: ["copyright"]
-            })
-            T.deepEqual(index["EuroSign"], { position: "AE01", level: 2 })
-            T.deepEqual(index["mu"], { position: "AB01", level: 1 })
-            T.deepEqual(index["copyright"], { position: "AD01", level: 1 })
-            T.equal(index.hasOwnProperty("NoSymbol"), false)
-            // The index is the keymap's complete answer; curation picks from
-            // it, so a token outside the palette is still indexed.
-            T.deepEqual(index["one"], { position: "AE01", level: 1 })
-        })
-
-        T.test("the reverse index reads every level the keymap carries", function () {
-            var index = Layout.buildTokenIndex({ AE03: ["three", "numerosign", "section", "U20B4"] })
-            T.deepEqual(index["U20B4"], { position: "AE03", level: 4 })
-            T.deepEqual(index["section"], { position: "AE03", level: 3 })
-        })
-
-        T.test("the curated palette is exactly the shipped category sequence", function () {
-            // The ticket's table: currency, mathematics, typography, brackets,
-            // legal marks, common — every name a real keysym, in a fixed
-            // order that filtering never reorders.
-            T.deepEqual(Layout.curatedTokens, [
-                "EuroSign", "sterling", "yen", "cent", "currency", "U20B4",
-                "plusminus", "multiply", "division", "degree", "notsign",
-                "approximate", "notequal", "lessthanequal", "greaterthanequal",
-                "onehalf", "onequarter", "threequarters", "twosuperior",
-                "threesuperior", "infinity",
-                "guillemotleft", "guillemotright", "emdash", "endash", "ellipsis",
-                "leftsinglequotemark", "rightsinglequotemark",
-                "leftdoublequotemark", "rightdoublequotemark",
-                "leftsingleanglequotemark", "rightsingleanglequotemark",
-                "copyright", "registered", "trademark", "section", "numerosign",
-                "mu", "brokenbar"
-            ])
-            T.equal(Layout.curatedMinimum, 8)
-        })
-
-        T.test("every shipped curated token draws its own character", function () {
-            // Expected characters are the worked source: the codepoints in
-            // xkbcommon's keysym header, written out here literally.
-            var expected = {
-                EuroSign: "\u20ac", sterling: "\u00a3", yen: "\u00a5",
-                cent: "\u00a2", currency: "\u00a4", U20B4: "\u20b4",
-                plusminus: "\u00b1", multiply: "\u00d7", division: "\u00f7",
-                degree: "\u00b0", notsign: "\u00ac", approximate: "\u2248",
-                notequal: "\u2260", lessthanequal: "\u2264",
-                greaterthanequal: "\u2265", onehalf: "\u00bd",
-                onequarter: "\u00bc", threequarters: "\u00be",
-                twosuperior: "\u00b2", threesuperior: "\u00b3",
-                infinity: "\u221e",
-                guillemotleft: "\u00ab", guillemotright: "\u00bb",
-                emdash: "\u2014", endash: "\u2013", ellipsis: "\u2026",
-                leftsinglequotemark: "\u2018", rightsinglequotemark: "\u2019",
-                leftdoublequotemark: "\u201c", rightdoublequotemark: "\u201d",
-                leftsingleanglequotemark: "\u2039",
-                rightsingleanglequotemark: "\u203a",
-                copyright: "\u00a9", registered: "\u00ae", trademark: "\u2122",
-                section: "\u00a7", numerosign: "\u2116",
-                mu: "\u00b5", brokenbar: "\u00a6"
-            }
-            for (var i = 0; i < Layout.curatedTokens.length; i++) {
-                var token = Layout.curatedTokens[i]
-                var misses = []
-                var overlay = Layout.capOverlay({ k: "AE05", lvl: 1 }, [token], misses)
-                T.equal(overlay.t, expected[token])
-                T.equal(misses.length, 0)
-            }
-            // And a token found on an AltGr level draws from that level.
-            var level3 = Layout.capOverlay({ k: "AB08", lvl: 3 },
-                ["less", "greater", "guillemotleft", "leftdoublequotemark"], [])
-            T.equal(level3.t, "\u00ab")
-        })
-
         T.test("a base-only dual cap keeps the stacked shape and stays enabled", function () {
             // symbols v2 renders dual caps stacked; a shifted level that
             // resolves to nothing leaves the pair one-sided — the flag, not
             // a resolved `s`, is what the panel's isDualKey reads, so the
             // cap stays stacked and enabled with its miss reported.
+            //
+            // Levels arrive as the helper's resolved facts, which is the only
+            // shape there is since ticket 05 retired the keysym-token path.
             var misses = []
             var cap = Layout.capOverlay({ k: "AD11", dual: true },
-                ["bracketleft", ""], misses)
+                [{ text: "[" }, { none: "" }], misses)
             T.equal(cap.t, "[")
             T.equal(cap.hasOwnProperty("s"), false)
             T.equal(cap.hasOwnProperty("unavailable"), false)
             T.equal(misses.length, 1)
-        })
-
-        T.test("an unresolved level marks the cap unavailable instead of blank and clickable", function () {
-            // Spec-v1.1 §3: a visible cap must never be silently blank. A
-            // valid partial keymap can leave a hole where one level resolves
-            // to nothing; the overlay marks the cap so the panel draws it
-            // dim and refuses its press, while the miss still reaches the
-            // §11 report. Fixed-label caps and spacers are never marked.
-            var misses = []
-            var hole = Layout.capOverlay({ k: "AE01", lvl: 2 }, ["one", ""], misses)
-            T.equal(hole.t, "")
-            T.equal(hole.unavailable, true)
-            T.equal(misses.length, 1)
-            var absent = Layout.capOverlay({ k: "AE02", lvl: 1 }, [], [])
-            T.equal(absent.unavailable, true)
-            var resolved = Layout.capOverlay({ k: "AE03", lvl: 2 },
-                ["three", "numbersign"], [])
-            T.equal(resolved.t, "#")
-            T.equal(resolved.hasOwnProperty("unavailable"), false)
         })
 
         T.test("the symbols page's dual caps draw both levels from the keymap", function () {
@@ -454,22 +362,23 @@ QtObject {
             // shifted/base pair the main page draws, with the level typed
             // following Shift. No built-in character behind either level.
             var pair = Layout.capOverlay({ k: "AD11", dual: true },
-                ["bracketleft", "braceleft"], [])
+                [{ text: "[" }, { text: "{" }], [])
             T.equal(pair.t, "[")
             T.equal(pair.s, "{")
             T.equal(pair.hasOwnProperty("unavailable"), false)
 
             // Digits: the top row types them without leaving the page, one
-            // press either way. (A compiled keymap names the digit keysyms
-            // as the bare character and the shifted form by keysym name.)
-            var digit = Layout.capOverlay({ k: "AE01", dual: true }, ["1", "exclam"], [])
+            // press either way.
+            var digit = Layout.capOverlay({ k: "AE01", dual: true },
+                [{ text: "1" }, { text: "!" }], [])
             T.equal(digit.t, "1")
             T.equal(digit.s, "!")
 
             // A level the keymap does not carry is a per-cap miss, and the
             // level that resolves still draws.
             var misses = []
-            var hole = Layout.capOverlay({ k: "AB08", dual: true }, ["comma", ""], misses)
+            var hole = Layout.capOverlay({ k: "AB08", dual: true },
+                [{ text: "," }, { none: "" }], misses)
             T.equal(hole.t, ",")
             T.equal(hole.hasOwnProperty("s"), false)
             T.deepEqual(misses, ["AB08^=<no symbol at this level>"])
@@ -485,104 +394,22 @@ QtObject {
             T.deepEqual(both, ["AB09=<no keymap entry>", "AB09^=<no keymap entry>"])
         })
 
-        T.test("every symbols-page cap is keymap-only and dual", function () {
-            // The page's declaration itself: no `lvl` caps (that shape is
-            // the curated page's), no built-in t/s a stale table could fall
-            // back to — what the page draws is what this session's keymap
-            // answered, or a reported hole. Thirteen top-row positions plus
-            // the eight punctuation positions carry the dual shape.
+        T.test("direct symbols page declares ten digit and five special glyph pairs", function () {
             var rows = Layout.symbolRows("ABC")
+            T.equal(rows.length, 5)
             var duals = 0
             for (var r = 0; r < rows.length; r++) {
                 for (var c = 0; c < rows[r].length; c++) {
                     var cap = rows[r][c]
-                    T.equal(cap.hasOwnProperty("lvl"), false)
-                    if (cap.dual === true) {
+                    T.equal(cap.pair === true, false)
+                    if (cap.shiftGlyph) {
                         duals += 1
-                        T.equal(cap.hasOwnProperty("t"), false)
-                        T.equal(cap.hasOwnProperty("s"), false)
+                        T.equal(!!cap.glyph, true)
+                        T.equal(cap.hasOwnProperty("lvl"), false)
                     }
                 }
             }
-            T.equal(duals, 21)
-        })
-
-        T.test("an incomplete keymap keeps the table order, pads with invisible spacers, and keeps its controls", function () {
-            // EuroSign from the currency category, then section and
-            // numerosign from the legal marks: three survivors, everything
-            // between them in the table unavailable.
-            var page = Layout.curatedPageRows({
-                AE04: ["four", "EuroSign"],
-                AE03: ["three", "numerosign", "section"]
-            })
-            T.equal(page.available, 3)
-            // Three survivors fill only the first content row, but the rows
-            // carrying the page's fixed caps are drawn regardless (R2): a
-            // page that dropped Shift/Enter left a locked Shift held with
-            // its control hidden and no Enter to come back with.
-            T.equal(page.rows.length, 3)
-            var row = page.rows[0]
-            T.equal(row[1].k, "AE04")
-            T.equal(row[1].lvl, 2)
-            // The exact marker is what tells the reducer a curated cap
-            // types its own level, latch or no latch.
-            T.equal(row[1].exact, true)
-            T.equal(row[2].k, "AE03")
-            T.equal(row[2].lvl, 3)
-            // Slots the keymap cannot fill are invisible spacers that keep
-            // the row on the grid; the rest of the row is exactly the row's
-            // fixed caps.
-            var spacers = 0
-            for (var c = 0; c < row.length; c++) {
-                if (Layout.isSpacer(row[c])) {
-                    spacers += 1
-                    T.equal(row[c].spacer, true)
-                    T.equal(row[c].hasOwnProperty("k"), false)
-                    T.equal(row[c].hasOwnProperty("label"), false)
-                }
-            }
-            T.equal(spacers, 10)
-            // The middle row is the control row: Shift and Enter with
-            // declared spacers between — visible Shift state, a direct
-            // unlock, and a way back, at any availability.
-            var mid = page.rows[1]
-            T.equal(mid[0].key, "shift")
-            T.equal(mid[mid.length - 1].key, "Return")
-            for (var m = 1; m < mid.length - 1; m++)
-                T.equal(Layout.isSpacer(mid[m]), true)
-            // The only row after it is the command row.
-            T.deepEqual(page.rows[2], Layout.commandRow("ABC"))
-        })
-
-        T.test("filtering never reorders the surviving symbols", function () {
-            var subset = {}
-            for (var i = 0; i < Layout.curatedTokens.length; i++) {
-                var token = Layout.curatedTokens[i]
-                // Drop "yen" and everything from "multiply" through
-                // "endash": the survivors must keep their relative order.
-                if (token !== "yen" && !(i >= 7 && i <= 25))
-                    subset["K" + (i < 10 ? "0" + i : i)] = [token, ""]
-            }
-            var page = Layout.curatedPageRows(subset)
-            var flat = []
-            for (var r = 0; r < page.rows.length - 1; r++)
-                for (var c = 0; c < page.rows[r].length; c++)
-                    // Level caps only: the rows' fixed anchors carry labels,
-                    // the spacers carry nothing, and neither is a slot.
-                    if (page.rows[r][c].k) flat.push(page.rows[r][c].k)
-            var wanted = []
-            for (var i = 0; i < Layout.curatedTokens.length; i++)
-                if (subset.hasOwnProperty("K" + (i < 10 ? "0" + i : i)))
-                    wanted.push("K" + (i < 10 ? "0" + i : i))
-            T.deepEqual(flat, wanted)
-        })
-
-        T.test("seven available symbols are reported below the page threshold", function () {
-            var few = {}
-            for (var i = 0; i < 7; i++) few["K0" + i] = [Layout.curatedTokens[i], ""]
-            var page = Layout.curatedPageRows(few)
-            T.equal(page.available, 7)
-            T.equal(page.available < Layout.curatedMinimum, true)
+            T.equal(duals, 15)
         })
 
         // ---- the colour rows' recommended swatches and the hex draft ----
@@ -647,6 +474,194 @@ QtObject {
             T.equal(Config.normalizeHexDraft("").ok, false)
             T.equal(Config.normalizeHexDraft(null).ok, false)
             T.equal(Config.normalizeHexDraft("red").ok, false)
+        })
+
+        T.test("hex Apply holds a valid draft while config is unhealthy", function () {
+            // Enter and the Apply button share one decision: an invalid
+            // draft is refused inline; a valid draft is not committed — and
+            // not treated as applied — while a malformed external edit
+            // stands; only a healthy config commits.
+            T.deepEqual(Config.commitHexDraft("#a55555", true),
+                { action: "commit", value: "#a55555" })
+            T.deepEqual(Config.commitHexDraft(" a55555 ", true),
+                { action: "commit", value: "#a55555" })
+            T.deepEqual(Config.commitHexDraft("#a55555", false),
+                { action: "hold", value: "#a55555" })
+            T.equal(Config.commitHexDraft("#ab", true).action, "reject")
+            T.equal(Config.commitHexDraft("#ab", false).action, "reject")
+            T.equal(Config.commitHexDraft("", true).action, "reject")
+        })
+
+        T.test("hex-edit dismiss drops item focus so hide cannot recapture keys", function () {
+            // Spec-v1.1 §5: ending the typed-hex exception returns the
+            // surface to WlrKeyboardFocus.None and leaves no focused
+            // TextInput. Custom/Cancel/outside clicks are dismissals too.
+            // A hide that still leaves a hex field focused hands Qt focus
+            // to a row field (beginHexEdit recaptures OSK keys) or keeps
+            // the caret after the pad is gone (letters go to the last app).
+            T.deepEqual(Config.hexEditRelease(), {
+                hexEditing: false,
+                hexEditField: "",
+                dropItemFocus: true
+            })
+        })
+
+        // Key hover/press fills (live-host ticket 01): mix the resting cap
+        // toward the foreground; never replace the cap with the foreground.
+        T.test("key hover mix is a modest lift; press is stronger and not white", function () {
+            T.equal(Config.keyHoverMix(0.08), 0.08)
+            T.equal(Config.keyHoverMix(1), 0.16)
+            T.equal(Config.keyPressMix(0.22, 0.08), 0.22)
+            T.equal(Config.keyPressMix(1, 0.16), 0.32)
+            T.equal(Config.keyPressMix(0.10, 0.08) > Config.keyHoverMix(0.08), true)
+
+            var rest = { r: 0.125, g: 0.125, b: 0.125 }
+            var fg = { r: 0.96, g: 0.96, b: 0.96 }
+            var hover = Config.mixRgb(rest, fg, Config.keyHoverMix(0.08))
+            var press = Config.mixRgb(rest, fg, Config.keyPressMix(0.22, 0.08))
+            T.equal(hover.a, 1)
+            T.equal(press.a, 1)
+            T.equal(hover.r > rest.r, true)
+            T.equal(press.r > hover.r, true)
+            T.equal(hover.r < 0.4, true)
+            T.equal(press.r < 0.5, true)
+
+            // A pinned mid-grey key-background must not bleach on hover
+            // even if the theme's overlay alpha is 1.
+            var pinned = { r: 0.19, g: 0.19, b: 0.19 }
+            var pinnedHover = Config.mixRgb(pinned, fg, Config.keyHoverMix(1))
+            T.equal(pinnedHover.r < 0.4, true)
+
+            // Host override #0ad4d4d4: light RGB at ~4% alpha. Mixing the
+            // raw RGB toward white is a solid pale cap. Composite onto the
+            // panel first so rest and hover stay a key of the theme.
+            var panel = { r: 0.08, g: 0.09, b: 0.12, a: 1 }
+            var thinLight = { r: 0.831, g: 0.831, b: 0.831, a: 0.039 }
+            var restOnPanel = Config.compositeOnto(panel, thinLight)
+            T.equal(restOnPanel.a, 1)
+            T.equal(restOnPanel.r < 0.2, true)
+            var thinHover = Config.mixRgb(restOnPanel, fg, Config.keyHoverMix(1))
+            T.equal(thinHover.r < 0.4, true)
+            T.equal(Config.compositeOnto(panel, { r: 0.2, g: 0.2, b: 0.2, a: 1 }).r,
+                0.2)
+            // Custom Apply writes a hex string. That must round-trip, not
+            // collapse to #000000 in the settings row.
+            var fromHex = Config.compositeOnto(panel, "#dcdcdc")
+            T.equal(Config.toHex(fromHex).toLowerCase(), "#dcdcdc")
+        })
+
+        // Paste chip (live-host ticket 02): classify CLIPBOARD types; flatten
+        // a text payload to a single-line preview. Elision is the chip width.
+        T.test("clipboard kinds hide empty, preview text, and keep a glyph for non-text", function () {
+            T.equal(Config.clipboardKind("", 1), "empty")
+            T.equal(Config.clipboardKind("Nothing is copied\n", 1), "empty")
+            T.equal(Config.clipboardKind("text/plain\ntext/html\n", 0), "text")
+            T.equal(Config.clipboardKind("UTF8_STRING\n", 0), "text")
+            T.equal(Config.clipboardKind("text/uri-list\n", 0), "text")
+            T.equal(Config.clipboardKind("image/png\nimage/jpeg\n", 0), "other")
+            T.equal(Config.clipboardKind("text/html\nimage/png\n", 0), "other")
+            T.equal(Config.clipboardKind("text/plain\nimage/png\n", 0), "other")
+            T.equal(Config.clipboardKind("text/uri-list\ntext/plain\n", 0), "text")
+            T.equal(Config.pastePreviewText("http://172.25.30.242/\n"),
+                "http://172.25.30.242/")
+            T.equal(Config.pastePreviewText("a\nb\tc"), "a b c")
+            T.equal(Config.pastePreviewText(""), "")
+        })
+
+        // Chip visibility is types-kind + preview + whether wl-paste
+        // --no-newline succeeded. Text stays hidden until a non-empty
+        // preview exists (adversarial 81d138b: no 30px flash, no glyph
+        // for whitespace, no leftover "text" on a failed paste).
+        T.test("paste chip hides until a non-empty text preview exists", function () {
+            T.equal(Config.pasteChipKind("empty", "", false), "empty")
+            T.equal(Config.pasteChipKind("other", "", false), "other")
+            T.equal(Config.pasteChipKind("other", "not a preview", true), "other")
+            T.equal(Config.pasteChipKind("text", "", false), "empty")
+            T.equal(Config.pasteChipKind("text", "", true), "empty")
+            T.equal(Config.pasteChipKind("text", "   \n\t", true), "empty")
+            T.equal(Config.pasteChipKind("text", "http://172.25.30.242/", false),
+                "empty")
+            T.equal(Config.pasteChipKind("text", "http://172.25.30.242/", true),
+                "text")
+        })
+
+        // Key radius (live-host ticket 04): 0–24 is a medium-key proportion;
+        // the drawn radius scales with the size preset so 24 stays a circle.
+        T.test("key radius 24 scales with the size preset", function () {
+            T.equal(Config.SIZE_PRESET_SCALES.medium, 1)
+            T.equal(Config.SIZE_PRESET_SCALES.large, 1.2)
+            T.equal(Config.SIZE_PRESET_SCALES["x-large"], 1.45)
+            T.equal(Config.effectiveKeyRadius(24, 1), 24)
+            T.equal(Math.round(Config.effectiveKeyRadius(24, 1.2) * 10), 288)
+            T.equal(Math.round(Config.effectiveKeyRadius(24, 1.45) * 100), 3480)
+            T.equal(Config.effectiveKeyRadius(0, 1.45), 0)
+        })
+
+        // Custom colour editor (live-host ticket 07): HS square + V slider
+        // keep RGB/HSV/hex in sync. Worked example is the WinUI reference
+        // swatch #34CF2B (R 52, G 207, B 43).
+        T.test("hsv and rgb round-trip the WinUI green and keep hex in sync", function () {
+            var rgb = { r: 52 / 255, g: 207 / 255, b: 43 / 255 }
+            var hsv = Config.rgbToHsv(rgb.r, rgb.g, rgb.b)
+            T.equal(Math.round(hsv.h * 360), 117)
+            T.equal(Math.round(hsv.s * 100), 79)
+            T.equal(Math.round(hsv.v * 100), 81)
+            T.equal(Config.toHex(Config.hsvToRgb(hsv.h, hsv.s, hsv.v)).toLowerCase(),
+                "#34cf2b")
+            var grey = Config.rgbToHsv(0.5, 0.5, 0.5)
+            T.equal(grey.h, 0)
+            T.equal(grey.s, 0)
+            T.equal(Config.toHex(Config.hsvToRgb(0, 0, 1)).toLowerCase(), "#ffffff")
+            T.equal(Config.toHex(Config.hsvToRgb(0, 0, 0)).toLowerCase(), "#000000")
+        })
+
+        T.test("RGB and HSV channel parse refuses empty and out of range", function () {
+            T.deepEqual(Config.parseChannel("52", 255), { ok: true, value: 52 })
+            T.deepEqual(Config.parseChannel("360", 360), { ok: true, value: 360 })
+            T.equal(Config.parseChannel("256", 255).ok, false)
+            T.equal(Config.parseChannel("361", 360).ok, false)
+            T.equal(Config.parseChannel("", 255).ok, false)
+            T.equal(Config.parseChannel("12.5", 255).ok, false)
+            T.equal(Math.round(Config.channelUnit(117, 360) * 1000), 325)
+            T.equal(Config.channelUnit(255, 255), 1)
+        })
+
+        T.test("colour-field insert replaces a selection and respects max length", function () {
+            function mock(text) {
+                return {
+                    text: text,
+                    cursorPosition: text.length,
+                    selectionStart: 0,
+                    selectionEnd: 0,
+                    maximumLength: 9,
+                    get length() { return this.text.length },
+                    remove: function (s, e) {
+                        this.text = this.text.slice(0, s) + this.text.slice(e)
+                        this.cursorPosition = s
+                        this.selectionStart = s
+                        this.selectionEnd = s
+                    },
+                    insert: function (pos, chunk) {
+                        this.text = this.text.slice(0, pos) + chunk + this.text.slice(pos)
+                        this.cursorPosition = pos + chunk.length
+                        this.selectionStart = this.cursorPosition
+                        this.selectionEnd = this.cursorPosition
+                    },
+                    selectAll: function () {
+                        this.selectionStart = 0
+                        this.selectionEnd = this.text.length
+                        this.cursorPosition = this.text.length
+                    }
+                }
+            }
+            var field = mock("#000000")
+            Config.fieldSelectAll(field)
+            Config.fieldInsert(field, "#34cf2b")
+            T.equal(field.text, "#34cf2b")
+            var clipped = mock("")
+            clipped.maximumLength = 4
+            Config.fieldInsert(clipped, "#34cf2b")
+            T.equal(clipped.text, "#34c")
         })
 
         Qt.exit(T.report("configuration"))

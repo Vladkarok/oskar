@@ -48,8 +48,7 @@ flush along the bottom edge at full width and reserves that space through
 the layer-shell exclusive zone, so windows move up while it is open and
 return when it closes — the way the Windows touch keyboard behaves. A
 fullscreen window ignores exclusive zones and is overlaid instead. **Floating**
-reserves nothing and is dragged by its bar. The mode button on the panel
-switches between them.
+reserves nothing and is dragged by its bar. Mode is chosen in Settings.
 
 Maintained defaults ship in `Config.js`. Deliberate user choices are sparse in
 `$XDG_CONFIG_HOME/omarchy-osk/config.json`; floating geometry is separate in
@@ -64,7 +63,7 @@ untouched while the panel keeps the last valid runtime value.
 | `sound` | `true` \| `false` | `false` |
 | `follow_theme` | `true` \| `false` | `true` |
 | `emoji_app` | picker command name on PATH | `omarchy-menu-emoji` |
-| `key_radius` | whole-pixel integer ≥ 0 | `8` |
+| `key_radius` | whole-pixel integer ≥ 0, 0–24 relative to M | `8` |
 | `panel_radius` | whole-pixel integer ≥ 0 | `12` |
 | `key_background` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#303030` |
 | `panel_background` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#202020` |

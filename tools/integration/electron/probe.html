@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>OSK-ELECTRON|boot</title>
+<p>Native Wayland keyboard integration target.</p>
+<script>
+document.title = "OSK-ELECTRON|ready";
+addEventListener("keydown", event => {
+  const key = event.key == null ? "null" : event.key;
+  document.title += key + "\u00b7" + (event.code || "-") + " ";
+});
+</script>

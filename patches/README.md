@@ -54,6 +54,45 @@ calling `scheduleRefresh()` on `configreloaded`) in the omarchy shell
 repository; once landed upstream this file and the pacman reinstall note
 here become obsolete.
 
+## omarchy-shell-emoji-osk.patch
+
+**What it does.** Opt-in OSK cooperation for the shell emoji overlay
+(`omarchy.emojis`). Ordinary standalone invocation (`omarchy-menu-emoji`,
+Super+Period, bar) is unchanged: fullscreen Exclusive, centred card,
+backdrop dismiss. An `{"osk":true, output, workArea, band}` summon payload
+fits the inner card with vendored `PickerFit.planPlacement`, subtracts the
+OSK band from the overlay input region, and primes Exclusive then OnDemand
+so picker search receives virtual-keyboard input while OSK clicks land.
+`shell isOpen` exposes the overlay's real open state. The overlay still
+inserts through `omarchy-menu-emoji-insert`; the OSK does not paste again.
+
+**Applies to.** `omarchy-dev 4.0.0.r2035.gf4a462e-1` (git `f4a462e`), files
+`/usr/share/omarchy/shell/plugins/emojis/Emojis.qml`,
+`/usr/share/omarchy/shell/shell.qml`, plus new
+`/usr/share/omarchy/shell/plugins/emojis/PickerFit.js`. Neighbouring
+revisions that keep those two files byte-identical will also take the
+patch; `patch` refuses otherwise.
+
+**Deployment scope.** Applied on the owner's desktop 2026-09-07 at their
+request. Restart the shell after applying (`omarchy restart shell`).
+`omarchy update` / `pacman -S omarchy-dev` restores stock files; re-apply
+the patch afterwards if OSK overlay cooperation is still wanted.
+
+**Apply.**
+
+```
+cd /usr/share/omarchy
+sudo patch -p1 < /path/to/omarchy-osk/patches/omarchy-shell-emoji-osk.patch
+```
+
+**Restore.**
+
+```
+sudo pacman -S omarchy-dev
+# or:
+cd /usr/share/omarchy && sudo patch -R -p1 < .../omarchy-shell-emoji-osk.patch
+```
+
 ### Why event-driven
 
 Decisions §19/§20 forbid polling. Hyprland announces every applied config

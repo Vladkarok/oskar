@@ -18,8 +18,11 @@ tests are for.
 
 import json
 import os
+import signal
+import shutil
 import socket
 import subprocess
+import sys
 import time
 
 # Hyprland names virtual keyboards hl-virtual-keyboard[-<binary>] depending on
@@ -67,6 +70,28 @@ class Client:
         if actual != reply:
             raise Failure(f"{command!r}: expected {reply!r}, got {actual!r}")
 
+    def configure(self, payload):
+        """Send a configure, return the keymap generation it installed.
+
+        Since protocol 4 the reply names the helper's install generation —
+        the fact the panel correlates keycap replies against, so most tests
+        capture and compare it rather than assert a literal.
+        """
+        reply = self.send(payload)
+        if not reply.startswith("configured\t"):
+            raise Failure(f"{payload!r}: expected configured<TAB><gen>, got {reply!r}")
+        try:
+            return int(reply.split("\t")[1])
+        except (IndexError, ValueError):
+            raise Failure(f"configured reply without a generation: {reply!r}")
+
+    def caps(self, group, positions=()):
+        """Request keycap facts for one group, decoded (decisions \u00a723)."""
+        line = f"caps {group}"
+        if positions:
+            line += " " + " ".join(positions)
+        return parse_caps_reply(self.send(line))
+
     def write_unread(self, command):
         """Write one protocol line without waiting for its reply.
 
@@ -94,15 +119,71 @@ class Client:
         self._socket.close()
 
 
+def parse_caps_reply(reply):
+    """Decode a `caps` reply into {gen, group, by_position}, or raise.
+
+    Each record is a position name plus one field per level: `t<text>` for
+    drawable text, `x<keysym>` for a symbol that produces no character, `n`
+    for no symbol at all. A bare record (no level fields) is a position the
+    keymap does not carry.
+    """
+    parts = reply.split("\t")
+    if len(parts) < 4 or parts[0] != "caps":
+        raise Failure(f"not a caps reply: {reply!r}")
+    try:
+        gen, group = int(parts[1]), int(parts[2])
+    except ValueError:
+        raise Failure(f"bad generation/group in caps reply: {reply!r}")
+    by_position = {}
+    for record in "\t".join(parts[3:]).split("\x1e"):
+        if not record:
+            continue
+        fields = record.split("\x1f")
+        levels = []
+        for field in fields[1:]:
+            tag, rest = field[:1], field[1:]
+            if tag == "t":
+                levels.append({"text": rest})
+            elif tag == "n":
+                levels.append({"none": ""})
+            elif tag == "x":
+                levels.append({"none": rest})
+            else:
+                raise Failure(f"unknown caps field tag {field!r} in {reply!r}")
+        by_position[fields[0]] = levels
+    return {"gen": gen, "group": group, "by_position": by_position}
+
+
 class Helper:
     """The helper under test: where to reach it, and what it wrote down."""
 
-    def __init__(self, socket_path, log_path):
+    def __init__(self, socket_path, log_path, pid=None):
         self.socket_path = socket_path
         self.log_path = log_path
+        self.pid = pid
 
     def connect(self):
         return Client(self.socket_path)
+
+    def terminate(self, timeout=5.0):
+        """Stop the helper the way `systemctl stop` does, and wait for it.
+
+        SIGTERM rather than SIGKILL on purpose: the shutdown release is what
+        is under test, and SIGKILL is by definition unhandleable — a helper
+        killed outright still strands whatever it holds, and no code can
+        change that.
+        """
+        if self.pid is None:
+            raise Failure("the helper's pid was not passed to the suite")
+        os.kill(self.pid, signal.SIGTERM)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                os.kill(self.pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        raise Failure(f"helper {self.pid} did not exit within {timeout}s of SIGTERM")
 
     def log(self):
         with open(self.log_path, encoding="utf-8", errors="replace") as handle:
@@ -152,6 +233,12 @@ class VirtualKeyboard:
         """
         for _ in range(40):
             if str(self.group()) == str(wanted):
+                if os.environ.get("OSK_DEBUG_LAYOUT"):
+                    print(
+                        f".... group {wanted} ok; device layout now "
+                        f"{self.layout()!r}",
+                        flush=True,
+                    )
                 return
             time.sleep(0.05)
         raise Failure(f"device group never became {wanted} (saw: {self.group()})")
@@ -159,7 +246,198 @@ class VirtualKeyboard:
     def expect_layout(self, wanted):
         actual = self.layout()
         if actual != wanted:
-            raise Failure(f"device layout is {actual!r}, expected {wanted!r}")
+            # The whole devices list, not just the verdict: which keymap the
+            # device last received is exactly the question here.
+            import json as _json
+            raise Failure(
+                f"device layout is {actual!r}, expected {wanted!r}; devices: "
+                + _json.dumps(
+                    [k | {"keymap": k.get("keymap", "")} for k in self._all_keyboards()],
+                    default=str,
+                )[:600]
+            )
+
+    def _all_keyboards(self):
+        out = subprocess.run(
+            ["hyprctl", "devices", "-j"], capture_output=True, text=True
+        ).stdout
+        return [
+            {k: kb.get(k) for k in ("name", "layout", "active_layout_index", "main")}
+            for kb in json.loads(out)["keyboards"]
+        ]
+
+
+def share_published_keymap():
+    """Point the nested compositor at the helper's published keymap (§35).
+
+    The real panel performs these two public compositor calls after each new
+    helper generation.  There is no panel in this suite, so the consumer
+    regressions cross that same boundary themselves rather than inspecting
+    either implementation's state.
+    """
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+    path = os.path.join(runtime, "omarchy-osk", "keymap.xkb")
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        raise Failure(f"helper did not publish a keymap at {path!r}")
+    for value in ("", path):
+        expression = f"hl.config({{input = {{kb_file = '{value}'}}}})"
+        proc = subprocess.run(
+            ["hyprctl", "eval", expression], capture_output=True, text=True
+        )
+        if proc.returncode != 0 or "error" in proc.stdout.lower():
+            raise Failure(
+                f"compositor refused input:kb_file = {value!r}: "
+                f"{(proc.stdout + proc.stderr).strip()!r}"
+            )
+    for _ in range(80):
+        proc = subprocess.run(
+            ["hyprctl", "getoption", "input:kb_file", "-j"],
+            capture_output=True,
+            text=True,
+        )
+        try:
+            if json.loads(proc.stdout).get("str") == path:
+                return path
+        except json.JSONDecodeError:
+            pass
+        time.sleep(0.05)
+    raise Failure(f"compositor never selected the published keymap {path!r}")
+
+
+def _active_window():
+    proc = subprocess.run(
+        ["hyprctl", "activewindow", "-j"], capture_output=True, text=True
+    )
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+
+class ElectronTarget:
+    """Native-Wayland Electron recorder for the Chromium DomCode path."""
+
+    marker = "OSK-ELECTRON|"
+
+    def __init__(self, debug_log=None):
+        fixture = os.path.join(os.path.dirname(__file__), "electron")
+        if not shutil.which("electron43"):
+            raise Failure("electron43 is required for the native-Wayland regression")
+        env = dict(os.environ)
+        if debug_log:
+            env["WAYLAND_DEBUG"] = "client"
+        self._errors = open(
+            debug_log or os.path.join(env["XDG_RUNTIME_DIR"], "osk-electron.log"),
+            "w+",
+        )
+        self._process = subprocess.Popen(
+            [
+                "electron43",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--ozone-platform=wayland",
+                fixture,
+            ],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=self._errors,
+        )
+        self._wait_ready()
+        self.last = self.title()
+
+    def _wait_ready(self):
+        for _ in range(360):
+            if self.title().startswith(self.marker + "ready"):
+                time.sleep(1)
+                return
+            if self._process.poll() is not None:
+                self._errors.flush()
+                self._errors.seek(0)
+                raise Failure(
+                    f"Electron exited with {self._process.returncode}: "
+                    f"{self._errors.read().strip()[-1000:]!r}"
+                )
+            time.sleep(0.25)
+        raise Failure(f"Electron never published its ready title; active={_active_window()}")
+
+    def title(self):
+        proc = subprocess.run(
+            ["hyprctl", "clients", "-j"], capture_output=True, text=True
+        )
+        try:
+            clients = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            return ""
+        for client in clients:
+            title = str(client.get("title", ""))
+            if title.startswith(self.marker):
+                return title
+        return ""
+
+    def delta(self, expect_event=True):
+        deadline = time.monotonic() + (4 if expect_event else 1)
+        while time.monotonic() < deadline:
+            current = self.title()
+            if len(current) > len(self.last):
+                delta = current[len(self.last):]
+                self.last = current
+                return delta
+            time.sleep(0.05)
+        return ""
+
+    def close(self):
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+        self._errors.close()
+
+
+class KeymapObserver:
+    """Focused Wayland client exposing keymap payload IDs and xkb state."""
+
+    def __init__(self):
+        binary = os.environ.get("OSK_KEYMAP_OBSERVER", "")
+        if not binary or not os.path.isfile(binary):
+            raise Failure("OSK_KEYMAP_OBSERVER is not a built observer binary")
+        self.path = os.path.join(
+            os.environ["XDG_RUNTIME_DIR"], "osk-keymap-observer.log"
+        )
+        self._log = open(self.path, "w+")
+        env = dict(os.environ, WAYLAND_DEBUG="client")
+        self._process = subprocess.Popen(
+            [binary], env=env, stdout=self._log, stderr=self._log
+        )
+        self.expect("READY", timeout=20)
+
+    def text(self):
+        self._log.flush()
+        with open(self.path, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+
+    def expect(self, needle, timeout=5):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if needle in self.text():
+                return
+            if self._process.poll() is not None:
+                raise Failure(
+                    f"keymap observer exited with {self._process.returncode}: "
+                    f"{self.text()[-1200:]!r}"
+                )
+            time.sleep(0.05)
+        raise Failure(
+            f"keymap observer never reported {needle!r}: {self.text()[-1200:]!r}"
+        )
+
+    def close(self):
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+        self._log.close()
 
 
 class TypingTarget:
@@ -168,15 +446,23 @@ class TypingTarget:
     The fourth source of truth, and the only one that can see a *modified*
     keystroke: a protocol reply says a key went out, `hyprctl devices` says
     which group the device is in, and neither says what character arrived.
-    So a foot terminal runs `cat` into a file and the assertion is on what
-    a focused client read — the same thing a human reads off the screen,
+    So a terminal runs `cat` into a file and the assertion is on what a
+    focused client read — the same thing a human reads off the screen,
     which is where the missing-modifier bug was found by hand.
 
     Canonical mode is the flush: the terminal hands `cat` a line when RTRN
     is typed, so every expectation below ends with one.
+
+    `cls` picks the client: `foot` is native Wayland; `x11cat` is the
+    bundled GTK fixture (x11cat.py) mapped through XWayland, so typing into
+    it exercises the X11 path end to end — the path that dropped
+    per-keystroke helper processes entirely (decisions \u00a71). A real
+    X11 window with real WM_CLASS and real core key events, only smaller
+    than a terminal.
     """
 
-    def __init__(self):
+    def __init__(self, cls="foot"):
+        self.cls = cls
         runtime = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
         self.path = os.path.join(runtime, "osk-typed.txt")
         if os.path.exists(self.path):
@@ -193,11 +479,35 @@ class TypingTarget:
         for attempt in range(5):
             if attempt:
                 time.sleep(2)
-            self._process = subprocess.Popen(
-                ["foot", "sh", "-c", f"cat > {self.path}"],
-                stdout=subprocess.DEVNULL,
-                stderr=self._errors,
-            )
+            if cls == "x11cat":
+                # GDK_BACKEND=x11 is the whole point: the same GTK would
+                # otherwise take the Wayland path and prove nothing here.
+                # The display comes from nested-session.sh, which identifies
+                # the X socket ITS compositor created — guessing :0 would map
+                # the client onto the live session's XWayland instead.
+                xdisplay = os.environ.get("OSK_NEST_XDISPLAY", "")
+                if not xdisplay:
+                    raise Failure(
+                        "no nested XWayland display was identified; refusing "
+                        "to guess an X display (a guess lands on the live "
+                        "session)"
+                    )
+                env = dict(os.environ, GDK_BACKEND="x11", DISPLAY=xdisplay)
+                env.pop("WAYLAND_DISPLAY", None)
+                self._process = subprocess.Popen(
+                    [sys.executable,
+                     os.path.join(os.path.dirname(__file__), "x11cat.py"),
+                     self.path],
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=self._errors,
+                )
+            else:
+                self._process = subprocess.Popen(
+                    ["foot", "sh", "-c", f"cat > {self.path}"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=self._errors,
+                )
             if self._wait_for_focus(last=attempt == 4):
                 return
 
@@ -227,10 +537,15 @@ class TypingTarget:
                 window = json.loads(out)
             except json.JSONDecodeError:
                 window = {}
-            if window.get("class") == "foot":
+            if window.get("class") == self.cls:
                 # The window is mapped and focused; the keyboard enter it is
-                # about to get is what makes the first keystroke land.
-                time.sleep(0.5)
+                # about to get is what makes the first keystroke land. The
+                # settle is generous because the host this runs on is shared
+                # and busy: a mapped-and-named foot has been seen taking
+                # seconds to actually receive its keyboard enter, and a
+                # keystroke sent before it is dropped on the compositor
+                # floor — an empty client file that reads as a product bug.
+                time.sleep(2)
                 return True
             if self._process.poll() is not None:
                 if not last:
@@ -240,7 +555,10 @@ class TypingTarget:
                     f"focus: {self._diagnosis()}"
                 )
             time.sleep(0.1)
-        raise Failure("no focused foot window to type into")
+        raise Failure(
+            "no focused foot window to type into; the compositor last "
+            f"answered: {out.strip()[:200]!r}"
+        )
 
     def _diagnosis(self):
         self._errors.flush()
@@ -256,11 +574,30 @@ class TypingTarget:
 
     def expect_text(self, wanted):
         """Wait for the client's text to reach `wanted`, then require it."""
-        for _ in range(40):
+        for _ in range(120):
             if self.text() == wanted:
                 return
-            time.sleep(0.1)
-        raise Failure(f"focused client read {self.text()!r}, expected {wanted!r}")
+            time.sleep(0.25)
+        # Evidence with the verdict: what the compositor thought was focused
+        # and what keymaps its keyboards carry at that moment.
+        active = subprocess.run(
+            ["hyprctl", "activewindow", "-j"], capture_output=True, text=True
+        ).stdout
+        devs = subprocess.run(
+            ["hyprctl", "devices", "-j"], capture_output=True, text=True
+        ).stdout
+        keymaps = []
+        try:
+            keymaps = [
+                {k: kb.get(k) for k in ("name", "layout", "active_layout_index", "active_keymap", "main")}
+                for kb in json.loads(devs)["keyboards"]
+            ]
+        except (json.JSONDecodeError, KeyError):
+            pass
+        raise Failure(
+            f"focused client read {self.text()!r}, expected {wanted!r}; "
+            f"activewindow: {active.strip()[:300]!r}; keyboards: {keymaps}"
+        )
 
     def close(self):
         self._process.terminate()
@@ -286,14 +623,14 @@ def test(name):
     return register
 
 
-def run(socket_path, log_path):
+def run(socket_path, log_path, pid=None):
     """Run every registered test in order; return a process exit code.
 
     The tests share one long-lived helper and build on each other's state —
     the compile count at the end only means anything if everything before it
     ran — so the first failure stops the run.
     """
-    helper = Helper(socket_path, log_path)
+    helper = Helper(socket_path, log_path, pid)
     keyboard = VirtualKeyboard()
     for name, body in _TESTS:
         try:

@@ -196,15 +196,36 @@ QtObject {
                 [{ op: "write", value: "true", seq: 3 }])
         })
 
-        T.test("a verify reading true keeps riding when the panel reopened", function () {
+        T.test("a verify reading true while reopened re-establishes the suspension", function () {
             var m = suspended()
             Machine.close(m)
             Machine.open(m)
-            // The value moved, but the panel is open again: ride now; the
-            // close's own verify resolves whatever holds the value then.
+            // The override is gone; riding it would leave the panel open
+            // unsuspended. Re-measure and suspend if the config still says so.
             var verify = Machine.readResult(m, "restore", 2, true)
+            T.deepEqual(reads(verify), [{ op: "read", kind: "probe", seq: 3 }])
+            T.equal(m.overrideLive, false)
+            var applied = Machine.readResult(m, "probe", 3, true)
+            T.deepEqual(writes(applied), [{ op: "write", value: "false", seq: 3 }])
+        })
+
+        T.test("a failed verify during reopen keeps ownership", function () {
+            // Re-probing after a failed verify can read the still-live
+            // override's false and assume hiding was originally disabled —
+            // then the next close restores nothing.
+            var m = suspended()
+            Machine.close(m)
+            Machine.open(m)
+            var verify = Machine.readResult(m, "restore", 2, null)
             T.equal(verify.length, 0)
             T.equal(m.overrideLive, true)
+            T.equal(m.recorded, "true")
+            T.equal(m.probeSeq, 0)
+            T.equal(m.outcome, "verify failed during reopen; the override obligation stands")
+            var closing = Machine.close(m)
+            T.deepEqual(reads(closing), [{ op: "read", kind: "restore", seq: 3 }])
+            T.deepEqual(writes(Machine.readResult(m, "restore", 3, false)),
+                [{ op: "write", value: "true", seq: 3 }])
         })
 
         T.test("a closed-panel verify that finds the value moved writes nothing", function () {
@@ -216,6 +237,57 @@ QtObject {
             T.equal(m.outcome, "restore skipped; the value no longer ours")
         })
 
+
+        T.test("an unconfirmed suspension write keeps the restore obligation", function () {
+            // A watchdog timeout is not settlement: the write may still land.
+            // Verifying now can read the pre-write true, drop the obligation,
+            // and let the late false land after close.
+            var m = Machine.create()
+            Machine.open(m)
+            Machine.readResult(m, "probe", 1, true)
+            Machine.close(m)
+            var unconfirmed = Machine.writeResult(m, 1, null)
+            T.equal(unconfirmed.length, 0)
+            T.equal(m.writeSeq, 1)
+            T.equal(m.writeValue, "false")
+            T.equal(m.overrideLive, true)
+            T.equal(m.recorded, "true")
+            T.equal(m.outcome, "suspension write unconfirmed; restore obligation stands")
+            // Physical completion, not the timeout, starts the queued restore.
+            var settled = Machine.writeResult(m, 1, true)
+            T.equal(m.writeSeq, 0)
+            T.deepEqual(reads(settled), [{ op: "read", kind: "restore", seq: 2 }])
+            T.deepEqual(writes(Machine.destroyed(m)),
+                [{ op: "write", value: "true", seq: 0 }])
+        })
+
+        T.test("an unconfirmed undo write stays in flight until it completes", function () {
+            var m = suspended()
+            Machine.close(m)
+            Machine.readResult(m, "restore", 2, false)
+            T.deepEqual(Machine.writeResult(m, 2, null), [])
+            T.equal(m.writeSeq, 2)
+            T.equal(m.writeValue, "true")
+            T.equal(m.overrideLive, true)
+            T.deepEqual(Machine.writeResult(m, 2, true), [])
+            T.equal(m.overrideLive, false)
+            T.equal(m.writeSeq, 0)
+        })
+
+        T.test("a reload during an unconfirmed write waits for physical completion", function () {
+            var m = Machine.create()
+            Machine.open(m)
+            Machine.readResult(m, "probe", 1, true)
+            T.deepEqual(Machine.configReloaded(m), [])
+            T.deepEqual(Machine.writeResult(m, 1, null), [])
+            T.equal(m.writeSeq, 1)
+            T.equal(m.reloadDuringWrite, true)
+            T.equal(m.overrideLive, true)
+            var settled = Machine.writeResult(m, 1, true)
+            T.equal(m.overrideLive, false)
+            T.equal(m.reloadDuringWrite, false)
+            T.deepEqual(reads(settled), [{ op: "read", kind: "probe", seq: 2 }])
+        })
 
         T.test("a failed suspension write leaves hiding as the user set it", function () {
             var m = Machine.create()
@@ -253,18 +325,19 @@ QtObject {
             T.equal(m.overrideLive, false)
         })
 
-        T.test("a config reload during the probe leaves the answer to the probe", function () {
-            // A probe already in flight measures whatever the compositor
-            // holds when it answers — after the reload, if the reload lands
-            // first. No second probe is wanted; the close-time verify is
-            // what guards the recorded value.
+        T.test("a config reload during the probe retires it and reissues", function () {
+            // A pre-reload true sample must not suspend after the reload
+            // configured false — that would restore obsolete true on close.
             var m = Machine.create()
             Machine.open(m) // probe seq 1 in flight
-            T.deepEqual(Machine.configReloaded(m), [])
-            T.equal(m.probeSeq, 1)
-            var applied = Machine.readResult(m, "probe", 1, true)
-            T.deepEqual(writes(applied), [{ op: "write", value: "false", seq: 1 }])
-            T.equal(m.overrideLive, true)
+            var actions = Machine.configReloaded(m)
+            T.deepEqual(reads(actions), [{ op: "read", kind: "probe", seq: 2 }])
+            T.equal(m.probeSeq, 2)
+            T.equal(Machine.readResult(m, "probe", 1, true).length, 0)
+            T.equal(m.overrideLive, false)
+            T.deepEqual(Machine.readResult(m, "probe", 2, false), [])
+            T.equal(m.overrideLive, false)
+            T.deepEqual(Machine.close(m), [])
         })
 
         T.test("open behind an in-flight undo write defers and re-probes fresh", function () {
@@ -393,20 +466,32 @@ QtObject {
             T.equal(m.overrideLive, false)
         })
 
-        T.test("a config reload during the suspension write keeps the undo owed", function () {
-            // Our write will land after the reload, so the reload did not
-            // take the value back from us — the undo obligation stands.
+        T.test("a config reload during a write re-probes if the panel is still open", function () {
+            var m = Machine.create()
+            Machine.open(m)
+            Machine.readResult(m, "probe", 1, true) // suspension write in flight
+            T.deepEqual(Machine.configReloaded(m), [])
+            var settled = Machine.writeResult(m, 1, true)
+            T.equal(m.overrideLive, false)
+            T.deepEqual(reads(settled), [{ op: "read", kind: "probe", seq: 2 }])
+            var applied = Machine.readResult(m, "probe", 2, true)
+            T.deepEqual(writes(applied), [{ op: "write", value: "false", seq: 2 }])
+        })
+
+        T.test("a config reload during a write is reconciled after settlement", function () {
+            // The write may already have applied before the reload wiped it.
+            // Restoring recorded true would overwrite a config that now says
+            // false. After settlement, the reload owns the value.
             var m = Machine.create()
             Machine.open(m)
             Machine.readResult(m, "probe", 1, true) // write in flight
             T.deepEqual(Machine.configReloaded(m), [])
-            T.equal(m.overrideLive, true)
-            Machine.close(m) // queues the restore behind the in-flight write
+            T.equal(m.writeSeq, 1)
+            Machine.close(m)
             var settled = Machine.writeResult(m, 1, true)
-            T.deepEqual(reads(settled), [{ op: "read", kind: "restore", seq: 2 }])
-            T.deepEqual(writes(Machine.readResult(m, "restore", 2, false)),
-                [{ op: "write", value: "true", seq: 2 }])
-            T.deepEqual(Machine.writeResult(m, 2, true), [])
+            T.equal(settled.length, 0)
+            T.equal(m.overrideLive, false)
+            T.equal(m.restoreSeq, 0)
         })
 
         T.test("a config reload resumes a probe deferred behind a dying restore", function () {

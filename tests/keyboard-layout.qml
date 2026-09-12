@@ -1,4 +1,4 @@
-// The curated page's half of the keycap pipeline, driven as a pure module:
+// The keycap pipeline driven as a pure module:
 // what rows the page declares for what the keymap resolved, and what each cap
 // draws versus what its press types (ticket 03, review findings R2 and R3).
 // Run with tools/run-tests.sh — no compositor, no display. The real-keymap
@@ -18,34 +18,60 @@ QtObject {
         // over distinct positions at levels 1..4, the same shape the real
         // pipeline's symbolMap carries, so curatedPageRows sees exactly what
         // it sees in production.
-        var slotPositions = [
-            "AE01", "AE02", "AE03", "AE04", "AE05", "AE06",
-            "AE07", "AE08", "AE09", "AE10", "AE11", "AE12",
-            "AD01", "AD02", "AD03", "AD04", "AD05", "AD06",
-            "AD07", "AD08", "AD09", "AD10", "AD11", "AD12",
-            "AC01", "AC02", "AC03", "AC04", "AC05", "AC06",
-            "AC07", "AC08", "AC09", "AC10", "AB01", "AB02",
-            "AB03", "AB04", "AB05", "AB06", "AB07", "AB08",
-            "AB09", "AB10", "BKSL", "TLDE"
-        ]
-
-        function mapOf(count) {
-            var map = {}
-            var next = 0
-            for (var p = 0; p < slotPositions.length && next < count; p++) {
-                var levels = []
-                for (var l = 0; l < 4 && next < count; l++) {
-                    levels.push(Layout.curatedTokens[next])
-                    next += 1
-                }
-                while (levels.length < 4) levels.push("")
-                map[slotPositions[p]] = levels
+        function directSymbolFacts() {
+            var glyphs = [
+                "!", "1", "@", "2", "#", "3", "$", "4",
+                "%", "5", "^", "6", "&", "7", "*", "8",
+                "(", "9", ")", "0", "`", "-", "=", "[",
+                "]", "{", "}", "\\", "|", ";", ":", "'",
+                "\"", ",", ".", "/", "_", "+", "<", ">",
+                "?", "~", "£", "€", "¥", "¢", "°", "±",
+                "×", "≈", "÷", "≠", "¬", "≤", "≥", "∞"
+            ]
+            // The shape the helper actually installs (decisions §33): the
+            // catalogue on levels five to eight of positions that keep their
+            // own levels one to four. This fixture is the hard case — a
+            // layout carrying NOTHING of its own, so every cap has to come
+            // out of the block — and `usDigitRowFacts` below is the ordinary
+            // one, where the layout already answers and the block is not
+            // reached for.
+            var facts = {}
+            for (var i = 0; i < glyphs.length; i += 4) {
+                facts[Layout.reservedPositions[i / 4]] = [
+                    { none: "" }, { none: "" }, { none: "" }, { none: "" },
+                    { text: glyphs[i] }, { text: glyphs[i + 1] },
+                    { text: glyphs[i + 2] }, { text: glyphs[i + 3] }
+                ]
             }
-            return map
+            return facts
         }
 
-        function expectedSlot(n) {
-            return { k: slotPositions[Math.floor(n / 4)], lvl: (n % 4) + 1 }
+        function usDigitRowFacts() {
+            var glyphs = [
+                "!", "1", "@", "2", "#", "3", "$", "4",
+                "%", "5", "^", "6", "&", "7", "*", "8",
+                "(", "9", ")", "0", "`", "-", "=", "[",
+                "]", "{", "}", "\\", "|", ";", ":", "'",
+                "\"", ",", ".", "/", "_", "+", "<", ">",
+                "?", "~", "£", "€", "¥", "¢", "°", "±",
+                "×", "≈", "÷", "≠", "¬", "≤", "≥", "∞"
+            ]
+            var digits = "1234567890"
+            var symbols = "!@#$%^&*()"
+            var facts = {}
+            for (var i = 0; i < glyphs.length; i += 4) {
+                var position = Layout.reservedPositions[i / 4]
+                var own = [{ none: "" }, { none: "" }, { none: "" }, { none: "" }]
+                var slot = i / 4
+                if (slot < 10)
+                    own = [{ text: digits[slot] }, { text: symbols[slot] },
+                           { none: "" }, { none: "" }]
+                facts[position] = own.concat([
+                    { text: glyphs[i] }, { text: glyphs[i + 1] },
+                    { text: glyphs[i + 2] }, { text: glyphs[i + 3] }
+                ])
+            }
+            return facts
         }
 
         function controlRowIndex(rows) {
@@ -76,180 +102,7 @@ QtObject {
 
         // ---- R2: the page keeps its essential controls at any availability ----
 
-        T.test("the Shift/Enter row survives 18 available symbols (ua's count)", function () {
-            var page = Layout.curatedPageRows(mapOf(18))
-            T.equal(page.available, 18)
-            T.equal(controlRowIndex(page.rows) >= 0, true)
-        })
-
-        T.test("the Shift/Enter row survives 26 and 23 available symbols (gb, fr)", function () {
-            T.equal(controlRowIndex(Layout.curatedPageRows(mapOf(26)).rows) >= 0, true)
-            T.equal(controlRowIndex(Layout.curatedPageRows(mapOf(23)).rows) >= 0, true)
-        })
-
-        T.test("the Shift/Enter control row exists with no symbol left for it", function () {
-            // 18 symbols fill the 13-slot first row and 5 of the 15-slot
-            // second row: the control row itself resolves nothing, which is
-            // exactly the shape where it used to vanish and a locked Shift
-            // stayed held with its control hidden.
-            var page = Layout.curatedPageRows(mapOf(18))
-            var index = controlRowIndex(page.rows)
-            T.equal(index >= 0, true)
-            // Everything between Shift and Enter is a declared spacer: the
-            // row draws its two controls and no blank cap.
-            for (var j = 0; j < page.rows[index].length; j++) {
-                var cap = page.rows[index][j]
-                if (cap.key !== "shift" && cap.key !== "Return")
-                    T.equal(Layout.isSpacer(cap), true)
-            }
-        })
-
-        T.test("the esc/Backspace row survives too; a control-free empty row is still omitted", function () {
-            // Ten symbols fill only the first content row: the second row
-            // carries no control cap and nothing resolved to it, so it stays
-            // omitted — but both fixed-control rows are there.
-            var page = Layout.curatedPageRows(mapOf(10))
-            T.equal(page.available, 10)
-            T.equal(escapeRowIndex(page.rows) >= 0, true)
-            T.equal(controlRowIndex(page.rows) >= 0, true)
-            T.equal(page.rows.length, 3)  // esc row, Shift/Enter row, command row
-        })
-
-        T.test("the eight-symbol availability threshold is unchanged", function () {
-            T.equal(Layout.curatedMinimum, 8)
-            var page = Layout.curatedPageRows(mapOf(8))
-            T.equal(page.available, 8)
-            // esc row + Shift/Enter row + command row: the control rows are
-            // kept, the control-free second row is dropped at this fill.
-            T.equal(page.rows.length, 3)
-            T.equal(controlRowIndex(page.rows), 1)
-            T.equal(page.available < Layout.curatedMinimum, false)
-            T.equal(Layout.curatedPageRows(mapOf(7)).available < Layout.curatedMinimum, true)
-        })
-
-        T.test("every curated row still sums to the shared 15.5-unit grid", function () {
-            var counts = [8, 10, 18, 23, 26, 37]
-            for (var c = 0; c < counts.length; c++) {
-                var rows = Layout.curatedPageRows(mapOf(counts[c])).rows
-                for (var i = 0; i < rows.length; i++) {
-                    var sum = 0
-                    for (var j = 0; j < rows[i].length; j++) sum += rows[i][j].w || 1
-                    T.equal(Math.abs(sum - 15.5) < 0.01, true)
-                }
-            }
-        })
-
-        T.test("no availability grows the page past its declared maximum height", function () {
-            var counts = [8, 10, 18, 23, 26, Layout.curatedTokens.length]
-            for (var c = 0; c < counts.length; c++) {
-                var rows = Layout.curatedPageRows(mapOf(counts[c])).rows
-                T.equal(rows.length <= Layout.curatedMaxRows, true)
-            }
-        })
-
-        T.test("symbol order is stable: tokens fill slots in declaration order", function () {
-            function firstLevelCap(page) {
-                for (var r = 0; r < page.rows.length; r++) {
-                    for (var s = 0; s < page.rows[r].length; s++) {
-                        if (page.rows[r][s].lvl) return page.rows[r][s]
-                    }
-                }
-                return null
-            }
-
-            // The n-th available token takes the n-th slot, whatever that
-            // slot's row: the category sequence never reorders (decisions
-            // §17). The expected position/level is mapOf's own spread.
-            var counts = [8, 10, 18, 23, 26]
-            for (var c = 0; c < counts.length; c++) {
-                var page = Layout.curatedPageRows(mapOf(counts[c]))
-                var seen = 0
-                for (var i = 0; i < page.rows.length; i++) {
-                    for (var j = 0; j < page.rows[i].length; j++) {
-                        var cap = page.rows[i][j]
-                        if (!cap.lvl) continue
-                        var want = expectedSlot(seen)
-                        T.equal(cap.k, want.k, "token " + seen + " position")
-                        T.equal(cap.lvl, want.lvl, "token " + seen + " level")
-                        T.equal(cap.exact, true, "token " + seen + " exact")
-                        seen += 1
-                    }
-                }
-                T.equal(seen, counts[c])
-            }
-            // And the very first slot carries the very first token's answer.
-            T.equal(firstLevelCap(Layout.curatedPageRows(mapOf(18))).k, "AE01")
-            T.equal(firstLevelCap(Layout.curatedPageRows(mapOf(18))).lvl, 1)
-        })
-
-        T.test("buildTokenIndex skips empty and NoSymbol levels and keeps the first occurrence", function () {
-            var index = Layout.buildTokenIndex({
-                AE01: ["EuroSign", "", "NoSymbol", ""],
-                AE02: ["EuroSign", "sterling"]
-            })
-            T.equal(index.EuroSign.position, "AE01")
-            T.equal(index.EuroSign.level, 1)
-            T.equal(index.sterling.position, "AE02")
-            T.equal(index.sterling.level, 2)
-            T.equal(index.hasOwnProperty("NoSymbol"), false)
-        })
-
         // ---- R3: an exact cap draws exactly the level it types ----
-
-        T.test("a level-1 curated cap carries no paired shift glyph", function () {
-            // The French shape that was the finding: TLDE resolves
-            // twosuperior at level 1 and asciitilde at level 2. The overlay
-            // used to attach the level-2 symbol as the cap's shifted variant,
-            // so a latched or locked Shift redrew ² as ~ while the exact
-            // press went on typing ².
-            var misses = []
-            var overlay = Layout.capOverlay(
-                { k: "TLDE", lvl: 1, exact: true },
-                ["twosuperior", "asciitilde", "notsign", "notsign"], misses)
-            T.equal(overlay.t, "\u00b2")
-            T.equal(overlay.s, undefined)
-            T.equal(misses.length, 0)
-        })
-
-        T.test("levels 2, 3 and 4 draw exactly their own level's symbol", function () {
-            var levels = ["twosuperior", "asciitilde", "notsign", "notsign"]
-            var wants = [
-                { lvl: 2, t: "~" },
-                { lvl: 3, t: "\u00ac" },
-                { lvl: 4, t: "\u00ac" }
-            ]
-            for (var i = 0; i < wants.length; i++) {
-                var misses = []
-                var overlay = Layout.capOverlay(
-                    { k: "TLDE", lvl: wants[i].lvl, exact: true }, levels, misses)
-                T.equal(overlay.t, wants[i].t, "level " + wants[i].lvl + " draws its level")
-                T.equal(overlay.s, undefined, "level " + wants[i].lvl + " carries no pair")
-                T.equal(misses.length, 0)
-            }
-        })
-
-        T.test("an exact cap draws its own symbol under every Shift and Caps combination", function () {
-            // The rule the seam exists for: display follows the exact press,
-            // not the modifiers. Shift (latched or locked) and Caps are the
-            // cap's business only through the level it already carries.
-            var cap = { k: "TLDE", lvl: 1, exact: true, t: "\u00b2", s: "~" }
-            T.equal(Layout.resolvedTypedChar(cap, false, false), "\u00b2")
-            T.equal(Layout.resolvedTypedChar(cap, false, true), "\u00b2")
-            T.equal(Layout.resolvedTypedChar(cap, true, false), "\u00b2")
-            T.equal(Layout.resolvedTypedChar(cap, true, true), "\u00b2")
-            var higher = { k: "AE03", lvl: 4, exact: true, t: "\u00b3" }
-            T.equal(Layout.resolvedTypedChar(higher, false, true), "\u00b3")
-            T.equal(Layout.resolvedTypedChar(higher, true, true), "\u00b3")
-        })
-
-        T.test("an unresolved curated level still draws blank and is marked unavailable", function () {
-            var misses = []
-            var overlay = Layout.capOverlay({ k: "AB01", lvl: 2, exact: true }, [], misses)
-            T.equal(overlay.t, "")
-            T.equal(overlay.unavailable, true)
-            T.equal(misses.length, 1)
-            T.equal(misses[0], "AB01^=<no keymap entry>")
-        })
 
         // ---- the moved display rule, pinned at its new single home ----
 
@@ -283,6 +136,350 @@ QtObject {
             T.equal(Layout.isLetterKey({ t: "2", s: "@" }), false)
             T.equal(Layout.isLetterKey({ t: "-", s: "" }), false)
             T.equal(Layout.isLetterKey({ t: "", s: "Q" }), false)
+        })
+
+        // ---- ticket 04: the helper-facts (text) overlay path ----
+
+        T.test("a dual cap draws both helper text levels stacked", function () {
+            var misses = []
+            var overlay = Layout.capOverlay(
+                { k: "AE01", dual: true },
+                [{ text: "1" }, { text: "!" }], misses)
+            T.equal(overlay.t, "1")
+            T.equal(overlay.s, "!")
+            T.equal(misses.length, 0)
+        })
+
+        T.test("a helper level with nothing to draw is a miss and can disable the cap", function () {
+            var misses = []
+            var overlay = Layout.capOverlay(
+                { k: "TLDE", dual: true },
+                [{ text: "`" }, { none: "" }], misses)
+            T.equal(overlay.t, "`")
+            T.equal(overlay.s, undefined)
+            T.equal(misses.length, 1)
+            T.equal(misses[0], "TLDE^=<no symbol at this level>")
+            // Both levels unanswered: dim and press-refusing, never blank
+            // and typeable (spec-v1.1 \u00a73) — same as the token path.
+            var misses2 = []
+            var gone = Layout.capOverlay(
+                { k: "TLDE", dual: true },
+                [{ none: "dead_acute" }, { none: "" }], misses2)
+            T.equal(gone.unavailable, true)
+            T.equal(misses2.length, 2)
+            T.equal(misses2[0], "TLDE=dead_acute")
+        })
+
+        T.test("a main-page pair keeps its built-in level where the helper has none", function () {
+            var misses = []
+            var overlay = Layout.capOverlay(
+                { k: "AD01", t: "q", s: "Q" },
+                [{ text: "\u0439" }, { none: "" }], misses)
+            T.equal(overlay.t, "\u0439")
+            T.equal(overlay.s, undefined)
+            T.equal(misses.length, 1)
+        })
+
+        T.test("a glyph cap resolves by character, at whatever level carries it", function () {
+            // Ticket 18. The cap names a character; the keymap says where it
+            // lives. Level 3 and 4 additionally ask for <LVL3> rather than
+            // RALT, because RALT is ISO_Level3_Shift only on some layouts.
+            var facts = {
+                AE05: [{ text: "5" }, { text: "%" }, { none: "" }, { none: "" }],
+                AB11: [{ text: "£" }, { text: "¥" }, { text: "°" }, { text: "×" }]
+            }
+            var resolved = Layout.applyLanguage(
+                [[{ glyph: "£" }, { glyph: "°" }, { glyph: "%" }, { glyph: "\u2603" }]],
+                "us", facts)[0]
+            T.equal(resolved[0].k, "AB11")
+            // baseLvl, not lvl: the press reads baseLvl for the unshifted
+            // half, and lvl is the curated page's single-level cap shape.
+            T.equal(resolved[0].baseLvl, 1)
+            T.equal(resolved[0].exact, true)
+            T.equal(resolved[0].level3, false)
+            T.equal(resolved[0].t, "£")
+            // Level three: same position, and the chord must move off RALT.
+            T.equal(resolved[1].baseLvl, 3)
+            T.equal(resolved[1].level3, true)
+            // A character the active layout already carries resolves there —
+            // the cap does not care which source supplied it.
+            T.equal(resolved[2].k, "AE05")
+            T.equal(resolved[2].baseLvl, 2)
+            // And one nothing carries is dim and press-refusing, not blank.
+            T.equal(resolved[3].unavailable, true)
+            T.equal(resolved[3].t, "\u2603")
+        })
+
+        T.test("a glyph cap whose base is missing refuses its Shift half too", function () {
+            // The cap is gated as a whole — `disabled` refuses the press — so
+            // an upper glyph drawn over an unavailable base would promise a
+            // character the cap cannot type. Both halves are reported, because
+            // a page silently losing caps on a keymap with fewer free
+            // positions is exactly how this goes unnoticed.
+            var facts = { AB11: [{ text: "\u00a5" }] }
+            var resolved = Layout.applyLanguage(
+                [[{ glyph: "\u00a3", shiftGlyph: "\u00a5" }]], "us", facts)[0][0]
+            T.equal(resolved.unavailable, true)
+            T.equal(resolved.t, "\u00a3")
+            T.equal(resolved.s, undefined)
+            T.equal(resolved.sk, undefined)
+            T.equal(resolved.dual, undefined)
+        })
+
+        T.test("the glyph index takes the first occurrence, in position order", function () {
+            // A character two positions can produce must always resolve to
+            // the same chord, or the cap would move when something unrelated
+            // to it changed.
+            var index = Layout.buildGlyphIndex({
+                I149: [{ text: "£" }],
+                AB11: [{ text: "£" }, { text: "¥" }]
+            })
+            T.equal(index["£"].position, "AB11")
+            T.equal(index["£"].level, 1)
+            T.equal(index["¥"].level, 2)
+            // Levels five to eight are where the block lives now (decisions
+            // §33), so they are indexed and they carry the level the press
+            // needs. Past eight is past every chord the panel has.
+            var deep = Layout.buildGlyphIndex({
+                AB11: [{ none: "" }, { none: "" }, { none: "" }, { none: "" },
+                       { text: "☃" }, { none: "" }, { none: "" }, { text: "∞" },
+                       { text: "☂" }]
+            })
+            T.equal(deep["☃"].level, 5)
+            T.equal(deep["∞"].level, 8)
+            T.equal(deep["☂"], undefined)
+            T.equal(Object.keys(Layout.buildGlyphIndex(null)).length, 0)
+        })
+
+        T.test("applyLanguage draws every positioned cap from the helper facts", function () {
+            // One source since ticket 18. The second — the §11 pipeline's
+            // symbolMap, which fed `token` and `lvl` caps — is gone, so a
+            // positioned cap and a glyph cap both resolve against the same
+            // facts and can never disagree about the keymap.
+            var facts = {
+                AD01: [{ text: "\u0439" }, { text: "\u0419" }],
+                AD02: [{ text: "\u0446" }, { text: "\u0426" },
+                       { text: "\u20b4" }, { none: "" }]
+            }
+            var resolved = Layout.applyLanguage(
+                [[{ t: "q", s: "Q", k: "AD01" }, { glyph: "\u20b4" }]], "ua", facts)
+            T.equal(resolved[0][0].t, "\u0439")
+            T.equal(resolved[0][0].s, "\u0419")
+            // The glyph cap found its character at level 3 of AD02 and asks
+            // for the level-three chord rather than a position of its own.
+            T.equal(resolved[0][1].t, "\u20b4")
+            T.equal(resolved[0][1].k, "AD02")
+            T.equal(resolved[0][1].baseLvl, 3)
+            T.equal(resolved[0][1].level3, true)
+        })
+
+        T.test("applyLanguage with no helper facts keeps built-ins and stays quiet", function () {
+            // Facts in flight or unresolved: the built-in table draws as the
+            // gated last resort and the status line owns the reason — that
+            // window must not log a per-cap miss flood on every rebuild.
+            var resolved = Layout.applyLanguage(
+                [[{ t: "q", s: "Q", k: "AD01" }]], "ua", null)
+            T.equal(resolved[0][0].t, "q")
+            T.equal(resolved[0][0].s, "Q")
+        })
+
+        T.test("applyLanguage with helper facts misses a missing position loudly", function () {
+            var resolved = Layout.applyLanguage(
+                [[{ t: "q", s: "Q", k: "AD01" }, { t: "w", s: "W", k: "AD02" }]],
+                "ua", { AD01: [{ text: "\u0439" }, { text: "\u0419" }] })
+            T.equal(resolved[0][0].t, "\u0439")
+            // AD02 has no record at all: built-in kept, miss recorded.
+            T.equal(resolved[0][1].t, "w")
+        })
+
+        // ---- ticket 12: pair caps on &123 (compact-control-map.md) ----
+
+        function unitsLeftOf(row, key) {
+            var sum = 0
+            for (var i = 0; i < row.length; i++) {
+                if (row[i].key === key) return sum
+                sum += row[i].w || 1
+            }
+            return -1
+        }
+
+        function shiftEnterRow(rows) {
+            var i = controlRowIndex(rows)
+            return i >= 0 ? rows[i] : []
+        }
+
+        function pairKeys(row) {
+            var out = []
+            for (var i = 0; i < row.length; i++) {
+                if (row[i].pair === true) out.push(row[i].k)
+            }
+            return out
+        }
+
+        function spacerCount(row) {
+            var n = 0
+            for (var i = 0; i < row.length; i++) {
+                if (Layout.isSpacer(row[i])) n += 1
+            }
+            return n
+        }
+
+        function rowSum(row) {
+            var sum = 0
+            for (var i = 0; i < row.length; i++) sum += row[i].w || 1
+            return sum
+        }
+
+        // ua's 12 pair positions in curated-token category order
+        // (docs/compact-control-map.md §2.2 / §3.2).
+        var uaPairOrder = [
+            "AE04", "AE03", "AE12", "AE05", "AE02", "AB08", "AB09", "AE11",
+            "AB10", "AB03", "AD04", "AB06"
+        ]
+
+        function uaSymbolMap() {
+            return {
+                RALT: ["ISO_Level3_Shift", "", "", ""],
+                AE04: ["4", "quotedbl", "", "EuroSign"],
+                AE03: ["3", "numerosign", "section", "U20B4"],
+                AE12: ["equal", "percent", "notequal", "plusminus"],
+                AE05: ["5", "colon", "degree", ""],
+                AE02: ["2", "quotedbl", "twosuperior", ""],
+                AB08: ["Cyrillic_be", "Cyrillic_BE", "guillemotleft", ""],
+                AB09: ["Cyrillic_yu", "Cyrillic_YU", "guillemotright",
+                    "leftdoublequotemark"],
+                AE11: ["minus", "underscore", "emdash", "endash"],
+                AB10: ["period", "comma", "", "ellipsis"],
+                AB03: ["Cyrillic_es", "Cyrillic_ES", "copyright", ""],
+                AD04: ["Cyrillic_ka", "Cyrillic_KA", "registered", ""],
+                AB06: ["Cyrillic_te", "Cyrillic_TE", "trademark", ""],
+                // One curated token already one-click at block L1 (not a pair).
+                AC10: ["numerosign", "", "", ""]
+            }
+        }
+
+        T.test("letters stay five rows and the command row is unchanged", function () {
+            T.equal(Layout.rows.length, 5)
+            T.deepEqual(Layout.rows[4], Layout.commandRow("&123"))
+            T.equal(Layout.rows[0][0].key, "Escape")
+            T.equal(Layout.rows[0][2].k, "AE01")
+        })
+
+        T.test("direct symbols keep the five-row grid and fixed control geometry", function () {
+            var rows = Layout.symbolRows("ABC")
+            T.equal(rows.length, 5)
+            T.deepEqual(rows[4], Layout.commandRow("ABC"))
+            for (var i = 0; i < rows.length; i++)
+                T.equal(Math.abs(rowSum(rows[i]) - 15.5) < 0.01, true)
+            T.equal(rows[0][0].key, "Escape")
+            T.equal(rows[0][0].w, Layout.rows[0][0].w)
+            T.equal(unitsLeftOf(rows[0], "BackSpace"), 14)
+            T.equal(rows[0][rows[0].length - 1].w, 1.5)
+            T.equal(rows[1][0].key, "Tab")
+            T.equal(rows[1][0].w, Layout.rows[1][0].w)
+            T.equal(unitsLeftOf(rows[1], "Delete"), 14.5)
+            T.equal(unitsLeftOf(rows[2], "Return"), 13)
+            T.equal(rows[2][rows[2].length - 1].w, 2.5)
+            T.equal(rows[3][0].key, "shift")
+            T.equal(rows[3][0].w, Layout.rows[3][0].w)
+            T.equal(unitsLeftOf(rows[3], "Up"), 12.5)
+            T.equal(rows[3][rows[3].length - 1].key, "shift")
+            T.equal(rows[3][rows[3].length - 1].w,
+                Layout.rows[3][Layout.rows[3].length - 1].w)
+            // Both pages are five rows, which is what the panel reserves
+            // height for. The curated page's own maximum used to be a third
+            // term here; it went with the page (ticket 05).
+            T.equal(Math.max(Layout.rows.length, rows.length), 5)
+        })
+
+        T.test("top symbols shift to digits with exact level chords", function () {
+            var rows = Layout.applyLanguage(Layout.symbolRows("ABC"), "ua",
+                directSymbolFacts())
+            var symbols = "!@#$%^&*()"
+            var digits = "1234567890"
+            for (var i = 0; i < 10; i++) {
+                var cap = rows[0][i + 1]
+                T.equal(cap.t, symbols[i])
+                T.equal(cap.s, digits[i])
+                T.equal(cap.k, Layout.reservedPositions[Math.floor(i / 2)])
+                T.equal(cap.sk, cap.k)
+                T.equal(cap.baseLvl, (i % 2) * 2 + 5)
+                T.equal(cap.slvl, (i % 2) * 2 + 6)
+                T.equal(cap.exact, true)
+                // Levels 7 and 8 want <LVL3> on top of <LVL5>; 5 and 6 do
+                // not. `level5` is not a cap field — the press derives it
+                // from the level through Layout.levelChord.
+                T.equal(cap.level3, (i % 2) === 1)
+                T.equal(cap.shiftLevel3, (i % 2) === 1)
+                T.equal(Layout.levelChord(cap.baseLvl).level5, true)
+                T.equal(Layout.levelChord(cap.slvl).level5, true)
+                // Exact glyph pairs choose the half in Keyboard.pressChar;
+                // their two resolved chords are the contract here.
+                T.equal(cap.t, symbols[i])
+                T.equal(cap.s, digits[i])
+            }
+        })
+
+        T.test("the layout answers first and the block only for what it lacks", function () {
+            // Level-major ordering (decisions §33). The block sits on levels
+            // five to eight of positions the layout already uses, so a
+            // position-major index would find `@` in the catalogue on AE01
+            // before finding it on AE02's own Shift level and send
+            // <LVL5>+<LVL3> for a character plain Shift types. On a `us`-
+            // shaped keymap the ten digit/symbol duals must all come out of
+            // the layout's own two levels.
+            var rows = Layout.applyLanguage(Layout.symbolRows("ABC"), "us",
+                usDigitRowFacts())
+            for (var i = 0; i < 10; i++) {
+                var cap = rows[0][i + 1]
+                // The page draws the symbol on the base and the digit behind
+                // Shift, so the base is the layout's level 2 and the Shift
+                // half is its level 1.
+                T.equal(cap.baseLvl, 2, "symbol " + i + " is a level-2 press")
+                T.equal(cap.slvl, 1, "digit " + i + " is a level-1 press")
+                T.equal(Layout.levelChord(cap.baseLvl).level5, false)
+                T.equal(Layout.levelChord(cap.slvl).level5, false)
+                T.equal(cap.level3, false)
+                T.equal(cap.shiftLevel3, false)
+            }
+            // And the characters no layout carries still come from the block,
+            // which is the half that has to keep working.
+            var index = Layout.buildGlyphIndex(usDigitRowFacts())
+            var glyphs = ["£", "€", "¥", "¢", "°", "±", "×", "≈", "÷", "≠"]
+            for (var g = 0; g < glyphs.length; g++) {
+                T.equal(index[glyphs[g]] !== undefined, true, glyphs[g] + " resolves")
+                T.equal(Layout.levelChord(index[glyphs[g]].level).level5, true,
+                    glyphs[g] + " comes from the block")
+            }
+        })
+
+        T.test("symbols Fn swaps Home and End for explicit media caps only", function () {
+            var plain = Layout.symbolRows("ABC")
+            var fn = Layout.symbolFunctionRows("ABC")
+            T.deepEqual(fn[0], Layout.functionRow)
+            // Found by key, not by index: the symbol slots moved this row's
+            // shape once already, and an index swap replaced two glyph caps
+            // instead of Home and End.
+            var slotOf = function (row, key) {
+                for (var i = 0; i < row.length; i++) {
+                    if (row[i].key === key) return i
+                }
+                return -1
+            }
+            var home = slotOf(plain[3], "Home")
+            var end = slotOf(plain[3], "End")
+            T.equal(home !== -1 && end !== -1, true)
+            T.deepEqual(fn[3][home], { label: "⏮", key: "XF86AudioPrev", w: 1 })
+            T.deepEqual(fn[3][end], { label: "⏭", key: "XF86AudioNext", w: 1 })
+            T.equal(Layout.positionForKeysym(fn[3][home].key), "I173")
+            T.equal(Layout.positionForKeysym(fn[3][end].key), "I171")
+            // Nothing else on the row was touched — the glyph caps in
+            // particular are still glyph caps under Fn.
+            T.equal(slotOf(fn[3], "Home"), -1)
+            T.equal(fn[3][1].glyph, "£")
+            T.equal(Math.abs(rowSum(fn[3]) - 15.5) < 0.01, true)
+            T.equal(fn[0][2].key, "F1")
+            T.equal(fn[0][13].key, "F12")
         })
 
         Qt.exit(T.report("keyboard layout"))

@@ -69,6 +69,8 @@ Item {
         // to settle by name).
         property int seq: 0
         property string kind: ""
+        property bool didStart: false
+        onStarted: didStart = true
         command: ["hyprctl", "getoption", "cursor:hide_on_key_press", "-j"]
         stdout: StdioCollector {
             id: readCollector
@@ -84,6 +86,7 @@ Item {
             // its machine slot — the seq guard makes this a no-op whenever
             // the real answer already landed.
             policy.readAnswered(readCollector.rkind, readCollector.rseq, null)
+            didStart = false
             readPending = false
             flushQueued()
         }
@@ -93,12 +96,15 @@ Item {
         id: optionWrite
         property int seq: 0
         property string value: "true"
+        property bool didStart: false
+        onStarted: didStart = true
         command: ["hyprctl", "eval",
             "hl.config({ cursor = { hide_on_key_press = " + value + " } })"]
         onExited: function (exitCode) {
             // A non-zero exit is a failed write: the machine must hear it,
             // or a failed undo would be recorded as landed.
             writeSettled(seq, exitCode === 0)
+            didStart = false
             writePending = false
             flushQueued()
         }
@@ -110,37 +116,60 @@ Item {
     // Process reports no spawn error and no exit for a hung command, so a
     // one-shot watchdog settles an op that is still unanswered after 10 s.
     //
-    // The settle is MACHINE-side only: the pending flag stays true until the
-    // process itself exits, because a still-running Process ignores
-    // `running = true` — clearing the flag early would turn the next op into
-    // a silent no-op and strand its generation. Until exit, new ops queue
-    // (queuedActions) and run the moment the hung command gives up.
+    // A confirmed startup failure (no onStarted) releases the pending slot
+    // so the next op can run. A still-running write is reported unknown
+    // rather than failed, and stays in flight until onExited: the machine
+    // keeps writeSeq, because a still-running Process ignores `running =
+    // true` and a queued restore must not verify against it. A started
+    // hung read is stopped so onExited can free the slot — including when
+    // its generation is already retired, or the watchdog would stop
+    // rearming and every later read would queue forever.
     Timer {
         id: settleWatchdog
         interval: 10000
         onTriggered: {
-            // Settle, machine-side only, an op the machine is STILL waiting
-            // for, under the generation the physically running op captured.
-            // Branching on the machine slots (not on the flags) is what
-            // keeps a stuck read process from starving a write settle: the
-            // read branch is skipped once its generation was retired, and
-            // the next firing reaches the write. A QUEUED generation owns
-            // no process and cannot be settled — it starts (and arms its
-            // own window) when the slot frees, so it must not keep this
-            // timer spinning. (A queued generation starts — and arms — when the slot
-// frees; a command that never exits strands it, per the limitation above.)
-            var canSettleRead = readPending
+            // A QUEUED generation owns no process and cannot be settled —
+            // it starts (and arms its own window) when the slot frees.
+            // Confirmed startup failure (pending, never got onStarted):
+            // release the slot so the next op can run. A still-running
+            // write is NOT a confirmed failure: reporting it as failed
+            // would drop the restore obligation while the write may still
+            // land. Tell the machine the completion is unknown and keep
+            // the slot until onExited. A started hung read is stopped
+            // (`running = false`) so onExited can release the slot; its
+            // late answer is droppable once the generation is retired.
+            var readNeverStarted = readPending && !optionRead.didStart
+            var writeNeverStarted = writePending && !optionWrite.didStart
+            var readCurrent = readPending && optionRead.didStart
                 && (readCollector.rkind === "probe"
                     && readCollector.rseq === policyState.probeSeq
                     || readCollector.rkind === "restore"
                     && readCollector.rseq === policyState.restoreSeq)
-            var canSettleWrite = writePending
+            var readRetiredHung = readPending && optionRead.didStart && !readCurrent
+            var canSettleWrite = writePending && optionWrite.didStart
                 && optionWrite.seq === policyState.writeSeq
-            if (canSettleRead)
+            if (readNeverStarted) {
                 policy.readAnswered(readCollector.rkind, readCollector.rseq, null)
-            else if (canSettleWrite)
+                optionRead.running = false
+                optionRead.didStart = false
+                readPending = false
+                flushQueued()
+            } else if (writeNeverStarted) {
                 policy.writeSettled(optionWrite.seq, false)
-            if (canSettleRead || canSettleWrite)
+                optionWrite.running = false
+                optionWrite.didStart = false
+                writePending = false
+                flushQueued()
+            } else if (readCurrent) {
+                policy.readAnswered(readCollector.rkind, readCollector.rseq, null)
+                optionRead.running = false
+            } else if (readRetiredHung) {
+                optionRead.running = false
+            } else if (canSettleWrite)
+                policy.writeSettled(optionWrite.seq, null)
+            if (readNeverStarted || writeNeverStarted || readCurrent
+                    || readRetiredHung || canSettleWrite
+                    || readPending || writePending)
                 settleWatchdog.restart()
         }
     }
@@ -232,11 +261,18 @@ Item {
                     continue
                 }
                 readPending = true
+                optionRead.didStart = false
                 optionRead.seq = action.seq
                 optionRead.kind = action.kind
                 readCollector.rseq = action.seq
                 readCollector.rkind = action.kind
                 optionRead.running = true
+                if (!optionRead.running && !optionRead.didStart) {
+                    policy.readAnswered(action.kind, action.seq, null)
+                    readPending = false
+                    flushQueued()
+                    continue
+                }
                 settleWatchdog.restart()
             } else if (action.op === "write") {
                 if (destructing || action.seq === 0) {
@@ -252,9 +288,16 @@ Item {
                     continue
                 } else {
                     writePending = true
+                    optionWrite.didStart = false
                     optionWrite.seq = action.seq
                     optionWrite.value = action.value
                     optionWrite.running = true
+                    if (!optionWrite.running && !optionWrite.didStart) {
+                        policy.writeSettled(action.seq, false)
+                        writePending = false
+                        flushQueued()
+                        continue
+                    }
                     settleWatchdog.restart()
                 }
             }

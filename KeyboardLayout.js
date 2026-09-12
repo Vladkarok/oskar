@@ -10,13 +10,13 @@
 // owner-measured Windows stagger; what that buys is the grid comment in
 // Keyboard.qml, and this is not the place to say it twice.
 //
-// A third shape belongs to the curated page: { k: position, lvl: 1..4, exact:
-// true } draws exactly one level of one position and types that level, rather
-// than the base/shift pair a main-page cap carries. It has no built-in
-// character at all, because a fixed ASCII table is the lie this project
-// exists to avoid — an unresolved level draws blank and is reported like any
-// other fallback. `exact` is also the display rule: the cap draws its own
-// level under every modifier combination (see resolvedTypedChar).
+// A second shape belongs to `&123`: { glyph: "£", shiftGlyph: "€" } names
+// CHARACTERS and lets the keymap say which position and level carries each.
+// It has no built-in character at all, because a fixed ASCII table is the lie
+// this project exists to avoid — a character no keymap carries draws dim and
+// refuses its press. Such a cap is `exact`: it draws its own level under
+// every modifier combination (see resolvedTypedChar), because the chord is
+// the level's decision and not the latch's.
 var functionRow = [
     { label: "esc", key: "Escape", w: 1.0 },
     { t: "`", s: "~", k: "TLDE" },
@@ -38,6 +38,9 @@ function commandRow(pageLabel) {
         // Fn is a panel display control: it swaps the top row in place and
         // never emits a key position or participates in modifier latching.
         { label: "Fn", key: "fn" },
+        // Super's cap draws U+E900 from the packaged omarchy TTF in
+        // Keyboard.qml when that file is present. This label is the
+        // accessible name and the missing-font fallback (spec-v1.1 §1).
         { label: "Super", key: "logo" },
         { label: "Alt", key: "alt" },
         // The emoji cap (spec-v1.1 §1): a fixed label naming the app the
@@ -115,246 +118,192 @@ var rows = [
     commandRow("&123")
 ]
 
-// The symbols page (spec-v1 §4). What it holds is a rule rather than a list:
-// every non-letter position on the main page — which is exactly what the
-// alphanumeric block cannot reach in one press — as DUAL-LEVEL caps, the
-// 2026-09-05 owner round that replaced the per-level rows: the old page drew
-// the shifted level of the top row and the base level of the punctuation
-// cluster as two separate rows, which read as "the same as the main window
-// with shift modifier, redundant" and gave no view of what Shift does to a
-// cap ("no view what symbols are available if shift is pressed"). A dual cap
-// is a main-page cap with NO built-in characters behind either level: both
-// come from the compiled keymap (see the dual branch of capOverlay), it draws
-// shifted-on-top / base-on-bottom with the emphasis swapping on Shift exactly
-// like the main page, and the level typed follows Shift — plain pairing
-// semantics, non-exact, so a latched or locked Shift applies to every one of
-// these caps and is consumed by it. No reducer fact changed (the `lvl`/`exact`
-// shape below remains the curated page's alone); only what the page draws and
-// where a press's Shift comes from.
-//
-// The top row now also types digits unshifted, which kills the redundancy the
-// owner named: on `us` the row reads 1!2@3#… stacked, one press either way.
-// Which characters those positions carry is still the keymap's business, not
-// ours: a position with nothing at a level reports that level in the §11 miss
-// log rather than borrowing a US character, and a position with nothing at
-// either level draws dim and refuses presses (spec-v1.1 §3).
-//
-// The nav caps fill out the rows the symbol positions do not reach across.
-// They are fixed-label caps like the arrows, and they are the other thing a
-// pointer cannot otherwise get at.
-var punctuationPositions = ["AD11", "AD12", "BKSL", "AC10", "AC11", "AB08", "AB09", "AB10"]
-
-var symbolTopPositions = ["TLDE", "AE01", "AE02", "AE03", "AE04", "AE05", "AE06",
-    "AE07", "AE08", "AE09", "AE10", "AE11", "AE12"]
-
-function dualCaps(positions) {
-    var out = []
-    for (var i = 0; i < positions.length; i++) {
-        out.push({ k: positions[i], dual: true })
-    }
-    return out
+// One direct punctuation page. The ten familiar number-row symbols occupy
+// the top row and Shift reaches digits 1–0 on those same caps; every other
+// ASCII punctuation mark gets its own one-click cap. The fixed controls keep
+// their exact main-page coordinates and wider punctuation/nav caps consume
+// the former empty centre. Every character cap resolves by glyph through the
+// helper's reserved block, so neither ASCII nor digits depend on a `us` group.
+function glyphCap(ch, width, shifted) {
+    var cap = { glyph: ch }
+    if (width) cap.w = width
+    if (shifted) cap.shiftGlyph = shifted
+    return cap
 }
 
-// A function of the page key's label rather than a fixed table, because the
-// label names the page the next press goes to: the main page when the curated
-// page does not exist, the curated page when it does. The rows themselves are
-// the declaration they always were.
+function symbolDigit(symbol, digit) {
+    return glyphCap(symbol, 0, digit)
+}
+
+
 function symbolRows(pageLabel) {
     return [
-    [{ label: "esc", key: "Escape", w: 1.0 }]
-        .concat(dualCaps(symbolTopPositions))
-        .concat([{ label: "⌫", key: "BackSpace", w: 1.5 }]),
-    [{ label: "Tab", key: "Tab", w: 1.5 }]
-        .concat(dualCaps(punctuationPositions))
-        .concat([
-            // Del is a nav cap like its neighbours: pointer-unreachable, and
-            // keysymPositions already maps Delete. It has stood on this row
-            // since round 4, and the owner's round-6 measured Windows
-            // reference puts Del at the end of the main page's second row
-            // too, where it now exists as a plain unit cap. All four nav
-            // caps here are 1.5 units wide: 1.5 Tab + 8 punctuation + 4 ×
-            // 1.5 nav is the 15.5 every row is declared to.
-            { label: "Del", key: "Delete", w: 1.5 },
-            { label: "Home", key: "Home", w: 1.5 },
-            { label: "End", key: "End", w: 1.5 },
-            { label: "Ins", key: "Insert", w: 1.5 }
-        ]),
-    // Shift is on this row because it is the one modifier the main page keeps
-    // outside the command row, and a locked modifier has to stay *indicated*
-    // as locked across a page switch, not merely stay held (spec-v1 §5).
-    // Merging the level rows left this row with one cap per side, so the
-    // middle is a declared spacer: the row still sums to the shared 15.5-unit
-    // grid (2.5 Shift + 8 spacer + 3 nav + 2 Enter), nothing blank is drawn,
-    // and the nav cluster keeps its right-edge alignment — same units-left
-    // invariant as the main page's fourth row (2.5 + 8 + 1 + 1 = 12.5), so
-    // this ↑ also sits exactly above the command row's ↓.
-    [{ label: "Shift", key: "shift", w: 2.5 },
-     { spacer: true, w: 8.0 },
-     { label: "PgUp", key: "Prior" },
-     { label: "PgDn", key: "Next" },
-     { label: "↑", key: "Up" },
-     { label: "Enter", key: "Return", w: 2.0 }],
+        [
+            { label: "esc", key: "Escape", w: 1.0 },
+            symbolDigit("!", "1"), symbolDigit("@", "2"),
+            symbolDigit("#", "3"), symbolDigit("$", "4"),
+            symbolDigit("%", "5"), symbolDigit("^", "6"),
+            symbolDigit("&", "7"), symbolDigit("*", "8"),
+            symbolDigit("(", "9"), symbolDigit(")", "0"),
+            glyphCap("`"), glyphCap("-"), glyphCap("="),
+            { label: "⌫", key: "BackSpace", w: 1.5 }
+        ],
+        [
+            { label: "Tab", key: "Tab", w: 1.5 },
+            glyphCap("[", 1.5), glyphCap("]", 1.5),
+            glyphCap("{", 1.5), glyphCap("}", 1.5),
+            glyphCap("\\", 1.5), glyphCap("|", 1.5),
+            glyphCap(";"), glyphCap(":"), glyphCap("'"), glyphCap("\""),
+            { label: "Del", key: "Delete" }
+        ],
+        [
+            glyphCap(",", 1.5), glyphCap(".", 1.5),
+            glyphCap("/", 1.5), glyphCap("_", 1.5),
+            glyphCap("+", 1.5), glyphCap("<", 1.5),
+            glyphCap(">", 1.5), glyphCap("?", 1.5),
+            glyphCap("~"),
+            { label: "Enter", key: "Return", w: 2.5 }
+        ],
+        // Five symbol slots and the navigation caps at one unit each. The
+        // navigation labels were 1.5 to 2.0 units and are pointer targets for
+        // keys nobody hunts for, so they gave up the width — but none of them
+        // could be dropped: Home, End, Ins, PgUp and PgDn exist on this page
+        // and nowhere else in the panel.
+        //
+        // Five is what the row yields, and it is the arithmetic that decides
+        // it: 2.5 + 5 + 5 leaves ↑ starting at 12.5, which is where the
+        // command row's ↓ starts, and the two have to line up.
+        //
+        // Every slot is a dual glyph cap — the more used character on the
+        // base, the rarer one drawn dim above it under Shift, so a symbol
+        // behind Shift is still visibly there. Pairs are grouped by meaning:
+        // currency with currency, measurement with measurement, maths with
+        // maths.
+        //
+        // Six characters want the base and there are five places, so one is
+        // on a Shift half: `€`, because it is the only one of the six the
+        // active layout may already carry on its own AltGr level, and the
+        // glyph index resolves it there when it does.
+        [
+            { label: "Shift", key: "shift", w: 2.5 },
+            { glyph: "£", shiftGlyph: "€" },
+            { glyph: "¥", shiftGlyph: "¢" },
+            { glyph: "°", shiftGlyph: "±" },
+            { glyph: "×", shiftGlyph: "≈" },
+            { glyph: "÷", shiftGlyph: "≠" },
+            { label: "Home", key: "Home" },
+            { label: "End", key: "End" },
+            { label: "Ins", key: "Insert" },
+            { label: "PgUp", key: "Prior" },
+            { label: "PgDn", key: "Next" },
+            { label: "↑", key: "Up" },
+            { label: "Shift", key: "shift", w: 2.0 }
+        ],
         commandRow(pageLabel)
     ]
 }
 
-// The curated page (spec-v1.1 §3, decisions §17). An entry is declared as a
-// keysym token, never a character: it is enabled only when some position and
-// level of the complete active keymap carries that token, and typing it is
-// the symbols page's own level-cap press with whatever real modifiers that
-// level asks for — AltGr for levels 3 and 4, the way level 2 uses Shift.
-// Nothing here widens the input boundary: no clipboard, no Unicode-entry
-// chord, no IME, no keymap of its own.
+// Fn on the symbols page exposes explicit media controls without changing
+// the main Fn row. They occupy Home/End's two-unit slots, so every fixed edge
+// and all F1–F12 remain where they already are.
+function symbolFunctionRows(pageLabel) {
+    var result = symbolRows(pageLabel)
+    result[0] = functionRow
+    // Home and End give up their slots, and they are found by label rather
+    // than by index: the row's shape moved once already when the symbol slots
+    // arrived, and an index silently replaced two glyph caps instead.
+    var row = result[3].slice()
+    var media = { Home: { label: "⏮", key: "XF86AudioPrev" },
+                  End: { label: "⏭", key: "XF86AudioNext" } }
+    for (var i = 0; i < row.length; i++) {
+        var swap = media[row[i].key]
+        if (swap) row[i] = { label: swap.label, key: swap.key, w: row[i].w || 1 }
+    }
+    result[3] = row
+    return result
+}
+
+
+// Positions whose facts the panel asks for on top of the ones its pages
+// declare, because the reserved symbol block may be hosted there (§33) and a
+// glyph cap names a character rather than a position.
 //
-// "Stable" is the palette, not a promise of availability (the ticket's own
-// warning): the category sequence never reorders, and a symbol the active
-// keymap cannot produce is simply absent — on plain `us` that is most of
-// them, which is why the page exists only at eight or more available.
+// This is a REQUEST list, not a map: which of these the helper actually hosts
+// on depends on the layout, and nothing here needs to know — `buildGlyphIndex`
+// asks the facts where each character lives. Asking for one the helper left
+// alone costs an empty record.
 //
-// Every name shipped here is a real keysym, checked against xkbcommon's
-// keysym header (libxkbcommon 1.13): `logicalnot` is spelled `notsign`,
-// `lessequal`/`greaterequal` are `lessthanequal`/`greaterthanequal`, and the
-// single angle quotes are `leftsingleanglequotemark`/`rightsingleanglequotemark`.
-// Plain `bullet` is not a keysym (the 0x0aXX legacy name for U+2022 is
-// `enfilledcircbullet`), so the typography category runs without it.
-// `rublesign` does not exist in xkbcommon 1.13 and is omitted. Hryvnia has
-// no Latin keysym name in xkbcommon's list at all; the keymap spells it
-// `U20B4` — keysym 0x10020b4 in xkbcommon's own Unicode-notation form,
-// which is exactly how the keycap pipeline reports it — so that is the
-// token declared here.
-var curatedTokens = [
-    // currency
-    "EuroSign", "sterling", "yen", "cent", "currency", "U20B4",
-    // mathematics
-    "plusminus", "multiply", "division", "degree", "notsign", "approximate",
-    "notequal", "lessthanequal", "greaterthanequal", "onehalf", "onequarter",
-    "threequarters", "twosuperior", "threesuperior", "infinity",
-    // typographic punctuation
-    "guillemotleft", "guillemotright", "emdash", "endash", "ellipsis",
-    "leftsinglequotemark", "rightsinglequotemark", "leftdoublequotemark",
-    "rightdoublequotemark",
-    // brackets: the single angle quotes
-    "leftsingleanglequotemark", "rightsingleanglequotemark",
-    // legal marks
-    "copyright", "registered", "trademark", "section", "numerosign",
-    // common
-    "mu", "brokenbar"
+// The digit row and the other rows' non-letter positions, which every
+// application's keycode table carries, plus the two free positions ticket 20
+// measured through. The exotic free keycodes this list used to hold are gone:
+// Chromium's Ozone/Wayland DomCode table drops them and Wine substitutes for
+// them, so the symbols typed in a terminal and produced nothing in Electron.
+var reservedPositions = [
+    "AE01", "AE02", "AE03", "AE04", "AE05", "AE06",
+    "AE07", "AE08", "AE09", "AE10", "AE11", "AE12",
+    "AD11", "AD12", "AC10", "AC11", "AB08",
+    "AB09", "AB10", "TLDE", "BKSL", "LSGT",
+    "AB11", "AE13"
 ]
 
-// Show page 2 only at eight or more available symbols (spec-v1.1 §3).
-var curatedMinimum = 8
+/// Which real modifiers an exact-level cap holds around its key.
+///
+/// Levels five to eight are the reserved block's (decisions §33): `<LVL5>`
+/// opens them, and Shift and `<LVL3>` choose among the four exactly as they
+/// choose among the four below. One table, so a cap, a press and a test
+/// cannot disagree about what level 7 means.
+function levelChord(level) {
+    var value = Number(level) || 1
+    return {
+        shift: value === 2 || value === 4 || value === 6 || value === 8,
+        level3: value === 3 || value === 4 || value === 7 || value === 8,
+        level5: value > 4
+    }
+}
 
-/// token -> { position, level } over the keycap pipeline's own answer. The
-/// whole point of building it here, from symbolMap, is that availability is
-/// the keymap's claim about itself: a symbol is enabled because the keymap
-/// carries it somewhere, at whatever level that is — including the AltGr
-/// levels a main-page cap never shows. Empty levels and NoSymbol are nothing
-/// to index.
-function buildTokenIndex(symbolMap) {
+/// Where each drawable character lives in the active keymap: character ->
+/// { position, level }.
+///
+/// By CHARACTER, not by keysym token. The helper's caps facts carry resolved
+/// text (`t<text>`) for anything drawable and a keysym name only for symbols
+/// that produce no character, so "sterling" is not a thing to look up — "£"
+/// is. That turns out to be the better question anyway: a cap wants a
+/// character, and it does not care whether the active layout already carried
+/// it or the reserved block supplied it.
+///
+/// First occurrence wins, in LEVEL then position order, so a character the
+/// keymap offers twice always resolves to the same chord and the cap does not
+/// move when something unrelated changes.
+///
+/// Level-major, and that is the whole point of the ordering. The block lives
+/// on levels five to eight of ordinary positions now (decisions §33), so a
+/// position-major scan would find `@` on `AE01`'s catalogue level before
+/// `AE02`'s own Shift level and send `<LVL5>`+`<LVL3>` for a character plain
+/// Shift already types. Level-major asks the layout first and reaches for the
+/// block only for what the layout does not carry — which on `us` is the ten
+/// special glyphs and nothing else.
+///
+/// Eight levels, not four: the block moved above the layout's own levels
+/// rather than onto positions of its own.
+function buildGlyphIndex(capsFacts) {
     var index = {}
-    for (var position in symbolMap) {
-        var levels = symbolMap[position]
-        if (!Array.isArray(levels)) continue
-        for (var i = 0; i < levels.length; i++) {
-            var token = String(levels[i] || "").trim()
-            if (token === "" || token === "NoSymbol") continue
-            // First occurrence wins: a token the keymap carries twice types
-            // the same either way, and one fixed answer keeps the cap stable.
-            if (index.hasOwnProperty(token)) continue
-            index[token] = { position: position, level: i + 1 }
+    if (!capsFacts) return index
+    var positions = []
+    for (var position in capsFacts) positions.push(position)
+    positions.sort()
+    for (var i = 0; i < 8; i++) {
+        for (var p = 0; p < positions.length; p++) {
+            var levels = capsFacts[positions[p]]
+            if (!Array.isArray(levels) || i >= levels.length) continue
+            var entry = levels[i]
+            if (!entry || typeof entry.text !== "string" || entry.text === "") continue
+            if (index.hasOwnProperty(entry.text)) continue
+            index[entry.text] = { position: positions[p], level: i + 1 }
         }
     }
     return index
 }
 
-// The slot plan, sized for the full palette and never reshaped: the available
-// symbols fill the slots in curatedTokens' order, and a slot nothing resolves
-// to becomes an invisible spacer ({ w } alone) so the row still sums to the
-// grid without drawing a blank cap. A row is left out only when nothing at
-// all resolved to it AND it carries no fixed cap; the esc/⌫ and
-// Shift/Enter rows stay whatever the availability is (see curatedPageRows).
-//
-// Row shapes, on the shared 15.5-unit half-lattice: esc + 13 + ⌫ like every
-// page's first row; a free row of 15 closed by an invisible half-unit pad;
-// then Shift + 11 + Enter like the symbols page's third row — Shift
-// because a locked Shift must stay indicated across a page switch (spec-v1
-// §5), Enter because a symbols page without one strands the user.
-// 13 + 15 + 11 = 39 slots, one per curated token; the command row closes the
-// page as on every other page, labelled for the main page it returns to.
-var curatedShape = [
-    {
-        before: [{ label: "esc", key: "Escape", w: 1.0 }],
-        slots: 13,
-        after: [{ label: "⌫", key: "BackSpace", w: 1.5 }]
-    },
-    {
-        before: [],
-        slots: 15,
-        // Fifteen unit slots leave half a unit short of the grid; the pad
-        // keeps the row on it without widening any cap.
-        after: [{ spacer: true, w: 0.5 }]
-    },
-    {
-        before: [{ label: "Shift", key: "shift", w: 2.5 }],
-        slots: 11,
-        after: [{ label: "Enter", key: "Return", w: 2.0 }]
-    }
-]
-
-// The tallest this page can be: the full palette's three content rows plus
-// the command row. The panel pins its height to the tallest page — the
-// main page, four content rows plus the command row — so a page switch
-// never resizes the panel.
-var curatedMaxRows = curatedShape.length + 1
-
-/// The page's rows and its availability count, both derived from the keymap's
-/// own answer. Recomputed whenever symbolMap reloads — never per click.
-function curatedPageRows(symbolMap) {
-    var index = buildTokenIndex(symbolMap)
-    var caps = []
-    for (var i = 0; i < curatedTokens.length; i++) {
-        var hit = index[curatedTokens[i]]
-        // `exact` marks the press for the reducer: a curated cap types
-        // exactly its own level — the chord comes from the level, never
-        // from a latch — but a latched Shift or AltGr is still consumed
-        // (spent) by it, as §2 spends the latches of any non-modifier
-        // key (a symbols-page cap, whose level-1 caps pair with a latched
-        // Shift by design, also APPLIES the latch it spends).
-        if (hit) caps.push({ k: hit.position, lvl: hit.level, exact: true })
-    }
-    var rows = []
-    var next = 0
-    for (var r = 0; r < curatedShape.length; r++) {
-        var row = curatedShape[r].before.slice()
-        var filled = 0
-        for (var s = 0; s < curatedShape[r].slots; s++) {
-            if (next < caps.length) {
-                row.push(caps[next])
-                next += 1
-                filled += 1
-            } else {
-                row.push({ spacer: true, w: 1 })
-            }
-        }
-        row = row.concat(curatedShape[r].after)
-        // A row is omitted only when it has neither symbols nor controls.
-        // The rows carrying the page's fixed caps — esc/⌫ above,
-        // Shift/Enter below — are drawn whatever the keymap resolved: a page
-        // that dropped its Shift/Enter row left a locked Shift held with its
-        // control hidden and no direct unlock, and no Enter to return with
-        // (review finding R2; ua, gb and fr all landed there). Everything
-        // else in an unfilled control row is a declared spacer, so nothing
-        // blank is drawn and the row still sums to the grid.
-        var fixed = curatedShape[r].before.concat(curatedShape[r].after)
-        var hasControls = false
-        for (var f = 0; f < fixed.length; f++) {
-            if (!isSpacer(fixed[f])) { hasControls = true; break }
-        }
-        if (filled > 0 || hasControls) rows.push(row)
-    }
-    rows.push(commandRow("ABC"))
-    return { rows: rows, available: caps.length }
-}
 
 /// A spacer slot: declared, not sniffed — `spacer: true` plus the width
 /// that keeps its row on the grid, and nothing else. The panel leaves a
@@ -365,258 +314,6 @@ function isSpacer(keyData) {
 }
 
 
-var tokenCharMap = {
-    space: " ",
-    grave: "`",
-    asciitilde: "~",
-    exclam: "!",
-    at: "@",
-    numbersign: "#",
-    dollar: "$",
-    percent: "%",
-    asciicircum: "^",
-    ampersand: "&",
-    asterisk: "*",
-    parenleft: "(",
-    parenright: ")",
-    minus: "-",
-    underscore: "_",
-    equal: "=",
-    plus: "+",
-    bracketleft: "[",
-    braceleft: "{",
-    bracketright: "]",
-    braceright: "}",
-    backslash: "\\",
-    bar: "|",
-    semicolon: ";",
-    colon: ":",
-    apostrophe: "'",
-    quotedbl: "\"",
-    comma: ",",
-    less: "<",
-    period: ".",
-    greater: ">",
-    slash: "/",
-    question: "?",
-    guillemotleft: "\u00ab",
-    guillemotright: "\u00bb",
-    ccedilla: "\u00e7",
-    Ccedilla: "\u00c7",
-    ntilde: "\u00f1",
-    Ntilde: "\u00d1",
-    adiaeresis: "\u00e4",
-    Adiaeresis: "\u00c4",
-    odiaeresis: "\u00f6",
-    Odiaeresis: "\u00d6",
-    udiaeresis: "\u00fc",
-    Udiaeresis: "\u00dc",
-    eacute: "\u00e9",
-    Eacute: "\u00c9",
-    aacute: "\u00e1",
-    Aacute: "\u00c1",
-    iacute: "\u00ed",
-    Iacute: "\u00cd",
-    oacute: "\u00f3",
-    Oacute: "\u00d3",
-    uacute: "\u00fa",
-    Uacute: "\u00da",
-    ssharp: "\u00df",
-    section: "\u00a7",
-    degree: "\u00b0",
-    idotless: "\u0131",
-    numerosign: "\u2116",
-    endash: "\u2013",
-    emdash: "\u2014",
-    doublelowquotemark: "\u201e",
-    leftdoublequotemark: "\u201c",
-    rightdoublequotemark: "\u201d",
-    brokenbar: "\u00a6",
-    currency: "\u00a4",
-    EuroSign: "\u20ac",
-    // The curated page's tokens (spec-v1.1 §3). A page-2 cap is only ever
-    // created because the keymap itself carries the token — see
-    // buildTokenIndex — so this table is the drawn half of the same claim:
-    // what the keymap resolved is what the cap must show.
-    sterling: "\u00a3",
-    yen: "\u00a5",
-    cent: "\u00a2",
-    plusminus: "\u00b1",
-    multiply: "\u00d7",
-    division: "\u00f7",
-    notsign: "\u00ac",
-    approximate: "\u2248",
-    notequal: "\u2260",
-    lessthanequal: "\u2264",
-    greaterthanequal: "\u2265",
-    onehalf: "\u00bd",
-    onequarter: "\u00bc",
-    threequarters: "\u00be",
-    twosuperior: "\u00b2",
-    threesuperior: "\u00b3",
-    infinity: "\u221e",
-    ellipsis: "\u2026",
-    leftsinglequotemark: "\u2018",
-    rightsinglequotemark: "\u2019",
-    leftsingleanglequotemark: "\u2039",
-    rightsingleanglequotemark: "\u203a",
-    copyright: "\u00a9",
-    registered: "\u00ae",
-    trademark: "\u2122",
-    mu: "\u00b5"
-}
-
-// X11 Cyrillic keysym names -> characters. Cyrillic layouts (ua, ru, bg,
-// by, rs, mk) spell their symbols as named keysyms rather than U#### escapes,
-// so without this every key falls back to its Latin label.
-var cyrillicCharMap = {
-    Cyrillic_IO: "\u0401",
-    Serbian_DJE: "\u0402",
-    Macedonia_GJE: "\u0403",
-    Ukrainian_IE: "\u0404",
-    Macedonia_DSE: "\u0405",
-    Ukrainian_I: "\u0406",
-    Ukrainian_YI: "\u0407",
-    Cyrillic_JE: "\u0408",
-    Cyrillic_LJE: "\u0409",
-    Cyrillic_NJE: "\u040a",
-    Serbian_TSHE: "\u040b",
-    Macedonia_KJE: "\u040c",
-    Byelorussian_SHORTU: "\u040e",
-    Cyrillic_DZHE: "\u040f",
-    Cyrillic_A: "\u0410",
-    Cyrillic_BE: "\u0411",
-    Cyrillic_VE: "\u0412",
-    Cyrillic_GHE: "\u0413",
-    Cyrillic_DE: "\u0414",
-    Cyrillic_IE: "\u0415",
-    Cyrillic_ZHE: "\u0416",
-    Cyrillic_ZE: "\u0417",
-    Cyrillic_I: "\u0418",
-    Cyrillic_SHORTI: "\u0419",
-    Cyrillic_KA: "\u041a",
-    Cyrillic_EL: "\u041b",
-    Cyrillic_EM: "\u041c",
-    Cyrillic_EN: "\u041d",
-    Cyrillic_O: "\u041e",
-    Cyrillic_PE: "\u041f",
-    Cyrillic_ER: "\u0420",
-    Cyrillic_ES: "\u0421",
-    Cyrillic_TE: "\u0422",
-    Cyrillic_U: "\u0423",
-    Cyrillic_EF: "\u0424",
-    Cyrillic_HA: "\u0425",
-    Cyrillic_TSE: "\u0426",
-    Cyrillic_CHE: "\u0427",
-    Cyrillic_SHA: "\u0428",
-    Cyrillic_SHCHA: "\u0429",
-    Cyrillic_HARDSIGN: "\u042a",
-    Cyrillic_YERU: "\u042b",
-    Cyrillic_SOFTSIGN: "\u042c",
-    Cyrillic_E: "\u042d",
-    Cyrillic_YU: "\u042e",
-    Cyrillic_YA: "\u042f",
-    Cyrillic_a: "\u0430",
-    Cyrillic_be: "\u0431",
-    Cyrillic_ve: "\u0432",
-    Cyrillic_ghe: "\u0433",
-    Cyrillic_de: "\u0434",
-    Cyrillic_ie: "\u0435",
-    Cyrillic_zhe: "\u0436",
-    Cyrillic_ze: "\u0437",
-    Cyrillic_i: "\u0438",
-    Cyrillic_shorti: "\u0439",
-    Cyrillic_ka: "\u043a",
-    Cyrillic_el: "\u043b",
-    Cyrillic_em: "\u043c",
-    Cyrillic_en: "\u043d",
-    Cyrillic_o: "\u043e",
-    Cyrillic_pe: "\u043f",
-    Cyrillic_er: "\u0440",
-    Cyrillic_es: "\u0441",
-    Cyrillic_te: "\u0442",
-    Cyrillic_u: "\u0443",
-    Cyrillic_ef: "\u0444",
-    Cyrillic_ha: "\u0445",
-    Cyrillic_tse: "\u0446",
-    Cyrillic_che: "\u0447",
-    Cyrillic_sha: "\u0448",
-    Cyrillic_shcha: "\u0449",
-    Cyrillic_hardsign: "\u044a",
-    Cyrillic_yeru: "\u044b",
-    Cyrillic_softsign: "\u044c",
-    Cyrillic_e: "\u044d",
-    Cyrillic_yu: "\u044e",
-    Cyrillic_ya: "\u044f",
-    Cyrillic_io: "\u0451",
-    Serbian_dje: "\u0452",
-    Macedonia_gje: "\u0453",
-    Ukrainian_ie: "\u0454",
-    Macedonia_dse: "\u0455",
-    Ukrainian_i: "\u0456",
-    Ukrainian_yi: "\u0457",
-    Cyrillic_je: "\u0458",
-    Cyrillic_lje: "\u0459",
-    Cyrillic_nje: "\u045a",
-    Serbian_tshe: "\u045b",
-    Macedonia_kje: "\u045c",
-    Byelorussian_shortu: "\u045e",
-    Cyrillic_dzhe: "\u045f",
-    Ukrainian_GHE_WITH_UPTURN: "\u0490",
-    Ukrainian_ghe_with_upturn: "\u0491",
-    Cyrillic_GHE_bar: "\u0492",
-    Cyrillic_ghe_bar: "\u0493",
-    Cyrillic_ZHE_descender: "\u0496",
-    Cyrillic_zhe_descender: "\u0497",
-    Cyrillic_KA_descender: "\u049a",
-    Cyrillic_ka_descender: "\u049b",
-    Cyrillic_KA_vertstroke: "\u049c",
-    Cyrillic_ka_vertstroke: "\u049d",
-    Cyrillic_EN_descender: "\u04a2",
-    Cyrillic_en_descender: "\u04a3",
-    Cyrillic_U_straight: "\u04ae",
-    Cyrillic_u_straight: "\u04af",
-    Cyrillic_U_straight_bar: "\u04b0",
-    Cyrillic_u_straight_bar: "\u04b1",
-    Cyrillic_HA_descender: "\u04b2",
-    Cyrillic_ha_descender: "\u04b3",
-    Cyrillic_CHE_descender: "\u04b6",
-    Cyrillic_che_descender: "\u04b7",
-    Cyrillic_CHE_vertstroke: "\u04b8",
-    Cyrillic_che_vertstroke: "\u04b9",
-    Cyrillic_SHHA: "\u04ba",
-    Cyrillic_shha: "\u04bb",
-    Cyrillic_SCHWA: "\u04d8",
-    Cyrillic_schwa: "\u04d9",
-    Cyrillic_I_macron: "\u04e2",
-    Cyrillic_i_macron: "\u04e3",
-    Cyrillic_O_bar: "\u04e8",
-    Cyrillic_o_bar: "\u04e9",
-    Cyrillic_U_macron: "\u04ee",
-    Cyrillic_u_macron: "\u04ef"
-}
-
-function tokenToText(token, fallback) {
-    var normalized = String(token || "").trim()
-    if (normalized === "") return fallback
-    if (tokenCharMap.hasOwnProperty(normalized)) return tokenCharMap[normalized]
-    if (cyrillicCharMap.hasOwnProperty(normalized)) return cyrillicCharMap[normalized]
-    if (/^U[0-9A-Fa-f]{4,6}$/.test(normalized)) {
-        return String.fromCodePoint(parseInt(normalized.slice(1), 16))
-    }
-    // 0x0100XXXX is the X11 "Unicode keysym" form (0x01000000 + codepoint),
-    // used by ru and others. Passing it to fromCodePoint raw would throw.
-    if (/^0x0100[0-9A-Fa-f]{4}$/.test(normalized)) {
-        return String.fromCodePoint(parseInt(normalized.slice(6), 16))
-    }
-    if (/^0x[0-9A-Fa-f]{2,6}$/.test(normalized)) {
-        return String.fromCodePoint(parseInt(normalized, 16))
-    }
-    if (normalized.length === 1) return normalized
-    if (/^[A-Za-z0-9]$/.test(normalized)) return normalized
-    return fallback
-}
-
 // A cap that draws a fixed label — Esc, Enter, the arrows, and Space, whose
 // label is deliberately empty — shows the same thing on every layout and has
 // no keymap symbol to miss. Only the caps that are supposed to come out of the
@@ -626,10 +323,11 @@ function drawsFixedLabel(keyData) {
     return keyData.hasOwnProperty("label")
 }
 
-// A missing token is a marker, not a character: `tokenToText` is asked for it
-// so that a keymap that really does resolve to an empty string cannot be
-// mistaken for a failure.
-var UNRESOLVED = " unresolved"
+// "No answer", distinct from a level that really does resolve to the empty
+// string. Spelled with an escape rather than a literal NUL: the literal made
+// every `grep` treat this file as binary and skip it silently, which cost two
+// separate investigations an afternoon each.
+var UNRESOLVED = "\u0000unresolved"
 
 // Whether a two-level cap is a letter pair — the shifted level is simply the
 // capital of the base — which holds in any script and needs no per-alphabet
@@ -650,7 +348,7 @@ function isLetterKey(keyData) {
 // TYPES, and the two can only move together, tested at the pure seam: caps
 // must match actual typed output, and this function is where they meet.
 //
-// An exact cap — the curated page's — answers only to the level it carries:
+// An exact cap — `&123`'s glyph caps — answers only to the level it carries:
 // its press types that level whatever the modifiers are doing (a latched
 // Shift or AltGr is spent by it, never applied to it; a locked Shift is
 // lifted around the press and restored; Caps affects letters only), so the
@@ -670,64 +368,42 @@ function resolvedTypedChar(keyData, capsOn, shiftOn) {
 /// to lay over it — never as an edit to the cap itself. Positions the keymap
 /// does not cover are appended to `misses` and left for the caller to report;
 /// a miss is a reporting matter, not an error (§11).
+///
+/// Entries are the helper's keycap facts (decisions §23, ticket 04): already
+/// resolved level answers, `{ text }` for drawable character text and
+/// `{ none }` for a level with nothing to draw. There is no second reading —
+/// the §11 pipeline compiled keysym tokens with its own `xkbcli` and this
+/// function had to know both; ticket 05 retired it, and with it the last
+/// place where two authorities could disagree about what a position carries.
 function capOverlay(keyData, symbols, misses) {
     var levels = Array.isArray(symbols) ? symbols : []
     var textAt = function (index) {
-        return tokenToText(index < levels.length ? levels[index] : "", UNRESOLVED)
+        if (index >= levels.length) return UNRESOLVED
+        var answer = levels[index]
+        return answer && typeof answer.text === "string" ? answer.text : UNRESOLVED
     }
-    // The miss text for one level: what the keymap actually has there, or
-    // the honest name for the hole — a level past the entry's length is
-    // "no symbol at this level", a position with no entry at all is the
-    // plainer "no keymap entry". Shared by the lvl and dual branches so the
-    // §11 report cannot drift between them.
+    // The miss text for one level: what the keymap actually has there, or the
+    // honest name for the hole — a level past the entry's length is "no symbol
+    // at this level", a position with no entry at all is the plainer "no
+    // keymap entry".
     var missToken = function (index) {
         if (levels.length === 0) return "<no keymap entry>"
-        var token = index < levels.length ? String(levels[index]).trim() : ""
-        return token || "<no symbol at this level>"
-    }
-
-    // A symbols-page single-level cap (the curated page's shape) draws
-    // exactly one level and carries no built-in character, so there is
-    // nothing to fall back *to*: an unresolved level leaves the cap blank
-    // and is reported, which is the §11 rule with the silent substitution
-    // removed entirely. Blank is also not allowed to look typeable
-    // (spec-v1.1 §3: a visible cap must never be silently blank), so the
-    // overlay marks the cap unavailable — a position the page declares and
-    // the keymap should cover, resolving to nothing, is drawn dim and
-    // refuses presses. Fixed-label caps and spacers are never marked: their
-    // labels are the panel's own, not the keymap's.
-    if (keyData.lvl) {
-        var index = keyData.lvl - 1
-        var drawn = textAt(index)
-        var overlay = { t: drawn === UNRESOLVED ? "" : drawn }
-        if (drawn === UNRESOLVED) {
-            misses.push(keyData.k + (index > 0 ? "^" : "") + "=" + missToken(index))
-            overlay.unavailable = true
-        }
-        // No paired shift glyph rides on a curated cap, whatever the
-        // neighbouring level resolves to. A curated press is exact — the
-        // chord is the level's decision: a latched Shift or AltGr is spent
-        // by it, never applied to it, and a locked Shift is lifted around
-        // the press and restored after it (ModifierReducer's exact press)
-        // — so the cap must draw that same level under every modifier
-        // combination. Attaching the level-2 symbol as the cap's shifted
-        // variant used to redraw French ² as ~ under Shift while the exact
-        // press went on typing ² (review finding R3). The stacked pair belongs
-        // to the dual caps below; the shift level has a cap of its own here.
-        return overlay
+        var answer = levels[index]
+        if (answer && answer.none !== undefined)
+            return answer.none === "" ? "<no symbol at this level>" : answer.none
+        return "<no symbol at this level>"
     }
 
     // The symbols page's dual cap (2026-09-05, the owner's symbols-page v2
     // round): both levels from the keymap, no built-in character behind
     // either. Whichever level resolves is carried as t (base) / s (shifted)
     // and the panel draws the stacked pair with Shift-swapped emphasis, so
-    // the page now SHOWS what Shift does to every cap. A level that does not
-    // resolve is a miss exactly as a single-level cap's would be; a cap with
-    // neither level resolving is marked unavailable — dim, press-refusing,
-    // never a silent blank (spec-v1.1 §3). What a cap does with a latched
-    // Shift is the main page's own pairing semantics (non-exact press in
-    // Keyboard.qml), decided by ModifierReducer.js; nothing here changes a
-    // reducer fact.
+    // the page SHOWS what Shift does to every cap. A level that does not
+    // resolve is a miss; a cap with neither resolving is marked unavailable —
+    // dim, press-refusing, never a silent blank (spec-v1.1 §3). What a cap
+    // does with a latched Shift is the main page's own pairing semantics
+    // (non-exact press in Keyboard.qml), decided by ModifierReducer.js;
+    // nothing here changes a reducer fact.
     if (keyData.dual) {
         var dual = {}
         var dualBase = textAt(0)
@@ -746,19 +422,20 @@ function capOverlay(keyData, symbols, misses) {
         return {}
     }
 
-    // A main-page cap keeps whichever of its two built-in characters the keymap
-    // failed to supply, so the overlay carries only the levels that resolved.
-    var pair = {}
-    var base = tokenToText(levels[0], UNRESOLVED)
-    if (base !== UNRESOLVED) pair.t = base
-    else if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "=" + levels[0])
+    // A main-page cap keeps whichever of its two built-in characters the
+    // keymap failed to supply, so the overlay carries only the levels that
+    // resolved.
+    var overlay = {}
+    var base = textAt(0)
+    if (base !== UNRESOLVED) overlay.t = base
+    else if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "=" + missToken(0))
 
-    if (levels.length > 1 && String(levels[1] || "").trim() !== "") {
-        var shifted = tokenToText(levels[1], UNRESOLVED)
-        if (shifted !== UNRESOLVED) pair.s = shifted
-        else if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "^=" + levels[1])
+    if (levels.length > 1) {
+        var shifted = textAt(1)
+        if (shifted !== UNRESOLVED) overlay.s = shifted
+        else if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "^=" + missToken(1))
     }
-    return pair
+    return overlay
 }
 
 /// A silent substitution is the failure mode decisions.md §11 records: the awk
@@ -770,8 +447,22 @@ function reportMisses(misses, layoutCode) {
     if (misses.length === 0) return
     var shown = misses.slice(0, 12).join(" ")
     if (misses.length > 12) shown += " … and " + (misses.length - 12) + " more"
-    console.error("[osk] keycap fallback to built-in table for " + layoutCode
+    reportOnce("[osk] keycap fallback to built-in table for " + layoutCode
         + ": " + misses.length + " cap(s): " + shown)
+}
+
+/// The same complaint, said once.
+///
+/// `applyLanguage` runs on every facts change AND on every page toggle, and
+/// it runs before the caller's identity check can decide the rows did not
+/// change. Toggling to `&123` and back on a keymap that is missing something
+/// used to print the same line each time. What is worth knowing is that the
+/// keymap is short, not how many times the user pressed a key.
+var lastReport = ""
+function reportOnce(line) {
+    if (line === lastReport) return
+    lastReport = line
+    console.error(line)
 }
 
 /// The page's declared rows, resolved against a compiled keymap.
@@ -782,16 +473,115 @@ function reportMisses(misses, layoutCode) {
 /// language's characters on any cap the new keymap does not cover. Deep-copying
 /// the whole table first would also do that, but building each cap as source
 /// plus overlay means there is no copy to keep in step with the declaration.
-function applyLanguage(rowsSource, layoutCode, symbolMap) {
+function applyLanguage(rowsSource, layoutCode, capsFacts) {
+    // One fact source: the helper's acknowledged keycap facts, resolved by
+    // libxkbcommon against the very keymap that types (decisions §23). The
+    // second source — the §11 xkbcli pipeline's `symbolMap`, which fed `token`
+    // and `lvl` caps — went with ticket 18: every cap is a glyph cap or a
+    // positioned cap now, and keeping a compile that nothing drew from cost a
+    // process per layout change and could raise "keymap unavailable" over caps
+    // that were perfectly good.
+    //
+    // With `capsFacts` absent — facts still in flight, or an unresolved
+    // mismatch — the built-in table draws as the gated last-resort fallback
+    // (spec-v1 §3.5) while the panel's status owns saying why; that window
+    // is deliberately NOT reported per cap, or every group switch would log
+    // a forty-line miss report for facts that are milliseconds away. With
+    // facts in hand, a position they do not answer is a loud per-cap miss,
+    // exactly as before.
     var misses = []
+    var glyphIndex = null
+    // Glyph caps asked for and glyph caps answered. A page where NONE of them
+    // resolved is not fifty independent misses — it is the reserved block
+    // missing (decisions §33), and saying so once is the only useful thing to
+    // print. The panel used to infer this from a hand-mirrored copy of the
+    // helper's host list, which could not tell a hosted position from one
+    // that natively has eight levels; this asks the question the user cares
+    // about instead, which is whether any symbol cap can type.
+    var glyphCaps = 0
+    var glyphHits = 0
     var resolved = rowsSource.map(function (row) {
         return row.map(function (keyData) {
-            var overlay = keyData.k
-                ? capOverlay(keyData, symbolMap ? symbolMap[keyData.k] : null, misses)
-                : {}
+            var overlay
+            if (keyData.glyph) {
+                // A cap that asks for a character and lets the keymap say
+                // where it lives. Unresolved means the active keymap cannot
+                // produce it at all: dim and press-refusing, never a blank
+                // cap that looks typeable (spec-v1.1 §3).
+                //
+                // `shiftGlyph` makes it a dual cap, drawn by the panel the
+                // way every other dual cap is — the Shift character dim on
+                // top, the base bright below — so a symbol hidden behind
+                // Shift is still visibly THERE. The two halves resolve
+                // independently: one can sit at level 1 of a position the
+                // active layout owns while the other sits at level 3 of the
+                // reserved block, and the press follows whichever is typed.
+                if (!glyphIndex) glyphIndex = buildGlyphIndex(capsFacts)
+                var glyphHit = glyphIndex[keyData.glyph]
+                glyphCaps += 1
+                if (glyphHit) {
+                    glyphHits += 1
+                    // `level3` says this chord needs the <LVL3> POSITION
+                    // rather than RALT, which is not something the level
+                    // alone decides — a pair cap at level 3 wants RALT. The
+                    // rest of the chord is the level's, and `pressChar` reads
+                    // it from `levelChord`; a second copy here would be one
+                    // more thing to keep in step.
+                    overlay = { t: keyData.glyph, k: glyphHit.position,
+                                baseLvl: glyphHit.level, exact: true,
+                                level3: levelChord(glyphHit.level).level3 }
+                    if (keyData.shiftGlyph) {
+                        var shiftHit = glyphIndex[keyData.shiftGlyph]
+                        if (shiftHit) {
+                            overlay.dual = true
+                            overlay.s = keyData.shiftGlyph
+                            overlay.sk = shiftHit.position
+                            overlay.slvl = shiftHit.level
+                            overlay.shiftLevel3 = levelChord(shiftHit.level).level3
+                        } else {
+                            // A Shift half the keymap cannot produce is simply
+                            // absent: drawing it grey would promise a keystroke
+                            // that does nothing. The base half still types.
+                            misses.push(keyData.shiftGlyph + " (shift of "
+                                + keyData.glyph + ") is not in this keymap")
+                        }
+                    }
+                } else {
+                    // The base did not resolve, so the whole cap is refused —
+                    // including a Shift half that did. `disabled` gates the
+                    // press for the cap as a whole, so attaching the upper
+                    // glyph here would draw a character the cap cannot type,
+                    // which is the exact promise spec-v1.1 §3 forbids. Both
+                    // halves are reported: a page quietly losing caps on a
+                    // keymap with fewer free positions is how this goes
+                    // unnoticed.
+                    overlay = { t: keyData.glyph, unavailable: true }
+                    misses.push(keyData.glyph + " is not in this keymap")
+                    if (keyData.shiftGlyph)
+                        misses.push(keyData.shiftGlyph + " (shift of "
+                            + keyData.glyph + ") is unreachable: its base is not")
+                }
+            } else if (keyData.fixedGlyph || keyData.latin)
+                overlay = {}
+            else if (!keyData.k)
+                overlay = {}
+            else if (capsFacts)
+                overlay = capOverlay(keyData, capsFacts[keyData.k], misses)
+            else
+                overlay = {}
             return Object.assign({}, keyData, overlay)
         })
     })
+    // Both, not one or the other: the cause line explains a page with no
+    // symbols, and the miss list is still the only place a positioned cap's
+    // own miss is named.
+    if (capsFacts && glyphCaps > 0 && glyphHits === 0)
+        reportOnce("[osk] not one character this page draws is in the keymap"
+            + " the helper installed: the reserved symbol block did not land"
+            + " (decisions §33), so every symbol cap draws unavailable."
+            + " " + glyphCaps + " cap(s) affected. A layout option that puts"
+            + " Hyper or ISO_Level5_Shift on a real key keeps the block off"
+            + " ordinary positions, which is the usual cause.")
     reportMisses(misses, layoutCode)
     return resolved
 }
@@ -815,7 +605,9 @@ var keysymPositions = {
     End: "END",
     Prior: "PGUP",
     Next: "PGDN",
-    Insert: "INS"
+    Insert: "INS",
+    XF86AudioPrev: "I173",
+    XF86AudioNext: "I171"
 }
 
 // Modifier positions are not here: they belong to ModifierReducer.js, which

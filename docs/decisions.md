@@ -330,6 +330,22 @@ not replace the last valid runtime state or get silently overwritten. The
 project is still in development, so no migration compatibility is promised:
 the old OSK config/state may be discarded rather than burdening the new model.
 
+Validation owns the override key space, not just the values (2026-09-06,
+review finding R5). The snake_case names the panel writes are canonical;
+the camelCase runtime spelling of an approved field is recognised and held
+to the same validation, so `{"key_radius":8,"keyRadius":-20}` is a malformed
+edit in either JSON order instead of a smuggled -20 that later serializes
+into a canonical `key_radius`. Duplicate semantic names resolve to the
+canonical spelling deterministically. Unknown keys ride verbatim — never
+rewritten into canonical names on save — so nothing unvalidated can gain an
+approved field's authority through serialization, and a key the runtime
+cannot hold as the override map's own property (`__proto__`, and the
+Object.prototype names V4 silently refuses to assign) is dropped by probe
+rather than by a maintained name list. The store
+(Config.js) stays the single home of this policy; the popover keeps issuing
+changes through the panel's set/clear/commit operations and holds no
+persistence policy of its own.
+
 ## 19. The helper is supervised; readiness is visible but not polled
 
 An installed but disabled user unit is indistinguishable from a broken
@@ -413,6 +429,658 @@ here. All four nav caps now sit at 1.5 units (1.5 Tab + 8 punctuation +
 4 × 1.5 nav = 15.5) and the main page's Del takes the default unit width.
 (`4742b4b`, `77b485d`, `8d6c836`)
 
+## 23. Keycap interpretation should share the helper's keymap authority
+
+Status: adopted 2026-09-06 by the owner's execution request settling this
+board (ticket 04); staged implementation began with the main/ordinary-symbols
+slice. The findings that motivated it:
+
+The review at `e55a7ce` found that curated availability assumes RALT selects
+level 3/4 and that exact-level input can disagree with the displayed Shift
+variant. The separate text-compiled keycap path discards facts the helper's
+libxkbcommon keymap already owns. Propose supplying keycaps and reachable
+position/chord facts from that installed keymap, correlated to an acknowledged
+generation. This changes §11's pipeline while retaining §3's independent,
+complete-keymap compilation. The staged plan and acceptance evidence are in
+[next-iteration-plan.md](next-iteration-plan.md).
+
+The accepted interface (recorded before implementation, per ticket 04; the
+socket schema is implementer design, independently reviewed):
+
+- **Protocol version 4, advanced together.** The `configure` reply becomes
+  `configured<TAB><generation>` and a new `caps <group> [positions…]` command
+  answers `caps<TAB><generation><TAB><group><TAB><records>` — one line, records
+  separated by `0x1E`, fields inside a record by `0x1F`. Both sides moved to
+  version 4 in the same change, so an old panel can never meet the new reply
+  shapes: the hello gate refuses the pairing before any configure is sent.
+- **Generation correlation.** The helper numbers each keymap install; a
+  same-keymap reconfigure keeps the number, a changed keymap bumps it. Every
+  keycap reply carries the generation it was computed from, and the panel
+  accepts facts only when the generation and group match what the helper last
+  acknowledged — superseded replies are discarded, and typing stays disabled
+  while the facts for the acknowledged world are absent (an unresolved
+  mismatch is a visible unavailable state, never a silent fallback).
+- **Honest per-level fields.** Each level is `t<text>` (resolved character
+  text, possibly multi-codepoint), `x<keysym>` (a symbol that produces no
+  character — a dead key, a media key), or `n` (no symbol at this level). A
+  requested position with no keymap entry is a record with no level fields.
+  Resolution happens through libxkbcommon against the same compiled keymap
+  that was uploaded; group switching adds no upload and no recompile.
+- **Scope staging.** Ticket 04 draws only the main and ordinary-symbols pages
+  from these facts; the curated page keeps the §11 xkbcli pipeline until
+  ticket 05 replaces it. The record grammar is positional and tag-dispatched
+  so ticket 05 can add chord-reachability fields (notably whether a group's
+  compiled RALT is a real ISO_Level3_Shift) without breaking this one.
+
+## 24. A picker opened from the panel needs a coordinated lifetime
+
+Status: owner-requested behaviour, 2026-09-06; Emote session implemented
+2026-09-07 (ticket 09). Shell-overlay cooperation implemented 2026-09-07
+(ticket 10): opt-in OSK payload, PickerFit card placement, Exclusive
+prime then OnDemand, VM-only shared-shell patch.
+
+The owner requires the emoji cap to open and dismiss its picker explicitly,
+with usable OSK search input and no overlap. Launch-only cannot supply that:
+Emote's second activation destroys and remaps the picker (same daemon pid,
+new address; live guest 2026-09-07, class `emote`, 565×549). Dismissal is
+`closewindow` of that address; the daemon is left running. A process-name
+kill is a dead end.
+
+`stay_focused` and keyboard target are different paths. On Hyprland 0.56.2
+the host's class-wide `stay_focused` rule is a follow_mouse lock that can
+win pointer hit-testing before overlays; `hl.dsp.focus` still moves the
+keyboard target even with the property set. The guest had no Emote rule.
+Live guest 2026-09-07: `stay_focused=true` on the identified address
+blocked OSK clicks (cursor sat on `q` and ☺; search stayed empty; ☺
+did not dismiss). The panel therefore unsets `stay_focused` on that
+address only while the session is open — not a class-wide keyword. GTK
+destroy-on-unfocus did not fire from a compositor focus dispatch on the
+live Wayland guest; nested evidence still saw closewindow after a real
+focus flip, so click-away is not promised. Overlay clicks with
+`WlrKeyboardFocus.None` left Emote as the keyboard target.
+
+A cancelled opening keeps a closer (cancelMap) until that window is gone
+or the 6s mapping timeout closewindows the late launch address from
+bindLaunch; dropping the session on panelClosed used to let a late map
+become the next ☺ recreate. Closing retries dismiss and re-arms that
+timeout once a pin exists, and a failed closewindow process settles
+rather than leaving ☺ dead. Mashing ☺ while a cancelled opening still
+has no pin must not postpone that closer. playPickerActions must not
+restart pickerHandoff while a close is in flight — a later stay/focus
+or !client observation used to kill the close script — and must not
+retarget a pending close onto a later map (stay used to overwrite
+pending.addr while keeping closeWin). timeout/failed settle clears
+pickerHandoffPending so a leftover close cannot closewindow the next
+appearance.
+
+Both pickers paste themselves (Emote: copy, destroy, 150 ms ydotool
+Ctrl+V; ydotool was absent on the guest. Shell overlay: dismiss, then
+`omarchy-menu-emoji-insert` Shift+Insert after 150 ms). The panel
+restores the recorded client before that delay and does not paste
+again. Fitting stays ticket 08's `PickerFit.planPlacement`; the overlay
+applies it to its inner card and does not move a client window.
+Unknown apps keep launch+fit. Managed toggle is Emote (identified
+window + `closewindow`) or the shell overlay (open/hide/state IPC).
+
+The default `omarchy-menu-emoji` launcher remains `omarchy-shell shell
+toggle omarchy.emojis`. OSK invocation is opt-in: summon with
+`{"osk":true, output, workArea, band}` or hide, never a second paste
+and never a process-name kill. Standalone Exclusive fullscreen is
+unchanged. OSK mode cannot keep Exclusive: KeyboardPanel already
+records that Exclusive routes every pointer event to that surface, so
+the OSK input region would not be reachable; the overlay primes then
+settles OnDemand, and the panel band is subtracted from its mask. The
+shared-shell patch lives in `patches/omarchy-shell-emoji-osk.patch` and
+is for the VM guest, not the owner's live desktop.
+
+## 25. Cursor hiding is owned by one serialized lifecycle
+
+Cursor hiding (spec-v1 §9) used to live in the panel as a free property plus
+a probe callback: close before the probe answered ran the restore first (a
+no-op) and then let the late answer disable hiding with the panel closed —
+review finding R6. The policy is now one owner (`CursorPolicy.js`, a pure
+state machine; `CursorPolicy.qml`, its process host) that serializes probe,
+override and restore, and tags every asynchronous answer with the generation
+that asked for it, so a stale generation can never apply.
+
+Non-obvious rules this fixes in writing: restore only an override this
+lifecycle measured and applied, after one verify read — if the value moved
+mid-lifecycle (config reload or external change), the undo is skipped rather
+than writing a guess; a config reload supersedes a live override, and while
+the panel is still open the policy re-measures so the suspension survives the
+reload; a reopen that lands mid-handoff either rides the still-live override
+or defers its probe behind the settling write, never mistaking our own
+`false` for the user's setting; a failed undo write keeps the obligation
+(the next close verifies and retries) instead of forgetting hiding was left
+disabled.
+
+Codex review of `ee834e4` (2026-09-07) required four more rules, now binding:
+a config reload retires an in-flight probe and reissues it — a pre-reload
+sample cannot apply after the reload; a reload that lands while a write is
+in flight is recorded and reconciled after that write settles, rather than
+assuming the write lands after the reload; a reopen mid-verify rides only a
+confirmed still-live override (`false`); a write whose physical completion
+is unknown (a watchdog timeout of a still-running process) retains the
+restore obligation, and a confirmed process startup failure releases the
+host slot.
+
+Codex Sol Medium on `1b35b46` (2026-09-07) tightened three of those: an
+unconfirmed write stays in flight (`writeSeq` kept) until physical
+completion or destruction — a queued restore must not verify against the
+still-running write; a failed verify during reopen keeps ownership rather
+than re-probing a still-live `false`; a started hung read is stopped so
+the host slot can be released once its generation is retired. The
+documented residuals (a direct external eval is indistinguishable from
+our override; a write that actually lands after a racing reload may leave
+hiding disabled until the next reload; a destroyed shell covered only by
+the config-reload escape hatch) live in the module header. The pure
+machine rides the existing plain-qml test runner; the wrapper is
+exercised end-to-end in the nested-compositor lab.
+
+## 26. An explicit paste command is not a typing method
+
+Status: owner scheduled ticket 14 into this release on 2026-09-07.
+Current-content paste first; history stays out.
+
+§17 forbids clipboard mutation as a way to type a symbol the keymap cannot
+produce. That prohibition still holds. A header control that pastes whatever
+the user already copied is a different act: the clipboard is the payload, not
+a staging area the panel writes then pastes. The panel must not replace
+clipboard contents, must not preview them, and must not synthesise glyphs
+this way.
+
+Delivery is per-class (`60adf57`, ticket 14, nested guest 2026-09-07). Typical
+terminals — foot, footclient, kitty, alacritty, ghostty, wezterm, kgx,
+gnome-terminal, konsole, xfce4-terminal, and reverse-DNS forms such as
+org.kde.konsole — receive Ctrl+Shift+V (clipboard-paste). Shift+Insert
+is PRIMARY in those clients. Empty or stale class uses that CLIPBOARD
+chord so a missed lookup cannot send PRIMARY into a terminal. Native and
+XWayland GTK entries receive Shift+Insert, which GTK binds to
+paste-clipboard. The nested run seeds PRIMARY with a different sentinel
+than CLIPBOARD, so a PRIMARY-paste cannot pass. Ctrl+V is not a paste
+(foot types a literal). The reducer emits the chosen exact chord: latched
+Ctrl/Alt/Super are spent and not mixed in, and locked Shift is left down
+when the chord wants it. Empty CLIPBOARD is a no-op at the client.
+Hex-entry paste inserts locally from `wl-paste` (CLIPBOARD, never
+PRIMARY) because Quickshell.clipboardText is empty/stale in this stack,
+and never asks the helper; the header control sits above the
+settings/editor dismiss layers so that click cannot close the editor.
+No per-keystroke process, no IME, no focus-taking panel.
+
+## 27. Super shows Omarchy's own compact mark
+
+The owner asked for the Omarchy logo on Super, not a Windows-style mark
+and not the word Super. The established compact mark is U+E900 in the
+private `omarchy` icon font (MIT, copyright David Heinemeier Hansson;
+documented in Omarchy's `default/fonts/omarchy/README.md`, installed at
+`/usr/share/fonts/omarchy/omarchy.ttf`). The bar launcher already
+renders that glyph (`shell/plugins/menu/BarWidget.qml`:
+`text: "\ue900"`, `fontFamily: "omarchy"`). Reusing that mechanism keeps
+theme colour, scaling, and attribution with Omarchy rather than vendoring
+a raster, drawing an approximation, or depending on an unofficial face
+(the community "Omarchy Font" wordmark TTF is a different font and is
+not used). The panel does not add a second Theme/Style reader: the glyph
+uses the existing text colour tokens. A missing font falls back to the
+Super label so the cap cannot go blank. Qt.fontFamilies(), FontLoader,
+fontInfo.family, and a zero-width paint are not a presence check for this
+private family: the first three miss it on a session whose bar already
+draws it, and a substitute or missing-glyph box has nonzero width. The
+packaged TTF path is the gate. If that file is absent, the cap never
+requests U+E900 and shows Super. Appearance is screenshot-verified; this
+is not a third product seam. Presentation only: one Super on the command
+row, same latch/cancel and chords.
+
+## 28. This release keeps five rows and hosts AltGr specials as pair caps
+
+A four-row compact letters page cannot keep a dedicated digit row at
+unchanged key size (65.5 units of mandatory content vs 62). The owner
+chose the digit row over the height cut (2026-09-07, ticket 11): ordinary
+pages stay five rows, ordinary click on a digit cap is the digit, and no
+arrangement setting is persisted. Four-row compact is future work, not a
+this-release requirement.
+
+Specials that today's curated page exposed from alphanumeric-block levels
+3/4 move onto `&123` as pair caps — stacked level 4 over level 3, Shift
+selecting the upper half, press AltGr+position, non-exact — without
+widening the input boundary (§17). Dual caps stay. The first eight pair
+slots replace the existing 8-unit spacer on the symbols Shift…Enter row
+and keep the 12.5-units-left-of-↑ invariant (§22). Remaining demand uses
+the one unused row of the five-row pin (letters already have five;
+symbols had four): fifteen unit slots plus a 0.5 pad. Capacity is 8, or
+23 when that extra row is present. Probed inventories fit (ua 12, fr 16,
+gb 19, de 21); us has none and omits the extra row. Page 2 is an overflow
+valve only. Pair caps fill only where compiled RALT is `ISO_Level3_Shift`
+(the owner's `us` group is not). Command row, Fn-in-place, header and
+paste are unchanged. Height saving this release is zero.
+
+The accepted map is [compact-control-map.md](compact-control-map.md).
+Ticket 12 implements that packing, not a shorter keyboard.
+
+## 29. Settings live on a second overlay; leftover-centre, keys still type
+
+Gluing a popover to the gear over the key grid made the card-local dismiss
+mask eat every key hit, and stretching the docked exclusive zone to host
+settings would push clients. The keyboard `PanelWindow` therefore stays
+the band it already is. Settings and the custom colour editor map as a
+second full-screen overlay (`ExclusionMode.Ignore`) with the keyboard
+band subtracted from its input region — the emoji overlay's hole — so
+leftover clicks dismiss and key clicks still land on the caps. Placement
+is the centre of leftover space (output minus the keyboard band), not the
+top edge of the strip. If leftover is too small and the surface covers
+keys, that is accepted; shrinking to fit is not.
+
+The hex pad is gone because the owner types hex with the main OSK. Colour
+fields take the existing Exclusive-then-OnDemand exception on the
+*settings* overlay, not the keyboard surface, so a focused hex/RGB/HSV
+field is the helper's client and an unfocused settings surface leaves the
+previous app as the client. The custom editor is a WinUI hue×saturation
+square plus a thin value slider: the old SV plane plus a hue bar duplicated
+value on two axes.
+
+## 30. `&123` is one Windows punctuation page; Shift holds page 2
+
+The owner rejected dual keymap caps and pair-slot packing on `&123`
+(2026-09-08) in favour of the Windows touch-keyboard glyphs
+(`windows-symbols-one.png` / `windows-symbols-two.png`), then asked
+for a single five-row page rather than two: base glyphs are page 1,
+Shift layer is page 2. Command row, Fn-in-place, header and paste stay.
+Cycle is letters → symbols → letters.
+
+All character caps on this page resolve through the helper's permanent
+reserved-symbol block. That includes ASCII punctuation and digits as well as
+`£ ¥ ° × ÷`: the page no longer moves the virtual keyboard temporarily to a
+`us` group, so a layout list without `us` stays honest and a physical layout
+switch cannot be overwritten by a stale restore on mouse-up. A missing glyph
+is unavailable rather than clickable with the wrong output. §17's input
+boundary still holds: no clipboard mutation, Unicode-entry chord, IME route,
+or per-symbol keymap swap.
+
+Paste of CLIPBOARD into a terminal is Ctrl+Shift+**V** (AB04). The
+previous chord used AB06, which is N; kitty, ghostty and agterm bind
+Ctrl+Shift+N to a new window.
+
+## 31. Keycap facts are a fact of the install, not of one group
+
+Status: adopted 2026-09-08 from the owner's report that a language switch
+flickered — the whole keyboard dimmed, the caps briefly reverted to the
+built-in table and "Starting omarchy-osk.service…" appeared and left again.
+Amends §23's accept rule and the typing gate; the protocol is unchanged.
+
+§23 accepted keycap facts only when generation **and group** matched the
+acknowledged world, and gated typing on an empty configure queue. Both were
+right about a changed keymap and wrong about a language switch, which changes
+neither the keymap nor anything the helper holds:
+
+- **Group is a key, not a staleness test.** The helper resolves every group
+  of an install when it installs it (`caps_per_group`), so all of them can be
+  in hand before the first switch. The panel asks for every group of the
+  configured keymap once per generation and holds them keyed by group; a
+  switch then selects an answer already in memory. Holding one group's facts
+  made each switch invalidate them, draw the built-in table in their place,
+  and gate typing until a round trip replaced facts the helper had already
+  computed. Generation is still the staleness test, and the *drawn* group is
+  still the only one that may reach the caps.
+- **The typing gate is the drain, not the queue.** A press is unsafe in front
+  of a configure that will compile and install a new keymap — the helper
+  drains every key it holds on the way in. A group-only configure compiles
+  nothing and drains nothing, and the socket is ordered, so the group move
+  lands ahead of any line written after it. Gating on the whole queue closed
+  the keyboard for that round trip for no guarantee.
+- **A refusal for a group nobody is drawing is not keymap-wide.** `err bad
+  group` for a pre-fetched group leaves the drawn group's facts current and
+  typing answering the installed keymap; it is logged, not raised as the
+  unavailable state.
+
+Two smaller costs went with it, both measured on the host: the compiled
+`symbolMap` is cached per configure line, so returning to a group runs no
+process (a switch back spawns nothing instead of ~45 ms of `xkbcli`); and the
+two layout pipelines run under `bash -c` like every other spawn in the panel,
+not `bash -lc`, whose only effect here was to source login profiles (~45 ms of
+the ~50 ms each run cost). The rows model is also compared before assignment:
+it is the Repeater's model, so reassigning it rebuilds a few hundred delegates,
+and a switch used to do that four times over for rows that mostly did not
+change.
+
+The service-starting notice now has to hold for 400 ms before it paints. It
+answers a helper genuinely being waited on; a state that resolves in a couple
+of frames reads as a glitch, not as information.
+
+## 32. The helper's keymap may carry symbols the compositor's does not
+
+Status: adopted 2026-09-08 after measuring what §3's byte-identity clause
+actually costs. Amends §3's corollary; §3's own rule — never subscribe to the
+seat keymap — is untouched and is what actually prevents the storm.
+
+§3 records that we compile the compositor's exact RMLVO so the helper's keymap
+is byte-identical, "which is why switching between the physical keyboard and
+ours is a no-op for everyone else", and warns that "any divergence re-opens the
+churn". Ticket 18 diverges deliberately: the reserved symbol block appends one
+key type and fourteen keys so `&123` can type characters no configured layout
+carries. The review flagged this as reinstating §3's risk, and the experiment's
+own notes listed physical/helper alternation as never exercised.
+
+**Measured, in the VM, with a real second typist.** A focused `foot` under
+`WAYLAND_DEBUG=1` logs every `wl_keyboard.keymap` it receives; the helper types
+`!` from the block; QEMU's emulated PS/2 keyboard types `z`, injected from the
+host with `virsh send-key` so it goes through the compositor's own keymap, not
+another virtual keyboard's.
+
+Six alternations produced `!z!z!z!z!z!z!z` at the client — every character
+correct from both typists — and the keymap event count **stayed at one**, the
+push the client got when it bound. Not one re-read across six switches of the
+active keyboard.
+
+So the divergence costs a single keymap push, not a push per alternation. The
+client ends up holding our extended map, which is the compositor's RMLVO plus
+positions its own keymap leaves empty, so every ordinary key still resolves
+identically — which is why the physical keyboard's `z` is still `z`.
+
+What §3 is really about survives intact: the storm was a feedback loop, the
+helper mirroring a seat keymap whose own rebuild it then mirrored again. There
+is no loop here — nothing subscribes, and the extra keys change no existing
+definition (asserted in the helper's unit tests: 485 pre-existing key
+definitions byte-identical before and after).
+
+The measurement to repeat if this is ever doubted is in this section, not in a
+comment: trace a client, alternate two real typists, count `wl_keyboard.keymap`.
+
+## 33. Layout-independent symbols live above a keycode every consumer knows
+
+Status: adopted 2026-09-09 after the owner reported §32's block typing
+`°€±≠` into an Electron app instead of the ten characters drawn. Amends §32:
+what the helper adds is unchanged in kind, only in *where* it is added.
+
+§32 settled that the helper's keymap may carry symbols the compositor's does
+not, and it still holds — the divergence costs one keymap push and changes no
+existing definition. What it left open is which positions carry the block, and
+the answer it took — the free keycodes the compiled keymap leaves empty — is
+wrong for a reason no terminal test could see.
+
+**A keycode is not a contract; a table lookup is.** Chromium's Ozone/Wayland
+path maps evdev codes to `DomCode` through a fixed table and drops what is not
+in it. Its X11 path takes the keysym instead, so the same character types into
+XWayland Chromium and vanishes in an Electron window. Wine builds a third
+table, matching keysyms against Windows layouts, and substitutes rather than
+drops: `≠` arrives in Proton as `?`, which is `VK_OEM_2` on a US layout. Three
+consumers, three opinions, one cause — the block sat on keycodes only xkb had
+ever heard of.
+
+Measured in the VM against native-Wayland Chromium, an ordinary letter as a
+control on every run: of the fourteen free positions the block used, exactly
+**two** reach Electron — `AB11` (evdev 89) and `AE13` (124). The ten page
+glyphs lived on `I219`, `I222` and `I230`, all dropped, which is precisely the
+`°€±≠` the owner saw. `foot` and `x11cat` resolve keysyms themselves, so no
+test built on either can catch this; that is why the suite passed.
+
+**So the catalogue moves to levels 5-8 of ordinary alphanumeric positions.**
+Every consumer's table already knows those keycodes — the question was only
+whether the modifier that selects the level survives the trip, and it does.
+Electron 43 on Ozone/Wayland took every level 5-8 chord on ordinary positions,
+12/12 steps in three runs, with stock levels 1-4 unchanged; foot agreed 12/12;
+`I219` stayed silent in the same runs, so the rig re-proved the drop while
+proving itself sensitive. The rig and its protocol are `tools/lvl5-probe/`.
+
+The rejected alternative is levels 3-4 where the active layout leaves them
+empty. It is simpler and it gives back exactly what ticket 18 set out to
+remove: availability that depends on which language is selected.
+
+Four things this shape costs, and they are the implementation:
+
+- **Levels 1-4 produce the same characters.** That is what keeps §32's "no
+  existing definition changed" true of a key the layout already defines, and
+  it is an assertion, not an intention: what the position produces today is
+  read off the keymap's own behaviour and written back verbatim, and a test
+  compares the keysyms of every keycode, in every group, under every modifier
+  pair, before against after.
+  **What does change is which modifiers the position consumes.** The block's
+  type declares `Shift+LevelThree+LevelFive`, so a hosted position consumes
+  LevelThree and LevelFive whether or not it did before — `us` `AE01` goes
+  from `0x1` to `0xa1`. It has to: four catalogue entries on one position need
+  Shift and LevelThree to tell them apart. Toolkits match accelerators after
+  stripping consumed modifiers, so an `AltGr+1`-shaped binding can stop
+  matching on a hosted position in a group where AltGr is `ISO_Level3_Shift`.
+  That is the price of the shape and it is not hidden here: the invariant is
+  about characters, not about masks.
+- **A position that answers to `Lock` is refused, not handled.** An
+  eight-level type without `map[Lock]` costs a letter position its CapsLock
+  uppercasing, so a position whose answer moves under Lock — or Control, Alt,
+  Ctrl+Alt or Super, the modifier families the other canonical types use — is
+  not hosted at all. A refusal costs the catalogue's tail, which is why the
+  visible page is at the head of the catalogue and the spares at the end.
+- **Ask about the MODIFIER, never about the key.** The first version of that
+  refusal held down `<CAPS>`, `<LALT>` and `<LWIN>`. Under `grp:caps_toggle` —
+  the owner's own option — pressing `<CAPS>` switches the *group*, so every
+  digit-row position looked like it answered to something, every one was
+  refused, and the catalogue collapsed to the two free positions on precisely
+  the configuration it was built for. An option is free to move Lock to
+  another key or to no key; the question is whether the Lock modifier changes
+  what the position types, and only a modifier mask asks that.
+- **`<LVL5>` needs no new machinery, but it does need proving.** Every
+  compiled keymap carries `ISO_Level5_Shift` as `modifier_map Mod3 {
+  <LVL5> }`, and the helper's per-group modifier probe credits it the way it
+  credits `<LVL3>` with Mod5. Declaring the keycode is not the same as
+  binding the keysym, though, and a block nothing can open would advertise
+  glyphs through the caps facts that type the position's own level one —
+  silent wrong characters, worse than the missing symbols this is allowed to
+  fail to. So the built keymap is asked, before it is installed, whether
+  holding LevelFive reaches the catalogue.
+
+Two limits worth writing down rather than discovering:
+
+- **The catalogue does not always fit.** Fourteen slots want fourteen
+  hostable positions, and the digit row is twelve; the other rows' non-letter
+  positions make up the difference where the layout leaves them free. Measured
+  option-free: most layouts host all fourteen, `br` thirteen, `cz`/`am`/`jp`
+  twelve, `sk` ten, `kz` eight, and `de(neo)` and `ca(multix)` two — those two
+  put eight levels on nearly every position already, so there is nothing to
+  ride above. Thirteen slots carry the whole visible page; below that the page
+  loses characters, in the catalogue's own order.
+- **A layout option that hands a physical key the block's own modifier**
+  keeps it off ordinary positions entirely, leaving only the free ones —
+  eight characters instead of fifty-six. Hosting above the digit row would
+  change what that key types on it, which is the one thing this section
+  promises never happens. It is not only the `lv5:` family: the test is
+  whether any real key carries the modifier LevelFive resolves to (Mod3 on a
+  stock keymap), so `caps:hyper`, `altwin:hyper_win` and
+  `ctrl:swapcaps_hyper` trip it exactly as `lv5:ralt_switch_lock` does. The
+  panel says so when the page comes up empty rather than leaving the user to
+  wonder.
+
+`AB11` and `AE13` remain usable whatever else changes: eight slots that work
+in every consumer measured. Proton is a separate acceptance item — it has a
+third table and it can run through XWayland or `winewayland.drv`, which are
+different keyboard paths again, so it is checked under the launcher the owner
+actually uses.
+
+The native-Wayland acceptance leg landed 2026-09-09. The ordinary VM nested
+suite drives Electron 43 with the shipping generated/published keymap, gates
+an ordinary DomCode control, keeps I219 as the known dropped negative control,
+and requires a discovered product glyph to arrive with a real DomCode. A
+terminal cannot fail this way, so the Electron leg remains essential.
+
+## 34. One device set: what the panel reads is what the button moves
+
+Status: adopted 2026-09-09 after the owner reported, for the third time, that
+a language switch left the indicator saying Ukrainian while typing produced
+English — "works one time in ten". Amends §5, which is about the same seam
+from the other side.
+
+§5 established that the language button must move a positively identified set
+of physical keyboards and never a device it only guessed at. It said nothing
+about where the panel *reads* the current group from, and the two sets drifted
+apart: the reading came from everything that is not a known pseudo-device, the
+switch from the helper's udev-identified keyboards.
+
+On the owner's laptop those are not the same set. `hyprctl devices` lists
+twelve keyboards, of which three can type. The other nine —
+`ideapad-extra-buttons`, a Razer mouse's keyboard interface, an ITE
+wireless-radio-control, two video buses, two power buttons — each carry an XKB
+group, and nothing ever advances them. They had been left on group 1 by some
+earlier switch and stayed there. So the panel read Ukrainian off a device that
+cannot type, told the helper group 1, and the keyboard the user's hands were
+on stayed in group 0. Intermittent, because it only bit when the seat's
+current-keyboard flag was outside the safe set and the last layout event had
+named one of the strays.
+
+**The reading device and the switch set come from one filter.** A group read
+off a device the button does not move is a group the keyboard will not be
+typing in. With nothing positively identified yet — the window before the
+helper's device snapshot arrives — there is no answer at all and no configure
+is sent, rather than a group guessed off whatever the compositor happened to
+list first.
+
+**And the seat is kept in one group.** A group-toggle key moves the one device
+it arrives on — measured: `Caps_Lock` under `grp:caps_toggle` moved
+`qemu-usb-keyboard-1` and nothing else, while every other keyboard stayed put.
+So one Alt+Shift splits the seat, and from then on the language button
+computes its next index from whichever device the reading picked. Every so
+often that is a group the user's own keyboard already holds, and the press
+moves everything except the keyboard in front of them: the indicator advances
+and the typing does not. That is the "works one time in ten" the owner
+reported, and it is not `hyprctl switchxkblayout` failing — that was measured
+too, on the device that actually receives the keys: `us` typed `q`, `ua` typed
+`й`, first try.
+
+When the safe set disagrees, the stragglers are brought to the group of the
+device that actually typed, never the other way round: the keyboard under the
+user's hands is the authority, and dragging it backwards would undo the switch
+they just made. Converging emits layout events of its own; the next refresh
+finds the set in step and sends nothing, which is what makes it terminate.
+
+**Which keyboard that is comes from the seat's `main` flag and from nowhere
+else.** It used to be learned from `activelayout` events — and every
+`switchxkblayout` this panel issues emits one naming the device it moved, so
+the anchor pointed at whatever the panel itself had touched last. The panel
+was reading its own echo. Harmless while it only decided a label; actively
+wrong once it decides which way a split seat converges, because it would then
+drag the user's keyboard back out of the group their own Alt+Shift had just
+put it in. Hyprland prints `IKeyboard::m_active` as `main`, which is where the
+last key actually came from; the panel remembers the last safe keyboard to
+hold it and keeps that across the moments the flag sits on its own virtual
+keyboard.
+
+Until the seat has reported a key on a keyboard this panel may act on, nothing
+is rearranged at all — §5's rule about never advancing a device you only
+guessed at, applied to the seat rather than to one device.
+
+Two smaller rules fell out of the same measurement:
+
+- **A disagreeing safe set is settled by consensus, not by the maximum.** The
+  old tie-break took the highest index any member had reached, so one keyboard
+  left behind on group 1 spoke for all three. The most common index wins, and
+  the lowest of a genuine tie: a majority cannot be dragged by one straggler,
+  and where either answer is a guess the same guess every time is worth more
+  than the larger one.
+- **This logic lives in `LayoutDevices.js`, not in a shell string.** It was a
+  jq program inside a QML string literal, and it is now the third defect of
+  exactly this shape to reach the owner — a mouse poisoning the indicator
+  (§5), a guessed device advanced while another kept typing (ticket 19), and
+  this. None of the three could have been caught by any suite, because there
+  was nothing a suite could call. The shell now only runs `hyprctl devices -j`;
+  every decision is a function, and `tests/layout-devices.qml` drives it with
+  the owner's real twelve-device zoo. Logic that has broken three times is not
+  allowed to stay untestable.
+
+## 35. The seat carries one keymap, and it is the extended one
+
+Status: adopted 2026-09-09 after the owner reported that switching the layout
+moved every indicator and left Telegram, WhatsApp and Viber typing the
+previous alphabet while Discord, the browser and a terminal were fine — and
+that pressing **any modifier key**, Ctrl included, unstuck them. Amends §32,
+which allowed the divergence this section ends.
+
+§3 compiled the compositor's exact RMLVO so the helper's keymap was
+byte-identical, "which is why switching between the physical keyboard and ours
+is a no-op for everyone else". §32 diverged on purpose for the symbol block
+and measured the cost as one keymap push, by tracing a focused terminal while
+two typists alternated. That measurement was true and it was the wrong
+measurement: it counted keymaps during typing, and the cost lands on **focus
+changes**.
+
+Measured on the owner's machine, six focus changes with a client under
+`WAYLAND_DEBUG`:
+
+- helper running with the block: **nine** `wl_keyboard.keymap` events, two
+  distinct keymaps alternating;
+- helper stopped: **one**.
+
+And the swap is not free. Every `keymap` is followed by
+`modifiers(..., group=0)`: the client's group resets. A client that re-reads
+the group afterwards is unharmed, which is why Chromium and a terminal were
+fine; one that does not keeps resolving keys in the first layout until any
+modifier event arrives — hence Ctrl fixing it, and hence the on-screen
+keyboard itself typing Latin once a physical key had put the client back at
+group 0.
+
+**So the seat gets one keymap and the extended one is it.** The helper
+publishes what it installed to `$XDG_RUNTIME_DIR/omarchy-osk/keymap.xkb` and
+the panel points `input:kb_file` at that file, so the compositor compiles the
+same keymap for every physical keyboard. There is nothing left to swap
+between, and §3's "a no-op for everyone else" is true again — this time with
+the block inside it rather than outside.
+
+What that costs and how it is bounded:
+
+- **The compositor's RMLVO stays the source.** The panel never feeds the
+  published file back to the helper as an input; it keeps sending the
+  configured rules, layouts, variants and options, so editing `kb_layout`
+  still takes effect and the file is only ever the compositor's copy of the
+  result. The helper recognises its own block in a `kb_file` and compiles it
+  as it stands rather than extending it twice.
+- **The setting is runtime-only.** `hyprctl eval hl.config({...})` does not
+  touch the user's config, and the file lives under `$XDG_RUNTIME_DIR`, so a
+  session that starts without this panel starts with nothing pointing
+  anywhere. A stale `kb_file` cannot outlive the thing that set it.
+- **It is cleared and set, not set.** Assigning the same path again is a
+  no-op, and a republished file under the same name has to be re-read.
+
+The measurement to repeat if this is ever doubted: trace a client with
+`WAYLAND_DEBUG=1`, change focus half a dozen times, and count distinct
+`wl_keyboard.keymap` payloads. One is correct. Two is this defect.
+
+Automated 2026-09-09 in the VM-only nested integration suite. The suite
+performs the panel's public clear/set of `input:kb_file`, maps a small Wayland
+client under `WAYLAND_DEBUG=client`, and performs exactly six verified focus
+transitions against a second real surface, ending on the observer. The client
+hashes every received keymap fd rather than mistaking equal byte counts for
+equal payloads, requires no event after its initial `OSK_RESERVED` payload,
+and finally requires the group selected before the sequence plus `AD01` to
+resolve to `й` without a corrective group request. The first green run
+observed one wire event and one payload identity.
+
+## 36. The QML is checked statically, because nothing loads it
+
+Status: adopted 2026-09-09 after a commit shipped a panel that would not load
+at all while three hundred checks stayed green.
+
+Every offscreen suite in this project drives the pure JavaScript modules —
+that is what makes them fast, and it is why they exist. What it costs is that
+`Keyboard.qml` and `Panel.qml` are never loaded by anything but the running
+shell. `onPairPositionsChanged` outlived the property it watched; QML refuses
+a handler for a property that does not exist, so the panel failed to load
+outright, and the suites had nothing to say about it. The owner found it.
+
+`qmllint` can say it, because Quickshell ships `.qmltypes` and so its own
+types resolve: `no matching signal found for handler "onPairPositionsChanged"`.
+`tools/qml-check.sh` fails on that message and the runner calls it. Proved by
+putting the real defect back in place and watching the gate catch it at the
+line.
+
+**One message, not a category**, and the reason matters more than the rule.
+`qmllint`'s categories are not usable as gates here yet: `unqualified` has 851
+hits that are the ordinary QML idiom of reaching an outer id; `missing-property`
+fires because Quickshell types its `Socket` as a bare QObject, so `.write` and
+`.flush` "do not exist"; `inheritance-cycle` reads `BarWidget.qml`'s
+same-named root as self-inheritance; `uncreatable-type` objects to
+`PanelWindow` being created, which is the only thing it is for. A gate that
+fires on things that are fine teaches everyone to ignore it, and then it
+catches nothing at all.
+
+So the list is one line long and grows one message at a time, each added when
+it is at zero across the tree. What would make it grow faster is cleaning up
+one of those categories — which is worth doing, and is not the same job as
+having a gate today.
+
 ## Dead ends — do not retry
 
 - Subscribing to / mirroring the seat keymap (§3). Also: guarding its
@@ -428,7 +1096,25 @@ here. All four nav caps now sit at 1.5 units (1.5 Tab + 8 punctuation +
   with `hl.config({...})`. (`a209fd4`)
 - IME / text-input routes (fcitx5, maliit, GNOME): never reach XWayland,
   and they fight Caps-Lock layout toggles with a second layout state.
+- Blaming the IME. It was measured out twice: stopping fcitx5 changed
+  nothing, and the real cause was two keymaps on the seat (§35).
+- Letting the helper's keymap differ from the compositor's without handing
+  the compositor the same file: the two swap on every focus change and each
+  swap resets the client's group (§35).
 - Running the helper against the session you are working in.
 - Rewriting the shell layer as a standalone pass with no behaviour change
   to test against, or renaming identifiers to lower the overlap count
   instead of rederiving the design (§14).
+- Exotic free keycodes (`I219`, `I222`, `I230`, `JPCM`, …) as the home for
+  the reserved symbol block: Chromium's Ozone/Wayland DomCode table drops
+  them and Wine substitutes for them (§33). `AB11` and `AE13` are the only
+  two of the fourteen that survive.
+- Levels 3-4 "where the layout leaves room" for the same block — it is
+  layout-dependent again, which is what ticket 18 removed (§33).
+- Gating any of this on `foot` or `x11cat`: both resolve keysyms themselves
+  and cannot fail the way a DomCode table does (§33).
+- Trying to deliver the symbol block to Wine or Proton. Measured in the VM
+  with `wine notepad`: ten glyphs typed on their real positions and levels
+  produced `_ /?/?` — the positions' Windows VK meanings. Wine builds a
+  keycode→VK table once and then knows only VK plus modifiers; xkb levels
+  above the second do not exist for it, whichever position they sit on (§33).

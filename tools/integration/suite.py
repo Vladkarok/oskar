@@ -11,13 +11,22 @@ Adding a coverage: write another `@test` below. The order matters — the
 tests share one helper process and each one starts where the last left off.
 """
 
+import json
 import os
 import re
 import subprocess
 import sys
 import time
 
-from harness import Failure, TypingTarget, run, test
+from harness import (
+    ElectronTarget,
+    Failure,
+    KeymapObserver,
+    TypingTarget,
+    run,
+    share_published_keymap,
+    test,
+)
 
 # The helper's stuck-key cap, injected by tools/smoke-daemon.sh so the suite
 # does not have to sleep through the real fifteen seconds. Same variable the
@@ -32,6 +41,7 @@ LFSH = 42
 # Two layouts, caps-toggle, starting on the second one. The nested session's
 # own config matches, so the compositor and the helper agree on the world.
 CONFIGURE = "configure\tevdev\tpc105\tus,ua\t\tgrp:caps_toggle\t\t1"
+CONFIGURE_GROUP0 = "configure\tevdev\tpc105\tus,ua\t\tgrp:caps_toggle\t\t0"
 
 # A different model, so the same layouts still take the full compile path
 # instead of short-circuiting.
@@ -62,7 +72,7 @@ CONFIGURE_CAPSLOCK_CANCEL = (
 @test("startup inventory reports a positively identified physical keyboard")
 def startup_keyboard_inventory(helper, keyboard):
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
+    client.expect("hello 4", "hello 4")
     reply = client.send("keyboards")
     if not reply.startswith("keyboards\t"):
         raise Failure(f"expected a keyboard inventory, got {reply!r}")
@@ -83,13 +93,15 @@ def three_group_cycling(helper, keyboard):
     # taken at the end proves cycling recompiled nothing (spec-v1 §3.3: group
     # switching is never a recompile).
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
-    client.expect(THREE_GROUP, "configured")
+    client.expect("hello 4", "hello 4")
+    gen = client.configure(THREE_GROUP)
     keyboard.expect_group(0)
     # Both protocol paths the panel drives, in the order a cycle moves
     # through them: a byte-identical configure carrying the next group
     # (what follows every compositor switch), then the direct `group <n>`.
-    client.expect(THREE_GROUP_ON_DE, "configured")
+    # The same keymap keeps the same generation: only an install can move
+    # it (decisions \u00a723).
+    assert client.configure(THREE_GROUP_ON_DE) == gen
     keyboard.expect_group(2)
     client.expect("group 0", "ok")
     keyboard.expect_group(0)
@@ -105,6 +117,90 @@ def three_group_cycling(helper, keyboard):
     client.close()
 
 
+@test("supplied keycap facts match what a focused native client receives")
+def facts_match_typed_output(helper, keyboard):
+    # Ticket 04's seam comparison: the facts the helper supplies for a group
+    # and the characters a real client actually reads, side by side, for
+    # both groups of the owner's setup. The caps the panel will draw are
+    # only honest if THIS holds.
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    gen = client.configure(CONFIGURE)
+    keyboard.expect_group(1)
+    client.expect("group 0", "ok")
+    keyboard.expect_group(0)
+
+    facts = client.caps(0, ["AD01", "AE01"])
+    if facts["gen"] != gen or facts["group"] != 0:
+        raise Failure(f"caps reply for the wrong world: {facts}")
+    if facts["by_position"]["AD01"] != [{"text": "q"}, {"text": "Q"}]:
+        raise Failure(f"group 0 AD01 facts: {facts['by_position']['AD01']}")
+    # Ticket 20 keeps the position's original levels 1-4 and adds the
+    # reserved-symbol block at levels 5-8 (decisions §33). This early seam
+    # still checks the whole facts reply so it cannot silently regress to the
+    # pre-block two-level shape before the dedicated chord test runs below.
+    if facts["by_position"]["AE01"] != [
+        {"text": "1"}, {"text": "!"}, {"text": "1"}, {"text": "!"},
+        {"text": "!"}, {"text": "1"}, {"text": "@"}, {"text": "2"},
+    ]:
+        raise Failure(f"group 0 AE01 facts: {facts['by_position']['AE01']}")
+
+    # One terminal for the whole comparison — the group switch happens under
+    # it, which is exactly the product story: same client, different group,
+    # different characters, facts agreeing throughout.
+    target = TypingTarget()
+    try:
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\n")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AD01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\nQ\n")
+
+        # Group 1 is the Ukrainian group: the facts must switch alphabet
+        # with the group, and typing must agree with what they say.
+        client.expect("group 1", "ok")
+        keyboard.expect_group(1)
+        facts = client.caps(1, ["AD01"])
+        if facts["gen"] != gen or facts["group"] != 1:
+            raise Failure(f"caps reply for the wrong world: {facts}")
+        # ua's AD01 is four-level: the AltGr levels carry the Serbian ј/Ј.
+        # The facts answer every level the keymap defines, not just the two
+        # the main page draws — and the client must receive each of them.
+        if facts["by_position"]["AD01"] != [
+            {"text": "й"}, {"text": "Й"}, {"text": "ј"}, {"text": "Ј"}
+        ]:
+            raise Failure(f"group 1 AD01 facts: {facts['by_position']['AD01']}")
+
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\nQ\nй\n")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AD01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\nQ\nй\nЙ\n")
+        client.expect("down RALT", "ok")
+        client.expect("tap AD01", "ok")
+        client.expect("up RALT", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\nQ\nй\nЙ\nј\n")
+        client.expect("down RALT", "ok")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AD01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("up RALT", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\nQ\nй\nЙ\nј\nЈ\n")
+    finally:
+        target.close()
+    client.expect("group 0", "ok")
+    keyboard.expect_group(0)
+    client.close()
+
+
 @test("the device group follows configure and group, around every tap")
 def group_follows_protocol(helper, keyboard):
     helper.expect_log("listening on")
@@ -112,17 +208,17 @@ def group_follows_protocol(helper, keyboard):
     # without a client, so every typing operation asserts it first: what is
     # proven is the group the tap actually ran under, not a final state.
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
-    client.expect(CONFIGURE, "configured")
+    client.expect("hello 4", "hello 4")
+    gen = client.configure(CONFIGURE)
     keyboard.expect_group(1)
     client.expect("tap AD01", "ok")
     client.expect("group 0", "ok")
     keyboard.expect_group(0)
     client.expect("tap AD01", "ok")
     # Byte-identical to the first: the helper must short-circuit rather than
-    # compile again. Both paths answer "configured", so the reply proves
-    # nothing — the compile count at the end is what proves it.
-    client.expect(CONFIGURE, "configured")
+    # compile again. The identical generation in the reply is the first half
+    # of the proof — the compile count at the end is the rest.
+    assert client.configure(CONFIGURE) == gen
     keyboard.expect_group(1)
     client.expect("tap AD01", "ok")
     client.close()
@@ -140,8 +236,8 @@ def release_crosses_the_unready_window(helper, keyboard):
     # Shift's lift would never go out at all. The helper sees exactly:
     # configure (reply unread), then `up`, with no readiness wait between.
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
-    client.expect(CONFIGURE, "configured")
+    client.expect("hello 4", "hello 4")
+    client.configure(CONFIGURE)
     client.expect("down AD01", "ok")
     # The claim is observable before the window: a tap may not lift it.
     client.expect("tap AD01", "err key held")
@@ -152,7 +248,7 @@ def release_crosses_the_unready_window(helper, keyboard):
     client.write_unread("up AD01")
     # Replies come back in order, and both arrive: the configure answered
     # and the release honoured, with nothing held waiting for readiness.
-    if client.read_reply() != "configured":
+    if not client.read_reply().startswith("configured\t"):
         raise Failure("the same-keymap reconfigure did not answer configured")
     if client.read_reply() != "ok":
         raise Failure("the release sent inside the unready window was not honoured")
@@ -174,7 +270,7 @@ def survives_mid_chord_disconnect(helper, keyboard):
     dying.close()
 
     fresh = helper.connect()
-    fresh.expect("hello 3", "hello 3")
+    fresh.expect("hello 4", "hello 4")
     fresh.expect("tap AD01", "ok")
     fresh.close()
 
@@ -202,7 +298,7 @@ def claims_are_owned(helper, keyboard):
     # connections' own lists, so A re-pressing after the swap must re-claim.
     # Under the earlier bookkeeping the press went out unclaimed and B could
     # end it.
-    a.expect(CONFIGURE_SWAPPED, "configured")
+    a.configure(CONFIGURE_SWAPPED)
     a.expect("down LCTL", "ok")
     b.expect("up LCTL", "err not holding")
     a.expect("tap LCTL", "err key held")
@@ -222,7 +318,7 @@ def modifiers_reach_the_client(helper, keyboard):
     # `modifiers` request and not from watching key events. Only a client
     # reading characters can tell the two apart.
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
+    client.expect("hello 4", "hello 4")
     # us,ua is still installed from the claims test; group 0 is `us`, and a
     # `group` command is not a compile, so the churn count below is untouched.
     client.expect("group 0", "ok")
@@ -285,6 +381,22 @@ def layout_reaches_the_compositor(helper, keyboard):
     keyboard.expect_layout("us,ua")
 
 
+@test("a hello in another protocol version is refused, not greeted")
+def protocol_mismatch_is_refused(helper, keyboard):
+    # The hello gate (decisions §23, ticket 04): version 4 moved reply
+    # shapes on both sides in one change, so a mixed pairing must be named
+    # before any configure is sent — the exact refusal the panel's
+    # "service needs updating" state keys off. No configure rides with this
+    # test: the gate exists so a mismatched panel never reaches one, and a
+    # compile here would put the churn count below in a lie.
+    client = helper.connect()
+    client.expect("hello 3", "err protocol 4 required, helper needs reinstall")
+    # The refusal names the version, not the connection: the same socket
+    # speaking the current version is greeted normally.
+    client.expect("hello 4", "hello 4")
+    client.close()
+
+
 @test("keymap churn stayed at four compiles: default, three-group, configured, swap")
 def churn_held(helper, keyboard):
     # The default compiled at startup, the three-group cycling keymap, the
@@ -294,6 +406,79 @@ def churn_held(helper, keyboard):
     helper.expect_compiles(4)
     # And the helper's own rate limiter never had to save us from one.
     helper.expect_no_log("refusing excessive keymap reconfiguration")
+
+
+@test("keycap facts carry the acknowledged keymap generation")
+def facts_carry_generation(helper, keyboard):
+    # The correlation the panel's readiness rests on: a reply names the
+    # install it came from, a same-keymap reconfigure keeps that install's
+    # number, a changed keymap moves it, and a group past the keymap's own
+    # count is refused rather than silently wrapped to another group.
+    #
+    # This test needs two real uploads of its own (a same-keymap configure
+    # and a changed one), and the four compiles the tests above performed
+    # land inside the helper's ten-second churn-guard window when the
+    # session is quick. Wait the guard out instead of raising the cap: the
+    # cap is the thing that keeps a compile loop from freezing a desktop.
+    time.sleep(11)
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    gen = client.configure(THREE_GROUP)
+    if client.caps(0, ["AD01"])["gen"] != gen:
+        raise Failure("caps reply did not carry the acknowledged generation")
+    assert client.configure(THREE_GROUP_ON_DE) == gen
+    # A changed keymap bumps the generation; the new facts answer under it.
+    gen_next = client.configure(CONFIGURE)
+    assert gen_next != gen
+    if client.caps(1, ["AD01"])["gen"] != gen_next:
+        raise Failure("caps reply did not carry the new generation")
+    client.expect("caps 9 AD01", "err bad group")
+    bare = client.caps(0, ["QQ77"])
+    if bare["by_position"]["QQ77"] != []:
+        raise Failure("an unknown position must answer bare, not with facts")
+    client.close()
+
+
+# A variant the owner's setup could carry: the second copy of `us` is
+# `euro`, whose AltGr level puts the euro sign on 5. Same layout code for
+# both groups — the case where guessing a group from the code is wrong.
+CONFIGURE_VARIANT = "configure\tevdev\tpc105\tus,us\t,euro\t\t\t0"
+
+
+@test("a repeated layout with distinct variants answers per-variant facts")
+def variant_facts(helper, keyboard):
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    gen = client.configure(CONFIGURE_VARIANT)
+    keyboard.expect_group(0)
+    plain = client.caps(0, ["AE05"])["by_position"]["AE05"]
+    euro = client.caps(1, ["AE05"])["by_position"]["AE05"]
+    # AE05 now also hosts reserved levels 5-8. This test owns the original
+    # per-variant levels; the dedicated reserved-block test owns the tail.
+    if plain[:2] != [{"text": "5"}, {"text": "%"}]:
+        raise Failure(f"group 0 AE05 facts: {plain}")
+    if euro[:4] != [{"text": "5"}, {"text": "%"}, {"text": "\u20ac"}, {"none": ""}]:
+        raise Failure(f"group 1 AE05 facts: {euro}")
+    if client.caps(1, ["AE05"])["gen"] != gen:
+        raise Failure("caps reply did not carry the acknowledged generation")
+    # Facts for a repeated layout with distinct variants are only honest if
+    # the focused client actually receives them: group 0 types a plain 5,
+    # group 1's AltGr level types the euro the facts named.
+    target = TypingTarget()
+    try:
+        client.expect("tap AE05", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("5\n")
+        client.expect("group 1", "ok")
+        keyboard.expect_group(1)
+        client.expect("down RALT", "ok")
+        client.expect("tap AE05", "ok")
+        client.expect("up RALT", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("5\n\u20ac\n")
+    finally:
+        target.close()
+    client.close()
 
 
 @test("a held Shift capitalises under options that put Shift in the Lock modmap")
@@ -314,15 +499,15 @@ def shift_capitalises_under_capslock_cancel(helper, keyboard):
     # churn count above a statement about the paths that matter.
     #
     # The helper refuses a fifth keymap upload inside ten seconds, which is
-    # the churn guard doing its job rather than a fault — the four the tests
-    # above compiled all land inside that window when the session is quick.
-    # Wait it out instead of raising the cap: the cap is the thing that keeps
-    # a compile loop from freezing a desktop.
+    # the churn guard doing its job rather than a fault — the compiles the
+    # tests above performed all land inside that window when the session is
+    # quick. Wait it out instead of raising the cap: the cap is the thing
+    # that keeps a compile loop from freezing a desktop.
     time.sleep(11)
 
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
-    client.expect(CONFIGURE_CAPSLOCK_CANCEL, "configured")
+    client.expect("hello 4", "hello 4")
+    client.configure(CONFIGURE_CAPSLOCK_CANCEL)
     keyboard.expect_group(0)
 
     target = TypingTarget()
@@ -345,7 +530,7 @@ def cap_releases_a_stuck_key(helper, keyboard):
     # has — so the release cannot come from the panel and cannot come from a
     # heartbeat, because there is none.
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
+    client.expect("hello 4", "hello 4")
     client.expect("down AD01", "ok")
     # `tap` on a held code is refused, which is how the claim is observable
     # from out here without reading the helper's internals.
@@ -365,7 +550,7 @@ def cap_exempts_modifiers(helper, keyboard):
     # visible here: after twice the cap the modifier is still claimed, and a
     # client still reads a capital.
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
+    client.expect("hello 4", "hello 4")
 
     target = TypingTarget()
     try:
@@ -397,7 +582,7 @@ def disconnect_releases_a_hold(helper, keyboard):
     # claim rules already lift everything a connection holds when its socket
     # closes, well before the cap would.
     dying = helper.connect()
-    dying.expect("hello 3", "hello 3")
+    dying.expect("hello 4", "hello 4")
     dying.expect("down AD01", "ok")
     dying.close()
     # The release happens on the dying connection's own thread when its read
@@ -406,7 +591,7 @@ def disconnect_releases_a_hold(helper, keyboard):
     time.sleep(0.5)
 
     fresh = helper.connect()
-    fresh.expect("hello 3", "hello 3")
+    fresh.expect("hello 4", "hello 4")
     # Free immediately, not fifteen seconds later: the disconnect did it.
     fresh.expect("tap AD01", "ok")
     fresh.close()
@@ -470,7 +655,7 @@ def repeat_belongs_to_the_compositor(helper, keyboard):
     # config, so whatever that provokes cannot disturb the compile counts
     # above.
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
+    client.expect("hello 4", "hello 4")
     keyboard.expect_group(0)
 
     held = 1.2
@@ -512,7 +697,7 @@ def refused_configure_never_drains(helper, keyboard):
     # drain-before-failure ordering (an upload failure) is not reachable from
     # outside the compositor and is covered by the reducer seam instead.
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
+    client.expect("hello 4", "hello 4")
     # A configure whose kb_file cannot be read fails to compile, and
     # install_config refuses BEFORE it would drain anything — the
     # deterministic never-drained ordering.
@@ -541,7 +726,7 @@ def refused_configure_never_drains(helper, keyboard):
     # connection: the helper released the old one's holds at its close, which
     # is exactly the world the ordering re-establishes.
     client = helper.connect()
-    client.expect("hello 3", "hello 3")
+    client.expect("hello 4", "hello 4")
     client.expect("down LFSH", "ok")
     client.expect("down AD01", "ok")
     client.expect("configure\tevdev\tpc105\tus\t\t\t/nonexistent-keymap\t0",
@@ -557,5 +742,651 @@ def refused_configure_never_drains(helper, keyboard):
     client.close()
 
 
+@test("supplied keycap facts match what an XWayland client receives")
+def facts_match_xwayland_output(helper, keyboard):
+    # The other half of the seam comparison: the XWayland path, which is
+    # what no per-keystroke helper process ever reached (decisions \u00a71).
+    # x11cat is a real X11 client — GTK mapped with GDK_BACKEND=x11, real
+    # WM_CLASS, real core key events; the nested compositor starts
+    # XWayland for it. Last in the file: it configures one more keymap, so
+    # everything above asserts on its own compile counts.
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    gen = client.configure(CONFIGURE)
+    keyboard.expect_group(1)
+    facts = client.caps(1, ["AD01"])
+    if facts["gen"] != gen or facts["group"] != 1:
+        raise Failure(f"caps reply for the wrong world: {facts}")
+    if facts["by_position"]["AD01"] != [
+        {"text": "й"}, {"text": "Й"}, {"text": "ј"}, {"text": "Ј"}
+    ]:
+        raise Failure(f"group 1 AD01 facts: {facts['by_position']['AD01']}")
+
+    target = TypingTarget(cls="x11cat")
+    try:
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("й\n")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AD01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("й\nЙ\n")
+        client.expect("down RALT", "ok")
+        client.expect("tap AD01", "ok")
+        client.expect("up RALT", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("й\nЙ\nј\n")
+        client.expect("down RALT", "ok")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AD01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("up RALT", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("й\nЙ\nј\nЈ\n")
+    finally:
+        target.close()
+    client.close()
+
+
+@test("reserved symbols type the same characters in every group")
+def reserved_symbols_are_layout_independent(helper, keyboard):
+    # Ticket 18, moved by ticket 20. The helper adds a block of symbols no
+    # configured layout carries to every keymap it installs. The claim is that
+    # they are not a layout's business: the same cap produces the same
+    # character in `us` and in `ua`.
+    #
+    # Since decisions §33 the block rides on levels five to eight of the digit
+    # row rather than on free keycodes of its own — Chromium's Ozone/Wayland
+    # DomCode table drops those, so they typed here and nowhere the owner
+    # works. `<LVL5>` opens the levels; Shift and `<LVL3>` choose among them.
+    #
+    # Nothing here installs a fixture keymap. The configure is the ordinary
+    # one every other test uses, so what is asserted is what ships.
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    gen = client.configure(CONFIGURE)
+    keyboard.expect_group(1)
+
+    # Discovery goes through the facts the panel already requests — the block
+    # needs no protocol of its own. AE01 is the first host; the helper puts the
+    # first two symbol/digit pairs from the direct page on its levels 5-8.
+    facts = client.caps(1, ["AE01"])
+    if facts["gen"] != gen:
+        raise Failure(f"caps reply for the wrong generation: {facts}")
+    levels = facts["by_position"].get("AE01")
+    if not isinstance(levels, list) or len(levels) != 8:
+        raise Failure(f"AE01 does not carry the reserved block: {levels}")
+    block = levels[4:]
+    if block != [{"text": "!"}, {"text": "1"},
+                 {"text": "@"}, {"text": "2"}]:
+        raise Failure(f"AE01 levels 5-8 are not the block: {block}")
+    # And what the layout itself put on levels 1-4 is still there. This is
+    # ticket 20's other half: the block is an addition, never an edit.
+    below = levels[:4]
+    if below[0] != {"text": "1"} or below[1] != {"text": "!"}:
+        raise Failure(f"AE01 lost its own levels 1-2: {below}")
+
+    target = TypingTarget()
+    try:
+        # Levels 1 and 2 first, because they are what must not have moved.
+        client.expect("tap AE01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("1\n")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("1\n!\n")
+
+        # Then the block, one chord per level. <LVL5> is ISO_Level5_Shift in
+        # every compiled keymap, as <LVL3> is ISO_Level3_Shift — the block
+        # reserves no modifier of its own.
+        client.expect("down LVL5", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LVL5", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("1\n!\n!\n")
+        client.expect("down LVL5", "ok")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("up LVL5", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("1\n!\n!\n1\n")
+        client.expect("down LVL5", "ok")
+        client.expect("down LVL3", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LVL3", "ok")
+        client.expect("up LVL5", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("1\n!\n!\n1\n@\n")
+        client.expect("down LVL5", "ok")
+        client.expect("down LVL3", "ok")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("up LVL3", "ok")
+        client.expect("up LVL5", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("1\n!\n!\n1\n@\n2\n")
+
+        # The whole point: group 0 is the other alphabet's neighbour — `us`
+        # here, where `ua` was — and the same four characters come out. A
+        # group move installs no keymap, so this also shows the block
+        # survives one.
+        before = helper.compiles()
+        client.configure("configure\tevdev\tpc105\tus,ua\t\tgrp:caps_toggle\t\t0")
+        keyboard.expect_group(0)
+        helper.expect_compiles(before)
+        client.expect("down LVL5", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LVL5", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("1\n!\n!\n1\n@\n2\n!\n")
+
+        # No `us` group at all: the direct punctuation remains the same
+        # because it comes from the reserved block rather than a temporary
+        # group switch. This is ticket 19's formerly dishonest `@` case.
+        client.configure("configure\tevdev\tpc105\tua,ru\t\tgrp:caps_toggle\t\t1")
+        keyboard.expect_group(1)
+        no_us = client.caps(1, ["AE01"])["by_position"].get("AE01")
+        if not isinstance(no_us, list) or no_us[4:] != block:
+            raise Failure(f"reserved punctuation changed without us: {no_us}")
+        client.expect("down LVL5", "ok")
+        client.expect("down LVL3", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LVL3", "ok")
+        client.expect("up LVL5", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("1\n!\n!\n1\n@\n2\n!\n@\n")
+    finally:
+        target.close()
+    client.close()
+    # Left on the group the tests after this one expect.
+    restore = helper.connect()
+    restore.expect("hello 4", "hello 4")
+    restore.configure(CONFIGURE)
+    keyboard.expect_group(1)
+    restore.close()
+
+
+@test("reserved symbols reach an XWayland client too")
+def reserved_symbols_reach_xwayland(helper, keyboard):
+    # The block's whole point is characters no layout carries, and XWayland is
+    # where that has bitten: the scratch gate found two keysyms that reach a
+    # native client and produce NOTHING in an X11 one (`approximate`,
+    # `permille`), which is why the catalogue spells those two in Unicode
+    # notation. A native-only test would not have caught it, and would not
+    # catch the next one either.
+    #
+    # This leg cannot catch a DomCode-table drop, which is what ticket 20 was:
+    # x11cat resolves the keysym itself. That gap is the ticket's own open
+    # acceptance item, a native-Wayland leg, and it is not this test.
+    #
+    # One position, all four block levels, through the real GTK/X11 fixture.
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    client.configure(CONFIGURE)
+    keyboard.expect_group(1)
+
+    target = TypingTarget(cls="x11cat")
+    try:
+        # x11cat flushes per key, so no newline is needed between levels.
+        client.expect("down LVL5", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LVL5", "ok")
+        target.expect_text("!")
+        client.expect("down LVL5", "ok")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("up LVL5", "ok")
+        target.expect_text("!1")
+        client.expect("down LVL5", "ok")
+        client.expect("down LVL3", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LVL3", "ok")
+        client.expect("up LVL5", "ok")
+        target.expect_text("!1@")
+        client.expect("down LVL5", "ok")
+        client.expect("down LVL3", "ok")
+        client.expect("down LFSH", "ok")
+        client.expect("tap AE01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("up LVL3", "ok")
+        client.expect("up LVL5", "ok")
+        target.expect_text("!1@2")
+    finally:
+        target.close()
+    client.close()
+
+
+@test("the published symbol keymap reaches native-Wayland Electron")
+def reserved_symbols_reach_electron(helper, keyboard):
+    """Ticket 20's missing consumer: Chromium's DomCode-gated path.
+
+    The symbol position is discovered from the helper's product-generated
+    facts.  On the old implementation that resolves to I219 and the positive
+    assertion fails; on the shipped implementation it resolves to an ordinary
+    position and Electron reports both the glyph and a real DomCode.
+    """
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    client.configure(CONFIGURE_GROUP0)
+    published = share_published_keymap()
+    if not published.endswith("/omarchy-osk/keymap.xkb"):
+        raise Failure(f"unexpected published keymap path: {published!r}")
+    client.expect("group 0", "ok")
+    keyboard.expect_group(0)
+
+    positions = (
+        [f"AE{i:02d}" for i in range(1, 14)]
+        + ["AB11"]
+        + ["JPCM", "I120", "I149", "I154", "I168", "I178", "I183",
+           "I184", "I219", "I222", "I230", "I248"]
+    )
+    facts = client.caps(0, positions)["by_position"]
+    found = None
+    for position in positions:
+        for level, fact in enumerate(facts.get(position, []), start=1):
+            if fact == {"text": "£"}:
+                found = (position, level)
+                break
+        if found:
+            break
+    if found is None:
+        raise Failure("the product keymap advertised no position for £")
+    position, level = found
+    chords = {
+        1: (), 2: ("LFSH",), 3: ("LVL3",), 4: ("LVL3", "LFSH"),
+        5: ("LVL5",), 6: ("LVL5", "LFSH"),
+        7: ("LVL5", "LVL3"), 8: ("LVL5", "LVL3", "LFSH"),
+    }
+    if level not in chords:
+        raise Failure(f"£ was advertised at unsupported level {level} on {position}")
+
+    target = ElectronTarget()
+    try:
+        client.expect("tap AB01", "ok")
+        control = target.delta()
+        if "z·KeyZ" not in control:
+            raise Failure(f"Electron control key did not arrive: {control!r}")
+
+        # The known discriminator. A keysym-resolving terminal accepts I219;
+        # Electron's fixed evdev->DomCode table must drop it entirely.
+        client.expect("tap I219", "ok")
+        negative = target.delta(expect_event=False)
+        if negative:
+            raise Failure(f"Electron unexpectedly accepted exotic I219: {negative!r}")
+
+        for modifier in chords[level]:
+            client.expect(f"down {modifier}", "ok")
+        client.expect(f"tap {position}", "ok")
+        for modifier in reversed(chords[level]):
+            client.expect(f"up {modifier}", "ok")
+        received = target.delta()
+        if "£·" not in received:
+            raise Failure(
+                f"Electron dropped product £ from {position} level {level}: {received!r}"
+            )
+        glyph_token = next((token for token in received.split() if token.startswith("£·")), "")
+        if glyph_token.endswith("·-"):
+            raise Failure(f"Electron received £ without a DomCode: {received!r}")
+        print(
+            f".... Electron: control KeyZ, I219 dropped, £ arrived from "
+            f"{position} level {level} as {glyph_token}",
+            flush=True,
+        )
+    finally:
+        target.close()
+        client.close()
+
+
+@test("six focus changes keep one published keymap and the selected group")
+def focus_keeps_one_keymap_and_group(helper, keyboard):
+    """Decisions §35 at the public Wayland/compositor boundary."""
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    client.configure(CONFIGURE)
+    share_published_keymap()
+    client.expect("group 1", "ok")
+    keyboard.expect_group(1)
+
+    observer = KeymapObserver()
+    other = None
+    try:
+        # Snapshot the one initial map before the focus sequence. The generic
+        # wire logger proves the event happened; the listener hashes the fd's
+        # bytes and proves which payload it carried.
+        initial_trace = observer.text()
+        initial_raw_events = re.findall(
+            r"wl_keyboard[@#][^.]*(?:\.|::)keymap\(", initial_trace
+        )
+        initial_payloads = re.findall(
+            r"^KEYMAP event=\d+ bytes=(\d+) id=([0-9a-f]+) catalogue=(\d)$",
+            initial_trace,
+            re.MULTILINE,
+        )
+        if len(initial_raw_events) != 1 or len(initial_payloads) != 1:
+            raise Failure(
+                "observer did not start with exactly one keymap event/payload: "
+                f"wire={len(initial_raw_events)}, payloads={initial_payloads}"
+            )
+        if initial_payloads[0][2] != "1":
+            raise Failure(f"initial seat keymap lacks the catalogue: {initial_payloads}")
+
+        initial_windows_raw = subprocess.run(
+            ["hyprctl", "clients", "-j"], capture_output=True, text=True
+        ).stdout
+        try:
+            initial_windows = json.loads(initial_windows_raw)
+        except json.JSONDecodeError:
+            initial_windows = []
+        observer_address = next(
+            (window.get("address") for window in initial_windows
+             if window.get("class") == "osk-keymap-observer"), None
+        )
+        initial_active_raw = subprocess.run(
+            ["hyprctl", "activewindow", "-j"], capture_output=True, text=True
+        ).stdout
+        try:
+            initial_active = json.loads(initial_active_raw)
+        except json.JSONDecodeError:
+            initial_active = {}
+        if not observer_address or initial_active.get("address") != observer_address:
+            raise Failure(
+                f"observer did not own focus before the sequence: {initial_active!r}"
+            )
+
+        # Mapping foot moves focus observer -> foot: transition 1 of exactly
+        # six. Five verified directional moves below end back on the observer.
+        other = TypingTarget()
+        clients_raw = subprocess.run(
+            ["hyprctl", "clients", "-j"], capture_output=True, text=True
+        ).stdout
+        try:
+            windows = json.loads(clients_raw)
+        except json.JSONDecodeError:
+            windows = []
+        foot_address = next(
+            (window.get("address") for window in windows
+             if window.get("class") == "foot"), None
+        )
+        if not observer_address or not foot_address:
+            raise Failure(f"focus fixtures did not both map: {windows!r}")
+        x_by_address = {
+            window.get("address"): (window.get("at") or [0])[0]
+            for window in windows
+        }
+        first_raw = subprocess.run(
+            ["hyprctl", "activewindow", "-j"], capture_output=True, text=True
+        ).stdout
+        try:
+            first_active = json.loads(first_raw)
+        except json.JSONDecodeError:
+            first_active = {}
+        if first_active.get("address") != foot_address:
+            raise Failure(
+                f"focus transition 1/6 did not land on foot: {first_active!r}"
+            )
+
+        for transition in range(2, 7):
+            before = subprocess.run(
+                ["hyprctl", "activewindow", "-j"], capture_output=True, text=True
+            ).stdout
+            try:
+                before_address = json.loads(before).get("address")
+            except json.JSONDecodeError:
+                before_address = None
+            wanted = observer_address if transition % 2 == 0 else foot_address
+            direction = (
+                "left" if x_by_address[wanted] < x_by_address.get(before_address, 0)
+                else "right"
+            )
+            dispatched = subprocess.run(
+                ["hyprctl", "dispatch",
+                 f"hl.dsp.focus({{ direction = '{direction}' }})"],
+                capture_output=True,
+                text=True,
+            )
+            if dispatched.returncode != 0 or "ok" not in dispatched.stdout.lower():
+                raise Failure(
+                    f"focus transition {transition}/6 was refused: "
+                    f"{(dispatched.stdout + dispatched.stderr).strip()!r}"
+                )
+            for _ in range(60):
+                now_raw = subprocess.run(
+                    ["hyprctl", "activewindow", "-j"],
+                    capture_output=True,
+                    text=True,
+                ).stdout
+                try:
+                    now = json.loads(now_raw)
+                except json.JSONDecodeError:
+                    now = {}
+                if now.get("address") == wanted and wanted != before_address:
+                    break
+                time.sleep(0.05)
+            else:
+                raise Failure(f"focus transition {transition}/6 never occurred")
+
+        if now.get("address") != observer_address:
+            raise Failure(f"six transitions did not end on the observer: {now!r}")
+        time.sleep(0.3)
+
+        # No group command after the sequence: this is the regression. The
+        # focused client must still have the group selected before it began.
+        keyboard.expect_group(1)
+        before_key = observer.text()
+        client.expect("tap AD01", "ok")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            after_key = observer.text()
+            key_tail = after_key[len(before_key):]
+            if "KEY evdev=16 group=1 text=й" in key_tail:
+                break
+            time.sleep(0.05)
+        else:
+            raise Failure(
+                "the retained group did not resolve AD01 as й after focus: "
+                f"{observer.text()[len(before_key):]!r}"
+            )
+
+        trace = observer.text()
+        raw_events = re.findall(r"wl_keyboard[@#][^.]*(?:\.|::)keymap\(", trace)
+        payloads = re.findall(
+            r"^KEYMAP event=\d+ bytes=(\d+) id=([0-9a-f]+) catalogue=(\d)$",
+            trace,
+            re.MULTILINE,
+        )
+        sequence_trace = trace[len(initial_trace):]
+        sequence_raw_events = re.findall(
+            r"wl_keyboard[@#][^.]*(?:\.|::)keymap\(", sequence_trace
+        )
+        sequence_payloads = re.findall(
+            r"^KEYMAP event=\d+ bytes=(\d+) id=([0-9a-f]+) catalogue=(\d)$",
+            sequence_trace,
+            re.MULTILINE,
+        )
+        if sequence_raw_events or sequence_payloads:
+            raise Failure(
+                "six focus transitions swapped the client's keymap: "
+                f"wire={len(sequence_raw_events)}, payloads={sequence_payloads}"
+            )
+        if len(raw_events) != 1 or len(payloads) != 1:
+            raise Failure(
+                f"trace changed outside the sequence accounting: "
+                f"wire={len(raw_events)}, payloads={payloads}"
+            )
+        identities = {identity for _, identity, _ in payloads}
+        if len(identities) != 1 or payloads[0][2] != "1":
+            raise Failure(
+                f"seat did not keep one extended keymap identity: {payloads}"
+            )
+        print(
+            f".... §35: {len(raw_events)} wl_keyboard.keymap event, "
+            f"payload {payloads[0][1]} ({payloads[0][0]} bytes), "
+            "no events during exactly six focus transitions, retained group 1 typed й",
+            flush=True,
+        )
+    finally:
+        if other is not None:
+            other.close()
+        observer.close()
+        client.close()
+
+
+@test("a custom keymap edited at its own path installs, unchanged does not")
+def custom_keymap_content_refresh(helper, keyboard):
+    # Ticket 06. A configure carries the PATH of a custom keymap; the user
+    # edits the FILE. Comparing configure fields alone reports "same keymap"
+    # for a map whose every key may have changed, and the helper goes on
+    # typing yesterday's while the panel draws caps for it — the two agreeing
+    # with each other and with nothing on screen.
+    #
+    # Under $HOME on purpose: the unit sets PrivateTmp, so /tmp is the
+    # helper's own and a file written there is one the helper cannot see.
+    path = os.path.join(os.path.expanduser("~"), "osk-custom-keymap.xkb")
+
+    def write(layouts):
+        compiled = subprocess.run(
+            ["xkbcli", "compile-keymap", "--layout", layouts],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(compiled)
+
+    line = f"configure\tevdev\tpc105\t\t\t\t{path}\t0"
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    target = TypingTarget()
+    try:
+        write("us")
+        first = client.configure(line)
+        keyboard.expect_group(0)
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\n")
+
+        # Same path, same line, different bytes: a new keymap and a new
+        # generation, and the typing follows the file rather than the path.
+        before = helper.compiles()
+        write("ru")
+        second = client.configure(line)
+        if second == first:
+            raise Failure(f"an edited keymap kept generation {first}")
+        helper.expect_compiles(before + 1)
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\n\u0439\n")
+
+        # And unchanged bytes are unchanged: no compile, no upload, and the
+        # generation the panel's facts are correlated against stands.
+        again = client.configure(line)
+        if again != second:
+            raise Failure(f"an unchanged file bumped the generation to {again}")
+        helper.expect_compiles(before + 1)
+
+        # A replacement that cannot compile is refused outright, and what was
+        # installed keeps typing — the panel is told, and nothing advertises
+        # caps for a keymap that is not in use.
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("this is not a keymap\n")
+        refused = client.send(line)
+        if not refused.startswith("err "):
+            raise Failure(f"an invalid keymap was accepted: {refused!r}")
+        helper.expect_compiles(before + 1)
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\n\u0439\n\u0439\n")
+
+        # Recoverable: fixing the file installs it, so a bad edit costs the
+        # edit and not the session.
+        write("us")
+        recovered = client.configure(line)
+        if recovered == second:
+            raise Failure("a repaired keymap did not install")
+        client.expect("tap AD01", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("q\n\u0439\n\u0439\nq\n")
+    finally:
+        target.close()
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+    client.close()
+    # Left as the tests after this one expect.
+    restore = helper.connect()
+    restore.expect("hello 4", "hello 4")
+    restore.configure(CONFIGURE)
+    keyboard.expect_group(1)
+    restore.close()
+
+
+@test("a helper stopped mid-hold releases the key before it exits")
+def shutdown_releases_a_hold(helper, keyboard):
+    # Last in the file because it stops the helper: nothing can run after it.
+    #
+    # The defect (ticket 17, found by the owner): SIGTERM killed the process
+    # with `shared.held` still full, so the virtual keyboard was destroyed
+    # holding the key. The compositor left it down and the focused client
+    # repeated it for the rest of the session; `Retry` could not clear it,
+    # because a restarted helper gets a NEW keyboard object and cannot lift
+    # another one's press.
+    #
+    # Two things make this test prove the shutdown path specifically:
+    #
+    #  * the client stays CONNECTED across the stop, so the per-connection
+    #    release in `release_all` — which the test above already covers —
+    #    cannot be what lifts the key;
+    #  * the hold is RTRN, so every repeat is a newline. `cat` is canonical,
+    #    a newline is its flush, and the captured text therefore grows in
+    #    real time instead of sitting in the terminal's line buffer. Holding
+    #    a letter here would look "clean" whatever the helper did, which is
+    #    the trap that made a first cut of this fix read as working.
+    target = TypingTarget()
+    try:
+        client = helper.connect()
+        client.expect("hello 4", "hello 4")
+        client.expect("down RTRN", "ok")
+        # Long enough for the compositor's repeat delay to elapse, so the key
+        # really is repeating when the helper is stopped. Without this the
+        # test would pass against a helper that strands the key, having only
+        # ever proven that one keystroke arrived.
+        time.sleep(1.0)
+        repeating = target.text()
+        if "\n" not in repeating:
+            raise Failure(
+                "the held RTRN never reached the focused client, so this test "
+                f"would prove nothing; it read {repeating!r}"
+            )
+
+        helper.terminate()
+
+        # Everything in flight has landed by now; whatever the client reads
+        # after this point came from a key the compositor still believes is
+        # down.
+        time.sleep(0.5)
+        settled = target.text()
+        time.sleep(1.5)
+        after = target.text()
+        if after != settled:
+            raise Failure(
+                "the key kept repeating after the helper stopped: "
+                f"{len(settled)} then {len(after)} bytes at the client — the "
+                "virtual keyboard was destroyed still holding it"
+            )
+        # The mechanism, not just the symptom: the shutdown path ran AND had
+        # something to release. The message names the codes for that reason —
+        # an unconditional "released" line cannot tell the fixed helper apart
+        # from one that found nothing held.
+        helper.expect_log("released held keys")
+    finally:
+        target.close()
+
+
 if __name__ == "__main__":
-    sys.exit(run(sys.argv[1], sys.argv[2]))
+    pid = int(sys.argv[3]) if len(sys.argv) > 3 else None
+    sys.exit(run(sys.argv[1], sys.argv[2], pid))

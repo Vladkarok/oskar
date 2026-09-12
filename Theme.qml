@@ -117,6 +117,12 @@ QtObject {
 
     readonly property color foreground: frozen ? held.foreground : Color.foreground
     readonly property color background: frozen ? held.background : Color.background
+    // Theme-derived accent, ignoring a user accentColor override. Colour-row
+    // swatches stay recommendations from the current (or frozen) Omarchy
+    // theme; pinning an accent must not replace that swatch with itself.
+    readonly property color themeAccent: colorAnswered(frozen ? held.accent : Color.accent)
+        ? (frozen ? held.accent : Color.accent)
+        : shippedColor("accentColor")
     // The accent and the latched "selected" tint are one override field
     // (spec-v1.1 §5's "accent/active colour"): an explicit accent wins for
     // both, with the selected fill re-tinted at the same alpha the theme's
@@ -124,10 +130,8 @@ QtObject {
     // accent and locked keys stay solid — one hue choice, the state weights
     // stay the theme's.
     readonly property color accent: hasOverride("accentColor")
-        ? overrides.accentColor
-        : colorAnswered(frozen ? held.accent : Color.accent)
-        ? (frozen ? held.accent : Color.accent)
-        : shippedColor("accentColor")
+        ? overrideAsColor("accentColor")
+        : themeAccent
     readonly property color urgent: frozen ? held.urgent : Color.urgent
     readonly property color muted: frozen ? held.muted : Color.muted
     readonly property color popupsBackground: frozen ? held.popupsBackground : Color.popups.background
@@ -135,52 +139,67 @@ QtObject {
     // file picks, so a theme that says what "selected" looks like is obeyed.
     readonly property color themeSelectedFill: frozen ? held.selectedAccentFill : Style.selectedAccentFill
     readonly property color selectedAccentFill: hasOverride("accentColor")
-        ? Util.alpha(overrides.accentColor, themeSelectedFill.a) : themeSelectedFill
+        ? Util.alpha(overrideAsColor("accentColor"), themeSelectedFill.a) : themeSelectedFill
 
     // Panel background (the card) and text: the override, else the token the
     // keyboard has always drawn with. The text override is scoped to the
     // keyboard's own glyph colour — the theme's `muted` stays the answer for
     // secondary text, since "dim" is a relation to the theme's palette, not
     // to one user-chosen colour.
+    function overrideAsColor(name) {
+        var raw = overrides[name]
+        if (typeof raw === "string") return Qt.color(raw)
+        return raw
+    }
+
     readonly property color panelBackground: hasOverride("panelBackground")
-        ? overrides.panelBackground
+        ? overrideAsColor("panelBackground")
         : colorAnswered(popupsBackground) ? popupsBackground
         : shippedColor("panelBackground")
     readonly property color textColor: hasOverride("textColor")
-        ? overrides.textColor
+        ? overrideAsColor("textColor")
         : colorAnswered(foreground) ? foreground
         : shippedColor("textColor")
-    // The keys' resting fill: the explicit override, else the shipped
-    // foreground-at-resting-alpha derivation — with no answer from that
-    // derivation's foreground, the shipped opaque key colour.
-    readonly property color keyFill: hasOverride("keyBackground")
-        ? overrides.keyBackground
-        : colorAnswered(foreground) ? Util.alpha(foreground, normalFillAlpha)
-        : shippedColor("keyBackground")
-    // Hover and press keep the theme's one state language, move toward the
-    // foreground. Unoverridden the fills ARE the foreground at the state
-    // alphas; with a key fill pinned, compositing that same overlay over the
-    // pinned colour keeps the direction of the feedback whatever colour is
-    // pinned — a light override lightens on hover, a dark one darkens toward
-    // the foreground exactly as the unoverridden keys do against the panel.
-    // The shipped tier keeps the same shape with the shipped foreground.
-    readonly property color keyHoverFill: hasOverride("keyBackground")
-        ? tintTowardForeground(keyFill, hoverFillAlpha)
-        : colorAnswered(foreground) ? Util.alpha(foreground, hoverFillAlpha)
-        : Util.alpha(shippedColor("textColor"), hoverFillAlpha)
-    readonly property color keyActiveFill: hasOverride("keyBackground")
-        ? tintTowardForeground(keyFill, pressedFillAlpha)
-        : colorAnswered(foreground) ? Util.alpha(foreground, pressedFillAlpha)
-        : Util.alpha(shippedColor("textColor"), pressedFillAlpha)
+    // The keys' resting fill: always opaque. A translucent override
+    // (host #0ad4d4d4) is painted onto the panel first — using its RGB
+    // as the cap makes hover an opaque pale square. No override is an
+    // opaque mix of the panel with the foreground at the theme's resting
+    // alpha. No answered foreground falls through to the shipped colour.
+    readonly property color keyFill: {
+        var raw = hasOverride("keyBackground")
+            ? overrides.keyBackground
+            : colorAnswered(foreground)
+                ? mixColor(panelBackground, foreground, normalFillAlpha)
+                : shippedColor("keyBackground")
+        var stacked = ConfigFile.compositeOnto(panelBackground, raw)
+        return Qt.rgba(stacked.r, stacked.g, stacked.b, 1)
+    }
+    // Hover and press are a modest mix of that resting cap toward the
+    // theme foreground (Config.js clamps the mix). Follow-theme with no
+    // colour override is the path that must stay a key of the current
+    // theme; a pinned key-background uses the same mix so hover cannot
+    // get worse than follow-theme.
+    readonly property color keyHoverFill: mixColor(keyFill, keyForeground,
+        ConfigFile.keyHoverMix(hoverFillAlpha))
+    readonly property color keyActiveFill: mixColor(keyFill, keyForeground,
+        ConfigFile.keyPressMix(pressedFillAlpha,
+            ConfigFile.keyHoverMix(hoverFillAlpha)))
+    readonly property color keyForeground: colorAnswered(foreground)
+        ? foreground : shippedColor("textColor")
+
+    // Opaque mix of `base` toward `target` at `amount`. Popover chrome still
+    // calls this as a foreground overlay; key hover/press go through
+    // Config.js's clamped mix so a high theme alpha cannot bleach a cap.
+    function mixColor(base, target, amount) {
+        var mixed = ConfigFile.mixRgb(base, target, amount)
+        return Qt.rgba(mixed.r, mixed.g, mixed.b, 1)
+    }
 
     // Composites the foreground over `base` at opacity `a` — the colour that
-    // painting foreground@a onto base produces. The override path only; the
-    // default path keeps the plain translucent tokens.
+    // painting foreground@a onto base produces. Chrome (popover card, etc.)
+    // still uses this; keys do not.
     function tintTowardForeground(base, a) {
-        var f = foreground
-        return Qt.rgba(f.r * a + base.r * (1 - a),
-            f.g * a + base.g * (1 - a),
-            f.b * a + base.b * (1 - a), 1)
+        return mixColor(base, keyForeground, a)
     }
 
     // The raw shared rounding token, carried as declared (var, not int): an

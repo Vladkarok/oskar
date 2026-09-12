@@ -118,6 +118,18 @@ The panel's geometry: docked, which reserves screen space at the bottom
 edge, or floating, which reserves none and remembers where it was put.
 _Avoid_: layout (which means xkb), position, style
 
+**Current-content paste**:
+The header control that pastes whatever is already on CLIPBOARD into the
+intended client. Distinct from using the clipboard as a typing method.
+_Avoid_: clipboard history, clipboard synthesis, paste-as-input
+
+### Picker interaction
+
+**Picker session**:
+One use of an emoji picker initiated from the panel, from opening through
+selection or dismissal. Distinct from a picker opened independently elsewhere.
+_Avoid_: picker process, emoji window lifetime
+
 ### Settings
 
 **Maintainer default**:

@@ -1,22 +1,18 @@
 # omarchy-osk
 
-A mouse-driven on-screen keyboard for Omarchy (Arch + Hyprland +
-Quickshell). Start with [docs/orientation.md](docs/orientation.md).
+Mouse-driven on-screen keyboard for Omarchy (Hyprland + Quickshell).
+Start with [docs/orientation.md](docs/orientation.md). When continuing a
+session, read [docs/session-handoff.md](docs/session-handoff.md) for current
+work and acceptance gates; older handoffs are historical.
 
-## Agent skills
+## Working rules
 
-### Issue tracker
+- [Agent workflow](docs/agents/workflow.md): model selection, delegation,
+  review, verification, and deployment. Applies to implementation work.
+- [Issue tracker](docs/agents/issue-tracker.md): local `.scratch/<feature>/`
+  tickets. [Triage labels](docs/agents/triage-labels.md) define their roles.
+- [Domain docs](docs/agents/domain.md): one context; decisions belong in
+  `docs/decisions.md`.
+- `/board`: [board skill](.agents/skills/board/SKILL.md), one ticket at a time.
 
-Local markdown under `.scratch/<feature>/`, gitignored. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-The five canonical roles, unchanged. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context; the decision log is `docs/decisions.md`, not `docs/adr/`. See `docs/agents/domain.md`.
-
-### Working the board
-
-`/board` runs the tickets one at a time through subagents, one per ticket, so the orchestrating context stays small. See `.claude/skills/board/SKILL.md`.
+Respond briefly. Identify tickets by number **and meaning**.
