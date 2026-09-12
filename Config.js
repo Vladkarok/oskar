@@ -14,12 +14,17 @@ var MODE_FLOATING = "floating"
 
 // The Super cap's mark (ticket 22, 2026-09-09): what the modifier cap draws.
 // The word is the default; the others are one mark each — the Omarchy glyph
-// (U+E900 in the private font, decisions §27's mechanism) and three inline
-// vectors Keyboard.qml draws itself. `macos` draws the macOS command mark
+// (U+E900 in the private font, decisions §27's mechanism), two inline
+// vectors and the owner's original Tux SVG. `macos` draws the macOS command mark
 // (⌘), which is what that key carries on an Apple keyboard — not an apple.
 // One list here, so validation, the popover's segments and the tests cannot
 // disagree about the value space.
 var SUPER_MARKS = ["word", "omarchy", "windows", "macos", "penguin"]
+var EMOJI_SKIN_TONES = ["", "🏻", "🏼", "🏽", "🏾", "🏿"]
+// Ticket 28: "direct" types the pick (decisions §39/§40); "clipboard"
+// publishes the exact sequence and sends the paste chord — the mode the
+// owner chose for Chromium-family clients such as ZCode.
+var EMOJI_DELIVERY_MODES = ["direct", "clipboard"]
 
 var CONFIG_FIELDS = [
     { file: "mode", value: "mode" },
@@ -27,6 +32,9 @@ var CONFIG_FIELDS = [
     { file: "sound", value: "sound" },
     { file: "follow_theme", value: "followTheme" },
     { file: "emoji_app", value: "emojiApp" },
+    { file: "emoji_close_after_pick", value: "emojiCloseAfterPick" },
+    { file: "emoji_page_size", value: "emojiPageSize" },
+    { file: "emoji_delivery", value: "emojiDelivery" },
     { file: "super_mark", value: "superMark" },
     { file: "key_radius", value: "keyRadius" },
     { file: "panel_radius", value: "panelRadius" },
@@ -53,6 +61,12 @@ function maintainerDefaults() {
         // row offers every picker found on PATH; this default stands until
         // one is chosen.
         emojiApp: "omarchy-menu-emoji",
+        emojiCloseAfterPick: false,
+        emojiPageSize: "medium",
+        // Ticket 28: typing is the default delivery (decisions §39/§40);
+        // clipboard compatibility is the explicit user's choice for the
+        // clients that drop it — never a silent swap.
+        emojiDelivery: "direct",
         // The Super cap says what the key is (ticket 22): the Omarchy glyph
         // stops being the unconditional drawing and becomes one chosen mark.
         // Sparse-store semantics mean this key never appears in the file
@@ -69,7 +83,8 @@ function maintainerDefaults() {
 }
 
 function stateDefaults() {
-    return { center: null }
+    return { center: null, emojiUsage: [], emojiSkinTone: "", layoutGroup: 0,
+        layoutDevice: "" }
 }
 
 function owns(object, key) {
@@ -144,8 +159,13 @@ function validFieldValue(field, value) {
     if (field.file === "mode") return value === MODE_DOCKED || value === MODE_FLOATING
     if (field.file === "size_preset")
         return value === "medium" || value === "large" || value === "x-large"
-    if (field.file === "sound" || field.file === "follow_theme")
+    if (field.file === "sound" || field.file === "follow_theme"
+        || field.file === "emoji_close_after_pick")
         return typeof value === "boolean"
+    if (field.file === "emoji_page_size")
+        return value === "medium" || value === "large" || value === "x-large"
+    if (field.file === "emoji_delivery")
+        return EMOJI_DELIVERY_MODES.indexOf(value) !== -1
     // Exactly the five marks the popover offers: anything else is a
     // malformed edit with the §5 preservation semantics, never a guess. The
     // QML side independently treats an unknown string as the word, so a
@@ -264,11 +284,57 @@ function parseState(text) {
     var parsed = parseObject(text, "state")
     if (parsed.error) return parsed
     var state = stateDefaults()
-    if (!owns(parsed.value, "center")) return { value: state, error: "" }
-    var center = parsePoint(parsed.value.center)
-    if (center === undefined)
-        return { value: null, error: "Invalid value for center" }
-    state.center = center
+    if (owns(parsed.value, "center")) {
+        var center = parsePoint(parsed.value.center)
+        if (center === undefined)
+            return { value: null, error: "Invalid value for center" }
+        state.center = center
+    }
+    if (owns(parsed.value, "emoji_usage")) {
+        var records = parsed.value.emoji_usage
+        if (!Array.isArray(records) || records.length > 64)
+            return { value: null, error: "Invalid value for emoji_usage" }
+        var seen = []
+        for (var i = 0; i < records.length; i++) {
+            var record = records[i]
+            if (!record || typeof record !== "object" || Array.isArray(record)
+                || typeof record.emoji !== "string" || record.emoji === ""
+                || typeof record.count !== "number" || !isFinite(record.count)
+                || record.count < 1 || record.count !== Math.floor(record.count)
+                || typeof record.lastUsed !== "number" || !isFinite(record.lastUsed)
+                || record.lastUsed < 1 || record.lastUsed !== Math.floor(record.lastUsed)
+                || seen.indexOf(record.emoji) !== -1)
+                return { value: null, error: "Invalid value for emoji_usage" }
+            seen.push(record.emoji)
+            state.emojiUsage.push({ emoji: record.emoji, count: record.count,
+                lastUsed: record.lastUsed })
+        }
+    }
+    if (owns(parsed.value, "emoji_skin_tone")) {
+        if (EMOJI_SKIN_TONES.indexOf(parsed.value.emoji_skin_tone) < 0)
+            return { value: null, error: "Invalid value for emoji_skin_tone" }
+        state.emojiSkinTone = parsed.value.emoji_skin_tone
+    }
+    // The remembered layout group (LayoutDevices' restart fallback): a
+    // whole index XKB can carry (0-3), anything else is a malformed edit
+    // with the §5 preservation semantics.
+    if (owns(parsed.value, "layout_group")) {
+        var remembered = parsed.value.layout_group
+        if (typeof remembered !== "number" || !isFinite(remembered)
+                || remembered < 0 || remembered > 3
+                || remembered !== Math.floor(remembered))
+            return { value: null, error: "Invalid value for layout_group" }
+        state.layoutGroup = remembered
+    }
+    // The remembered identity of the seat's last typing keyboard: any
+    // string (it is matched against the helper's safe inventory later, so
+    // a stale name simply never matches), anything but a string is
+    // malformed with the §5 preservation semantics.
+    if (owns(parsed.value, "layout_device")) {
+        if (typeof parsed.value.layout_device !== "string")
+            return { value: null, error: "Invalid value for layout_device" }
+        state.layoutDevice = parsed.value.layout_device
+    }
     return { value: state, error: "" }
 }
 
@@ -669,6 +735,14 @@ function serializeState(state) {
     return JSON.stringify({
         center: state.center
             ? { x: state.center.x, y: state.center.y }
-            : null
+            : null,
+        emoji_usage: state.emojiUsage || [],
+        emoji_skin_tone: EMOJI_SKIN_TONES.indexOf(state.emojiSkinTone) >= 0
+            ? state.emojiSkinTone : "",
+        layout_group: typeof state.layoutGroup === "number"
+            && state.layoutGroup >= 0 && state.layoutGroup <= 3
+            ? Math.floor(state.layoutGroup) : 0,
+        layout_device: typeof state.layoutDevice === "string"
+            ? state.layoutDevice : ""
     }, null, 2) + "\n"
 }

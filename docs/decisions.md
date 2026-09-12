@@ -1177,6 +1177,15 @@ carries on that key — the store value is `macos` where §38 first said
 with a face. The chosen marks stay drawn vectors in the cap's own ink; no
 vendored art entered for any of them.
 
+Amended again 2026-09-10 after the owner rejected approximated proportions
+and theme inversion: the penguin uses the supplied `Monochrome_Tux.svg`
+geometry, with its lettering removed, opaque white interiors and a white
+exterior outline. Its black and white colours stay fixed in all key states
+and themes. Preserve the original paths and aspect ratio; do not redraw or
+stylise the mark. This supersedes the drawn-and-tinted rule above for the
+penguin alone. The key's state remains visible through its normal background
+and border. Owner visual acceptance remains separate from technical review.
+
 ## 39. An emoji is delivered through a transient keymap, and the settle is before the restore
 
 Status: adopted 2026-09-10, closing ticket 24's delivery step. Amends §35
@@ -1227,6 +1236,77 @@ the picked codepoint for one keystroke, self-healed by the restore.
 Wine stays a recorded limit (§33): the keysyms arrive, Wine's Windows-VK
 world renders a box. The suite proves foot byte-exact, x11cat (XWayland)
 byte-exact, the clipboard untouched, and the pick once.
+
+## 40. Chromium text insertion needs its own Unicode-entry route
+
+Status: adopted 2026-09-10, ticket 26.
+
+The missing-plane defect is inside Chromium, after correct XKB translation:
+Electron 43 reports `KeyboardEvent.key` as U+1F601, then its default editor
+inserts U+F601. Chromium's `ui::KeyEvent::GetCharacter()` still narrows the
+DomKey scalar to one `char16_t`. A surrogate-pair keymap is not an escape:
+libxkbcommon correctly gives surrogate keysyms no Unicode value. Both facts
+are regression-pinned at the real Electron input boundary.
+
+Known Chromium-family classes therefore use protocol command `text-unicode`,
+which drives Chromium's standard Linux Ctrl+Shift+U composition with bounded
+pacing. A transient one-group US keymap supplies the composition's ASCII hex;
+the user's group zero is never assumed to be US-like, so `ua,ru`, AZERTY,
+Dvorak and custom maps take the same route. The installed keymap, selected
+group and held state are restored before the distinct `text-ok` reply.
+Every other client keeps §39's transient-keymap `text` route: the Unicode
+entry sequence is not universal (the raw foot leg rejects it), while the
+keysym route remains byte-exact in foot and XWayland. Neither route reads or
+changes the clipboard. `text-ok` / `text-err` are distinct from ordinary
+command replies so a nearby tap cannot confirm or reject the wrong pick.
+This is consumer routing, not scalar rewriting.
+
+## 41. The paste chip attempts unconditionally; a refused emoji send is silent
+
+Owner verdict, 2026-09-11, after living with ticket 25's liveness probe:
+a click on the paste chip always sends the chord, whatever the probe era
+claimed. A dead clipboard owner pasting nothing is the Wayland behaviour
+the owner already dislikes; the chip adding its own refusal on top was
+"only an inconvenience". The probe, its watchdog and its gone-hint are
+gone from the external-client path; the R2 target determination (colour
+field, emoji search, external client) and the bounded panel-local read
+stay — they decide WHERE a paste lands, never WHETHER it happens.
+
+The stage-B delivery-failure hint ("Emoji could not be delivered") was
+removed by the same verdict: with the helper stopped the panel's top hint
+already names the lifecycle state, and a refused `text` send while
+connected is not worth its own surface.
+
+Two follow-ups the verdict created live in their own tickets: the emoji
+page's search-input focus indication (owner request, ticket 29), and the
+clipboard-compatibility delivery route for Chromium-family clients such
+as ZCode (ticket 28, release plan §6).
+
+## 42. Clipboard compatibility is an explicit emoji-delivery mode, direct by default
+
+Ticket 28, built as the owner approved ("делай как предложено", 2026-09-11).
+The emoji page's header gains a toggle beside the skin-tone hand: typing
+(⌨, the default) or clipboard compatibility (📋). Compatibility publishes
+the exact picked sequence with `wl-copy --foreground` and sends the proven
+paste chord — the route Emote and omarchy-menu-emoji always used, and the
+only one Chromium-family clients that drop both typed routes (ZCode's
+U+F8Fx placeholders, ticket 13's acceptance) leave.
+
+The §6 rules it implements:
+
+- Direct stays the maintained default; the mode never engages silently.
+- The publication is VERIFIED against the clipboard before the chord
+  (one `wl-paste` comparison, a few quick retries, then a loud journal
+  drop) — a chord at an unverified clipboard would paste the user's
+  previous content, which is the one failure worse than no delivery.
+- The publisher stays alive as the selection owner until the next pick
+  replaces it; killing it would recreate the dead-owner behaviour the
+  owner rejected in §41.
+- The clipboard is REPLACED, not restored: one text payload, stated in
+  the toggle's tooltip. A roundtrip restore would race the pasting
+  client.
+- Usage counts the acknowledged send, not the client's insertion — the
+  same semantics §39 already records for `text-ok`.
 
 ## Dead ends — do not retry
 

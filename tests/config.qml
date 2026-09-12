@@ -19,6 +19,10 @@ QtObject {
                 followTheme: true,
                 // Omarchy 4.0.2's own default emoji picker (2026-09-05).
                 emojiApp: "omarchy-menu-emoji",
+                emojiCloseAfterPick: false,
+                emojiPageSize: "medium",
+                // Ticket 28: typing is the default delivery.
+                emojiDelivery: "direct",
                 // The Super cap says what the key is (ticket 22).
                 superMark: "word",
                 keyRadius: 8,
@@ -29,7 +33,10 @@ QtObject {
                 accentColor: "#7aa2f7",
                 borderColor: "#5a5a5a"
             })
-            T.deepEqual(Config.stateDefaults(), { center: null })
+            T.deepEqual(Config.stateDefaults(), {
+                center: null, emojiUsage: [], emojiSkinTone: "",
+                layoutGroup: 0, layoutDevice: ""
+            })
         })
 
         T.test("the emoji app override is any bare name, trimmed", function () {
@@ -60,6 +67,83 @@ QtObject {
             // And it round-trips under the file's snake_case name.
             T.equal(Config.serializeOverrides({ emojiApp: "xmoji" }),
                 '{\n  "emoji_app": "xmoji"\n}\n')
+        })
+
+        T.test("emoji page preferences validate and stay sparse", function () {
+            var parsed = Config.reloadOverrides({},
+                '{"emoji_close_after_pick":true,"emoji_page_size":"x-large"}')
+            T.deepEqual(parsed.value, {
+                emojiCloseAfterPick: true, emojiPageSize: "x-large"
+            })
+            T.equal(Config.serializeOverrides(parsed.value),
+                '{\n  "emoji_close_after_pick": true,'
+                + '\n  "emoji_page_size": "x-large"\n}\n')
+            T.equal(Config.reloadOverrides({}, '{"emoji_page_size":"small"}').error,
+                "Invalid value for emoji_page_size")
+            T.equal(Config.reloadOverrides({}, '{"emoji_close_after_pick":1}').error,
+                "Invalid value for emoji_close_after_pick")
+        })
+
+        T.test("emoji usage state preserves exact sequences and validates its bound", function () {
+            var text = '{"center":null,"emoji_usage":['
+                + '{"emoji":"👨‍👩‍👧","count":3,"lastUsed":9}]}'
+            var parsed = Config.reloadState(Config.stateDefaults(), text)
+            T.equal(parsed.error, "")
+            T.deepEqual(parsed.value.emojiUsage,
+                [{ emoji: "👨‍👩‍👧", count: 3, lastUsed: 9 }])
+            T.equal(parsed.value.emojiSkinTone, "")
+            T.equal(Config.serializeState(parsed.value).indexOf("👨‍👩‍👧") >= 0, true)
+            T.equal(Config.reloadState(parsed.value,
+                '{"emoji_usage":[{"emoji":"x","count":0,"lastUsed":1}]}').error,
+                "Invalid value for emoji_usage")
+            var records = []
+            for (var i = 0; i < 65; i++)
+                records.push({ emoji: "e" + i, count: 1, lastUsed: i + 1 })
+            T.equal(Config.reloadState(parsed.value,
+                JSON.stringify({ emoji_usage: records })).error,
+                "Invalid value for emoji_usage")
+        })
+
+        T.test("emoji delivery mode is direct or clipboard, direct by default", function () {
+            // Ticket 28: the explicit mode for clients that drop the typed
+            // routes. The canonical name and its camelCase alias validate
+            // identically; anything else is a malformed edit with the §5
+            // preservation semantics.
+            var modes = ["direct", "clipboard"]
+            for (var i = 0; i < modes.length; i++) {
+                var parsed = Config.reloadOverrides({},
+                    '{"emoji_delivery":"' + modes[i] + '"}')
+                T.equal(parsed.error, "")
+                T.deepEqual(parsed.value, { emojiDelivery: modes[i] })
+                T.equal(Config.serializeOverrides(parsed.value),
+                    '{\n  "emoji_delivery": "' + modes[i] + '"\n}\n')
+            }
+
+            var previous = { emojiDelivery: "direct" }
+            var unknown = Config.reloadOverrides(previous,
+                '{"emoji_delivery":"paste"}')
+            T.equal(unknown.value, previous)
+            T.equal(unknown.error, "Invalid value for emoji_delivery")
+            var aliasOk = Config.reloadOverrides({}, '{"emojiDelivery":"clipboard"}')
+            T.equal(aliasOk.error, "")
+            T.deepEqual(aliasOk.value, { emojiDelivery: "clipboard" })
+            var aliasBad = Config.reloadOverrides(previous,
+                '{"emojiDelivery":"emote"}')
+            T.equal(aliasBad.value, previous)
+            T.equal(aliasBad.error, "Invalid value for emojiDelivery")
+        })
+
+        T.test("emoji skin tone is validated UI state, not an override", function () {
+            var parsed = Config.reloadState(Config.stateDefaults(),
+                '{"emoji_skin_tone":"🏽"}')
+            T.equal(parsed.error, "")
+            T.equal(parsed.value.emojiSkinTone, "🏽")
+            T.equal(Config.serializeState(parsed.value).indexOf(
+                '"emoji_skin_tone": "🏽"') >= 0, true)
+            T.equal(Config.reloadState(parsed.value,
+                '{"emoji_skin_tone":"blue"}').error,
+                "Invalid value for emoji_skin_tone")
+            T.equal(Config.configField("emoji_skin_tone"), null)
         })
 
         T.test("the Super mark is one of five words, the word by default", function () {
@@ -363,7 +447,10 @@ QtObject {
 
         T.test("valid external state reloads while malformed state is retained", function () {
             var first = Config.reloadState(Config.stateDefaults(), '{"center":{"x":12,"y":34}}')
-            T.deepEqual(first.value, { center: { x: 12, y: 34 } })
+            T.deepEqual(first.value, {
+                center: { x: 12, y: 34 }, emojiUsage: [], emojiSkinTone: "",
+                layoutGroup: 0, layoutDevice: ""
+            })
             var malformed = Config.reloadState(first.value, '{"center":{"x":12}}')
             T.equal(malformed.value, first.value)
             T.equal(malformed.error, "Invalid value for center")
@@ -372,13 +459,20 @@ QtObject {
             // as an absent centre — the card simply falls back to docked
             // placement rules instead of restoring a stale top-left.
             var legacy = Config.reloadState(Config.stateDefaults(), '{"position":{"x":12,"y":34}}')
-            T.deepEqual(legacy.value, { center: null })
+            T.deepEqual(legacy.value, {
+                center: null, emojiUsage: [], emojiSkinTone: "",
+                layoutGroup: 0, layoutDevice: ""
+            })
             T.equal(legacy.error, "")
         })
 
         T.test("state serialization cannot copy preferences into state", function () {
             T.equal(Config.serializeState({ center: { x: 5, y: 9 }, mode: "floating" }),
-                '{\n  "center": {\n    "x": 5,\n    "y": 9\n  }\n}\n')
+                '{\n  "center": {\n    "x": 5,\n    "y": 9\n  },'
+                + '\n  "emoji_usage": [],'
+                + '\n  "emoji_skin_tone": "",'
+                + '\n  "layout_group": 0,'
+                + '\n  "layout_device": ""\n}\n')
         })
 
         // ---- the curated symbols page (spec-v1.1 §3, decisions §17) ----

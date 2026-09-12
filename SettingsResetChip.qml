@@ -39,10 +39,17 @@ Rectangle {
     MouseArea {
         id: resetChipArea
         anchors.fill: parent
+        hoverEnabled: true
+        Accessible.role: Accessible.Button
+        Accessible.name: "Reset this setting"
         enabled: panel.configHealthy
         onClicked: {
             panel.clearOverride(resetChip.overrideName)
             resetChip.resetClicked()
         }
+    }
+    HoverTooltip {
+        text: "Reset this setting"
+        hovered: resetChipArea.containsMouse
     }
 }

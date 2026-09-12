@@ -49,7 +49,12 @@
 //!                     the focused client and none at any other time, with the
 //!                     group restored by re-sending modifiers because a
 //!                     keymap event resets it (decisions §35, §37).
-//! Replies are `ok`, `hello <n>`, `configured<TAB><generation>`, `pong`,
+//!   text-unicode <utf8>
+//!                     deliver through Chromium's Linux Ctrl+Shift+U
+//!                     composition path; the panel selects this only for a
+//!                     known Chromium-family focused client (decisions §40).
+//! Replies are `ok`, `text-ok`, `text-err <reason>`, `hello <n>`,
+//! `configured<TAB><generation>`, `pong`,
 //! `keyboards<TAB>name...`, `caps<TAB><generation><TAB><group><TAB><records>`,
 //! or `err <reason>`.
 //!
@@ -58,7 +63,7 @@
 //! reconfigure keeps the generation (the installed keymap did not change), a
 //! changed one bumps it, so a facts reply computed from a superseded keymap is
 //! detectable and discardable. The panel and the helper moved to protocol
-//! version 4 together, which is what keeps an updated panel and an installed
+//! version 5 together, which is what keeps an updated panel and an installed
 //! old helper from ever negotiating the new reply shapes (decisions §23).
 //!
 //! Key repeat belongs to the compositor: a press is `down`, a release is `up`,
@@ -71,7 +76,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -87,10 +92,11 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 /// reinstalling the helper says so instead of failing silently. Version 4 adds
 /// the keycap-facts reply and the generation on `configured`; the panel learned
 /// both in the same release, so the version gate is what keeps the pair honest.
-/// `text` (ticket 24) deliberately did not bump it: the command is additive,
-/// an updated panel against an installed old helper gets `err unknown command`
-/// for each pick, and no existing reply changed shape.
-const PROTOCOL_VERSION: u32 = 4;
+/// Version 5 adds `text-unicode`: unlike ticket 24's initially additive
+/// `text`, it is selected automatically for Chromium-family clients, so an
+/// updated panel must fail the hello gate against an older helper instead of
+/// accepting clicks that can only earn `err unknown command`.
+const PROTOCOL_VERSION: u32 = 5;
 
 /// How long a non-modifier code may stay held before the helper lifts it
 /// (spec-v1 §6). Fifteen seconds of held backspace is about six hundred
@@ -128,7 +134,10 @@ fn text_settle() -> Duration {
         std::env::var("OMARCHY_OSK_TEXT_SETTLE_MS")
             .ok()
             .and_then(|raw| raw.trim().parse::<u64>().ok())
-            .map_or(Duration::from_millis(DEFAULT_TEXT_SETTLE_MS), Duration::from_millis)
+            .map_or(
+                Duration::from_millis(DEFAULT_TEXT_SETTLE_MS),
+                Duration::from_millis,
+            )
     })
 }
 
@@ -330,23 +339,64 @@ const RESERVED_SYMBOLS: [&str; 56] = [
     // Everything drawn on the direct punctuation page comes first. Keeping
     // these in the helper-owned block removes the temporary switch to a `us`
     // group and makes a layout list such as `ua,ru` honest as well.
-    "exclam", "1", "at", "2",
-    "numbersign", "3", "dollar", "4",
-    "percent", "5", "asciicircum", "6",
-    "ampersand", "7", "asterisk", "8",
-    "parenleft", "9", "parenright", "0",
-    "grave", "minus", "equal", "bracketleft",
-    "bracketright", "braceleft", "braceright", "backslash",
-    "bar", "semicolon", "colon", "apostrophe",
-    "quotedbl", "comma", "period", "slash",
-    "underscore", "plus", "less", "greater",
-    "question", "asciitilde",
+    "exclam",
+    "1",
+    "at",
+    "2",
+    "numbersign",
+    "3",
+    "dollar",
+    "4",
+    "percent",
+    "5",
+    "asciicircum",
+    "6",
+    "ampersand",
+    "7",
+    "asterisk",
+    "8",
+    "parenleft",
+    "9",
+    "parenright",
+    "0",
+    "grave",
+    "minus",
+    "equal",
+    "bracketleft",
+    "bracketright",
+    "braceleft",
+    "braceright",
+    "backslash",
+    "bar",
+    "semicolon",
+    "colon",
+    "apostrophe",
+    "quotedbl",
+    "comma",
+    "period",
+    "slash",
+    "underscore",
+    "plus",
+    "less",
+    "greater",
+    "question",
+    "asciitilde",
     // The ten special glyphs visible on row four.
-    "sterling", "EuroSign", "yen", "cent",
-    "degree", "plusminus", "multiply", "U2248",
-    "division", "notequal",
+    "sterling",
+    "EuroSign",
+    "yen",
+    "cent",
+    "degree",
+    "plusminus",
+    "multiply",
+    "U2248",
+    "division",
+    "notequal",
     // Spare catalogue capacity after the complete visible page.
-    "notsign", "lessthanequal", "greaterthanequal", "infinity",
+    "notsign",
+    "lessthanequal",
+    "greaterthanequal",
+    "infinity",
 ];
 
 /// Where the catalogue lives (decisions §33): levels five to eight of the
@@ -361,8 +411,7 @@ const RESERVED_SYMBOLS: [&str; 56] = [
 /// without `map[Lock]` costs a letter position its CapsLock, and `carried_
 /// levels` refuses any position whose answer moves under Lock anyway.
 const CATALOGUE_ROW: [&str; 12] = [
-    "AE01", "AE02", "AE03", "AE04", "AE05", "AE06",
-    "AE07", "AE08", "AE09", "AE10", "AE11", "AE12",
+    "AE01", "AE02", "AE03", "AE04", "AE05", "AE06", "AE07", "AE08", "AE09", "AE10", "AE11", "AE12",
 ];
 
 /// Positions that host what the digit row could not.
@@ -376,8 +425,7 @@ const CATALOGUE_ROW: [&str; 12] = [
 /// so on a Cyrillic layout, where every one of them is a letter, none is
 /// taken and nothing is lost that was not lost already.
 const CATALOGUE_SPARE: [&str; 10] = [
-    "AD11", "AD12", "AC10", "AC11", "AB08",
-    "AB09", "AB10", "TLDE", "BKSL", "LSGT",
+    "AD11", "AD12", "AC10", "AC11", "AB08", "AB09", "AB10", "TLDE", "BKSL", "LSGT",
 ];
 
 /// The two of the fourteen free positions ticket 20 measured through: `AB11`
@@ -445,9 +493,15 @@ fn free_positions(keymap: &str) -> Vec<String> {
     let mut declared: Vec<(u32, String)> = Vec::new();
     for line in keymap[lo..hi].lines() {
         let line = line.trim();
-        let Some(rest) = line.strip_prefix('<') else { continue };
-        let Some((name, rest)) = rest.split_once('>') else { continue };
-        let Some((_, value)) = rest.split_once('=') else { continue };
+        let Some(rest) = line.strip_prefix('<') else {
+            continue;
+        };
+        let Some((name, rest)) = rest.split_once('>') else {
+            continue;
+        };
+        let Some((_, value)) = rest.split_once('=') else {
+            continue;
+        };
         if let Ok(code) = value.trim().trim_end_matches(';').trim().parse::<u32>() {
             if code <= 255 {
                 declared.push((code, name.to_string()));
@@ -650,7 +704,10 @@ fn key_statement_bounds(keymap: &str, position: &str) -> Option<(usize, usize)> 
     if keymap[end..].starts_with('\n') {
         end += 1;
     }
-    let start = keymap[..at].rfind('\n').map(|newline| newline + 1).unwrap_or(at);
+    let start = keymap[..at]
+        .rfind('\n')
+        .map(|newline| newline + 1)
+        .unwrap_or(at);
     Some((start, end))
 }
 
@@ -699,7 +756,9 @@ fn extend_with_reserved(keymap: &str) -> Option<String> {
             if slots.len() == RESERVED_SYMBOLS.len() / 4 - available.len() {
                 break;
             }
-            let Some(code) = codes.get(*position) else { continue };
+            let Some(code) = codes.get(*position) else {
+                continue;
+            };
             if let Some(kept) = carried_levels(&compiled, &probe, *code) {
                 slots.push((position, Some(kept)));
             }
@@ -802,9 +861,9 @@ const MAX_TEXT_SCALARS: usize = 16;
 /// invariant — but there is no reason to spend the block's seats when
 /// twenty-six letter positions are sitting unused.
 const TEXT_ROWS: [&str; 26] = [
-    "AD01", "AD02", "AD03", "AD04", "AD05", "AD06", "AD07", "AD08", "AD09", "AD10", "AD11",
-    "AC01", "AC02", "AC03", "AC04", "AC05", "AC06", "AC07", "AC08", "AC09", "AC10",
-    "AB01", "AB02", "AB03", "AB04", "AB05",
+    "AD01", "AD02", "AD03", "AD04", "AD05", "AD06", "AD07", "AD08", "AD09", "AD10", "AD11", "AC01",
+    "AC02", "AC03", "AC04", "AC05", "AC06", "AC07", "AC08", "AC09", "AC10", "AB01", "AB02", "AB03",
+    "AB04", "AB05",
 ];
 
 /// One planned slot: the letter position that will carry a codepoint, the
@@ -871,7 +930,11 @@ fn plan_text_slots(
             continue;
         }
         for level in 5u8..=8 {
-            slots.push(TextSlot { position, code, level });
+            slots.push(TextSlot {
+                position,
+                code,
+                level,
+            });
             if slots.len() == wanted {
                 break 'rows;
             }
@@ -987,7 +1050,10 @@ enum TextBuildError {
 /// catalogue for the length of the swap. With the sixteen-scalar cap that
 /// never happens — four positions of `TEXT_ROWS` host the lot, and the block
 /// sits above the digit row — but the code does not lean on that.
-fn build_text_keymap(installed: &str, typed: &[(TextSlot, char)]) -> Result<String, TextBuildError> {
+fn build_text_keymap(
+    installed: &str,
+    typed: &[(TextSlot, char)],
+) -> Result<String, TextBuildError> {
     use xkbcommon::xkb;
 
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
@@ -1005,7 +1071,10 @@ fn build_text_keymap(installed: &str, typed: &[(TextSlot, char)]) -> Result<Stri
     let mut positions: Vec<(&'static str, u32, [Option<char>; 4])> = Vec::new();
     for (slot, scalar) in typed {
         let index = (slot.level - 5) as usize;
-        match positions.iter_mut().find(|(name, _, _)| *name == slot.position) {
+        match positions
+            .iter_mut()
+            .find(|(name, _, _)| *name == slot.position)
+        {
             Some((_, _, above)) => above[index] = Some(*scalar),
             None => {
                 let mut above = [None; 4];
@@ -1025,8 +1094,8 @@ fn build_text_keymap(installed: &str, typed: &[(TextSlot, char)]) -> Result<Stri
             let tail = if group + 1 < groups { "," } else { "" };
             let mut symbols: Vec<String> = Vec::with_capacity(8);
             for level in 0..4u32 {
-                let syms = compiled
-                    .key_get_syms_by_level(xkb::Keycode::from(code + 8), group, level);
+                let syms =
+                    compiled.key_get_syms_by_level(xkb::Keycode::from(code + 8), group, level);
                 if syms.is_empty() {
                     // An empty level is a level: spelled out, so the rewritten
                     // key keeps the shape it had.
@@ -1179,8 +1248,16 @@ fn deliver_text(
     let Some(level5) = bit_of("LVL5") else {
         return "err no level keys".to_string();
     };
-    let shift = if needs_shift { bit_of("LFSH") } else { Some((0, 0)) };
-    let level3 = if needs_level3 { bit_of("LVL3") } else { Some((0, 0)) };
+    let shift = if needs_shift {
+        bit_of("LFSH")
+    } else {
+        Some((0, 0))
+    };
+    let level3 = if needs_level3 {
+        bit_of("LVL3")
+    } else {
+        Some((0, 0))
+    };
     let (Some(shift), Some(level3)) = (shift, level3) else {
         return "err no level keys".to_string();
     };
@@ -1227,9 +1304,24 @@ fn deliver_text(
     // Bits that would move a level if a connection held them across a tap.
     let perturbing = level5.1 | shift.1 | level3.1;
     for (slot, _) in &typed {
+        // Same rule as the Unicode route (F4): this loop's chords are
+        // per-scalar and lifted before the next iteration, so leaving here
+        // strands nothing; the held-key claims answer to the shutdown
+        // release once this lock goes back.
+        if shutdown_requested() {
+            return "err shutting down".to_string();
+        }
         let wanted = level5.1
-            | if slot.level == 6 || slot.level == 8 { shift.1 } else { 0 }
-            | if slot.level == 7 || slot.level == 8 { level3.1 } else { 0 };
+            | if slot.level == 6 || slot.level == 8 {
+                shift.1
+            } else {
+                0
+            }
+            | if slot.level == 7 || slot.level == 8 {
+                level3.1
+            } else {
+                0
+            };
 
         // Lift what is held that the level does not want, and put it back
         // after the tap — only shared state answers for this, a held key's
@@ -1303,6 +1395,12 @@ fn deliver_text(
     if !settle.is_zero() {
         thread::sleep(settle);
     }
+    // The settle was the last unattended window; a shutdown that arrived
+    // during it leaves the taps sent but nothing held, so skipping the
+    // restore loses only a keymap the dying device takes with it (F4).
+    if shutdown_requested() {
+        return "err shutting down".to_string();
+    }
 
     // The installed keymap goes back through the one upload path, and the
     // group rides home on the closing modifiers request. `current` is `base`
@@ -1320,6 +1418,162 @@ fn deliver_text(
         typed.len(),
         started.elapsed().as_secs_f64() * 1000.0
     );
+    "ok".to_string()
+}
+
+/// Chromium's editor insertion still narrows a printable key event to one
+/// UTF-16 unit. Its Linux Unicode-entry composition path preserves the scalar;
+/// the panel selects this route only for Chromium-family clients.
+fn deliver_unicode_text(
+    shared: &Shared,
+    connection: &Connection,
+    keyboard: &ZwpVirtualKeyboardV1,
+    payload: &str,
+) -> String {
+    use xkbcommon::xkb;
+
+    let scalars = match text_scalars(payload) {
+        Ok(scalars) => scalars,
+        Err(reply) => return reply,
+    };
+    let Some(installed) = shared.installed_keymap.as_ref() else {
+        return "err no keymap yet".to_string();
+    };
+
+    // Unicode entry is expressed in ASCII hex. Never assume the user's group
+    // zero is US-like: `ua,ru`, AZERTY, Dvorak and custom maps all make the
+    // fixed physical positions below say something else. A one-group US map
+    // is the short-lived composition alphabet; the installed map and selected
+    // group go back before the reply, exactly as for `text`.
+    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+    let Some(entry_map) = xkb::Keymap::new_from_names(
+        &context,
+        "evdev",
+        "pc105",
+        "us",
+        "",
+        None,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    ) else {
+        return "err keymap".to_string();
+    };
+    let entry_keymap = entry_map.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
+    let entry_codes = parse_keycodes(&entry_keymap);
+    let entry_masks = modifier_masks_for_keymap(&entry_keymap, &entry_codes);
+    let code = |name: &str| entry_codes.get(name).copied();
+    let (Some(ctrl), Some(shift), Some(u_key), Some(enter)) =
+        (code("LCTL"), code("LFSH"), code("AD07"), code("RTRN"))
+    else {
+        return "err no unicode keys".to_string();
+    };
+    let mask = |key: u32| {
+        entry_masks
+            .get(&key)
+            .and_then(|groups| groups.first())
+            .copied()
+            .unwrap_or(0)
+    };
+    let (ctrl_mask, shift_mask) = (mask(ctrl), mask(shift));
+    if ctrl_mask == 0 || shift_mask == 0 {
+        return "err no unicode keys".to_string();
+    }
+    for name in [
+        "AE10", "AE01", "AE02", "AE03", "AE04", "AE05", "AE06", "AE07", "AE08", "AE09", "AC01",
+        "AB05", "AB03", "AC03", "AD03", "AC04",
+    ] {
+        if code(name).is_none() {
+            return "err no unicode keys".to_string();
+        }
+    }
+    let held: Vec<u32> = shared.held.keys().copied().collect();
+    for held_code in &held {
+        keyboard.key(stamp(), *held_code, 0);
+    }
+    if let Err(error) = upload_keymap(keyboard, &entry_keymap) {
+        eprintln!("text-unicode: cannot upload the ASCII entry keymap: {error}");
+        for held_code in &held {
+            keyboard.key(stamp(), *held_code, 1);
+        }
+        keyboard.modifiers(shared.modifier_mask(), 0, 0, shared.group);
+        let _ = connection.flush();
+        return "err keymap".to_string();
+    }
+    keyboard.modifiers(0, 0, 0, 0);
+    let _ = connection.roundtrip();
+
+    for scalar in scalars {
+        // Shutdown beats the pacing, not the other way round (F4): each
+        // scalar ends with Ctrl up and the mask zeroed, so leaving here
+        // strands nothing at the device — the held-key claims in
+        // `shared.held` answer to the shutdown release, which could not
+        // take this lock while the composition slept under it.
+        if shutdown_requested() {
+            return "err shutting down".to_string();
+        }
+        keyboard.key(stamp(), ctrl, 1);
+        keyboard.modifiers(ctrl_mask, 0, 0, 0);
+        let _ = connection.flush();
+        thread::sleep(Duration::from_millis(10));
+        keyboard.key(stamp(), shift, 1);
+        keyboard.modifiers(ctrl_mask | shift_mask, 0, 0, 0);
+        let _ = connection.flush();
+        thread::sleep(Duration::from_millis(10));
+        keyboard.key(stamp(), u_key, 1);
+        keyboard.key(stamp(), u_key, 0);
+        let _ = connection.flush();
+        thread::sleep(Duration::from_millis(10));
+        keyboard.key(stamp(), shift, 0);
+        keyboard.modifiers(ctrl_mask, 0, 0, 0);
+        let _ = connection.flush();
+        thread::sleep(Duration::from_millis(10));
+        keyboard.key(stamp(), ctrl, 0);
+        keyboard.modifiers(0, 0, 0, 0);
+        let _ = connection.flush();
+        thread::sleep(Duration::from_millis(10));
+        for digit in format!("{:x}", scalar as u32).bytes() {
+            let name = match digit {
+                b'0' => "AE10",
+                b'1' => "AE01",
+                b'2' => "AE02",
+                b'3' => "AE03",
+                b'4' => "AE04",
+                b'5' => "AE05",
+                b'6' => "AE06",
+                b'7' => "AE07",
+                b'8' => "AE08",
+                b'9' => "AE09",
+                b'a' => "AC01",
+                b'b' => "AB05",
+                b'c' => "AB03",
+                b'd' => "AC03",
+                b'e' => "AD03",
+                b'f' => "AC04",
+                _ => unreachable!(),
+            };
+            let position = code(name).expect("validated above");
+            keyboard.key(stamp(), position, 1);
+            keyboard.key(stamp(), position, 0);
+            let _ = connection.flush();
+            thread::sleep(Duration::from_millis(10));
+        }
+        keyboard.key(stamp(), enter, 1);
+        keyboard.key(stamp(), enter, 0);
+        let _ = connection.flush();
+        thread::sleep(Duration::from_millis(10));
+    }
+    // Enter commits the last scalar before the installed keymap returns.
+    // The roundtrip keeps the restore from racing the composition consumer.
+    let _ = connection.roundtrip();
+    if let Err(error) = upload_keymap(keyboard, installed) {
+        eprintln!("text-unicode: typed, but cannot restore the installed keymap: {error}");
+        let _ = connection.flush();
+        return "err keymap".to_string();
+    }
+    for held_code in &held {
+        keyboard.key(stamp(), *held_code, 1);
+    }
+    keyboard.modifiers(shared.modifier_mask(), 0, 0, shared.group);
+    let _ = connection.flush();
     "ok".to_string()
 }
 
@@ -1458,12 +1712,19 @@ enum Command {
     /// Keycap facts (decisions §23): the requested positions' per-level text
     /// in the named group of the installed keymap. No positions means every
     /// named key the keymap carries.
-    Caps { group: u32, positions: Vec<String> },
+    Caps {
+        group: u32,
+        positions: Vec<String>,
+    },
     /// Delivers an arbitrary Unicode string (ticket 24): the payload rides a
     /// transient variant of the installed keymap, one codepoint per slot on
     /// levels five to eight of a letter position, and the installed keymap is
     /// uploaded back afterwards.
     Text(String),
+    /// Chromium still inserts printable key events through a BMP-only
+    /// char16 path. Its Linux Unicode-entry path commits full scalar values,
+    /// so callers that identified that consumer can request that route.
+    UnicodeText(String),
 }
 
 /// The two separator bytes of a `caps` reply. Both are outside everything a
@@ -1511,7 +1772,7 @@ fn keycap_facts_for_groups(keymap: &str) -> Vec<String> {
             let levels = compiled.num_levels_for_key(code, group);
             let mut record = String::from(name);
             for level in 0..levels {
-                let syms = compiled.key_get_syms_by_level(code.into(), group, level);
+                let syms = compiled.key_get_syms_by_level(code, group, level);
                 record.push(CAPS_FIELD_SEP);
                 if syms.is_empty() {
                     record.push('n');
@@ -1547,12 +1808,7 @@ fn keycap_facts_for_groups(keymap: &str) -> Vec<String> {
 /// a carried key whose level is empty (spec-v1.1 §3's honest hole). `None`
 /// says the group is past the keymap's own count, which no panel should ask
 /// for: xkb would silently wrap it to another group's facts.
-fn caps_reply(
-    gen: u64,
-    per_group: &[String],
-    group: u32,
-    positions: &[String],
-) -> Option<String> {
+fn caps_reply(gen: u64, per_group: &[String], group: u32, positions: &[String]) -> Option<String> {
     let records = per_group.get(group as usize)?;
     // The header fields are tabs, like every other protocol reply's; the
     // 0x1F fields begin inside the record section, where level text lives.
@@ -1648,9 +1904,10 @@ impl Shared {
             .filter_map(|code| match self.modifier_masks.get(code) {
                 // A group beyond the keymap's own count wraps in xkb; the
                 // first group's bit is the honest answer for it.
-                Some(per_group) => {
-                    per_group.get(self.group as usize).or_else(|| per_group.first()).copied()
-                }
+                Some(per_group) => per_group
+                    .get(self.group as usize)
+                    .or_else(|| per_group.first())
+                    .copied(),
                 None => None,
             })
             .fold(0, |mask, bit| mask | bit)
@@ -1882,7 +2139,9 @@ fn is_published_keymap(path: &str) -> bool {
 /// Renamed into place rather than written in place: the compositor may be
 /// reading the path at any moment, and half a keymap compiles into nothing.
 fn publish_keymap(text: &str) {
-    let Some(path) = published_keymap_path() else { return };
+    let Some(path) = published_keymap_path() else {
+        return;
+    };
     let staging = path.with_extension("xkb.new");
     if std::fs::write(&staging, text).is_err() {
         eprintln!("cannot stage the keymap for the compositor");
@@ -2038,6 +2297,22 @@ fn startup_keyboard_reply() -> String {
     }
 }
 
+/// The hello handshake's exact grammar (F6): precisely `hello <u32>`.
+/// `Some(Ok(v))` is a well-formed version request, `Some(Err(()))` is a
+/// hello-shaped line that is not (bare, trailing words, non-numeric
+/// version — the old parser defaulted all three to the current version),
+/// and `None` is not a hello line at all, belonging to the verb parser.
+fn parse_hello(line: &str) -> Option<Result<u32, ()>> {
+    let mut words = line.split_whitespace();
+    if words.next()? != "hello" {
+        return None;
+    }
+    match (words.next(), words.next()) {
+        (Some(version), None) => Some(version.parse::<u32>().map_err(|_| ())),
+        _ => Some(Err(())),
+    }
+}
+
 fn parse(line: &str) -> Option<Command> {
     if let Some(raw) = line.strip_prefix("configure\t") {
         let fields: Vec<&str> = raw.split('\t').collect();
@@ -2069,12 +2344,22 @@ fn parse(line: &str) -> Option<Command> {
     // is the user's string, not a word list, and nothing after the one
     // separator space is ours to trim. A bare "text" is no command at all —
     // like a bare "tap" — and answers "err unknown command".
+    if let Some(rest) = line.strip_prefix("text-unicode ") {
+        return Some(Command::UnicodeText(rest.to_string()));
+    }
     if let Some(rest) = line.strip_prefix("text ") {
         return Some(Command::Text(rest.to_string()));
     }
     let mut parts = line.split_whitespace();
     let verb = parts.next()?;
     let raw = parts.next()?;
+    // Fixed-arity verbs take exactly one argument (F6): a third word is a
+    // malformed line, not a silently truncated one. The variable-arity and
+    // free-text verbs (`caps`, `text`, `text-unicode`, `configure`) are
+    // peeled off above with their own rules.
+    if parts.next().is_some() {
+        return None;
+    }
     let key = || match raw.parse::<u32>() {
         Ok(code) => Key::Code(code),
         Err(_) => Key::Name(raw.to_string()),
@@ -2173,14 +2458,21 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         // `hello` reports more than "the process is up": a keyboard without a
         // keymap accepts commands and drops every key, so the client must not
         // enable keys until one is loaded. `ping` stays a plain liveness check.
-        if let Some(version) = line.strip_prefix("hello") {
-            let wanted: u32 = version.trim().parse().unwrap_or(PROTOCOL_VERSION);
-            let reply = if wanted != PROTOCOL_VERSION {
-                format!("err protocol {PROTOCOL_VERSION} required, helper needs reinstall")
-            } else if shared.lock().unwrap().is_ready() {
-                format!("hello {PROTOCOL_VERSION}")
-            } else {
-                "err not ready".to_string()
+        // The grammar is exactly `hello <u32>` (F6): the handshake is a
+        // version gate, not a default, so an old or broken client fails
+        // closed instead of negotiating the current version by omission.
+        if let Some(hello) = parse_hello(line) {
+            let reply = match hello {
+                Ok(wanted) if wanted == PROTOCOL_VERSION => {
+                    if shared.lock().unwrap().is_ready() {
+                        format!("hello {PROTOCOL_VERSION}")
+                    } else {
+                        "err not ready".to_string()
+                    }
+                }
+                _ => {
+                    format!("err protocol {PROTOCOL_VERSION} required, helper needs reinstall")
+                }
             };
             let _ = writeln!(out, "{reply}");
             continue;
@@ -2286,6 +2578,23 @@ fn expire_stuck_keys(shared: &SharedRef, connection: &Connection) -> Vec<u32> {
 /// away underneath one.
 const SHUTDOWN_SIGNALS: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
 
+/// Set the moment the sigwait thread wakes, before it goes anywhere near the
+/// shared lock (F4). A text delivery holds that lock across its paced sleeps
+/// — a Chromium-route family is ~750 ms — while the shutdown release waits on
+/// it for at most 500 ms and then leaves anyway, destroying the virtual
+/// keyboard mid-chord: Hyprland does not lift a destroyed device's presses
+/// (ticket 17), so the composition's Ctrl or Shift would stay down on the
+/// seat for the rest of the session. The deliveries therefore poll this flag
+/// between their steps and abort inside one pacing beat (~a scalar), handing
+/// the lock back so the ordinary release-and-roundtrip path answers for the
+/// device. Atomic and lock-free precisely because the setter must not need
+/// the lock the reader is holding.
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+fn shutdown_requested() -> bool {
+    SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
+}
+
 fn shutdown_signal_set() -> libc::sigset_t {
     // SAFETY: sigemptyset/sigaddset only write through the pointer they are
     // given, and it points at a zeroed sigset_t owned by this frame.
@@ -2356,15 +2665,26 @@ fn apply(
     held: Option<&mut Vec<u32>>,
     conn_id: u64,
 ) -> String {
+    let text_command = matches!(&command, Command::Text(_) | Command::UnicodeText(_));
     let mut shared = shared.lock().unwrap();
-    apply_locked(&mut shared, connection, command, held, conn_id)
+    let reply = apply_locked(&mut shared, connection, command, held, conn_id);
+    if !text_command {
+        return reply;
+    }
+    if reply == "ok" {
+        "text-ok".to_string()
+    } else if let Some(reason) = reply.strip_prefix("err ") {
+        format!("text-err {reason}")
+    } else {
+        format!("text-err {reply}")
+    }
 }
 
 fn apply_locked(
     shared: &mut Shared,
     connection: &Connection,
     command: Command,
-    mut held: Option<&mut Vec<u32>>,
+    held: Option<&mut Vec<u32>>,
     conn_id: u64,
 ) -> String {
     if shared.shutting_down {
@@ -2393,7 +2713,7 @@ fn apply_locked(
     // A `text` payload is refused for what it is before any device state is
     // consulted: an empty or oversized string is the panel's bug, not a
     // reason to report the keymap.
-    if let Command::Text(ref payload) = command {
+    if let Command::Text(ref payload) | Command::UnicodeText(ref payload) = command {
         if let Err(reply) = text_scalars(payload) {
             return reply;
         }
@@ -2516,6 +2836,9 @@ fn apply_locked(
         Command::Text(ref payload) => {
             return deliver_text(shared, connection, &keyboard, payload);
         }
+        Command::UnicodeText(ref payload) => {
+            return deliver_unicode_text(shared, connection, &keyboard, payload);
+        }
         Command::Configure(_) => unreachable!("handled above"),
     }
 
@@ -2531,7 +2854,7 @@ fn apply_locked(
         }
     }
 
-    if let Some(held) = held.as_deref_mut() {
+    if let Some(held) = held {
         if let Some(code) = pressed {
             if !held.contains(&code) {
                 held.push(code);
@@ -2561,7 +2884,7 @@ fn run(mut queue: EventQueue<State>, mut state: State) -> Result<(), Box<dyn std
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn run_main() -> Result<(), Box<dyn std::error::Error>> {
     let connection = Connection::connect_to_env()?;
     let mut queue = connection.new_event_queue();
     let qh = queue.handle();
@@ -2648,6 +2971,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if unsafe { libc::sigwait(&set, &mut received) } != 0 {
             return;
         }
+        // Before anything that can block: the deliveries poll this between
+        // their paced steps and abort within one beat, so the release below
+        // wins the race with the 500 ms guard instead of racing it.
+        SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
         // The release waits on the compositor, and a compositor that is
         // itself going away (the `PartOf=` teardown) may never answer. The
         // release is best-effort and systemd must not sit through its stop
@@ -2673,6 +3000,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket_connection = connection.clone();
     thread::spawn(move || serve(listener, socket_shared, socket_connection));
     run(queue, state)
+}
+
+fn main() {
+    if let Err(error) = run_main() {
+        // The startup errors this binary can return are session facts —
+        // no Wayland display, no zwp_virtual_keyboard_manager_v1, no seat,
+        // a second live instance, an unbindable socket — and retrying
+        // cannot change any of them while the session stands. The unit's
+        // RestartPreventExitStatus=78 (EX_CONFIG) exists exactly so
+        // systemd fails closed instead of spinning StartLimit on them;
+        // runtime failures stay exit 1 and keep Restart=always.
+        eprintln!("omarchy-osk-daemon: {error}");
+        std::process::exit(78);
+    }
 }
 
 #[cfg(test)]
@@ -2726,9 +3067,13 @@ mod tests {
         let mut out = Vec::new();
         for (index, _) in extended.match_indices("key <") {
             let rest = &extended[index + 5..];
-            let Some(name_end) = rest.find('>') else { continue };
+            let Some(name_end) = rest.find('>') else {
+                continue;
+            };
             let Some(open) = rest.find('{') else { continue };
-            let Some(close) = rest[open..].find('}') else { continue };
+            let Some(close) = rest[open..].find('}') else {
+                continue;
+            };
             if rest[open..open + close].contains("\"OSK_RESERVED\"") {
                 out.push(rest[..name_end].to_string());
             }
@@ -2943,7 +3288,13 @@ mod tests {
             // outright; see `an_lv5_option_keeps_the_block_off_ordinary_positions`.
             let singles: Vec<u32> = std::iter::once(0)
                 .chain(probe.chords.iter().copied())
-                .chain(probe.others.iter().copied().filter(|mods| *mods != probe.level_five))
+                .chain(
+                    probe
+                        .others
+                        .iter()
+                        .copied()
+                        .filter(|mods| *mods != probe.level_five),
+                )
                 .collect();
             let mut chords: Vec<u32> = Vec::new();
             for one in &singles {
@@ -2988,7 +3339,9 @@ mod tests {
         let (lo, hi) = key_statement_bounds(&stock, "AE01").expect("AE01 is defined");
         let mut lettered = String::new();
         lettered.push_str(&stock[..lo]);
-        lettered.push_str("\tkey <AE01> {\n\t\ttype[1]= \"ALPHABETIC\",\n\t\tsymbols[1]= [ a, A ]\n\t};\n");
+        lettered.push_str(
+            "\tkey <AE01> {\n\t\ttype[1]= \"ALPHABETIC\",\n\t\tsymbols[1]= [ a, A ]\n\t};\n",
+        );
         lettered.push_str(&stock[hi..]);
 
         let hosts = catalogue_hosts(&extend_with_reserved(&lettered).expect("block composes"));
@@ -3124,7 +3477,11 @@ mod tests {
         // A path that is not there answers None rather than pretending.
         let _ = std::fs::remove_file(&path);
         assert_eq!(kb_file_mark(&path.to_string_lossy()), None);
-        assert_eq!(kb_file_mark(""), None, "an RMLVO configure has no file to mark");
+        assert_eq!(
+            kb_file_mark(""),
+            None,
+            "an RMLVO configure has no file to mark"
+        );
     }
 
     /// A keymap whose `<LVL5>` opens nothing gets its own layout back.
@@ -3194,7 +3551,9 @@ mod tests {
         let mut out = std::collections::HashMap::new();
         for (index, _) in keymap.match_indices("key <") {
             let rest = &keymap[index + 5..];
-            let Some(name_end) = rest.find('>') else { continue };
+            let Some(name_end) = rest.find('>') else {
+                continue;
+            };
             let name = rest[..name_end].to_string();
             let Some(open) = rest.find('{') else { continue };
             let mut depth = 0usize;
@@ -3560,6 +3919,39 @@ mod tests {
         assert!(parse("nonsense").is_none());
     }
 
+    #[test]
+    fn hello_is_exactly_one_version_word() {
+        // F6: the handshake is a gate, not a default. A bare hello, trailing
+        // words, or a non-numeric version word is a malformed hello — an
+        // err protocol answer — and only `hello <u32>` negotiates.
+        assert_eq!(parse_hello("hello 5"), Some(Ok(5)));
+        assert_eq!(parse_hello("hello 0"), Some(Ok(0)));
+        assert_eq!(parse_hello("hello"), Some(Err(())));
+        assert_eq!(parse_hello("hello 5 extra"), Some(Err(())));
+        assert_eq!(parse_hello("hello garbage"), Some(Err(())));
+        assert_eq!(parse_hello("hello -1"), Some(Err(())));
+        // Not hello lines at all: the verb parser owns them.
+        assert_eq!(parse_hello("hellox 5"), None);
+        assert_eq!(parse_hello("tap AD01"), None);
+        assert_eq!(parse_hello(""), None);
+    }
+
+    #[test]
+    fn fixed_arity_verbs_refuse_extra_arguments() {
+        // F6: tap/down/up/mods/group take exactly one argument; a third
+        // word is a malformed line, not a silently truncated command.
+        assert!(parse("tap AD01").is_some());
+        assert!(parse("tap AD01 extra").is_none());
+        assert!(parse("down LFSH").is_some());
+        assert!(parse("down LFSH now").is_none());
+        assert!(parse("up 16").is_some());
+        assert!(parse("up 16 17").is_none());
+        assert!(parse("mods 3").is_some());
+        assert!(parse("mods 3 4").is_none());
+        assert!(parse("group 1").is_some());
+        assert!(parse("group 1 2").is_none());
+    }
+
     /// Pulls one position's tab-style fields (`CAPS_FIELD_SEP`-separated) out
     /// of a per-group facts string, so the tag assertions below read like the
     /// protocol they pin.
@@ -3647,7 +4039,8 @@ mod tests {
         // Requested positions answer in request order. The header is tab
         // separated like every other reply; 0x1F begins at the levels.
         assert_eq!(
-            caps_reply(7, &facts, 0, &["AD01".to_string(), "AE01".to_string()]).expect("group 0 exists"),
+            caps_reply(7, &facts, 0, &["AD01".to_string(), "AE01".to_string()])
+                .expect("group 0 exists"),
             format!(
                 "caps\t7\t0\tAD01{f}tq{f}tQ{r}AE01\
                  {f}t1{f}t!{f}t1{f}t!{f}t!{f}t1{f}t@{f}t2",
@@ -3658,10 +4051,13 @@ mod tests {
         // No position list: the group's whole record set.
         let full = caps_reply(7, &facts, 1, &[]).expect("group 1 exists");
         assert!(full.starts_with("caps\t7\t1\t"));
-        assert!(full.split(CAPS_RECORD_SEP).any(|r| r.starts_with("AD01\u{1f}")));
+        assert!(full
+            .split(CAPS_RECORD_SEP)
+            .any(|r| r.starts_with("AD01\u{1f}")));
         // A position the keymap does not carry answers bare — the panel's
         // "no keymap entry", never another position's facts.
-        let with_unknown = caps_reply(7, &facts, 0, &["AD01".to_string(), "ZZ09".to_string()]).expect("group 0 exists");
+        let with_unknown = caps_reply(7, &facts, 0, &["AD01".to_string(), "ZZ09".to_string()])
+            .expect("group 0 exists");
         assert!(with_unknown.split(CAPS_RECORD_SEP).any(|r| r == "ZZ09"));
         // A group past the keymap's own count is refused rather than wrapped:
         // xkb would silently answer another group's facts for it.
@@ -3767,7 +4163,6 @@ mod tests {
         extend_with_reserved(TEXT_FIXTURE).expect("the block composes on the fixture")
     }
 
-
     /// Slot finding for `text`: letters found in `TEXT_ROWS` order, positions
     /// the keymap does not define are skipped, and a string the keymap cannot
     /// host whole is refused rather than silently truncated.
@@ -3861,7 +4256,10 @@ mod tests {
         let skip = std::collections::HashSet::new();
 
         let plan = plan_text_slots(keymap, &codes, 1, &skip).expect("both positions host");
-        assert_eq!(plan[0].position, "AD01", "TEXT_ROWS order, not the type's opinion");
+        assert_eq!(
+            plan[0].position, "AD01",
+            "TEXT_ROWS order, not the type's opinion"
+        );
 
         // Two hosted positions carry eight codepoints; nine cannot fit.
         assert_eq!(
@@ -3930,7 +4328,10 @@ mod tests {
 
         let plan = plan_text_slots(keymap, &codes, 1, &std::collections::HashSet::new())
             .expect("AC01 still hosts");
-        assert_eq!(plan[0].position, "AC01", "<AD01> already reaches level eight");
+        assert_eq!(
+            plan[0].position, "AC01",
+            "<AD01> already reaches level eight"
+        );
     }
 
     /// A level carrying several keysyms cannot be re-expressed by the flat
@@ -3982,8 +4383,7 @@ mod tests {
         let plan = plan_text_slots(keymap, &codes, 1, &std::collections::HashSet::new())
             .expect("AC01 still hosts");
         assert_eq!(
-            plan[0].position,
-            "AC01",
+            plan[0].position, "AC01",
             "<AD01>'s first level carries two keysyms"
         );
     }
@@ -4051,7 +4451,10 @@ mod tests {
 
         let plan = plan_text_slots(keymap, &codes, 1, &std::collections::HashSet::new())
             .expect("the CapsLocked letter hosts a pick");
-        assert_eq!(plan[0].position, "AD01", "TEXT_ROWS order, Lock notwithstanding");
+        assert_eq!(
+            plan[0].position, "AD01",
+            "TEXT_ROWS order, Lock notwithstanding"
+        );
     }
 
     /// The owner's stock `us,ua` map — the exact keymap the nested suite's
@@ -4077,7 +4480,10 @@ mod tests {
 
         let five = plan_text_slots(&installed, &codes, 5, &skip).expect("four fill one position");
         assert_eq!(five[0].position, "AD01");
-        assert_eq!(five[4].position, "AD02", "the fifth scalar opens the next position");
+        assert_eq!(
+            five[4].position, "AD02",
+            "the fifth scalar opens the next position"
+        );
         assert_eq!(five[4].level, 5);
 
         // And the sixteen-scalar cap fits four positions, as the builder's
@@ -4099,6 +4505,32 @@ mod tests {
         assert_eq!(unicode_keysym('\u{10FFFF}'), 0x0110_FFFF);
         assert_eq!(unicode_keysym('a'), 0x0100_0061);
         assert_eq!(unicode_keysym('\u{A9}'), 0x0100_00A9);
+    }
+
+    #[test]
+    fn probe_surrogate_unicode_keysyms() {
+        use xkbcommon::xkb;
+        let text = TEXT_FIXTURE.replace("onesuperior", "0x100d83d");
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let map = xkb::Keymap::new_from_string(
+            &context,
+            text,
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .expect("numeric surrogate keysym compiles");
+        let codes = parse_keycodes(TEXT_FIXTURE);
+        assert_eq!(
+            map.key_get_syms_by_level(xkb::Keycode::from(codes["AD01"] + 8), 0, 2),
+            &[xkb::Keysym::from(0x0100_d83d)]
+        );
+        let mut state = xkb::State::new(&map);
+        let probe = LevelProbe::new(&map).expect("fixture has LevelThree");
+        state.update_mask(probe.chords[2], 0, 0, 0, 0, 0);
+        assert_eq!(
+            state.key_get_utf32(xkb::Keycode::from(codes["AD01"] + 8)),
+            0
+        );
     }
 
     /// §33's invariant, asserted per rewritten position of a transient pick:
@@ -4128,7 +4560,11 @@ mod tests {
 
         let positions: std::collections::HashSet<&str> =
             slots.iter().map(|slot| slot.position).collect();
-        assert_eq!(positions, ["AD01"].into_iter().collect(), "two scalars fit one position");
+        assert_eq!(
+            positions,
+            ["AD01"].into_iter().collect(),
+            "two scalars fit one position"
+        );
         for position in positions {
             // The old statement was cut, not shadowed: one definition left.
             assert_eq!(
@@ -4194,8 +4630,16 @@ mod tests {
         for group in 0..built.num_layouts() {
             for (slot, scalar) in slots.iter().zip(&scalars) {
                 let mods = probe.level_five
-                    | if slot.level == 6 || slot.level == 8 { shift } else { 0 }
-                    | if slot.level == 7 || slot.level == 8 { lvl3 } else { 0 };
+                    | if slot.level == 6 || slot.level == 8 {
+                        shift
+                    } else {
+                        0
+                    }
+                    | if slot.level == 7 || slot.level == 8 {
+                        lvl3
+                    } else {
+                        0
+                    };
                 assert_eq!(
                     syms_with_mods(&built, group, mods, codes[slot.position]),
                     vec![xkb::Keysym::from(unicode_keysym(*scalar))],
@@ -4237,6 +4681,10 @@ mod tests {
             Some(Command::Text(payload)) => assert_eq!(payload, "a b"),
             other => panic!("expected a text command, got {other:?}"),
         }
+        match parse("text-unicode 😁😛") {
+            Some(Command::UnicodeText(payload)) => assert_eq!(payload, "😁😛"),
+            other => panic!("expected a Unicode text command, got {other:?}"),
+        }
         // A bare "text" is not a command, like a bare "tap"; neither is a
         // verb that merely starts the same way.
         assert!(parse("text").is_none());
@@ -4244,9 +4692,13 @@ mod tests {
 
         assert_eq!(text_scalars("").unwrap_err(), "err empty text");
         assert_eq!(text_scalars("👍").unwrap().len(), 1);
-        assert_eq!(text_scalars(&"a".repeat(MAX_TEXT_SCALARS)).unwrap().len(), MAX_TEXT_SCALARS);
-        assert_eq!(text_scalars(&"a".repeat(MAX_TEXT_SCALARS + 1)).unwrap_err(), "err text too long");
+        assert_eq!(
+            text_scalars(&"a".repeat(MAX_TEXT_SCALARS)).unwrap().len(),
+            MAX_TEXT_SCALARS
+        );
+        assert_eq!(
+            text_scalars(&"a".repeat(MAX_TEXT_SCALARS + 1)).unwrap_err(),
+            "err text too long"
+        );
     }
 }
-
-

@@ -26,14 +26,18 @@ which is what makes our virtual keyboard invisible to other clients.
 _Avoid_: layout config, xkb config
 
 **Keymap**:
-The compiled xkb keymap holding every layout as a group. There is one,
-and it is uploaded once.
-_Avoid_: layout file, keyboard map
+The compiled xkb keymap holding every layout as a group, extended by the
+helper's reserved symbol block. One identity is installed per `configure`;
+a group switch installs nothing, and a text delivery swaps a transient
+keymap only for the length of the delivery and restores it (decisions §39).
+_Avoid_: layout file, keyboard map, the one keymap
 
 **Churn**:
-Repeated keymap recompilation by the compositor. Our upper bound is two
-compiles for the lifetime of a session; anything above that is a defect,
-not a slow path.
+Repeated keymap recompilation by the compositor. Bounded per cause, not by
+one session-wide number: each configure-identity change and each transient
+text swap costs its counted compiles, and a group switch costs none. The
+nested harness derives its ceiling from the identities the suite installs,
+never from the last observed count.
 _Avoid_: rebuild loop, thrashing, the storm
 
 ### Devices
@@ -123,12 +127,38 @@ The header control that pastes whatever is already on CLIPBOARD into the
 intended client. Distinct from using the clipboard as a typing method.
 _Avoid_: clipboard history, clipboard synthesis, paste-as-input
 
-### Picker interaction
+### Emoji page
 
-**Picker session**:
-One use of an emoji picker initiated from the panel, from opening through
-selection or dismissal. Distinct from a picker opened independently elsewhere.
-_Avoid_: picker process, emoji window lifetime
+**Emoji page**:
+The panel's own overlay page of emoji tiles, opened from the `☺` cap and
+driven by the keyboard's own keys. It replaced the external-picker
+cooperation (tickets 09/10, decisions §24 — history); the configured
+external app remains launchable from a page chip, with no cooperation
+from us.
+_Avoid_: picker session, picker window, the picker
+
+**Pick**:
+One emoji choice on the emoji page, delivered to the previously focused
+client exactly once through a text route — never through the clipboard.
+
+**Skin tone**:
+The emoji page's selected tone, persisted as state (`emoji_skin_tone`),
+not a user override. Tone-capable families occupy one tile; delivery
+resolves to an existing exact catalogue sequence.
+_Avoid_: tone override, tone setting
+
+**Text route**:
+The helper's transient-keymap delivery of a text string (decisions §39).
+Ordinary keys type through the installed keymap; a pick uploads a
+transient keymap for the length of the delivery and restores the
+installed one after.
+_Avoid_: clipboard synthesis, per-keystroke spawn
+
+**Unicode-entry route**:
+The Chromium-family variant of text delivery (`text-unicode`) that types
+Ctrl+Shift+U hex composition; its short visible `U+…` preedit is expected,
+not a defect.
+_Avoid_: the hex hack, Chromium workaround
 
 ### Settings
 

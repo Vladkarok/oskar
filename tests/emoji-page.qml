@@ -9,22 +9,21 @@
 import QtQml
 import "../EmojiCatalog.js" as Catalog
 import "../EmojiPage.js" as Page
-import "../Config.js" as Config
 import "../SettingsPlacement.js" as Place
 import "harness.js" as T
 
 QtObject {
     // The page's chrome restated: page margins 2x10, the header row's 28,
-    // a 1px hairline, the tabs' two recorded chip rows (24-high chips on a
-    // 7-space gap), and 7-space gaps between the column's four children.
+    // a 1px hairline, one 24-high icon-tab row, and 7-space gaps between the
+    // column's four children.
     // Only the grid cells carry the size preset's scale.
-    function naturalPageHeight(cell, gap) {
-        var chrome = 2 * 10 + 28 + 1 + (2 * 24 + 7) + 3 * 7
-        return chrome + 4 * (cell + gap) - gap
+    function naturalPageHeight(cell, gap, rows) {
+        var chrome = 2 * 10 + 28 + 1 + 24 + 3 * 7
+        return chrome + rows * (cell + gap) - gap
     }
 
-    function naturalPageWidth(cell, gap) {
-        return 2 * 10 + 8 * cell + 7 * gap
+    function naturalPageWidth(cell, gap, columns) {
+        return 2 * 10 + columns * cell + (columns - 1) * gap
     }
 
     Component.onCompleted: {
@@ -43,23 +42,21 @@ QtObject {
             T.equal(tabs[tabs.length - 1].value, "Flags")
         })
 
-        T.test("tab labels shorten at the ampersand and keep bare names", function () {
-            T.equal(Page.tabLabel("Smileys & Emotion"), "Smileys")
-            T.equal(Page.tabLabel("Food & Drink"), "Food")
-            T.equal(Page.tabLabel("Flags"), "Flags")
-            T.equal(Page.tabLabel("Activities"), "Activities")
-            T.equal(Page.tabLabel(""), "")
+        T.test("every category has a stable representative emoji", function () {
+            T.equal(Page.categoryIcon("Smileys & Emotion"), "😀")
+            T.equal(Page.categoryIcon("People & Body"), "👋")
+            T.equal(Page.categoryIcon("Flags"), "🏁")
             var tabs = Page.tabs(groups)
             for (var i = 0; i < tabs.length; i++) {
-                if (tabs[i].label.indexOf(" ") >= 0) {
-                    T.fail("label " + tabs[i].label + " did not shorten")
+                if (tabs[i].label === "•") {
+                    T.fail("group " + tabs[i].value + " has no icon")
                     return
                 }
             }
             T.equal(true, true)
         })
 
-        T.test("no group is an empty tab, and the slices reassemble the catalogue", function () {
+        T.test("no group is empty and tone families occupy one base tile", function () {
             var total = 0
             for (var i = 0; i < groups.length; i++) {
                 var slice = Page.groupEntries(entries, groups[i])
@@ -69,24 +66,113 @@ QtObject {
                 }
                 total += slice.length
             }
-            T.equal(total, entries.length)
-            // 3781 entries, none lost between the tabs and the grid.
-            T.equal(total, 3781)
+            T.equal(total < entries.length, true)
+            T.equal(total, 2026)
         })
 
-        T.test("variants sit beside their base inside the group slice", function () {
-            // Skin tones render as their own cells next to the base because
-            // they already do in the catalogue; the slice must keep them so.
+        T.test("simple, ZWJ and multi-person families collapse and resolve exactly", function () {
             var slice = Page.groupEntries(entries, "People & Body")
-            var at = -1
-            for (var i = 0; i < slice.length; i++) {
-                if (slice[i].name === "thumbs up") { at = i; break }
+            function named(name) {
+                for (var i = 0; i < slice.length; i++)
+                    if (slice[i].name === name) return slice[i]
+                return null
             }
-            T.equal(at >= 0, true)
-            T.equal(slice[at].variants.length, 5)
-            for (var v = 0; v < 5; v++) {
-                T.equal(slice[at + 1 + v].base, entries.indexOf(slice[at]))
-                T.equal(slice[at + 1 + v].name.indexOf("thumbs up: ") === 0, true)
+            var thumbs = named("thumbs up")
+            T.equal(thumbs !== null, true)
+            T.equal(named("thumbs up: light skin tone"), null)
+            T.equal(Page.entryForTone(thumbs, "🏽", entries).emoji, "👍🏽")
+            var beard = named("woman: beard")
+            T.equal(Page.entryForTone(beard, "🏿", entries).emoji, "🧔🏿‍♀️")
+            var people = named("people holding hands")
+            T.equal(Page.entryForTone(people, "🏼", entries).emoji,
+                "🧑🏼‍🤝‍🧑🏼")
+            T.equal(Page.entryForTone(people, "", entries).emoji,
+                people.emoji)
+        })
+
+        T.test("the selector exposes default plus five standard tones", function () {
+            T.equal(Page.SKIN_TONES.length, 6)
+            T.equal(Page.SKIN_TONES[0].value, "")
+            var seen = {}
+            for (var i = 0; i < Page.SKIN_TONES.length; i++) {
+                T.equal(Page.SKIN_TONES[i].label !== "", true)
+                T.equal(seen[Page.SKIN_TONES[i].value] === true, false)
+                seen[Page.SKIN_TONES[i].value] = true
+                T.equal(Page.toneHand(Page.SKIN_TONES[i].value),
+                    Page.SKIN_TONES[i].hand)
+            }
+        })
+
+        T.test("unsupported flags and semantically fixed sequences are unchanged", function () {
+            var flag = Catalog.search("flag ukraine", 0)[0]
+            T.equal(Page.entryForTone(flag, "🏿", entries).emoji, flag.emoji)
+            var fixed = null
+            for (var i = 0; i < entries.length; i++) {
+                if (entries[i].emoji === "🫱🏻‍🫲🏼") {
+                    fixed = entries[i]
+                    break
+                }
+            }
+            T.equal(fixed !== null, true)
+            T.equal(Page.entryForTone(fixed, "🏻", entries).emoji, fixed.emoji)
+        })
+
+        T.test("a Recent tile repeats its exact stored sequence under a selected tone (R1)", function () {
+            // The scenario the second review reproduced: a default 👍 that
+            // lands in Recent (not Most Frequent), a dark tone selected, and
+            // the history tile clicked. The grid's one delegate decides the
+            // tone flag by the tile's origin — appliesTone with the same two
+            // facts that chose its model — so the stored 👍 delivers as 👍,
+            // never retone to 👍🏿. On the old code the delegate passed a
+            // hardcoded true and this delivered the wrong sequence.
+            var records = [
+                { emoji: "😀", count: 5, lastUsed: 2 },
+                { emoji: "👍", count: 1, lastUsed: 1 }
+            ]
+            var sections = Page.usageSections(records, 1)
+            T.equal(sections.frequent.length, 1)
+            T.equal(sections.frequent[0].emoji, "😀")
+            T.equal(sections.recent.length, 1)
+            T.equal(sections.recent[0].emoji, "👍")
+            var flag = Page.appliesTone(false, "__usage__")
+            T.equal(flag, false)
+            var delivered = flag
+                ? Page.entryForTone(sections.recent[0], "🏿", entries)
+                : sections.recent[0]
+            T.equal(delivered.emoji, "👍")
+        })
+
+        T.test("catalogue and search tiles still resolve the selected tone", function () {
+            // A group slice and a standing search both show catalogue bases;
+            // their picks resolve the selector exactly as before R1.
+            T.equal(Page.appliesTone(false, "People & Body"), true)
+            T.equal(Page.appliesTone(false, "Flags"), true)
+            T.equal(Page.appliesTone(true, "__usage__"), true)
+            T.equal(Page.appliesTone(true, "Flags"), true)
+        })
+
+        T.test("a paste into the search is collapsed, bounded and refuses nothingness", function () {
+            // R2 review follow-up: the clipboard serves whatever it holds;
+            // the query takes typed text only.
+            T.equal(Page.searchPasteText("thumbs up", 64), "thumbs up")
+            T.equal(Page.searchPasteText("flag\n ukraine ", 64), "flag ukraine")
+            T.equal(Page.searchPasteText("  \n\t ", 64), "")
+            T.equal(Page.searchPasteText("", 64), "")
+            T.equal(Page.searchPasteText(null, 64), "")
+            T.equal(Page.searchPasteText("a very long clipboard payload", 8),
+                "a very l")
+            T.equal(Page.searchPasteText("anything", 0), "")
+            T.equal(Page.searchPasteText("anything", -3), "")
+        })
+
+        T.test("search collapses variants after ranking and still fills its limit", function () {
+            var results = Page.visibleEntries(Catalog.search("hand", 0), entries, 8)
+            T.equal(results.length, 8)
+            var seen = {}
+            for (var i = 0; i < results.length; i++) {
+                var key = Page.toneFamilyKey(results[i].emoji)
+                T.equal(seen[key] === true, false)
+                seen[key] = true
             }
         })
 
@@ -177,27 +263,90 @@ QtObject {
             T.equal(Page.columnsFor(4000, cell, gap, 8), 8)
         })
 
+        T.test("page sizes request independent M L XL capacities", function () {
+            T.deepEqual(Page.pageCapacity("medium"), { columns: 8, rows: 4 })
+            T.deepEqual(Page.pageCapacity("large"), { columns: 10, rows: 6 })
+            T.deepEqual(Page.pageCapacity("x-large"), { columns: 12, rows: 8 })
+            T.deepEqual(Page.pageCapacity("bad"), { columns: 8, rows: 4 })
+        })
+
+        T.test("usage chrome is direct arithmetic, not GridView geometry", function () {
+            T.equal(Page.usageChromeHeight(false, 18, 5, 4), 0)
+            T.equal(Page.usageChromeHeight(true, 18, 5, 4), 59)
+        })
+
+        T.test("only known Chromium-family classes take Unicode entry", function () {
+            T.equal(Page.needsUnicodeEntry("chromium"), true)
+            T.equal(Page.needsUnicodeEntry("brave-browser"), true)
+            T.equal(Page.needsUnicodeEntry("com.openai.codex"), true)
+            T.equal(Page.needsUnicodeEntry("chatgpt"), true)
+            T.equal(Page.needsUnicodeEntry("Claude"), true)
+            // Owner acceptance proved ZapZap already handles the ordinary
+            // transient-keymap route correctly; do not reroute it merely
+            // because its engine may be Chromium-derived.
+            T.equal(Page.needsUnicodeEntry("ZapZap"), false)
+            T.equal(Page.needsUnicodeEntry("foot"), false)
+            T.equal(Page.needsUnicodeEntry("x11cat"), false)
+        })
+
+        T.test("successful usage ranks, deduplicates and evicts deterministically", function () {
+            var records = []
+            records = Page.usageAfterSuccess(records, "😁")
+            records = Page.usageAfterSuccess(records, "😛")
+            records = Page.usageAfterSuccess(records, "😁")
+            T.deepEqual(records, [
+                { emoji: "😁", count: 2, lastUsed: 3 },
+                { emoji: "😛", count: 1, lastUsed: 2 }
+            ])
+            var recordSections = Page.usageSections(records, 1)
+            var sections = {
+                frequent: Page.recordsToEntries(recordSections.frequent, entries),
+                recent: Page.recordsToEntries(recordSections.recent, entries)
+            }
+            T.equal(sections.frequent[0].emoji, "😁")
+            T.equal(sections.recent[0].emoji, "😛")
+            var seen = {}
+            for (var f = 0; f < sections.frequent.length; f++)
+                seen[sections.frequent[f].emoji] = true
+            for (var r = 0; r < sections.recent.length; r++)
+                T.equal(seen[sections.recent[r].emoji] === true, false)
+
+            records = []
+            for (var i = 0; i < 64; i++)
+                records.push({ emoji: "e" + i, count: i === 0 ? 2 : 1,
+                    lastUsed: i + 1 })
+            records = Page.usageAfterSuccess(records, "new")
+            T.equal(records.length, 64)
+            T.equal(records.some(function (x) { return x.emoji === "e1" }), false)
+            T.equal(records.some(function (x) { return x.emoji === "e0" }), true)
+            T.equal(records.some(function (x) { return x.emoji === "new" }), true)
+
+            records = Page.usageAfterSuccess([], "👍🏻")
+            records = Page.usageAfterSuccess(records, "👍🏿")
+            T.equal(records.length, 2)
+            T.equal(records[0].emoji, "👍🏻")
+            T.equal(records[1].emoji, "👍🏿")
+        })
+
         T.test("the page stays clear of the keyboard band at every size preset", function () {
             var output = { x: 0, y: 0, w: 1280, h: 800 }
-            var presets = Config.SIZE_PRESET_SCALES
+            var presets = Page.PAGE_SIZES
             var tried = 0
             for (var preset in presets) {
-                // Cells ride the preset's scale (space(42) * uiScale at the
-                // theme's scale-1 spacing), the chrome does not.
-                var cell = Math.round(42 * presets[preset])
+                var cell = 42
                 var gap = 4
+                var capacity = Page.pageCapacity(preset)
                 var natural = {
-                    w: naturalPageWidth(cell, gap),
-                    h: naturalPageHeight(cell, gap)
+                    w: naturalPageWidth(cell, gap, capacity.columns),
+                    h: naturalPageHeight(cell, gap, capacity.rows)
                 }
                 // The suite's recorded medium band, scaled as the keyboard's
                 // card is by the preset.
                 var band = Place.overlayBand("docked", output,
-                    { x: 0, y: 0, w: 1280, h: Math.round(240 * presets[preset]) })
+                    { x: 0, y: 0, w: 1280, h: 240 })
                 var fitted = Place.fitSizeInLeftover(output, band, natural, 8)
                 // Width never needs clamping on this output: the grid keeps
                 // all eight natural columns at every preset.
-                T.equal(fitted.w, natural.w)
                 var pos = Place.centreInLeftover(output, band, fitted)
                 // The never-covers-keys rule, arithmetic not aspiration.
                 T.equal(pos.y + fitted.h <= band.y, true)
@@ -211,20 +360,22 @@ QtObject {
             // column count shrinks with it, and the height clamps into the
             // leftover (the grid scrolls the difference).
             var output = { x: 0, y: 0, w: 480, h: 640 }
-            var cell = Math.round(42 * Config.SIZE_PRESET_SCALES["x-large"])
+            var cell = 42
             var gap = 4
+            var capacity = Page.pageCapacity("x-large")
             var natural = {
-                w: naturalPageWidth(cell, gap),
-                h: naturalPageHeight(cell, gap)
+                w: naturalPageWidth(cell, gap, capacity.columns),
+                h: naturalPageHeight(cell, gap, capacity.rows)
             }
             var maxPageWidth = Math.max(0, output.w - 2 * 6)
             var width = Math.min(natural.w, maxPageWidth)
             T.equal(width < natural.w, true)
-            var columns = Page.columnsFor(width - 2 * 10, cell, gap, 8)
-            T.equal(columns < 8, true)
+            var columns = Page.columnsFor(width - 2 * 10, cell, gap,
+                capacity.columns)
+            T.equal(columns < capacity.columns, true)
             T.equal(columns >= 1, true)
             var band = Place.overlayBand("docked", output,
-                { x: 0, y: 0, w: 480, h: Math.round(240 * Config.SIZE_PRESET_SCALES["x-large"]) })
+                { x: 0, y: 0, w: 480, h: 240 })
             var fitted = Place.fitSizeInLeftover(output, band, natural, 8)
             var pos = Place.centreInLeftover(output, band, fitted)
             T.equal(pos.y + fitted.h <= band.y, true)

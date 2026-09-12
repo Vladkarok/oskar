@@ -5,7 +5,10 @@ import Quickshell.Io
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "ClipboardPaste.js" as ClipboardPaste
 import "Config.js" as ConfigFile
+import "EmojiCatalog.js" as Catalog
+import "EmojiPage.js" as EmojiGrid
 import "SettingsPlacement.js" as SettingsPlacement
 
 Item {
@@ -119,6 +122,8 @@ Item {
     // authority either way — a name missing from PATH raises the
     // transient hint.
     property string emojiApp: maintainedDefaults.emojiApp
+    property bool emojiCloseAfterPick: maintainedDefaults.emojiCloseAfterPick
+    property string emojiPageSize: maintainedDefaults.emojiPageSize
     // The chip's not-found answer (ticket 24 step 5): the same transient
     // shape the old ☺ cap's probe raised — named failure in the hint
     // line, auto-cleared after a few seconds without another event.
@@ -130,6 +135,10 @@ Item {
     // otherwise. Override, else the maintained default — the same plain
     // preference shape as the mode and the emoji app.
     property string superMark: maintainedDefaults.superMark
+    // Emoji delivery mode (ticket 28): "direct" types the pick through the
+    // helper; "clipboard" publishes the exact sequence and sends the paste
+    // chord — the owner's choice for Chromium-family clients (ZCode).
+    property string emojiDelivery: maintainedDefaults.emojiDelivery
     // Colour-field entry — the panel's ONE sanctioned keyboard-focus
     // exception (spec-v1.1 §5). False except while a hex/RGB/HSV field is
     // the active entry: the popover or editor window that holds that field
@@ -179,6 +188,21 @@ Item {
     // the keys — step 3 types its search from those very keys. Panel-local
     // state; nothing persists.
     property bool emojiOpen: false
+    // Ticket 29: the page's search is the keys' target only while armed —
+    // one flag drives the caps' routing, the paste chip's target rule and
+    // the field's visible state, so what the user sees is what decides.
+    readonly property bool emojiSearchActive: root.emojiOpen
+        && emojiPage.searchArmed
+    readonly property var emojiUsage: geometryState.emojiUsage || []
+    readonly property string emojiSkinTone: geometryState.emojiSkinTone || ""
+    // The remembered layout group: persisted UI state (not an override),
+    // the restart fallback LayoutDevices reads when no live device
+    // evidence exists.
+    readonly property int rememberedLayoutGroup: typeof geometryState.layoutGroup === "number"
+        && geometryState.layoutGroup >= 0 ? Math.floor(geometryState.layoutGroup) : 0
+    readonly property string rememberedLayoutDevice:
+        typeof geometryState.layoutDevice === "string"
+            ? geometryState.layoutDevice : ""
 
     function toggleEmojiPage() {
         var next = !root.emojiOpen
@@ -189,6 +213,95 @@ Item {
             root.closeCustomEditor()
         }
         root.emojiOpen = next
+    }
+
+    // Ticket 29: a focus change while the page stands disarms the search —
+    // the client the owner clicked becomes the keys' target until the
+    // search field is clicked again. Hyprland announces focus changes as
+    // the `activewindow` raw event (the same stream Keyboard's layout
+    // tracker reads; there is no activeToplevel property-change signal to
+    // connect to — the first cut connected to one that does not exist and
+    // never fired).
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            if (!event || !event.name) return
+            if (String(event.name) !== "activewindow" || !root.emojiOpen) return
+            // Deferred out of the event dispatch: a quickshell SIGSEGV
+            // once landed inside a bound-signal frame on this path, and
+            // the state change has no reason to run inside it.
+            Qt.callLater(function () {
+                if (root.emojiOpen && emojiPage.searchArmed) {
+                    emojiPage.searchArmed = false
+                    console.log("[osk] emoji search disarmed: focus moved to",
+                        root.focusedClientClass() || "an unnamed client")
+                }
+            })
+        }
+    }
+
+    // A delivered pick (ticket 29's flow): the keys go back to the chat the
+    // emoji landed in — disarmed, and the standing query retires so the
+    // next field click starts a fresh search instead of appending to the
+    // old one.
+    function emojiPickSettled() {
+        emojiPage.searchArmed = false
+        emojiPage.query = ""
+    }
+
+    // Every geometryState write goes through here: one place that knows
+    // the full field set, so a new field cannot be silently dropped by the
+    // next writer (the drag-remember site wiped the layout identity fields
+    // the day they were born — the owner's keyboards desynced again).
+    function mergedGeometryState(overrides) {
+        var next = {
+            center: root.geometryState.center,
+            emojiUsage: root.emojiUsage,
+            emojiSkinTone: root.emojiSkinTone,
+            layoutGroup: root.rememberedLayoutGroup,
+            layoutDevice: root.rememberedLayoutDevice
+        }
+        for (var key in overrides)
+            if (Object.prototype.hasOwnProperty.call(overrides, key))
+                next[key] = overrides[key]
+        return next
+    }
+
+    function recordEmojiSuccess(emoji) {
+        root.geometryState = root.mergedGeometryState({
+            emojiUsage: EmojiGrid.usageAfterSuccess(root.emojiUsage, emoji)
+        })
+        root.saveState()
+    }
+
+    function chooseEmojiSkinTone(tone) {
+        if (ConfigFile.EMOJI_SKIN_TONES.indexOf(tone) < 0
+            || tone === root.emojiSkinTone) return
+        root.geometryState = root.mergedGeometryState({ emojiSkinTone: tone })
+        root.saveState()
+    }
+
+    // The helper acknowledged a configure: its world, group included, now
+    // matches the panel's. Persisted as the restart fallback — a majority
+    // of sleeping keyboards must not outvote it after a shell restart
+    // (the 2026-09-12 desync).
+    // The seat named a (safe) keyboard as its last typist: persist the
+    // identity — a shell restart re-picks `main` by enumeration order, and
+    // the named tier reading the LIVE device is worth more than any
+    // remembered group.
+    function recordLayoutDevice(name) {
+        var next = String(name || "")
+        if (next === "" || next === root.rememberedLayoutDevice) return
+        root.geometryState = root.mergedGeometryState({ layoutDevice: next })
+        root.saveState()
+    }
+
+    function recordLayoutGroup(group) {
+        var next = (typeof group === "number" && group >= 0)
+            ? Math.floor(group) : 0
+        if (next === root.rememberedLayoutGroup) return
+        root.geometryState = root.mergedGeometryState({ layoutGroup: next })
+        root.saveState()
     }
 
     function colorForField(field) {
@@ -323,18 +436,24 @@ Item {
     }
 
     // Current-content paste (spec-v1.1 §1, ticket 14). Never writes
-    // CLIPBOARD. An active hex draft is the local target and the one path
-    // that reads the selection (to insert it); otherwise the helper sends
-    // the proven paste chord at whoever already has focus. Empty clipboard
-    // hides the chip. The control stays clickable whenever it can deliver —
-    // Quickshell's clipboard getter is not a reliable empty check and is
-    // not the hex-insert source (it stays empty/stale here).
-    readonly property bool pasteEnabled: root.hexEditing || keyboard.inputReady
+    // CLIPBOARD. A panel-local input (colour field, emoji search) takes
+    // the paste itself; otherwise the helper sends the proven paste chord
+    // at whoever already has focus — unconditionally, by owner decision
+    // (decisions §41): a dead clipboard owner pasting nothing is the
+    // Wayland behaviour the chip no longer compounds with its own
+    // refusal. Empty clipboard hides the chip. The control stays
+    // clickable whenever it can deliver — Quickshell's clipboard getter
+    // is not a reliable empty check and is not the hex-insert source (it
+    // stays empty/stale here).
+    readonly property bool pasteEnabled: root.hexEditing || root.emojiOpen
+        || keyboard.inputReady
     // CLIPBOARD observation for the chip: empty / text / other. Refreshed
     // on panel open, on paste click, and by wl-paste --watch — never polled.
     property string clipboardKind: "empty"
     property string clipboardPreview: ""
     property int clipboardSeq: 0
+    property bool clipboardContentGone: false
+    property var clipboardReadState: ClipboardPaste.readInitial()
     // Last non-empty focused class: a layer click can briefly clear
     // activeToplevel, and terminals vs GTK pick different CLIPBOARD chords.
     property string lastClientClass: ""
@@ -350,17 +469,60 @@ Item {
 
     function pasteCurrentContent() {
         if (!root.pasteEnabled) return
-        if (root.hexEditing) {
-            // wl-paste reads compositor CLIPBOARD. Quickshell.clipboardText
-            // is empty/stale in this stack, so it cannot be the insert path.
-            if (hexClipboardRead.running)
-                hexClipboardRead.running = false
-            hexClipboardRead.running = true
+        // R2: one target determination before any delivery choice. A
+        // panel-local input — the colour field, or the emoji page whose
+        // search every key is typing into while it is open — takes the
+        // paste itself; only a panel with no local input delivers the
+        // chord to the focused client behind it.
+        var target = ClipboardPaste.pasteTarget(root.hexEditing, root.emojiSearchActive)
+        if (target !== "external-client") {
+            root.startLocalClipboardRead(target)
             root.refreshClipboardPreview()
             return
         }
         keyboard.pasteCurrent(root.focusedClientClass())
-        root.refreshClipboardPreview()
+    }
+
+    // The panel-local read (colour field, emoji search) — bounded and
+    // target-guarded the way the probe is (R2): the same wl-paste that
+    // blocks on a dead owner serves this read, so a watchdog force-kills
+    // it, and an answer arriving for a target that closed or was replaced
+    // inserts nothing.
+    function startLocalClipboardRead(target) {
+        // A kill from the previous read's watchdog may still be in flight:
+        // its late output is refused by sequence, but the Process object
+        // is not reusable until that exit lands (the probe's own rule).
+        if (localClipboardRead.retiring) return
+        var started = ClipboardPaste.readStart(root.clipboardReadState, target)
+        root.clipboardReadState = started.state
+        if (started.action !== "read") return
+        localClipboardRead.seq = started.state.seq
+        localClipboardReadWatchdog.restart()
+        if (localClipboardRead.running)
+            localClipboardRead.running = false
+        localClipboardRead.running = true
+    }
+
+    function finishLocalClipboardRead(seq, raw) {
+        // The target is re-derived at arrival by the same determination
+        // the click made; readExited refuses a mismatch for us.
+        var result = ClipboardPaste.readExited(root.clipboardReadState, seq,
+            ClipboardPaste.pasteTarget(root.hexEditing, root.emojiSearchActive))
+        root.clipboardReadState = result.state
+        if (result.action !== "insert") return
+        localClipboardReadWatchdog.stop()
+        insertLocalClipboardText(raw)
+    }
+
+    function markClipboardContentGone() {
+        // Retire any one-shot preview answer that was already in flight: it
+        // describes the dead owner's old selection and must not resurrect
+        // the chip after the failed pre-flight.
+        root.clipboardSeq += 1
+        root.clipboardKind = "empty"
+        root.clipboardPreview = ""
+        root.clipboardContentGone = true
+        clipboardGoneTimer.restart()
     }
 
     function refreshClipboardPreview() {
@@ -374,6 +536,10 @@ Item {
     function applyClipboardTypes(text, seq, exitCode) {
         if (seq !== root.clipboardSeq) return
         var kind = ConfigFile.clipboardKind(text, exitCode)
+        if (kind !== "empty") {
+            root.clipboardContentGone = false
+            clipboardGoneTimer.stop()
+        }
         // Text stays hidden until wl-paste --no-newline returns a
         // non-empty preview; empty/other apply immediately.
         root.clipboardKind = ConfigFile.pasteChipKind(kind, "", false)
@@ -392,13 +558,22 @@ Item {
         root.clipboardPreview = root.clipboardKind === "text" ? preview : ""
     }
 
-    function insertHexClipboard(raw) {
+    // The local read's insert. Routing reads the live surfaces: the read's
+    // target was verified against the same determination at arrival, so
+    // reaching here means the target it served is the one now open. wl-paste
+    // reads compositor CLIPBOARD — Quickshell.clipboardText is empty/stale
+    // in this stack and cannot be the insert path.
+    function insertLocalClipboardText(raw) {
         var text = String(raw || "")
         if (text.length && text.charAt(text.length - 1) === "\n")
             text = text.slice(0, -1)
-        if (!root.hexEditing || !text.length) return
-        if (root.customEditorField !== "") customColorEditor.insertHexText(text)
-        else settingsPopover.insertHexText(text)
+        if (!text.length) return
+        if (root.hexEditing) {
+            if (root.customEditorField !== "") customColorEditor.insertHexText(text)
+            else settingsPopover.insertHexText(text)
+            return
+        }
+        emojiPage.pasteIntoSearch(text)
     }
 
     // The hint line's one state table (spec-v1.1 §3, §1, §6). The newest
@@ -427,6 +602,11 @@ Item {
     // "retry" for a service that is not running, "update" for a protocol
     // mismatch (Copy install command plus Retry).
     readonly property var hintState: {
+        if (root.clipboardContentGone)
+            return {
+                text: "Clipboard content is no longer available",
+                accent: true
+            }
         if (root.emojiAppMissing)
             return {
                 text: root.emojiApp + " not found on PATH",
@@ -499,6 +679,81 @@ Item {
         root.opened = true
     }
 
+    // Ticket 30's local workaround, measured on the owner's host (scale 2):
+    // the docked panel's exclusive zone registers (reserved = the strip's
+    // height) and NEW tiled windows respect it, but Hyprland does not
+    // relayout the windows that were tiled while the panel was closed —
+    // their bottoms stay behind the strip until something else forces a
+    // layout. One config keyword write forces it. The value is read, set
+    // one above, and restored on the next tick: at the owner's gaps of 0
+    // the visible cost is a one-frame one-pixel gap.
+    //
+    // Review-hardened: a nudge arriving while the chain is busy is skipped
+    // (a second read in the +1 window would capture the nudged value and
+    // strand it for the session), and a read that does not parse aborts
+    // the whole chain — a failed probe must not write anything, or it
+    // would clobber a nonzero user setting with 0.
+    property bool relayoutBusy: false
+    Timer {
+        id: relayoutKickoff
+        interval: 150
+        repeat: false
+        onTriggered: relayoutProbe.running = true
+    }
+    Process {
+        id: relayoutProbe
+        property int value: 0
+        command: ["hyprctl", "getoption", "-j", "general:gaps_out"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    relayoutProbe.value = JSON.parse(this.text).int || 0
+                } catch (error) {
+                    root.relayoutBusy = false
+                    console.warn("[osk] cannot read gaps_out; no relayout nudge")
+                    return
+                }
+                // A fresh cycle: this write is the +1 nudge, the next is
+                // the restore (flag armed in relayoutSet.onExited).
+                relayoutSet.restoring = false
+                relayoutSet.command = ["hyprctl", "keyword", "general:gaps_out",
+                    String(relayoutProbe.value + 1)]
+                relayoutSet.running = true
+            }
+        }
+    }
+    Process {
+        id: relayoutSet
+        property bool restoring: false
+        command: []
+        onExited: {
+            if (!restoring) {
+                restoring = true
+                relayoutRestore.restart()
+            } else {
+                root.relayoutBusy = false
+            }
+        }
+    }
+    Timer {
+        id: relayoutRestore
+        interval: 60
+        repeat: false
+        onTriggered: {
+            relayoutSet.command = ["hyprctl", "keyword", "general:gaps_out",
+                String(relayoutProbe.value)]
+            relayoutSet.running = true
+        }
+    }
+
+    function nudgeHyprlandRelayout() {
+        if (root.mode !== "docked") return
+        if (root.relayoutBusy) return
+        root.relayoutBusy = true
+        relayoutKickoff.restart()
+    }
+
     function close() {
         root.opened = false
     }
@@ -529,6 +784,16 @@ Item {
         if (!root.configHealthy) return
         if (root.superMark === mark) return
         root.setOverride("superMark", mark)
+    }
+
+    // The emoji delivery mode (ticket 28): setSuperMark's shape. Flipping
+    // the mode also cancels an unresolved publish — a slow verify must not
+    // paste a pick the user has decided to deliver by typing instead.
+    function setEmojiDelivery(mode) {
+        if (!root.configHealthy) return
+        if (root.emojiDelivery === mode) return
+        root.cancelEmojiPublish("delivery mode changed")
+        root.setOverride("emojiDelivery", mode)
     }
 
     // ---- which output, and where on it (spec-v1 §7) ----
@@ -606,7 +871,8 @@ Item {
         var previous = root.floatingCenter
         if (previous && previous.x === center.x && previous.y === center.y) return
         root.floatingCenter = center
-        root.geometryState = { center: root.floatingCenter }
+        root.geometryState = root.mergedGeometryState(
+            { center: root.floatingCenter })
         root.saveState()
     }
 
@@ -639,9 +905,12 @@ Item {
         root.mode = effective.mode
         root.sizePreset = effective.sizePreset
         root.superMark = effective.superMark
+        root.emojiDelivery = effective.emojiDelivery
         var soundChanged = root.sound !== effective.sound
         root.sound = effective.sound
         root.followTheme = effective.followTheme
+        root.emojiCloseAfterPick = effective.emojiCloseAfterPick
+        root.emojiPageSize = effective.emojiPageSize
         // The emoji picker is a plain preference like the mode: override,
         // else the maintained default (Omarchy's own). The emoji page's
         // chip reads it at launch time and the popover row mirrors it;
@@ -809,6 +1078,7 @@ Item {
             // is already held, and no-ops entirely while following.
             if (!root.followTheme) tokens.freeze()
             root.refreshClipboardPreview()
+            root.nudgeHyprlandRelayout()
             root.moveToPointerScreen(function (pointer, pointerScreen) {
                 if (pointerScreen) panel.screen = pointerScreen
                 root.applyFloatingPosition()
@@ -825,20 +1095,58 @@ Item {
         settingsPopover.visible = false
         settingsPopover.resetAllArmed = false
         root.emojiOpen = false
+        // The relayout nudge is needed in both directions: the zone leaving
+        // is as lazy as the zone arriving (ticket 30).
+        root.nudgeHyprlandRelayout()
         // Locked Shift is genuinely held down at the device, so closing the
         // panel has to let go of it before the keyboard disappears.
         keyboard.releaseModifiers()
     }
 
-    // Reports {"x": n, "y": n} in compositor coordinates, which is the same
-    // space Quickshell's screens are laid out in. A failure leaves the panel on
-    // whatever output it already had rather than guessing at one.
+    // Panel-local clipboard read (colour field, emoji search — R2). The
+    // same force-kill contract as the probe below; wl-paste runs as the
+    // command itself, so signal(9) kills it directly. The collector
+    // carries the bytes; a late streamFinished from a timed-out read is
+    // refused by the settled state machine before anything is inserted,
+    // and a stream that never ends is the watchdog's to close.
     Process {
-        id: hexClipboardRead
+        id: localClipboardRead
+        property int seq: 0
+        property bool didStart: false
+        property bool retiring: false
         command: ["wl-paste", "--no-newline"]
         stdout: StdioCollector {
             waitForEnd: true
-            onStreamFinished: root.insertHexClipboard(this.text)
+            onStreamFinished: root.finishLocalClipboardRead(
+                localClipboardRead.seq, this.text)
+        }
+        onStarted: didStart = true
+        onExited: {
+            localClipboardRead.didStart = false
+            localClipboardRead.retiring = false
+        }
+    }
+
+    Timer {
+        id: localClipboardReadWatchdog
+        interval: 500
+        repeat: false
+        onTriggered: {
+            var result = ClipboardPaste.readTimedOut(root.clipboardReadState,
+                localClipboardRead.seq,
+                ClipboardPaste.pasteTarget(root.hexEditing, root.emojiSearchActive))
+            root.clipboardReadState = result.state
+            if (result.action === "ignore") return
+            if (result.action === "gone") root.markClipboardContentGone()
+            // Retire before stopping: the collector's late streamFinished
+            // is then refused by the settled state, and while that physical
+            // exit is pending another click cannot retag the Process with a
+            // newer sequence (the probe watchdog's own rule).
+            localClipboardRead.retiring = localClipboardRead.didStart
+            if (localClipboardRead.didStart && result.kill)
+                localClipboardRead.signal(9)
+            else
+                localClipboardRead.running = false
         }
     }
 
@@ -881,6 +1189,111 @@ Item {
         }
     }
 
+    Timer {
+        id: clipboardGoneTimer
+        interval: 4000
+        repeat: false
+        onTriggered: root.clipboardContentGone = false
+    }
+
+    // Emoji delivery through the clipboard (ticket 28, "clipboard" mode).
+    // The correlation lives in the pure ClipboardPaste.publish* machine;
+    // these are only its processes. The publisher stays alive as the
+    // selection owner — killing it would recreate ticket 25's dead-owner
+    // behaviour; the next pick replaces it, which is replacement, not
+    // loss. The pick's payload is what the mode REPLACES the clipboard
+    // with (spec-v1.1 §1): text only, stated in the toggle's tooltip.
+    property var emojiPublishState: ClipboardPaste.publishInitial()
+
+    Process {
+        id: emojiClipboardPublish
+        command: []
+    }
+
+    Process {
+        id: emojiClipboardVerify
+        property int seq: 0
+        command: ["wl-paste", "--no-newline"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: root.finishEmojiPublishVerify(
+                emojiClipboardVerify.seq, this.text)
+        }
+    }
+
+    Timer {
+        id: emojiPublishVerifyTimer
+        interval: 60
+        repeat: false
+        onTriggered: {
+            emojiClipboardVerify.seq = root.emojiPublishState.seq
+            if (emojiClipboardVerify.running)
+                emojiClipboardVerify.running = false
+            emojiClipboardVerify.running = true
+        }
+    }
+
+    function pickViaClipboard(emoji) {
+        var started = ClipboardPaste.publishStart(root.emojiPublishState, emoji)
+        if (started.action === "publish-superseding")
+            console.warn("[osk] emoji pick superseded an unresolved publish;"
+                + " the earlier pick was never pasted")
+        root.emojiPublishState = started.state
+        if (emojiClipboardPublish.running)
+            emojiClipboardPublish.running = false
+        emojiClipboardPublish.command = ["wl-copy", "--foreground", emoji]
+        emojiClipboardPublish.running = true
+        emojiPublishVerifyTimer.restart()
+    }
+
+    function cancelEmojiPublish(reason) {
+        var cancelled = ClipboardPaste.publishCancel(root.emojiPublishState)
+        if (cancelled.action === "dropped")
+            console.warn("[osk] emoji publish cancelled:", reason)
+        root.emojiPublishState = cancelled.state
+    }
+
+    function finishEmojiPublishVerify(seq, served) {
+        var result = ClipboardPaste.publishServed(root.emojiPublishState,
+            seq, served)
+        root.emojiPublishState = result.state
+        if (result.action === "stale") return
+        if (result.action === "retry") {
+            emojiPublishVerifyTimer.restart()
+            return
+        }
+        if (result.action === "drop") {
+            console.warn("[osk] emoji clipboard publication not confirmed;"
+                + " pick dropped, no chord sent")
+            return
+        }
+        // The chord: only when the helper can actually send it — a stopped
+        // helper drops the paste silently, and a delivery that never went
+        // out must not record usage, settle the search or close the page
+        // (review finding: the direct path waits for text-ok; this path
+        // must not be weaker). The emoji IS on the clipboard; a manual
+        // Ctrl+V remains possible.
+        if (!keyboard.inputReady) {
+            console.warn("[osk] helper not ready; emoji published to the"
+                + " clipboard but no paste chord was sent")
+            root.emojiPublishState = ClipboardPaste.publishCancel(
+                root.emojiPublishState).state
+            return
+        }
+        var wanted = result.state.pending
+        root.emojiPublishState = ClipboardPaste.publishCancel(
+            root.emojiPublishState).state
+        keyboard.pasteCurrent(root.focusedClientClass())
+        root.recordEmojiSuccess(wanted)
+        // Ticket 29's flow: the keys go back to the chat the emoji
+        // landed in.
+        root.emojiPickSettled()
+        if (root.emojiCloseAfterPick) root.emojiOpen = false
+    }
+
+    // Reports {"x": n, "y": n} in compositor coordinates, which is the same
+    // space Quickshell's screens are laid out in. A failure leaves the panel on
+    // whatever output it already had rather than guessing at one.
     Process {
         id: cursorProbe
         command: ["hyprctl", "cursorpos", "-j"]
@@ -1399,6 +1812,8 @@ Item {
                         id: gearArea
                         anchors.fill: parent
                         hoverEnabled: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: "Settings"
                         onClicked: {
                             // The page and the card are mutually exclusive
                             // leftover-centre surfaces (toggleEmojiPage's
@@ -1411,6 +1826,10 @@ Item {
                                 settingsPopover.visible = true
                             }
                         }
+                    }
+                    HoverTooltip {
+                        text: "Settings"
+                        hovered: gearArea.containsMouse
                     }
                 }
 
@@ -1495,7 +1914,13 @@ Item {
                         id: closeArea
                         anchors.fill: parent
                         hoverEnabled: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: "Close keyboard"
                         onClicked: root.close()
+                    }
+                    HoverTooltip {
+                        text: "Close keyboard"
+                        hovered: closeArea.containsMouse
                     }
                 }
             }
@@ -1510,19 +1935,40 @@ Item {
                 // an absent Omarchy font both land on the word, never a
                 // blank cap.
                 superMark: root.superMark
+                // The persisted group feeds LayoutDevices' restart
+                // fallback; every acknowledged configure refreshes it.
+                rememberedLayoutGroup: root.rememberedLayoutGroup
+                rememberedLayoutDevice: root.rememberedLayoutDevice
+                onGroupConfirmed: function (group) {
+                    root.recordLayoutGroup(group)
+                }
+                onLayoutDeviceNamed: function (name) {
+                    root.recordLayoutDevice(name)
+                }
                 // The ☺ cap toggles the panel's own emoji page: open on
                 // press, dismiss on a second press. The keyboard stays
                 // mapped and clickable underneath — that is the point.
                 onEmojiCapActivated: root.toggleEmojiPage()
-                // Step 3: while the page stands the keys feed its search
-                // and reach nothing else. The binding (not an assignment)
-                // is what ends the interception on every close route — the
-                // page dies with emojiOpen by whatever hand closed it. The
-                // Esc cap closes the page like the ☺ cap does; every other
-                // intercepted key only moves the query.
-                searchMode: root.emojiOpen
+                // Step 3: while the page stands AND the search is armed the
+                // keys feed it and reach nothing else (ticket 29) — a focus
+                // change disarms, a click on the field re-arms. The binding
+                // (not an assignment) is what ends the interception on every
+                // close route — the page dies with emojiOpen by whatever
+                // hand closed it. The Esc cap closes the page like the ☺ cap
+                // does; every other intercepted key only moves the query.
+                searchMode: root.emojiSearchActive
                 onSearchInput: function (action, text) {
                     if (action === "escape") {
+                        // Esc is the natural "leave the search" gesture the
+                        // platform cannot give a click: the first press
+                        // hands the keys back to the focused chat (ticket
+                        // 29), the second closes the page as before.
+                        if (emojiPage.searchArmed) {
+                            emojiPage.searchArmed = false
+                            emojiPage.query = ""
+                            console.log("[osk] emoji search disarmed by Esc")
+                            return
+                        }
                         root.emojiOpen = false
                         return
                     }
@@ -1690,6 +2136,10 @@ Item {
                     Accessible.name: "Paste"
                     onClicked: root.pasteCurrentContent()
                 }
+                HoverTooltip {
+                    text: "Paste clipboard"
+                    hovered: pasteArea.containsMouse
+                }
             }
         }
     }
@@ -1720,6 +2170,14 @@ Item {
         readonly property bool overlayOpen: settingsPopover.visible
             || root.customEditorField !== ""
             || root.emojiOpen
+        // Ticket 29: the page alone is non-modal — the card and the editor
+        // keep the modal leftover (an outside click dismisses them), but
+        // with only the page standing the input region is the page's own
+        // rectangle, so a press on the client behind it reaches that
+        // client: focus moves, the rawEvent disarm routes the keys there,
+        // and the page stays up for the next pick.
+        readonly property bool emojiPageSolo: root.emojiOpen
+            && !settingsPopover.visible && root.customEditorField === ""
         readonly property var overlayBox: ({
             x: 0, y: 0, w: settingsLayer.width, h: settingsLayer.height
         })
@@ -1739,10 +2197,18 @@ Item {
             { w: emojiPage.width, h: emojiPage.height })
 
         mask: Region {
-            x: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.x : 0
-            y: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.y : 0
-            width: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.w : 0
-            height: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.h : 0
+            x: settingsLayer.overlayOpen
+                ? (settingsLayer.emojiPageSolo ? emojiPage.x
+                    : settingsLayer.leftoverBox.x) : 0
+            y: settingsLayer.overlayOpen
+                ? (settingsLayer.emojiPageSolo ? emojiPage.y
+                    : settingsLayer.leftoverBox.y) : 0
+            width: settingsLayer.overlayOpen
+                ? (settingsLayer.emojiPageSolo ? emojiPage.width
+                    : settingsLayer.leftoverBox.w) : 0
+            height: settingsLayer.overlayOpen
+                ? (settingsLayer.emojiPageSolo ? emojiPage.height
+                    : settingsLayer.leftoverBox.h) : 0
             Region {
                 x: settingsPopover.x
                 y: settingsPopover.y
@@ -1851,7 +2317,9 @@ Item {
         EmojiPage {
             id: emojiPage
             tokens: tokens
-            uiScale: root.sizeScale
+            pageSize: root.emojiPageSize
+            usageRecords: root.emojiUsage
+            skinTone: root.emojiSkinTone
             hostWidth: settingsLayer.leftoverBox.w
             hostHeight: settingsLayer.leftoverBox.h
             x: settingsLayer.emojiPlace.x
@@ -1863,16 +2331,39 @@ Item {
             // the process and nothing more.
             externalApp: root.emojiApp
             onExternalAppRequested: root.launchEmojiApp()
-            // Step 4: the choice delivers. One click is one send and one
-            // close: the sequence rides keyboard.sendText to the focused
-            // client (an unready helper makes it the send's own silent
-            // no-op), and the page closes by the same route the cap uses —
-            // emojiOpen falls, searchMode with it, and the query dies on
-            // the page's open edge. Nothing is kept; there is no repeat.
-            onEmojiChosen: function (entry) {
-                keyboard.sendText(entry.emoji)
-                root.emojiOpen = false
+            deliveryMode: root.emojiDelivery
+            onDeliveryModeRequested: function (mode) { root.setEmojiDelivery(mode) }
+            // One click is one send to the focused client. The page closes
+            // only after helper success when the preference asks it to;
+            // usage likewise records acknowledged delivery, never a click
+            // an unready or refusing helper did not deliver.
+            onEmojiChosen: function (entry, applyTone) {
+                var delivered = applyTone
+                    ? EmojiGrid.entryForTone(entry, root.emojiSkinTone,
+                        Catalog.entries()) : entry
+                // Ticket 28's explicit mode: clipboard compatibility
+                // publishes the exact sequence and pastes it, for the
+                // clients (ZCode) that drop the typed routes. Direct keeps
+                // decisions §39/§40 untouched.
+                if (root.emojiDelivery === "clipboard") {
+                    root.pickViaClipboard(delivered.emoji)
+                    return
+                }
+                // A refused send stays silent by owner decision
+                // (decisions §41): the header's lifecycle hint already
+                // covers a stopped helper, and a connected refusal is not
+                // worth its own surface. Usage and page-close wait for
+                // the helper's acknowledgement either way.
+                keyboard.sendText(delivered.emoji, function (success) {
+                    if (!success) return
+                    root.recordEmojiSuccess(delivered.emoji)
+                    // Ticket 29's flow: the keys go back to the chat the
+                    // emoji landed in.
+                    root.emojiPickSettled()
+                    if (root.emojiCloseAfterPick) root.emojiOpen = false
+                }, EmojiGrid.needsUnicodeEntry(root.focusedClientClass()))
             }
+            onSkinToneChosen: function (tone) { root.chooseEmojiSkinTone(tone) }
             onDismissed: root.emojiOpen = false
         }
     }

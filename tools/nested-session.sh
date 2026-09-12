@@ -240,15 +240,27 @@ status=$?
 #   32 (identity changes, unchanged above) + 5 picks x 4 pairs x 2 lines
 #   = 40, + 2 (one startup-variance pair) = 74.
 #
+# Re-derived 2026-09-11 for the stage-C delivery legs. The suite now runs
+# THIRTEEN picks: the two text legs of ticket 24's pick test, Electron's
+# four text-unicode picks, the x11cat leg's two, the §35 leg's one, the
+# isolation leg's text+text-unicode pair, the focus-split's one, and the
+# mid-delivery stop's one (which uploads its entry map and, on the abort
+# path, never restores — covered by its pick's allotment):
+#
+#   32 (identity changes, unchanged above) + 13 picks x 4 pairs x 2 lines
+#   = 104, + 4 (the stop test's respawned helper: one startup upload and
+#   one configure upload, two pairs) + 2 (one startup-variance pair)
+#   = 142.
+#
 # Observed on this guest with the legs landed and green: 50 and 52 on the
 # five-pick runs (earlier partial runs: 44 green at three picks, 36 red at
 # the same point). A feedback loop
-# grows at ~190 pairs per second (the incident above), so 74 still fails
+# grows at ~190 pairs per second (the incident above), so 138 still fails
 # closed on the churn this guard exists to catch.
 after_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 rebuilds=$((after_xkb - before_xkb))
 echo "--- exited with $status; compositor keymap rebuilds during run: $rebuilds ---"
-if (( rebuilds > 74 )); then
+if (( rebuilds > 142 )); then
     echo "unsafe keymap churn detected" >&2
     exit 1
 fi

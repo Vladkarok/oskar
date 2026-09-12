@@ -198,7 +198,9 @@ Item {
                     Accessible.name: "Set " + colorRow.labelText + " to " + hex
 
                     MouseArea {
+                        id: swatchArea
                         anchors.fill: parent
+                        hoverEnabled: true
                         enabled: panel.configHealthy
                         onClicked: {
                             colorRow.draftDirty = false
@@ -207,6 +209,10 @@ Item {
                             hexInput.text = parent.hex
                             currentHex = parent.hex
                         }
+                    }
+                    HoverTooltip {
+                        text: "Set " + colorRow.labelText + " to " + parent.hex
+                        hovered: swatchArea.containsMouse
                     }
                 }
             }

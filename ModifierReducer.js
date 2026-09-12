@@ -194,13 +194,31 @@ var TERMINAL_CLIPBOARD_CLASSES = {
 /// proven. Empty class uses the terminal CLIPBOARD chord so a stale lookup
 /// cannot send PRIMARY into a terminal.
 ///
+/// Wine/Proton binds paste to plain Ctrl+V: Shift+Insert reaches the game
+/// as an unbound key and the terminal CLIPBOARD chord is not Wine's binding
+/// either — the owner's Proton report on ticket 28's acceptance day, where
+/// only manual Ctrl+V pasted.
+///
 /// V is AB04 (z x c v). AB06 is N. Ctrl+Shift+N opens a new window in
 /// kitty, ghostty, and agterm — the chord this used to send.
 function pasteChordForClass(wmClass) {
     var cls = String(wmClass || "").toLowerCase()
+    if (usesWinePasteChord(cls))
+        return { ctrl: true, shift: false, position: "AB04" }
     if (!cls || usesTerminalClipboardChord(cls))
         return { ctrl: true, shift: true, position: "AB04" }
     return { ctrl: false, shift: true, position: "INS" }
+}
+
+function usesWinePasteChord(cls) {
+    // Proton game windows carry the Windows executable's name as their
+    // class ("football.exe"); Hyprland reports Steam Proton titles as
+    // "steam_proton" or "steam_app_<id>" (the owner's "Last War" is
+    // "steam_proton"), and Wine's own surfaces carry "wine"
+    // ("wine64-preloader").
+    if (cls.indexOf("wine") !== -1 || cls.indexOf("proton") !== -1) return true
+    if (cls.indexOf("steam_app") === 0) return true
+    return cls.slice(-4) === ".exe"
 }
 
 function usesTerminalClipboardChord(cls) {

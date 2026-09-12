@@ -678,6 +678,10 @@ Rectangle {
                         editor.dismissed()
                     }
                 }
+                HoverTooltip {
+                    text: "Cancel colour edit"
+                    hovered: cancelArea.containsMouse
+                }
             }
 
             Text {

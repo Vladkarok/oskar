@@ -117,8 +117,9 @@ Rectangle {
         }
     }
     readonly property var settingsRowLabels:
-        ["Mode", "Size", "Super mark", "Key click sound", "Follow Omarchy theme",
-         "Emoji app", "Key radius", "Panel radius", "Key background",
+        ["Mode", "Size", "Emoji picking", "Emoji page size", "Super mark",
+         "Key click sound", "Follow Omarchy theme", "Emoji app",
+         "Key radius", "Panel radius", "Key background",
          "Panel background", "Text colour", "Accent colour", "Border colour"]
     readonly property real labelColumnWidth: {
         var widest = 0
@@ -289,8 +290,15 @@ Rectangle {
                 MouseArea {
                     id: stepDownArea
                     anchors.fill: parent
+                    hoverEnabled: true
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Decrease value"
                     enabled: panel.configHealthy
                     onClicked: stepper.bump(-1)
+                }
+                HoverTooltip {
+                    text: "Decrease"
+                    hovered: stepDownArea.containsMouse
                 }
             }
 
@@ -329,8 +337,15 @@ Rectangle {
                 MouseArea {
                     id: stepUpArea
                     anchors.fill: parent
+                    hoverEnabled: true
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Increase value"
                     enabled: panel.configHealthy
                     onClicked: stepper.bump(1)
+                }
+                HoverTooltip {
+                    text: "Increase"
+                    hovered: stepUpArea.containsMouse
                 }
             }
         }
@@ -550,6 +565,87 @@ Rectangle {
                     tokens: popoverRoot.tokens
                     panel: popoverRoot.panel
                     overrideName: "sizePreset"
+                }
+            }
+
+            SettingsHairline {}
+
+            Text {
+                width: parent.width
+                text: "EMOJI PAGE"
+                color: tokens.muted
+                font.family: tokens.fontFamily
+                font.pixelSize: tokens.fontBodySmall
+            }
+
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+                Text {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Emoji picking"
+                    color: tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBody
+                }
+                SettingsSegmented {
+                    id: emojiPickingControl
+                    x: popoverRoot.controlColumnX
+                    anchors.verticalCenter: parent.verticalCenter
+                    segments: [
+                        { value: false, label: "Keep open" },
+                        { value: true, label: "Close" }
+                    ]
+                    current: panel.emojiCloseAfterPick
+                    onPicked: function (value) {
+                        panel.setOverride("emojiCloseAfterPick", value)
+                    }
+                }
+                SettingsResetChip {
+                    anchors.left: emojiPickingControl.right
+                    anchors.leftMargin: tokens.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "emojiCloseAfterPick"
+                }
+            }
+
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+                Text {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Emoji page size"
+                    color: tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBody
+                }
+                SettingsSegmented {
+                    id: emojiPageSizeControl
+                    x: popoverRoot.controlColumnX
+                    anchors.verticalCenter: parent.verticalCenter
+                    segments: [
+                        { value: "medium", label: "M" },
+                        { value: "large", label: "L" },
+                        { value: "x-large", label: "XL" }
+                    ]
+                    current: panel.emojiPageSize
+                    onPicked: function (value) {
+                        panel.setOverride("emojiPageSize", value)
+                    }
+                }
+                SettingsResetChip {
+                    anchors.left: emojiPageSizeControl.right
+                    anchors.leftMargin: tokens.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "emojiPageSize"
                 }
             }
 

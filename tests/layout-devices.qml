@@ -88,12 +88,62 @@ QtObject {
         T.test("the helper's own virtual keyboard never decides anything", function () {
             // It holds `main` right after the panel types, and it is on the
             // group the panel put it on — reading from it would be the panel
-            // reading its own answer back and calling it evidence.
+            // reading its own answer back and calling it evidence. In steady
+            // state the anchor names a real keyboard, and that outranks it.
             var picked = Devices.select(zoo(1, "hl-virtual-keyboard-omarchy-osk-daemon"),
-                "", safeNames)
+                "ite-tech.-inc.-ite-device(8176)-keyboard", safeNames)
+            T.equal(picked.reading.name, "ite-tech.-inc.-ite-device(8176)-keyboard")
             T.equal(picked.reading.active_layout_index, 1)
-            T.equal(picked.reading.name.indexOf("hl-virtual-keyboard"), -1)
             T.equal(picked.switchSet.indexOf("hl-virtual-keyboard-omarchy-osk-daemon"), -1)
+        })
+
+        T.test("after a restart the remembered group beats a majority of sleepers", function () {
+            // The owner's 2026-09-12 desync, exactly as `hyprctl devices`
+            // caught it live: the seat's flag on a mouse's keyboard
+            // interface (never safe), no anchor (the shell just restarted),
+            // the keyboard the user actually types on flipped to group 1 by
+            // alt-shift while its two sleeping siblings never receive the
+            // toggle and sit on 0. Consensus read 0 — English caps while he
+            // typed Ukrainian. The panel's remembered group, persisted with
+            // its state, is the honest tie-breaker; the helper's own device
+            // cannot serve (its reported index is the layout slot, never the
+            // group — measured live).
+            var desync = zoo(0, "razer-razer-deathadder-v3-keyboard")
+            desync[3].active_layout_index = 1
+            var picked = Devices.select(desync, "", safeNames, 1)
+            // Facts come from a safe consensus device; the GROUP is the
+            // remembered one, and the caller derives the code from it.
+            T.equal(picked.group, 1)
+            T.equal(Devices.activeLayoutForGroup(picked.reading, picked.group), "ua")
+            T.equal(picked.reading.name.indexOf("hl-virtual-keyboard"), -1)
+            T.equal(picked.switchSet.length, 3)
+            T.equal(picked.switchSet.indexOf("hl-virtual-keyboard-omarchy-osk-daemon"), -1)
+        })
+
+        T.test("the remembered group is ignored when live evidence exists", function () {
+            // A unanimous safe set is consensus evidence, and a named/main
+            // device outranks memory — the fallback is only for the
+            // evidence-free restart window on a diverged seat.
+            T.equal(Devices.select(zoo(0, ""), "", safeNames, 1).group, 0)
+            var named = Devices.select(zoo(0, ""),
+                "ite-tech.-inc.-ite-device(8176)-keyboard", safeNames, 1)
+            T.equal(named.reading.name, "ite-tech.-inc.-ite-device(8176)-keyboard")
+            T.equal(named.group, 0)
+            // A non-integer or negative memory is not evidence at all.
+            var junk = Devices.select(zoo(0, ""), "", safeNames, -1)
+            T.equal(junk.group, 0)
+            T.equal(junk.reading.name.indexOf("hl-virtual-keyboard"), -1)
+        })
+
+        T.test("with the helper's device absent the consensus still answers", function () {
+            // Helper down (first start, or it lost its seat): the old
+            // consensus tier is unchanged behind the fallback.
+            var noVirtual = zoo(0, "").filter(function (device) {
+                return device.name.indexOf("hl-virtual-keyboard") !== 0
+            })
+            var picked = Devices.select(noVirtual, "", safeNames)
+            T.equal(picked.reading.active_layout_index, 0)
+            T.equal(picked.reading.name.indexOf("hl-virtual-keyboard"), -1)
         })
 
         T.test("one stuck keyboard cannot drag the reading", function () {
@@ -105,9 +155,13 @@ QtObject {
             var picked = Devices.select(split, "", safeNames)
             T.equal(picked.reading.active_layout_index, 0)
 
-            // And the other way: two on `ua` and one lagging reads `ua`.
+            // And the other way: two on `ua` and one lagging reads `ua`. The
+            // helper's virtual device is modelled as synced (the panel put
+            // it there) — a majority that disagrees with its own last
+            // write is not a state devices reach by themselves.
             var other = zoo(1, "")
             other[3].active_layout_index = 0
+            other[11].active_layout_index = 1
             T.equal(Devices.select(other, "", safeNames).reading.active_layout_index, 1)
         })
 
