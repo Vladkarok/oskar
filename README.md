@@ -67,7 +67,6 @@ untouched while the panel keeps the last valid runtime value.
 | `size_preset` | preset name | `medium` |
 | `sound` | `true` \| `false` | `false` |
 | `follow_theme` | `true` \| `false` | `true` |
-| `emoji_app` | picker command name on PATH | `omarchy-menu-emoji` |
 | `emoji_close_after_pick` | `true` \| `false` | `false` |
 | `emoji_page_size` | `medium` \| `large` \| `x-large` | `medium` |
 | `super_mark` | `word` \| `omarchy` \| `windows` \| `macos` \| `penguin` | `word` |
