@@ -50,6 +50,7 @@ keyboards                                 -> keyboards\t<safe physical name>…
 configure\t<rules>\t<model>\t<layouts>\t<variants>\t<options>\t<kb_file>\t<group>
 caps <group> [positions…]                 -> keycap facts for the named group
 group <n> | tap <AD01|code> | down … | up … | mods <mask> | ping
+text <utf8>                               -> ok | err … (a transient keymap swap; decisions §39)
 ```
 
 Replies are `ok`, `configured\t<generation>`,
@@ -98,11 +99,12 @@ upstream Hyprland/Omarchy work.
 
 ## Suggested next steps
 
-For the 2026-09-06 review and owner-requested settings, picker, and compact-row
-planning, read [next-iteration-plan.md](next-iteration-plan.md). It indexes the
-draft `.scratch/next-iteration/` board; it is not an implementation instruction.
-For a fresh runner executing that board, use
-[next-iteration-handoff.md](next-iteration-handoff.md) together with `/board`.
+Continuing a session starts at [session-handoff.md](session-handoff.md): what
+is done, what is next, and the traps this project has already paid for. For
+the 2026-09-06 review that produced the current board, read
+[next-iteration-plan.md](next-iteration-plan.md) — it indexes the draft
+`.scratch/next-iteration/` board and is not an implementation instruction.
+The board itself is worked with `/board`, one ticket at a time.
 
 1. Implement the local v1.1 board derived from [spec-v1.1.md](spec-v1.1.md).
 2. Land the shared Omarchy Style refresh needed for live rounding updates.

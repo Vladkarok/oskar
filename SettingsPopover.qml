@@ -117,9 +117,9 @@ Rectangle {
         }
     }
     readonly property var settingsRowLabels:
-        ["Mode", "Size", "Key click sound", "Follow Omarchy theme", "Emoji app",
-         "Key radius", "Panel radius", "Key background", "Panel background",
-         "Text colour", "Accent colour", "Border colour"]
+        ["Mode", "Size", "Super mark", "Key click sound", "Follow Omarchy theme",
+         "Emoji app", "Key radius", "Panel radius", "Key background",
+         "Panel background", "Text colour", "Accent colour", "Border colour"]
     readonly property real labelColumnWidth: {
         var widest = 0
         for (var i = 0; i < labelProbe.children.length; i++) {
@@ -143,12 +143,15 @@ Rectangle {
     }
 
     // The widest control block any row lays down, measured from the same
-    // compact pieces the colour rows draw — swatches, hex, confirm chip
-    // and Custom. The emoji chooser sits inside it.
+    // compact pieces the colour rows draw — the committed-colour indicator
+    // square (ticket 23), swatches, hex, confirm chip and Custom. The emoji
+    // chooser sits inside it.
     Row {
         id: controlProbe
         visible: false
         spacing: tokens.space(6)
+
+        Rectangle { width: tokens.space(24); height: 1 }
 
         Repeater {
             model: 4
@@ -547,6 +550,71 @@ Rectangle {
                     tokens: popoverRoot.tokens
                     panel: popoverRoot.panel
                     overrideName: "sizePreset"
+                }
+            }
+
+            SettingsHairline {}
+
+            // SUPER MARK (ticket 22): what the Super cap draws — the word by
+            // default, a mark by choice. Five segments on the same
+            // SettingsSegmented the Mode and Size rows use; the instance is
+            // wider because five labels cannot fit the two-row width
+            // ("Omarchy", "Windows" and "Penguin" each measure ~50px against
+            // the default's ~28px segment), and the card's measured control
+            // zone (~328 space units) holds the wider control plus its reset
+            // chip with room to spare. Choosing the standing mark is a no-op
+            // — no movement, no config write — like choosing the active
+            // preset.
+            Text {
+                width: parent.width
+                text: "SUPER MARK"
+                color: tokens.muted
+                font.family: tokens.fontFamily
+                font.pixelSize: tokens.fontBodySmall
+            }
+
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+
+                Text {
+                    anchors {
+                        left: parent.left
+                        verticalCenter: parent.verticalCenter
+                    }
+                    text: "Super mark"
+                    color: tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBody
+                }
+
+                SettingsSegmented {
+                    id: superMarkControl
+                    x: popoverRoot.controlColumnX
+                    anchors {
+                        verticalCenter: parent.verticalCenter
+                    }
+                    width: tokens.space(290)
+                    readonly property var superMarkLabels:
+                        ({ word: "Word", omarchy: "Omarchy", windows: "Windows",
+                           macos: "macOS", penguin: "Penguin" })
+                    segments: ConfigFile.SUPER_MARKS.map(function (mark) {
+                        return { value: mark, label: superMarkControl.superMarkLabels[mark] }
+                    })
+                    current: panel.superMark
+                    onPicked: function (value) { panel.setSuperMark(value) }
+                }
+
+                SettingsResetChip {
+                    anchors {
+                        left: superMarkControl.right
+                        leftMargin: tokens.space(6)
+                        verticalCenter: parent.verticalCenter
+                    }
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "superMark"
                 }
             }
 

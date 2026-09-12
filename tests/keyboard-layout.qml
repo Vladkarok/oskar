@@ -482,6 +482,46 @@ QtObject {
             T.equal(fn[0][13].key, "F12")
         })
 
+        // ---- ticket 22: the Super cap's mark is a setting ----
+        //
+        // The pure arm choice Keyboard.qml draws by: the word is the default
+        // and the landing place for everything undrawable — an unknown
+        // setting string, and the Omarchy glyph when its private font is
+        // absent. Rendering shape and proportion of the three drawn marks is
+        // invisible to this suite (decisions §36) and stays for the owner's
+        // eyes; what is pinned here is that every answer names an arm that
+        // draws something.
+
+        T.test("the Super cap draws the word by default and on anything unknown", function () {
+            T.equal(Layout.superMarkArm("word", true), "word")
+            T.equal(Layout.superMarkArm("word", false), "word")
+            // The store rejects these values; the QML still treats one as
+            // the word so nothing can ever draw a blank cap.
+            T.equal(Layout.superMarkArm("tux", true), "word")
+            T.equal(Layout.superMarkArm("Super", true), "word")
+            T.equal(Layout.superMarkArm("", false), "word")
+            T.equal(Layout.superMarkArm(undefined, true), "word")
+            T.equal(Layout.superMarkArm(7, true), "word")
+        })
+
+        T.test("the Omarchy arm answers on the font gate alone", function () {
+            T.equal(Layout.superMarkArm("omarchy", true), "omarchy")
+            // The packaged TTF absent: the word, never a blank cap
+            // (decisions §27 as amended) — the gate stays attached to this
+            // arm and to no other.
+            T.equal(Layout.superMarkArm("omarchy", false), "word")
+        })
+
+        T.test("the three drawn marks draw whatever the font answers", function () {
+            // The inline vectors carry no font dependency, so the gate that
+            // guards the glyph arm has nothing to say about them.
+            var marks = ["windows", "macos", "penguin"]
+            for (var i = 0; i < marks.length; i++) {
+                T.equal(Layout.superMarkArm(marks[i], true), marks[i])
+                T.equal(Layout.superMarkArm(marks[i], false), marks[i])
+            }
+        })
+
         Qt.exit(T.report("keyboard layout"))
     }
 }

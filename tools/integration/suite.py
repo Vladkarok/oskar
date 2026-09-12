@@ -19,13 +19,17 @@ import sys
 import time
 
 from harness import (
+    Clipboard,
     ElectronTarget,
     Failure,
     KeymapObserver,
     TypingTarget,
+    focus_toward,
+    published_keymap_is_live,
     run,
     share_published_keymap,
     test,
+    window_addresses,
 )
 
 # The helper's stuck-key cap, injected by tools/smoke-daemon.sh so the suite
@@ -1228,6 +1232,304 @@ def focus_keeps_one_keymap_and_group(helper, keyboard):
             f".... §35: {len(raw_events)} wl_keyboard.keymap event, "
             f"payload {payloads[0][1]} ({payloads[0][0]} bytes), "
             "no events during exactly six focus transitions, retained group 1 typed й",
+            flush=True,
+        )
+    finally:
+        if other is not None:
+            other.close()
+        observer.close()
+        client.close()
+
+
+@test("a text pick delivers its payload once and leaves the clipboard alone")
+def text_pick_delivers_once_without_clipboard(helper, keyboard):
+    """Ticket 24's delivery half, end to end through the helper socket.
+
+    One `text` line while a real client is focused is exactly what a click
+    on the emoji page drives, so the leg is the pick itself, not a mock of
+    one. The focused client's `cat` capture is the whole assertion, the same
+    evidence every typing leg here reads: the payload byte-exact, and once —
+    a doubled delivery fails the equality the same way a dropped one does.
+    The family is five scalars (two ZWJ joins inside), so the pick must
+    plan, chord and restore five level-5-8 slots, not one.
+    """
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    # The keymap the §35 leg installed, so this configure short-circuits
+    # and compiles nothing: the churn bookkeeping this suite does stays
+    # about the tests that earned it.
+    client.configure(CONFIGURE)
+    keyboard.expect_group(1)
+
+    # Ticket 24's negative half (decisions §26 and its reverse): a pick
+    # types, it never pastes. The clipboard is seeded so "unchanged" cannot
+    # be confused with "there was nothing to read", then hashed around the
+    # picks. The offer lives on the nested seat — the WAYLAND_DISPLAY this
+    # suite runs under — never on the host session's.
+    clipboard = Clipboard("osk text-pick canary")
+    try:
+        target = TypingTarget()
+        try:
+            client.expect("text 🙂", "ok")
+            helper.expect_log("text: delivered 1 scalar(s)")
+            client.expect("tap RTRN", "ok")
+            target.expect_text("🙂\n")
+
+            client.expect("text 👨‍👩‍👧", "ok")
+            helper.expect_log("text: delivered 5 scalar(s)")
+            client.expect("tap RTRN", "ok")
+            target.expect_text("🙂\n👨‍👩‍👧\n")
+        finally:
+            target.close()
+        served = clipboard.expect_unchanged("after two text picks")
+    finally:
+        clipboard.close()
+    client.close()
+    print(
+        ".... text: focused foot read 🙂 then 👨‍👩‍👧, each exactly once; "
+        f"nested-seat clipboard sha256 {served} unchanged",
+        flush=True,
+    )
+
+
+@test("a text pick delivers its payload to an XWayland client too")
+def text_pick_reaches_xwayland(helper, keyboard):
+    """Ticket 24's third consumer (decisions §33's X11 path).
+
+    x11cat is a real X11 client — GDK on the core key-events path, no input
+    method — and it flushes per key press, so each pick's scalars arrive
+    one write at a time and the assertion needs no newline: the same exact
+    equality as the foot leg, on a client that resolves the keysyms itself
+    rather than through a DomCode table.
+    """
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    # Same keymap the delivery leg before this left installed: this
+    # configure short-circuits and compiles nothing.
+    client.configure(CONFIGURE)
+    keyboard.expect_group(1)
+
+    target = TypingTarget(cls="x11cat")
+    try:
+        client.expect("text 🙂", "ok")
+        target.expect_text("🙂")
+        client.expect("text 👨‍👩‍👧", "ok")
+        target.expect_text("🙂👨‍👩‍👧")
+    finally:
+        target.close()
+    client.close()
+    print(
+        ".... text/x11cat: the XWayland client read 🙂 then 👨‍👩‍👧, "
+        "each exactly once",
+        flush=True,
+    )
+
+
+@test("a text pick costs two keymap events and the §35 invariant survives it")
+def text_pick_keeps_one_keymap_and_group(helper, keyboard):
+    """Ticket 24's cost, measured where §35 measured its defect.
+
+    The design spends exactly two `wl_keyboard.keymap` events per pick on
+    the focused client — the transient map out, the installed map back —
+    and compensates each event's group reset by re-sending modifiers
+    (§35). So with the observer focused: exactly two events, the second
+    carrying the very payload the client started with; the emoji itself
+    among the events' keys; and then six focus changes with no keymap
+    event at all and the pre-pick group still resolving letters — the
+    stable single-keymap behaviour §35 automated, surviving a pick.
+    """
+    client = helper.connect()
+    client.expect("hello 4", "hello 4")
+    client.configure(CONFIGURE)
+    # Left live by the §35 leg, and a pick must not need it re-pointed:
+    # the transient swap happens on the helper's own device, and touching
+    # kb_file is what costs the compositor an identity change.
+    published_keymap_is_live()
+    client.expect("group 1", "ok")
+    keyboard.expect_group(1)
+
+    observer = KeymapObserver()
+    other = None
+    try:
+        # The one initial map, before anything is picked.
+        initial_trace = observer.text()
+        initial_raw_events = re.findall(
+            r"wl_keyboard[@#][^.]*(?:\.|::)keymap\(", initial_trace
+        )
+        initial_payloads = re.findall(
+            r"^KEYMAP event=\d+ bytes=(\d+) id=([0-9a-f]+) catalogue=(\d)$",
+            initial_trace,
+            re.MULTILINE,
+        )
+        if len(initial_raw_events) != 1 or len(initial_payloads) != 1:
+            raise Failure(
+                "observer did not start with exactly one keymap event/payload: "
+                f"wire={len(initial_raw_events)}, payloads={initial_payloads}"
+            )
+        if initial_payloads[0][2] != "1":
+            raise Failure(f"initial seat keymap lacks the catalogue: {initial_payloads}")
+        initial_id = initial_payloads[0][1]
+
+        # The observer owns focus; map foot and take focus back, so the
+        # pick runs focused on the observer. Both windows stay for the six
+        # transitions after the pick.
+        clients_raw = subprocess.run(
+            ["hyprctl", "clients", "-j"], capture_output=True, text=True
+        ).stdout
+        try:
+            client_list = json.loads(clients_raw)
+        except json.JSONDecodeError:
+            client_list = []
+        observer_address = next(
+            (window.get("address") for window in client_list
+             if window.get("class") == "osk-keymap-observer"), None
+        )
+        initial_active_raw = subprocess.run(
+            ["hyprctl", "activewindow", "-j"], capture_output=True, text=True
+        ).stdout
+        try:
+            initial_active = json.loads(initial_active_raw)
+        except json.JSONDecodeError:
+            initial_active = {}
+        if not observer_address or initial_active.get("address") != observer_address:
+            raise Failure(
+                f"observer did not own focus before the pick: {initial_active!r}"
+            )
+
+        other = TypingTarget()
+        clients_raw = subprocess.run(
+            ["hyprctl", "clients", "-j"], capture_output=True, text=True
+        ).stdout
+        try:
+            client_list = json.loads(clients_raw)
+        except json.JSONDecodeError:
+            client_list = []
+        foot_address = next(
+            (window.get("address") for window in client_list
+             if window.get("class") == "foot"), None
+        )
+        if not foot_address:
+            raise Failure(f"foot did not map for the focus sequence: {client_list!r}")
+        x_by_address = window_addresses()
+        focus_toward(observer_address, foot_address, x_by_address)
+
+        # The pick. The reply is the helper's word; the trace is the fact.
+        before_pick = observer.text()
+        client.expect("text 🙂", "ok")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if len(re.findall(
+                    r"^KEYMAP event=\d+ bytes=\d+ id=[0-9a-f]+ catalogue=\d$",
+                    observer.text(),
+                    re.MULTILINE)) >= 3:
+                break
+            time.sleep(0.05)
+        else:
+            raise Failure(
+                "a text pick never produced its two keymap events; "
+                f"trace tail: {observer.text()[len(before_pick):][-600:]!r}"
+            )
+        time.sleep(0.3)  # the pick's trailing modifiers, past the second event
+        pick_trace = observer.text()[len(before_pick):]
+        pick_raw = re.findall(
+            r"wl_keyboard[@#][^.]*(?:\.|::)keymap\(", pick_trace
+        )
+        pick_payloads = re.findall(
+            r"^KEYMAP event=\d+ bytes=(\d+) id=([0-9a-f]+) catalogue=(\d)$",
+            pick_trace,
+            re.MULTILINE,
+        )
+        if len(pick_raw) != 2 or len(pick_payloads) != 2:
+            raise Failure(
+                f"a text pick must cost exactly two keymap events: "
+                f"wire={len(pick_raw)}, payloads={pick_payloads}"
+            )
+        if pick_payloads[0][1] == initial_id or pick_payloads[1][1] != initial_id:
+            raise Failure(
+                f"the installed keymap did not go back last: pick {pick_payloads}, "
+                f"initial {initial_id}"
+            )
+        if any(catalogue != "1" for *_, catalogue in pick_payloads):
+            raise Failure(f"a pick keymap lacked the catalogue: {pick_payloads}")
+        if "text=🙂" not in pick_trace:
+            raise Failure(
+                "the focused observer never read the emoji back: "
+                f"{pick_trace[-600:]!r}"
+            )
+        groups = re.findall(r"^MODIFIERS group=(\d+)", pick_trace, re.MULTILINE)
+        if not groups or groups[-1] != "1":
+            raise Failure(
+                f"the pick did not end with the group re-sent: {groups}"
+            )
+        keyboard.expect_group(1)
+
+        # Six verified focus changes after the pick, ending on the observer:
+        # §35's sequence, none of which may carry a keymap event.
+        before_sequence = observer.text()
+        current = observer_address
+        for transition in range(6):
+            wanted = foot_address if transition % 2 == 0 else observer_address
+            focus_toward(wanted, current, x_by_address)
+            current = wanted
+        if current != observer_address:
+            raise Failure(f"six transitions did not end on the observer: {current}")
+        time.sleep(0.3)
+        sequence_trace = observer.text()[len(before_sequence):]
+        sequence_raw = re.findall(
+            r"wl_keyboard[@#][^.]*(?:\.|::)keymap\(", sequence_trace
+        )
+        sequence_payloads = re.findall(
+            r"^KEYMAP event=\d+ bytes=(\d+) id=([0-9a-f]+) catalogue=(\d)$",
+            sequence_trace,
+            re.MULTILINE,
+        )
+        if sequence_raw or sequence_payloads:
+            raise Failure(
+                "focus changes after a pick swapped the client's keymap: "
+                f"wire={len(sequence_raw)}, payloads={sequence_payloads}"
+            )
+
+        # The retained group, with nothing corrective between the pick and
+        # this tap: the observer still resolves AD01 as й at group 1.
+        keyboard.expect_group(1)
+        before_key = observer.text()
+        client.expect("tap AD01", "ok")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            key_tail = observer.text()[len(before_key):]
+            if "KEY evdev=16 group=1 text=й" in key_tail:
+                break
+            time.sleep(0.05)
+        else:
+            raise Failure(
+                "the group retained through the pick did not resolve AD01 as й: "
+                f"{key_tail!r}"
+            )
+
+        # Whole-trace accounting: initial + the pick's two, two distinct
+        # payloads, the seat back on the extended map it started with.
+        trace = observer.text()
+        raw_events = re.findall(r"wl_keyboard[@#][^.]*(?:\.|::)keymap\(", trace)
+        payloads = re.findall(
+            r"^KEYMAP event=\d+ bytes=(\d+) id=([0-9a-f]+) catalogue=(\d)$",
+            trace,
+            re.MULTILINE,
+        )
+        if len(raw_events) != 3 or len(payloads) != 3:
+            raise Failure(
+                f"trace accounting broke: wire={len(raw_events)}, "
+                f"payloads={payloads}"
+            )
+        identities = {payload[1] for payload in payloads}
+        if identities != {initial_id, pick_payloads[0][1]}:
+            raise Failure(
+                f"unexpected keymap identities on the seat: {payloads}, "
+                f"initial {initial_id}"
+            )
+        print(
+            f".... §35 after a pick: {len(raw_events)} keymap events total "
+            f"(transient {pick_payloads[0][1][:8]}, installed {initial_id[:8]} "
+            "back), six focus changes carried none, group 1 still typed й",
             flush=True,
         )
     finally:

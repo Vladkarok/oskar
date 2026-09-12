@@ -16,6 +16,7 @@ Nothing here inspects the helper's internals; that is what the Rust unit
 tests are for.
 """
 
+import hashlib
 import json
 import os
 import signal
@@ -56,7 +57,11 @@ class Client:
                 if attempt == 49:
                     raise
                 time.sleep(0.05)
-        self._stream = self._socket.makefile("rw")
+        # UTF-8 on purpose, independent of the guest's locale: the `text`
+        # command's payload is the user's string (ticket 24), and a TextIOWrapper
+        # left at the locale default would encode emoji as ASCII or die trying
+        # on a C-locale guest.
+        self._stream = self._socket.makefile("rw", encoding="utf-8")
 
     def send(self, command):
         """Write one protocol line, return the helper's reply."""
@@ -304,6 +309,85 @@ def share_published_keymap():
     raise Failure(f"compositor never selected the published keymap {path!r}")
 
 
+def published_keymap_is_live():
+    """The compositor still names the helper's published keymap (§35).
+
+    A leg that only READS the seat must not re-point it: every clear/set of
+    `input:kb_file` costs the compositor a keymap identity change, which is
+    the nested-session churn ceiling's currency. Legs that need it set call
+    `share_published_keymap`; legs that only need it to still be set assert
+    through here.
+    """
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+    path = os.path.join(runtime, "omarchy-osk", "keymap.xkb")
+    proc = subprocess.run(
+        ["hyprctl", "getoption", "input:kb_file", "-j"],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        if json.loads(proc.stdout).get("str") == path:
+            return path
+    except json.JSONDecodeError:
+        pass
+    raise Failure(
+        f"input:kb_file no longer names the published keymap {path!r}: "
+        f"{proc.stdout.strip()[:200]!r}"
+    )
+
+
+def focus_toward(wanted, before, x_by_address):
+    """One verified focus move, the §35 leg's method.
+
+    Hyprland's directional focus dispatch between two known windows, with
+    the move confirmed against `activewindow` before the caller proceeds —
+    an unverified dispatch would leave the next assertion reading whatever
+    window happened to be focused.
+    """
+    direction = (
+        "left" if x_by_address[wanted] < x_by_address.get(before, 0) else "right"
+    )
+    dispatched = subprocess.run(
+        ["hyprctl", "dispatch", f"hl.dsp.focus({{ direction = '{direction}' }})"],
+        capture_output=True,
+        text=True,
+    )
+    if dispatched.returncode != 0 or "ok" not in dispatched.stdout.lower():
+        raise Failure(
+            f"focus dispatch {direction} toward {wanted} was refused: "
+            f"{(dispatched.stdout + dispatched.stderr).strip()!r}"
+        )
+    for _ in range(60):
+        now_raw = subprocess.run(
+            ["hyprctl", "activewindow", "-j"], capture_output=True, text=True
+        ).stdout
+        try:
+            now = json.loads(now_raw)
+        except json.JSONDecodeError:
+            now = {}
+        if now.get("address") == wanted and wanted != before:
+            return now
+        time.sleep(0.05)
+    raise Failure(
+        f"focus never moved {direction} from {before} to {wanted}; "
+        f"compositor last answered: {now_raw.strip()[:200]!r}"
+    )
+
+
+def window_addresses():
+    """{address: x} for every mapped window, for focus_toward's directions."""
+    raw = subprocess.run(
+        ["hyprctl", "clients", "-j"], capture_output=True, text=True
+    ).stdout
+    try:
+        windows = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return {
+        window.get("address"): (window.get("at") or [0])[0] for window in windows
+    }
+
+
 def _active_window():
     proc = subprocess.run(
         ["hyprctl", "activewindow", "-j"], capture_output=True, text=True
@@ -438,6 +522,88 @@ class KeymapObserver:
         except subprocess.TimeoutExpired:
             self._process.kill()
         self._log.close()
+
+
+class Clipboard:
+    """The nested seat's clipboard, observed through wl-clipboard.
+
+    Ticket 24's negative half: a pick must type, never paste (decisions §26
+    and the reverse clause the ticket adds). The seat is seeded on purpose —
+    an empty clipboard cannot distinguish "unchanged" from "there was
+    nothing to read" — and the seeded offer is held by a foreground wl-copy
+    this class owns, so the observation has exactly one lifecycle to clean
+    up and cannot be mistaken for the live session's clipboard: it binds to
+    whatever WAYLAND_DISPLAY the suite runs under, which is the nested
+    compositor's.
+    """
+
+    def __init__(self, seed):
+        if not (shutil.which("wl-copy") and shutil.which("wl-paste")):
+            raise Failure(
+                "wl-copy and wl-paste are required to observe the seat "
+                "clipboard; without them a pick's clipboard behaviour "
+                "cannot be asserted and must not be faked"
+            )
+        self._process = subprocess.Popen(
+            ["wl-copy", "--foreground", seed],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        # wl-copy turns its command-line text into a line — this guest serves
+        # the seed with a trailing newline whatever --trim-newline claims —
+        # so the seeding check accepts the seed as served, and the digest
+        # that the pick must not move is over the bytes wl-paste actually
+        # serves, never over the seed string.
+        deadline = time.monotonic() + 5
+        served = b""
+        while time.monotonic() < deadline:
+            try:
+                served = self.read()
+            except Failure:
+                # wl-paste exits nonzero while nothing has been copied yet,
+                # so the first reads race the seeding; keep polling rather
+                # than declaring the seat unreadable.
+                served = b""
+            if served in (seed.encode(), seed.encode() + b"\n"):
+                self.seed_digest = hashlib.sha256(served).hexdigest()
+                return
+            time.sleep(0.05)
+        alive = self._process.poll() is None
+        self.close()
+        raise Failure(
+            "the seeded clipboard never became readable via wl-paste; "
+            f"wl-copy alive={alive}, wl-paste served {served!r}"
+        )
+
+    def read(self):
+        """What wl-paste currently serves, or raise."""
+        proc = subprocess.run(["wl-paste"], capture_output=True)
+        if proc.returncode != 0:
+            raise Failure(
+                "wl-paste could not read the seat clipboard: "
+                f"{proc.stderr.decode(errors='replace').strip()!r}"
+            )
+        return proc.stdout
+
+    def digest(self):
+        return hashlib.sha256(self.read()).hexdigest()
+
+    def expect_unchanged(self, note):
+        """Require the seat clipboard still to serve exactly the seed."""
+        current = self.digest()
+        if current != self.seed_digest:
+            raise Failure(
+                f"the seat clipboard changed {note}: sha256 "
+                f"{self.seed_digest} -> {current}"
+            )
+        return current
+
+    def close(self):
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
 
 
 class TypingTarget:

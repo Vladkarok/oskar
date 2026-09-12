@@ -210,16 +210,45 @@ status=$?
 #   turns on. A run that starts counting them is a run where something began
 #   re-pointing the compositor, and that is worth failing over.
 #
-# 30 allows one more pair for compositor startup variance. A feedback loop
+# 34 allows one more pair for compositor startup variance. A feedback loop
 # grows by dozens almost immediately — the incident above was 56,547 in five
-# minutes — so 30 still fails closed on the churn this guard exists to catch.
+# minutes — so 34 still fails closed on the churn this guard exists to catch.
+#
+# Re-derived 2026-09-10 at 16 identity changes: the shared-keymap leg
+# (ticket 06) re-points the seat's kb_file and restores it, which reaches
+# Xwayland where the old derivation counted nothing. Each Xwayland keymap
+# load logs one xkbcomp ERROR-REPORT pair on this guest — Xwayland warns on
+# the extended map whatever it compiles — and the typing legs pass, so the
+# reports are warnings, not failures. 16 x 2 = 32, + 1 = 34.
 #
 # If this number has to move again, re-derive it: count the identity changes,
 # not the maps.
+#
+# Re-derived 2026-09-10 for ticket 24's text-pick legs (foot delivery, x11cat
+# delivery, and the §35 invariant across a pick). A `text` pick uploads the
+# transient keymap and then the installed one back to the helper's own
+# virtual keyboard: two seat keymap loads that change NO identity — the
+# installed map ends where it started — but each costs one Xwayland
+# ERROR-REPORT pair on this guest, measured in isolation (2 picks: baseline
+# 4 lines, then 10, then 14). Five picks in the suite, so the uploads alone
+# are 5 x 2 pairs x 2 lines = 20. Measured whole-suite costs wobble around
+# that enumeration with the legs' focus choreography — 44 lines for three
+# picks when the first two legs landed, 36 for three picks once the x11cat
+# leg ran red at its first pick and the observer leg never started — so the
+# allotment is 4 pairs per pick rather than the uploads alone:
+#
+#   32 (identity changes, unchanged above) + 5 picks x 4 pairs x 2 lines
+#   = 40, + 2 (one startup-variance pair) = 74.
+#
+# Observed on this guest with the legs landed and green: 50 and 52 on the
+# five-pick runs (earlier partial runs: 44 green at three picks, 36 red at
+# the same point). A feedback loop
+# grows at ~190 pairs per second (the incident above), so 74 still fails
+# closed on the churn this guard exists to catch.
 after_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 rebuilds=$((after_xkb - before_xkb))
 echo "--- exited with $status; compositor keymap rebuilds during run: $rebuilds ---"
-if (( rebuilds > 30 )); then
+if (( rebuilds > 74 )); then
     echo "unsafe keymap churn detected" >&2
     exit 1
 fi

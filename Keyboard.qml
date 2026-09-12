@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
@@ -26,11 +27,25 @@ Item {
     // clicks, Caps Lock — and never for the panel's own UI actions. The panel
     // plays the key click sound on it (spec-v1 §10).
     signal keyPressed()
-    // The ☺ cap's PATH probe succeeded (spec-v1.1 §1). The panel owns the
-    // session: Emote is toggled (closewindow of the identified appearance,
-    // never a second exec); other apps still launch. Arm happens before
-    // execDetached so a fast map cannot arrive against a null session.
-    signal emojiCapActivated(string app)
+    // The ☺ cap was pressed. The panel answers by toggling its own emoji
+    // page; the external-picker machinery this signal once armed is gone
+    // (ticket 24 step 5) — the configured app, when wanted, is launched
+    // from the page's chip.
+    signal emojiCapActivated()
+
+    // While the emoji page stands (searchMode, wired from the panel's
+    // emojiOpen), the keys feed its search instead of typing to the focused
+    // client: one intercepted press arrives here as an action — "char" with
+    // the character the cap drew (Layout.resolvedTypedChar, so what you see
+    // is what the search gets, in every configured layout and group),
+    // "backspace", "space", or "escape" from the Esc cap. The panel applies
+    // it to the page's query; Escape closes the page. The daemon receives
+    // nothing for an intercepted press (ticket 24, step 3).
+    signal searchInput(string action, string text)
+    // The panel's emoji-page state, mirrored. Binding, not assignment: the
+    // page closing by any route — cap, Escape, leftover click, gear, the
+    // panel itself — ends the interception with it.
+    property bool searchMode: false
 
     // The size preset's multiplier on top of the theme's own scaling
     // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
@@ -146,12 +161,18 @@ Item {
     readonly property int latchedBorderWidth: Math.max(2 * keyBorderWidth, root.theme.focusBorderWidth)
     readonly property int keyFontSize: Math.max(1, Math.round(root.theme.fontBody * uiScale))
     readonly property int keySmallFontSize: Math.max(1, Math.round(root.theme.fontBodySmall * uiScale))
-    // Super's compact mark (spec-v1.1 §1): U+E900 / family `omarchy`, the
-    // same request the bar menu launcher makes. Qt.fontFamilies(),
-    // FontLoader, fontInfo.family, and a zero-width paint miss or
-    // substitute this private family, so the packaged TTF path is the
-    // gate: an absent file never requests U+E900 and the Super label
-    // stays readable. Sized to the cap so it stays recognizable at M/L/XL.
+    // Super's mark (ticket 22, decisions §27 as amended): one arm of the
+    // settings choice draws. `superMark` is the effective setting the panel
+    // passes in; the pure choice in KeyboardLayout.js names the arm. The
+    // Omarchy arm keeps §27's gate — U+E900 / family `omarchy`, the same
+    // request the bar menu launcher makes, only after the packaged TTF is
+    // present, because Qt.fontFamilies(), FontLoader, fontInfo.family and a
+    // zero-width paint miss or substitute this private family. A missing
+    // font, like an unknown setting string, lands on the word arm: a mark
+    // the system cannot render is never a blank cap.
+    property string superMark: "word"
+    readonly property string superMarkArm: Layout.superMarkArm(
+        root.superMark, root.omarchyFontPresent)
     FileView {
         id: omarchyIconFontFile
         path: "/usr/share/fonts/omarchy/omarchy.ttf"
@@ -325,17 +346,6 @@ Item {
         }).length
         return Math.max(1, Math.min(listed, 4))
     }
-    // The emoji cap's spawn answer (spec-v1.1 §1), raised when the configured
-    // picker cannot be found on PATH at click time. Same swap the keymap
-    // failure uses — the panel's one hint line names this failure in the
-    // accent colour and hands the hint back on recovery (a successful probe,
-    // or the auto-clear below). Transient by design: it answers the click
-    // just made, then gets out of the way; typing and panel readiness never
-    // consult it.
-    property bool emojiFailed: false
-    // The app the ☺ cap execs — the panel's resolved override-over-default
-    // (spec-v1.1 §1). Bare PATH name; the probe and the hint both name it.
-    property string emojiAppName: "omarchy-menu-emoji"
     // Which page is drawn: main or symbols. A page is not a mode and not a
     // modifier: it changes what can be seen and nothing else — not the
     // keymap, not the group, not what any modifier is holding.
@@ -896,6 +906,22 @@ Item {
         })
     }
 
+    /// One emoji's sequence to the focused client (ticket 24, step 4): the
+    /// helper's `text` command over the same socket and the same unchecked
+    /// write every command uses. Gated like a tap — with the helper not
+    /// ready the caps draw gated and the send is a silent no-op, so an
+    /// emoji click with the service down spends the page and nothing else.
+    /// The reply needs nothing here: replies are matched by shape, `ok` is
+    /// the same unheard reply every tap earns, and the command's own
+    /// refusals are owned by the err arm's text case below — none of them
+    /// disturbs the configure ledger, which only `configured` and
+    /// `err cannot configure keymap` can move.
+    function sendText(s) {
+        if (!root.inputReady) return
+        var line = Session.textLine(s)
+        if (line !== "") sendCommandUnchecked(line)
+    }
+
     /// Lifts locked Shift and returns every modifier to idle. The panel closing
     /// is not the compositor forgetting: locked Shift is really held at the
     /// device and must come up before the socket goes away.
@@ -1295,6 +1321,27 @@ Item {
                             sendCommandUnchecked("mods 0")
                             root.inputReady = false
                             root.inputStatus = reply
+                        } else if (reply === "err unknown command"
+                                || reply === "err empty text"
+                                || reply === "err text too long"
+                                || reply === "err no slots"
+                                || reply === "err no level keys"
+                                || reply === "err keymap") {
+                            // The text delivery's own refusals (ticket 24,
+                            // step 4) — the only commands that can earn them
+                            // are `text` and whatever arrives after it. None
+                            // says anything about the device world: the old
+                            // helper's parse never saw the verb, the empty
+                            // and oversized refusals are the sender's bug,
+                            // and a slot or level refusal is one emoji
+                            // undelivered with the installed keymap exactly
+                            // as it was (the helper's own contract). So none
+                            // may gate typing, the way the ownership
+                            // refusals above stay status-only: a refused
+                            // emoji must not brick the keyboard until a
+                            // re-handshake.
+                            console.warn("[osk] text delivery refused:", reply)
+                            root.inputStatus = reply
                         } else {
                             root.inputReady = false
                             root.inputStatus = reply
@@ -1369,36 +1416,6 @@ Item {
         }
     }
 
-    // The emoji cap's PATH probe (spec-v1.1 §1). The configured app by bare
-    // PATH name, never an absolute path. execDetached is the panel's: Emote
-    // is a managed session (ticket 09) and a second exec would recreate the
-    // picker rather than dismiss it. The probe still answers "not on PATH"
-    // before anything is launched.
-    Process {
-        id: emojiProbe
-        command: ["sh", "-c", "command -v \"$1\" >/dev/null", "osk-emoji-probe",
-            root.emojiAppName]
-        onExited: function(exitCode, exitStatus) {
-            emojiFailTimer.stop()
-            if (exitCode === 0) {
-                root.emojiFailed = false
-                root.emojiCapActivated(root.emojiAppName)
-                return
-            }
-            root.emojiFailed = true
-            emojiFailTimer.restart()
-        }
-    }
-
-    Timer {
-        id: emojiFailTimer
-        // A few seconds of "<app> not found on PATH", then the hint line
-        // returns to its mode text without another event being needed.
-        interval: 4000
-        repeat: false
-        onTriggered: root.emojiFailed = false
-    }
-
     Timer {
         id: reconnectTimer
         interval: 2000
@@ -1446,6 +1463,23 @@ Item {
     // the key caps are drawn with, so what is shown is what is typed — the
     // reducer decides both, from the same `letter` and `caps` facts.
     function pressChar(keyData) {
+        // searchMode intercepts before anything the press would dispatch:
+        // the character the cap draws — the same resolvedTypedChar the label
+        // pipeline uses — is the query's next character, and the helper
+        // receives nothing (no tap, no down/up, no mods). Space rides this
+        // arm too: its drawn character IS the separator. An empty resolution
+        // (a cap that draws nothing) stays silent.
+        if (root.searchMode) {
+            var searchChar = root.resolvedTypedChar(keyData)
+            // Truthiness, not !== "": a partially resolved dual cap can hand
+            // back undefined, which a string signal coerces to "" and which
+            // must stay silent like any other cap that draws nothing.
+            if (searchChar) {
+                root.keyPressed()
+                root.searchInput("char", searchChar)
+            }
+            return
+        }
         // The ten symbol/digit caps use Shift to pick the digit chord. The
         // latch already selected the layer, so the reducer receives an exact
         // chord and temporarily lifts Shift to type the digit's level 1.
@@ -1513,12 +1547,12 @@ Item {
     function pressSpecial(keyData, doubleClick) {
         switch (keyData.key) {
         case "close": closeRequested(); return
-        // The ☺ cap (spec-v1.1 §1) probes PATH for the configured picker.
-        // The panel decides launch vs dismiss. A second click while the
-        // probe is already running needs no queue: the pending probe's
-        // exit resolves for both.
+        // The ☺ cap (ticket 24) toggles the panel's own emoji page: open on
+        // press, dismiss on a second press. No PATH probe stands in the
+        // way — the page is ours, and the configured external app, when
+        // wanted, is the page chip's own launch.
         case "emoji":
-            if (!emojiProbe.running) emojiProbe.running = true
+            root.emojiCapActivated()
             return
         // Not a keystroke, so no click sound, for the same reason close is
         // silent: nothing was typed.
@@ -1541,6 +1575,23 @@ Item {
                 type: doubleClick ? "doubleClick" : "click",
                 modifier: keyData.key
             })
+            return
+        }
+        // searchMode, for the caps that reach this far: BackSpace deletes,
+        // the Esc cap closes the page through the panel, and every other
+        // positional cap — Enter, Tab, the arrows — does nothing at all:
+        // no query change, and no dispatch, so the focused client receives
+        // nothing. The fixed cases and the modifiers above this line kept
+        // their own paths (close and ☺ toggle the panel's surfaces, page
+        // and fn and caps change only what the keys show or hold), which is
+        // what lets the next letters come from a freshly switched group.
+        if (root.searchMode) {
+            if (keyData.key === "BackSpace") {
+                root.keyPressed()
+                root.searchInput("backspace", "")
+            } else if (keyData.key === "Escape") {
+                root.searchInput("escape", "")
+            }
             return
         }
         var position = Layout.positionForKeysym(keyData.key)
@@ -1655,6 +1706,14 @@ Item {
                                 && producesInput
                             property bool disabled: unavailable || inputGated
                             property bool isSuper: keyData.key === "logo"
+                            // One ink binding for every Super-mark arm
+                            // (ticket 22): the cap's own state machine —
+                            // disabled dims, locked/on knocks out, otherwise
+                            // the plain glyph colour — tints the word, the
+                            // Omarchy glyph and the drawn vectors alike.
+                            readonly property color superInk: disabled ? root.textDim
+                                : (locked || toggleOn) ? root.lockedText
+                                : root.textMain
 
                             color: disabled ? root.keyBg
                                 : (locked || toggleOn) ? root.lockedFill
@@ -1666,28 +1725,275 @@ Item {
                                 : root.keyBorderColor
                             border.width: latched ? root.latchedBorderWidth : root.keyBorderWidth
 
+                            // ---- the Super cap's mark (ticket 22) ----
+                            //
+                            // One arm of the settings choice draws, chosen by
+                            // the pure superMarkArm in KeyboardLayout.js; the
+                            // cap's hit area, latch/chord behaviour and
+                            // accessible name are the same whatever draws.
+                            // The word arm is the generic label below; these
+                            // three arms draw when their mark is picked. Each
+                            // is wrapped in a Loader that is active only on
+                            // the arm's own Super cap, so the other ~two dozen
+                            // delegates instantiate nothing for them.
+
                             Text {
                                 id: superLogo
-                                // Same request as the bar launcher, but only
-                                // after the packaged TTF is present so Qt
-                                // cannot substitute another family's U+E900.
+                                // The Omarchy arm: same request as the bar
+                                // launcher, and §27's gate stays attached to
+                                // this arm alone — superMarkArm returns
+                                // "omarchy" only when the packaged TTF is
+                                // present, so Qt cannot substitute another
+                                // family's U+E900 and an absent font lands on
+                                // the word arm instead of a blank cap.
                                 visible: !keyRect.isDual && keyRect.isSuper
-                                    && root.omarchyFontPresent
+                                    && root.superMarkArm === "omarchy"
                                 anchors.centerIn: parent
                                 text: root.omarchyFontPresent ? "\ue900" : ""
                                 textFormat: Text.PlainText
                                 renderType: Text.NativeRendering
-                                color: keyRect.disabled ? root.textDim
-                                    : (keyRect.locked || keyRect.toggleOn)
-                                    ? root.lockedText : root.textMain
+                                color: keyRect.superInk
                                 font.family: "omarchy"
                                 font.pixelSize: root.superLogoSize
                                 Accessible.name: "Super"
                             }
 
+                            // The Windows arm: the four-pane 2×2 mark —
+                            // square panes, one small gap — composed of
+                            // plain Rectangles, the one mark needing no
+                            // curves. Flat, monochrome, cap-state inked.
+                            Loader {
+                                active: !keyRect.isDual && keyRect.isSuper
+                                    && root.superMarkArm === "windows"
+                                anchors.centerIn: parent
+                                width: root.superLogoSize
+                                height: root.superLogoSize
+                                sourceComponent: Component {
+                                    Item {
+                                        anchors.fill: parent
+                                        Accessible.name: "Super"
+
+                                        readonly property real pane: 0.45
+                                        readonly property real offset: 0.55
+
+                                        Rectangle {
+                                            x: 0; y: 0
+                                            width: parent.pane * parent.width
+                                            height: parent.pane * parent.height
+                                            color: keyRect.superInk
+                                        }
+                                        Rectangle {
+                                            x: parent.offset * parent.width; y: 0
+                                            width: parent.pane * parent.width
+                                            height: parent.pane * parent.height
+                                            color: keyRect.superInk
+                                        }
+                                        Rectangle {
+                                            x: 0; y: parent.offset * parent.height
+                                            width: parent.pane * parent.width
+                                            height: parent.pane * parent.height
+                                            color: keyRect.superInk
+                                        }
+                                        Rectangle {
+                                            x: parent.offset * parent.width
+                                            y: parent.offset * parent.height
+                                            width: parent.pane * parent.width
+                                            height: parent.pane * parent.height
+                                            color: keyRect.superInk
+                                        }
+                                    }
+                                }
+                            }
+
+                            // The macOS and Penguin arms: inline vectors
+                            // drawn with QtQuick.Shapes — monochrome, no
+                            // vendored raster, no font, no network. Paths
+                            // are laid out in a fixed 100×100 box and
+                            // scaled to the cap, so the same coordinates
+                            // read the same at every preset. The module
+                            // import is proven loadable by the host Qt
+                            // 6 runtime offscreen (the run-tests.sh runtime
+                            // instantiates a Shape with ShapePath, PathCubic
+                            // and OddEvenFill cleanly); rendering shape and
+                            // proportion stays for the owner's eyes, since
+                            // the offscreen suites cannot judge a silhouette.
+                            Loader {
+                                id: commandMarkLoader
+                                active: !keyRect.isDual && keyRect.isSuper
+                                    && root.superMarkArm === "macos"
+                                anchors.centerIn: parent
+                                width: root.superLogoSize
+                                height: root.superLogoSize
+                                sourceComponent: Component {
+                                    Shape {
+                                        anchors.fill: parent
+                                        Accessible.name: "Super"
+                                        preferredRendererType: Shape.GeometryRenderer
+
+                                        transform: Scale {
+                                            xScale: commandMarkLoader.width / 100
+                                            yScale: commandMarkLoader.height / 100
+                                        }
+
+                                        // The macOS command mark (⌘): the
+                                        // looped square as one stroked
+                                        // outline — four straight sides and
+                                        // four quarter-circle loops, RoundCap
+                                        // and RoundJoin so the corners read
+                                        // round, the fill transparent because
+                                        // the stroke IS the mark. Coordinates
+                                        // lifted verbatim from the owner
+                                        // render the choice was made on.
+                                        ShapePath {
+                                            strokeColor: keyRect.superInk
+                                            fillColor: "transparent"
+                                            strokeWidth: 8
+                                            capStyle: ShapePath.RoundCap
+                                            joinStyle: ShapePath.RoundJoin
+                                            startX: 62.5; startY: 25
+                                            PathLine { x: 62.5; y: 75 }
+                                            PathArc {
+                                                x: 75; y: 62.5
+                                                radiusX: 12.5; radiusY: 12.5
+                                                useLargeArc: true
+                                                direction: PathArc.Counterclockwise
+                                            }
+                                            PathLine { x: 25; y: 62.5 }
+                                            PathArc {
+                                                x: 37.5; y: 75
+                                                radiusX: 12.5; radiusY: 12.5
+                                                useLargeArc: true
+                                                direction: PathArc.Counterclockwise
+                                            }
+                                            PathLine { x: 37.5; y: 25 }
+                                            PathArc {
+                                                x: 25; y: 37.5
+                                                radiusX: 12.5; radiusY: 12.5
+                                                useLargeArc: true
+                                                direction: PathArc.Counterclockwise
+                                            }
+                                            PathLine { x: 75; y: 37.5 }
+                                            PathArc {
+                                                x: 62.5; y: 25
+                                                radiusX: 12.5; radiusY: 12.5
+                                                useLargeArc: true
+                                                direction: PathArc.Counterclockwise
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // The Penguin arm: Tux read at cap size — the
+                            // body silhouette with the face as an OddEvenFill
+                            // subpath, the eyes and beak refilled where they
+                            // sit inside that hole, and the belly as its own
+                            // cutout subpath; flippers and feet paint over
+                            // the body in a second path, disjoint subpaths
+                            // so nothing cancels. Coordinates lifted
+                            // verbatim from the owner render the choice was
+                            // made on.
+                            Loader {
+                                id: penguinMarkLoader
+                                active: !keyRect.isDual && keyRect.isSuper
+                                    && root.superMarkArm === "penguin"
+                                anchors.centerIn: parent
+                                width: root.superLogoSize
+                                height: root.superLogoSize
+                                sourceComponent: Component {
+                                    Shape {
+                                        anchors.fill: parent
+                                        Accessible.name: "Super"
+                                        preferredRendererType: Shape.GeometryRenderer
+
+                                        transform: Scale {
+                                            xScale: penguinMarkLoader.width / 100
+                                            yScale: penguinMarkLoader.height / 100
+                                        }
+
+                                        // Body, face, eyes, beak, belly: one
+                                        // path, alternating in and out under
+                                        // OddEvenFill — body filled, face
+                                        // holed, eyes and beak refilled
+                                        // inside the hole, belly holed.
+                                        ShapePath {
+                                            fillColor: keyRect.superInk
+                                            strokeColor: "transparent"
+                                            fillRule: ShapePath.OddEvenFill
+                                            startX: 50; startY: 6
+                                            PathCubic { control1X: 38; control1Y: 6; control2X: 30; control2Y: 12; x: 29; y: 22 }
+                                            PathCubic { control1X: 28.4; control1Y: 28; control2X: 27; control2Y: 33; x: 26; y: 37 }
+                                            PathCubic { control1X: 25; control1Y: 46; control2X: 24; control2Y: 56; x: 24; y: 64 }
+                                            PathCubic { control1X: 24; control1Y: 80; control2X: 35; control2Y: 88; x: 50; y: 88 }
+                                            PathCubic { control1X: 65; control1Y: 88; control2X: 76; control2Y: 80; x: 76; y: 64 }
+                                            PathCubic { control1X: 76; control1Y: 56; control2X: 75; control2Y: 46; x: 74; y: 37 }
+                                            PathCubic { control1X: 73; control1Y: 33; control2X: 71.6; control2Y: 28; x: 71; y: 22 }
+                                            PathCubic { control1X: 70; control1Y: 12; control2X: 62; control2Y: 6; x: 50; y: 6 }
+                                            PathMove { x: 43; y: 16 }
+                                            PathCubic { control1X: 37.5; control1Y: 16; control2X: 33.5; control2Y: 20; x: 33.5; y: 25.5 }
+                                            PathCubic { control1X: 33.5; control1Y: 31; control2X: 37; control2Y: 36.5; x: 42; y: 38.5 }
+                                            PathCubic { control1X: 46.5; control1Y: 39.6; control2X: 53.5; control2Y: 39.6; x: 58; y: 38.5 }
+                                            PathCubic { control1X: 63; control1Y: 36.5; control2X: 66.5; control2Y: 31; x: 66.5; y: 25.5 }
+                                            PathCubic { control1X: 66.5; control1Y: 20; control2X: 62.5; control2Y: 16; x: 57; y: 16 }
+                                            PathCubic { control1X: 54.8; control1Y: 16; control2X: 52.8; control2Y: 17.6; x: 52; y: 19 }
+                                            PathCubic { control1X: 50.8; control1Y: 20.2; control2X: 49.2; control2Y: 20.2; x: 48; y: 19 }
+                                            PathCubic { control1X: 47.2; control1Y: 17.6; control2X: 45.2; control2Y: 16; x: 43; y: 16 }
+                                            PathMove { x: 43; y: 23 }
+                                            PathCubic { control1X: 45.7; control1Y: 23; control2X: 46.9; control2Y: 25.6; x: 45.7; y: 28.1 }
+                                            PathCubic { control1X: 44.5; control1Y: 30.6; control2X: 41.5; control2Y: 30.6; x: 40.3; y: 28.1 }
+                                            PathCubic { control1X: 39.1; control1Y: 25.6; control2X: 40.3; control2Y: 23; x: 43; y: 23 }
+                                            PathMove { x: 57; y: 23 }
+                                            PathCubic { control1X: 59.7; control1Y: 23; control2X: 60.9; control2Y: 25.6; x: 59.7; y: 28.1 }
+                                            PathCubic { control1X: 58.5; control1Y: 30.6; control2X: 55.5; control2Y: 30.6; x: 54.3; y: 28.1 }
+                                            PathCubic { control1X: 53.1; control1Y: 25.6; control2X: 54.3; control2Y: 23; x: 57; y: 23 }
+                                            PathMove { x: 44; y: 29.5 }
+                                            PathCubic { control1X: 48; control1Y: 28.6; control2X: 52; control2Y: 28.6; x: 56; y: 29.5 }
+                                            PathCubic { control1X: 55.5; control1Y: 33.5; control2X: 53; control2Y: 36.2; x: 50; y: 36.2 }
+                                            PathCubic { control1X: 47; control1Y: 36.2; control2X: 44.5; control2Y: 33.5; x: 44; y: 29.5 }
+                                            PathMove { x: 50; y: 43 }
+                                            PathCubic { control1X: 42; control1Y: 43; control2X: 36.5; control2Y: 51; x: 36.5; y: 60 }
+                                            PathCubic { control1X: 36.5; control1Y: 71.5; control2X: 42; control2Y: 79; x: 50; y: 79 }
+                                            PathCubic { control1X: 58; control1Y: 79; control2X: 63.5; control2Y: 71.5; x: 63.5; y: 60 }
+                                            PathCubic { control1X: 63.5; control1Y: 51; control2X: 58; control2Y: 43; x: 50; y: 43 }
+                                        }
+
+                                        // Flippers and feet, painted over the
+                                        // body: two side flippers and two feet
+                                        // below it, disjoint subpaths so the
+                                        // fill never cancels itself.
+                                        ShapePath {
+                                            fillColor: keyRect.superInk
+                                            strokeColor: "transparent"
+                                            fillRule: ShapePath.OddEvenFill
+                                            startX: 25.5; startY: 42
+                                            PathCubic { control1X: 18.5; control1Y: 44; control2X: 14.5; control2Y: 51; x: 15.5; y: 58 }
+                                            PathCubic { control1X: 16.3; control1Y: 63.5; control2X: 20; control2Y: 67; x: 25; y: 65.5 }
+                                            PathCubic { control1X: 27.5; control1Y: 64.7; control2X: 28; control2Y: 61; x: 27.2; y: 56 }
+                                            PathCubic { control1X: 26.6; control1Y: 51; control2X: 26.4; control2Y: 46; x: 25.5; y: 42 }
+                                            PathMove { x: 74.5; y: 42 }
+                                            PathCubic { control1X: 81.5; control1Y: 44; control2X: 85.5; control2Y: 51; x: 84.5; y: 58 }
+                                            PathCubic { control1X: 83.7; control1Y: 63.5; control2X: 80; control2Y: 67; x: 75; y: 65.5 }
+                                            PathCubic { control1X: 72.5; control1Y: 64.7; control2X: 72; control2Y: 61; x: 72.8; y: 56 }
+                                            PathCubic { control1X: 73.4; control1Y: 51; control2X: 73.6; control2Y: 46; x: 74.5; y: 42 }
+                                            PathMove { x: 19; y: 93 }
+                                            PathCubic { control1X: 19; control1Y: 88.5; control2X: 27; control2Y: 86.5; x: 35; y: 87.5 }
+                                            PathCubic { control1X: 43; control1Y: 88.5; control2X: 46.5; control2Y: 91; x: 45.5; y: 94.5 }
+                                            PathCubic { control1X: 44.5; control1Y: 98; control2X: 37; control2Y: 100; x: 28.5; y: 99 }
+                                            PathCubic { control1X: 23; control1Y: 98.3; control2X: 19; control2Y: 96.5; x: 19; y: 93 }
+                                            PathMove { x: 54.5; y: 94.5 }
+                                            PathCubic { control1X: 53.5; control1Y: 91; control2X: 57; control2Y: 88.5; x: 65; y: 87.5 }
+                                            PathCubic { control1X: 73; control1Y: 86.5; control2X: 81; control2Y: 88.5; x: 81; y: 93 }
+                                            PathCubic { control1X: 81; control1Y: 96.5; control2X: 77; control2Y: 98.3; x: 71.5; y: 99 }
+                                            PathCubic { control1X: 63; control1Y: 100; control2X: 55.5; control2Y: 98; x: 54.5; y: 94.5 }
+                                        }
+                                    }
+                                }
+                            }
+
                             Text {
                                 visible: !keyRect.isDual
-                                    && (!keyRect.isSuper || !root.omarchyFontPresent)
+                                    && (!keyRect.isSuper
+                                        || root.superMarkArm === "word")
                                 anchors.centerIn: parent
                                 text: keyData.label
                                     ? keyData.label
@@ -1823,7 +2129,8 @@ Item {
                                             || Modifiers.isModifier(keyData.key)
                                             || keyData.key === "caps"
                                             || keyData.key === "fn"
-                                            || keyData.key === "page") {
+                                            || keyData.key === "page"
+                                            || keyData.key === "emoji") {
                                         root.pressSpecial(keyData, false)
                                     }
                                 }
@@ -1845,23 +2152,24 @@ Item {
                                 onCanceled: if (keyRect.types) root.releaseKey()
 
                                 // What is left on the click is only the
-                                // command caps that would tear something out
-                                // from under the button still held — close,
-                                // emoji. They are deliberately not swept into
-                                // the press path with the modifiers. They also
-                                // pay Qt's second-press suppression (issue 13)
-                                // for it, which is survivable here because
-                                // nobody double-clicks Close to close twice.
+                                // command cap that would tear something out
+                                // from under the button still held — close.
+                                // It is deliberately not swept into the press
+                                // path with the modifiers, and it pays Qt's
+                                // second-press suppression (issue 13) for it,
+                                // which is survivable because nobody
+                                // double-clicks Close to close twice.
                                 //
-                                // The page control is no longer one of them
-                                // (spec-v1.1 §3): waiting for `clicked` lost
-                                // every second press of a rapid pair to the
-                                // same suppression, and unlike close it tears
-                                // nothing out from under the pointer — the
-                                // grid rebuilds in place under the button,
-                                // the command row keeps its place, and the
-                                // next press lands on the same spot. So it
-                                // acts on the way down, one press per press.
+                                // The page control (spec-v1.1 §3) and the
+                                // emoji cap (ticket 24) are no longer among
+                                // them: waiting for `clicked` lost every
+                                // second press of a rapid pair to the same
+                                // suppression — fatal now the emoji cap
+                                // toggles a page, whose dismiss IS the second
+                                // press. Neither tears anything out from
+                                // under the pointer — the grid the button
+                                // sits on does not rebuild — so both act on
+                                // the way down, one press per press.
                                 onClicked: {
                                     if (!keyData.key) return
                                     if (Layout.positionForKeysym(keyData.key)) return
@@ -1869,6 +2177,7 @@ Item {
                                     if (keyData.key === "caps") return
                                     if (keyData.key === "fn") return
                                     if (keyData.key === "page") return
+                                    if (keyData.key === "emoji") return
                                     root.pressSpecial(keyData, false)
                                 }
 
