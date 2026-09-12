@@ -31,7 +31,6 @@ var CONFIG_FIELDS = [
     { file: "size_preset", value: "sizePreset" },
     { file: "sound", value: "sound" },
     { file: "follow_theme", value: "followTheme" },
-    { file: "emoji_app", value: "emojiApp" },
     { file: "emoji_close_after_pick", value: "emojiCloseAfterPick" },
     { file: "emoji_page_size", value: "emojiPageSize" },
     { file: "emoji_delivery", value: "emojiDelivery" },
@@ -54,13 +53,6 @@ function maintainerDefaults() {
         sizePreset: "medium",
         sound: false,
         followTheme: true,
-        // What Omarchy 4.0.2 itself ships as its emoji picker: its
-        // omarchy-menu-emoji launcher toggles the shell's own emoji overlay
-        // (verified against /usr/share/omarchy/bin on 2026-09-05; the
-        // pre-v1.1 plugin called the same script). The popover's Emoji app
-        // row offers every picker found on PATH; this default stands until
-        // one is chosen.
-        emojiApp: "omarchy-menu-emoji",
         emojiCloseAfterPick: false,
         emojiPageSize: "medium",
         // Ticket 28: typing is the default delivery (decisions §39/§40);
@@ -172,10 +164,6 @@ function validFieldValue(field, value) {
     // value that could not reach the file can never blank the cap either.
     if (field.file === "super_mark")
         return SUPER_MARKS.indexOf(value) !== -1
-    // The emoji picker is a bare PATH name the panel execs — never a path,
-    // never arguments. Empty (or padding-only) is not a name.
-    if (field.file === "emoji_app")
-        return typeof value === "string" && value.trim() !== ""
     if (field.file === "key_radius" || field.file === "panel_radius")
         return isRadius(value)
     if (field.file === "key_background" || field.file === "panel_background"
@@ -241,7 +229,7 @@ function parseOverrides(text) {
         // override must not come back padded from the panel's own reads and
         // serialization. The emoji app name trims for the same reason — a
         // padded name is still that name.
-        if (isColor(value) || field.file === "emoji_app") value = value.trim()
+        if (isColor(value)) value = value.trim()
         // Duplicate semantic names resolve deterministically: the canonical
         // spelling wins regardless of JSON order. An alias never overwrites
         // a canonical value, and a later canonical value overwrites an

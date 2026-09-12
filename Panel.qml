@@ -110,27 +110,8 @@ Item {
     }
     readonly property alias effectiveColorForField: effectiveColors
 
-    // The emoji picker (spec-v1.1 §1, 2026-09-09 amendment): an external
-    // app the user may prefer, defaulting to Omarchy's own
-    // omarchy-menu-emoji and changeable from the popover's Emoji app row.
-    // It is opt-in only now — the panel's own emoji page is the primary
-    // route, and the page's chip launches this app as an explicit
-    // fallback with no window management from us. `detectedEmojiPickers`
-    // is the PATH probe's answer, gathered once at load like the other
-    // dependency checks; the row offers those, the override may still name
-    // any app (an external edit), and the chip's click-time probe is the
-    // authority either way — a name missing from PATH raises the
-    // transient hint.
-    property string emojiApp: maintainedDefaults.emojiApp
     property bool emojiCloseAfterPick: maintainedDefaults.emojiCloseAfterPick
     property string emojiPageSize: maintainedDefaults.emojiPageSize
-    // The chip's not-found answer (ticket 24 step 5): the same transient
-    // shape the old ☺ cap's probe raised — named failure in the hint
-    // line, auto-cleared after a few seconds without another event.
-    property bool emojiAppMissing: false
-    property var detectedEmojiPickers: []
-    readonly property var emojiPickerCandidates:
-        ["omarchy-menu-emoji", "emote", "xmoji", "bmoji"]
     // The Super cap's mark (ticket 22): the word by default, a chosen mark
     // otherwise. Override, else the maintained default — the same plain
     // preference shape as the mode and the emoji app.
@@ -607,11 +588,6 @@ Item {
                 text: "Clipboard content is no longer available",
                 accent: true
             }
-        if (root.emojiAppMissing)
-            return {
-                text: root.emojiApp + " not found on PATH",
-                accent: true
-            }
         if (keyboard.lifecycleKind === "incompatible")
             return {
                 text: "omarchy-osk.service needs updating",
@@ -916,8 +892,6 @@ Item {
         // chip reads it at launch time and the popover row mirrors it;
         // changing it ends nothing — the external app is just an app
         // (ticket 24 step 5).
-        if (root.emojiApp !== effective.emojiApp)
-            root.emojiApp = effective.emojiApp
         // A follow-theme flip while the panel is on screen is immediate:
         // stopping freezes the tokens at the look they then have, and
         // re-enabling releases that snapshot so a later stop freezes the
@@ -1319,7 +1293,6 @@ Item {
     // parsed overrides and state are already applied by the time this runs.
     Component.onCompleted: {
         root.probeDependencies()
-        emojiPickerDetect.running = true
     }
 
     // Blocking, atomic writes leave either the old file or the complete new
@@ -1482,61 +1455,7 @@ Item {
         }
     }
 
-    // The PATH probe behind the popover's Emoji app row: which of the known
-    // pickers this system could actually launch. Gathered once at load, in
-    // the same one-shot shape as the dependency check — no poll. The row
-    // offers what this finds; the override itself may still name any app (an
-    // external edit), and the page chip's click-time probe is the authority
-    // at launch time.
-    Process {
-        id: emojiPickerDetect
-        command: ["bash", "-c",
-            "for name in \"$@\"; do command -v \"$name\" >/dev/null 2>&1 && printf '%s\\n' \"$name\"; done",
-            "omarchy-osk-emoji-detect"].concat(root.emojiPickerCandidates)
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                root.detectedEmojiPickers = text.split("\n").filter(function (line) {
-                    return line.trim() !== ""
-                })
-            }
-        }
-    }
 
-    // The emoji page's external-app chip (ticket 24 step 5): the click-time
-    // PATH probe the old ☺ cap ran, now serving the explicit fallback. On
-    // PATH the app is exec'd detached and that is all — no window
-    // management, no session, no fitting; opening and closing it is the
-    // user's business. Absent, the transient hint names the configured app
-    // and clears itself.
-    function launchEmojiApp() {
-        emojiAppProbe.running = false
-        emojiAppProbe.running = true
-    }
-
-    Process {
-        id: emojiAppProbe
-        command: ["sh", "-c", "command -v \"$1\" >/dev/null", "osk-emoji-app-probe",
-            root.emojiApp]
-        onExited: (exitCode, exitStatus) => {
-            emojiAppMissingTimer.stop()
-            if (exitCode === 0) {
-                Quickshell.execDetached([root.emojiApp])
-                return
-            }
-            root.emojiAppMissing = true
-            emojiAppMissingTimer.restart()
-        }
-    }
-
-    Timer {
-        id: emojiAppMissingTimer
-        // A few seconds of "<app> not found on PATH", then the hint line
-        // returns to its mode text without another event being needed.
-        interval: 4000
-        repeat: false
-        onTriggered: root.emojiAppMissing = false
-    }
 
     // The height the docked strip needs. In docked mode it is also the
     // window's height and therefore the space the compositor reserves for it;
@@ -2333,8 +2252,6 @@ Item {
             // The explicit fallback (ticket 24 step 5): the configured
             // external app, launched bare from the chip — the panel runs
             // the process and nothing more.
-            externalApp: root.emojiApp
-            onExternalAppRequested: root.launchEmojiApp()
             deliveryMode: root.emojiDelivery
             onDeliveryModeRequested: function (mode) { root.setEmojiDelivery(mode) }
             // One click is one send to the focused client. The page closes

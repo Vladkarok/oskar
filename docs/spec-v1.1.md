@@ -63,14 +63,12 @@ the reasons; this file records required behaviour.
   amendment, ticket 24 step 5: the cap no longer launches a picker, and the
   external-picker machinery — the courtesy move, the managed session, the
   shell-overlay payload and the fitting — is removed; decisions §24
-  records why the external route could not be made to work.) The
-  configured external app remains available from the page as an explicit
-  fallback: one chip execs it and the panel does nothing more — no window
-  management, no session; opening and closing the app is the user's
-  business. The default app is Omarchy's own (`omarchy-menu-emoji`,
-  verified against Omarchy 4.0.2); the settings popover's Emoji app row
-  chooses among the pickers detected on PATH, persisted as a sparse
-  `emoji_app` override, and an override may name any app. A configured app
+  records why the external route could not be made to work.) (2026-09-13
+  amendment: the external-app fallback is removed with the settings row,
+  the page chip and the `emoji_app` override — the panel's own page is
+  the only picker, and the owner confirmed nothing external is wanted.
+  The removal supersedes the chip/row/override text that followed here.)
+  A configured app
   missing from PATH, launched from the chip, raises the existing transient
   hint, naming the configured app.
 

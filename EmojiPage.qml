@@ -75,11 +75,6 @@ Rectangle {
     signal emojiChosen(var entry, bool applyTone)
     signal skinToneChosen(string tone)
     signal dismissed()
-    // The fallback's seam (ticket 24 step 5): the chip names the configured
-    // external app and one press asks the panel to exec it — nothing more
-    // rides along, no window management, no session.
-    property string externalApp: ""
-    signal externalAppRequested()
 
     // One intercepted keyboard cap, applied to the standing query. The
     // keyboard names the action ("char" with the character it drew,
@@ -360,7 +355,7 @@ Rectangle {
             Rectangle {
                 id: toneButton
                 anchors {
-                    right: externalAppChip.left
+                    right: parent.right
                     rightMargin: emojiRoot.contentSpacing
                     verticalCenter: parent.verticalCenter
                 }
@@ -394,54 +389,6 @@ Rectangle {
                 }
             }
 
-            // The configured external app (spec-v1.1 §1, 2026-09-09
-            // amendment): one compact chip, one press, one execDetached —
-            // the panel runs it and nothing more, the way the ☺ cap once
-            // did. No fitting, no session, no paste handoff; the app's
-            // windows are the user's to close. Absent from PATH, the panel
-            // raises the transient hint; the chip itself stays put.
-            Rectangle {
-                id: externalAppChip
-                anchors {
-                    right: parent.right
-                    verticalCenter: parent.verticalCenter
-                }
-                width: Math.min(externalAppLabel.implicitWidth + tokens.space(8) * 2,
-                    parent.width / 3)
-                height: tokens.space(22)
-                radius: tokens.cornerRadius
-                visible: emojiRoot.externalApp !== ""
-                color: chipArea.pressed ? tokens.accent
-                    : chipArea.containsMouse ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
-                    : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-                border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-                border.width: tokens.normalBorderWidth
-
-                Text {
-                    id: externalAppLabel
-                    anchors.centerIn: parent
-                    width: parent.width - tokens.space(8) * 2
-                    horizontalAlignment: Text.AlignHCenter
-                    elide: Text.ElideRight
-                    // The popover's own shortening: the launcher prefix
-                    // says nothing the row has not already said.
-                    text: emojiRoot.externalApp.indexOf("omarchy-") === 0
-                        ? emojiRoot.externalApp.slice("omarchy-".length)
-                        : emojiRoot.externalApp
-                    color: chipArea.pressed ? tokens.background : tokens.muted
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBodySmall
-                }
-
-                MouseArea {
-                    id: chipArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    Accessible.role: Accessible.Button
-                    Accessible.name: "Open " + emojiRoot.externalApp
-                    onClicked: emojiRoot.externalAppRequested()
-                }
-            }
         }
 
         Rectangle {

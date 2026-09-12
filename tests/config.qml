@@ -18,8 +18,7 @@ QtObject {
                 sound: false,
                 followTheme: true,
                 // Omarchy 4.0.2's own default emoji picker (2026-09-05).
-                emojiApp: "omarchy-menu-emoji",
-                emojiCloseAfterPick: false,
+                        emojiCloseAfterPick: false,
                 emojiPageSize: "medium",
                 // Ticket 28: typing is the default delivery.
                 emojiDelivery: "direct",
@@ -37,36 +36,6 @@ QtObject {
                 center: null, emojiUsage: [], emojiSkinTone: "",
                 layoutGroup: 0, layoutDevice: ""
             })
-        })
-
-        T.test("the emoji app override is any bare name, trimmed", function () {
-            // The ☺ cap execs the configured picker by bare PATH name
-            // (spec-v1.1 §1): a string is valid — any string, since the
-            // panel probes PATH at click time and answers a miss with the
-            // transient hint — but empty or padding-only is not a name, and
-            // a non-string is a malformed value like any other.
-            var parsed = Config.reloadOverrides({},
-                '{"emoji_app":"emote"}')
-            T.equal(parsed.error, "")
-            T.deepEqual(parsed.value, { emojiApp: "emote" })
-
-            var padded = Config.reloadOverrides({}, '{"emoji_app":"  emote  "}')
-            T.equal(padded.error, "")
-            T.deepEqual(padded.value, { emojiApp: "emote" })
-
-            var previous = { emojiApp: "emote" }
-            var empty = Config.reloadOverrides(previous, '{"emoji_app":""}')
-            T.equal(empty.value, previous)
-            T.equal(empty.error, "Invalid value for emoji_app")
-            var paddedEmpty = Config.reloadOverrides(previous, '{"emoji_app":"   "}')
-            T.equal(paddedEmpty.error, "Invalid value for emoji_app")
-            var nonString = Config.reloadOverrides(previous, '{"emoji_app":7}')
-            T.equal(nonString.value, previous)
-            T.equal(nonString.error, "Invalid value for emoji_app")
-
-            // And it round-trips under the file's snake_case name.
-            T.equal(Config.serializeOverrides({ emojiApp: "xmoji" }),
-                '{\n  "emoji_app": "xmoji"\n}\n')
         })
 
         T.test("emoji page preferences validate and stay sparse", function () {
@@ -366,7 +335,6 @@ QtObject {
                 ['{"textColor":7}', "Invalid value for textColor"],
                 ['{"followTheme":1}', "Invalid value for followTheme"],
                 ['{"sound":"yes"}', "Invalid value for sound"],
-                ['{"emojiApp":""}', "Invalid value for emojiApp"],
                 ['{"mode":" sideways"}', "Invalid value for mode"]
             ]
             for (var i = 0; i < cases.length; i++) {
@@ -379,11 +347,11 @@ QtObject {
             // the same trimming the canonical spellings get.
             T.deepEqual(Config.reloadOverrides({},
                 '{"capCorner":12,"accentColor":" #00ff00 ","sound":true,'
-                + '"emojiApp":" emote ","sizePreset":"x-large"}').value, {
+                + '"keyBackground":" #101010 ","sizePreset":"x-large"}').value, {
                 capCorner: 12,
                 accentColor: "#00ff00",
                 sound: true,
-                emojiApp: "emote",
+                keyBackground: "#101010",
                 sizePreset: "x-large"
             })
         })

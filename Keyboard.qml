@@ -760,7 +760,7 @@ Item {
             + "printf '%s' \"$compact\" | jq -r '[.[].layout // \"\"] | join(\",\")' "
             + "| tr ',' '\\n' | sed '/^$/d' | sort -u | while read code; do "
             + "  name=$(sed -n \"/^! layout/,/^! /p\" /usr/share/X11/xkb/rules/base.lst 2>/dev/null "
-            + "    | awk -v want=\"$code\" '$1==want { sub(/^[^ ]+ +/, \"\"); print; exit }'); "
+            + "    | awk -v want=\"$code\" '$1==want { $1=\"\"; sub(/^ +/, \"\"); print; exit }'); "
             + "  [[ -n \"$name\" ]] && printf 'TITLE\\t%s\\t%s\\n' \"$code\" \"$name\"; "
             + "done", "onscreen-keyboard"]
         compositorQuery.running = true
