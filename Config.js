@@ -36,7 +36,7 @@ var CONFIG_FIELDS = [
     { file: "emoji_page_size", value: "emojiPageSize" },
     { file: "emoji_delivery", value: "emojiDelivery" },
     { file: "super_mark", value: "superMark" },
-    { file: "key_radius", value: "keyRadius" },
+    { file: "key_radius", value: "capCorner" },
     { file: "panel_radius", value: "panelRadius" },
     { file: "key_background", value: "keyBackground" },
     { file: "panel_background", value: "panelBackground" },
@@ -45,7 +45,7 @@ var CONFIG_FIELDS = [
     { file: "border_color", value: "borderColor" }
 ]
 
-var APPEARANCE_FIELDS = ["keyRadius", "panelRadius", "keyBackground",
+var APPEARANCE_FIELDS = ["capCorner", "panelRadius", "keyBackground",
     "panelBackground", "textColor", "accentColor", "borderColor"]
 
 function maintainerDefaults() {
@@ -72,7 +72,7 @@ function maintainerDefaults() {
         // Sparse-store semantics mean this key never appears in the file
         // unless the user picked something.
         superMark: "word",
-        keyRadius: 8,
+        capCorner: 8,
         panelRadius: 12,
         keyBackground: "#303030",
         panelBackground: "#202020",
@@ -214,7 +214,7 @@ function parseOverrides(text) {
         // spelling (camelCase — an alias of the same field), or not at all
         // (an unknown field). Canonical and alias are validated identically:
         // an invalid value under either spelling is a malformed edit with
-        // the §5 preservation semantics, so `{"key_radius":8,"keyRadius":-20}`
+        // the §5 preservation semantics, so `{"key_radius":8,"capCorner":-20}`
         // cannot smuggle -20 past validation in either JSON order.
         var field = configField(key)
         var isAlias = false

@@ -88,11 +88,11 @@ upstream Hyprland/Omarchy work.
   Temporary local patches rather than waiting on upstream merges.
   Upstream PRs only after local proof, and never at the cost of breaking
   what already works.
-- **Own implementation.** The scaffold came from
-  abdxdev/omarchy-onscreen-keyboard (MIT, both copyright lines kept) and
-  our fixes were merged upstream. The daemon, `systemd/` and `tools/`
-  share nothing with it; the QML still does, and is being reimplemented
-  against [spec-v1.md](spec-v1.md#13-provenance) until it does not.
+- **Own implementation.** The first panel sketch grew out of
+  abdxdev/omarchy-onscreen-keyboard; every substantive line has since been
+  replaced by our own, `tools/provenance.py` measures zero shared lines
+  against the upstream snapshot, and the licence is a sole copyright
+  (spec-v1.md §13 keeps the history).
 - **Never run the helper against the session you are working in** — see
   the keymap storm in decisions.md. Run `tools/nested-session.sh` inside the VM; host suites are offscreen.
 - Ask when uncertain rather than guessing; discuss conflicts item by item.

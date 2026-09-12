@@ -153,7 +153,7 @@ function groupEntries(entries, group) {
 }
 
 // Step 3's seam: one intercepted keyboard cap applied to the standing
-// query. The keyboard resolves what a cap draws (Layout.resolvedTypedChar —
+// query. The keyboard resolves what a cap draws (Layout.charUnderModifiers —
 // what you see is what the search gets, in every configured layout and
 // group) and names the action; this only updates the string.
 //

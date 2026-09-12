@@ -1054,11 +1054,11 @@ Rectangle {
                     anchors {
                         verticalCenter: parent.verticalCenter
                     }
-                    value: tokens.keyRadius
+                    value: tokens.capCorner
                     minimum: 0
                     maximum: 24
                     onStepped: function (value) {
-                        panel.setOverride("keyRadius", value)
+                        panel.setOverride("capCorner", value)
                     }
                 }
 
@@ -1070,7 +1070,7 @@ Rectangle {
                     }
                     tokens: popoverRoot.tokens
                     panel: popoverRoot.panel
-                    overrideName: "keyRadius"
+                    overrideName: "capCorner"
                 }
             }
 

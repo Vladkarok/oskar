@@ -55,37 +55,23 @@ live/dead-owner recipe ran in the VM (`evidence/25/`). F11 measured:
 Electron under app id `code` receives U+F601 for U+1F601 via the `text`
 route (`evidence/13/f11/`).
 
-**2026-09-12 (review round + owner's second acceptance + stage D2
-started):** the owner's host try found the gaps the VM could not see:
-Proton's class is `steam_proton` (chord detection extended to
-proton/steam_app — tested), the panel was in FLOATING mode (nothing
-reserves space there — the owner moved to docked), and docked's real
-defect is Hyprland not relaying out stale tiles when the exclusive zone
-arrives or leaves (measured: zone registers, new tiles respect it, old
-tiles keep their bottoms behind the strip). The panel now forces one
-relayout on open and close via a guarded read-`+1`-restore of
-`general:gaps_out` (host-verified 749↔418, gaps back at the owner's 0);
-a read that fails to parse writes nothing. Independent review of the
-whole acceptance-day range returned **do not ship** — its HIGH finding
-was real: Hyprland 0.56.2 emits NO event for a click on the
-already-focused window, so the disarm could never fire for the owner's
-own gesture; the search field now TOGGLES (armed by default, a click
-hands the keys back, another re-arms), the publish-verify machine moved
-to pure `ClipboardPaste.publish*` (12 tests), the chord is gated on
-`inputReady`, and the relayout chain got a busy guard. Focused re-review:
-**Verdict: ship**. **D2:** R3 closed (CLAUDE.md is a regular
-`@AGENTS.md` import; a clean checkout passes `omarchy-plugin-validate`),
-R5 closed (startup failures exit 78 = EX_CONFIG, which the unit already
-refuses to retry; runtime keeps exit 1 — VM-verified), and the packaging
-skeleton landed: `make stage` lays out the plan-§7 file set (packaged
-unit, symlink-free runtime payload that passes the validator), a
-prototype PKGBUILD builds and its check() runs the full suites, and the
-VM smoke install→legacy-migration→protocol→removal→dev-restore passed —
-including the measured trap that removal must disable first or the
-enable symlink dangles (package notes fixed). Still open in D2: setup
-twice, upgrade, login cycle, teardown twice, reinstall; plugin
-registration from `/usr/share` is still only documented, not proven;
-release PKGBUILD needs a pinned tag and real checksums.
+**2026-09-12 (stage D2 complete; verdicts on 22/28/30):** the owner
+accepted: Proton paste-on-click (28 resolved), the Super marks with the
+CurveRenderer ⌘ (22 resolved), and the docked investigation's verdict
+(30 resolved — the content clipping is old-Chromium Electron, fixed
+upstream between ~118 and 152, lab-proven; the owner declined XWayland
+and will wait for app updates). **The D2 choreography ran green in the
+VM**: install → setup×2 (idempotent) → upgrade → teardown×2 (second
+refused cleanly, no dangling enable symlink) → reinstall, protocol
+verified at every step. **/usr/share registration proven**: the
+packaged payload symlinked into ~/.config/omarchy/plugins loads — panel
+renders, emoji page opens from the packaged tree (the plugin rescan
+accepts a top-level symlink to system files). **AUR PKGBUILD ready**
+(`-git` prototype, pkgver from commits, publish-gated to the owner:
+public push, tag, .SRCINFO). The dead workspace-nudge code is removed.
+Still owed: the accumulated independent review round (layout fix
+e79d884, Proton pacing d9b42df, Esc aec2ffd, pkg work), the ticket-19
+upstream notes, and stage E's cold-boot/E2E pass.
 
 **2026-09-11 (stage C closed by owner acceptance):** ticket 13 is
 **resolved** — the owner ran every owner leg and signed off ("r1 good,

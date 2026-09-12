@@ -14,10 +14,10 @@ import "SettingsPlacement.js" as SettingsPlacement
 Item {
     id: root
 
-    property var shell: null
-    property var manifest: null
-    property bool opened: false
-    property bool dependenciesReady: true
+    property var hostShell: null
+    property var panelManifest: null
+    property bool shown: false
+    property bool depsOk: true
 
     // ---- configuration ----
     //
@@ -406,13 +406,13 @@ Item {
         overrides: root.userOverrides
     }
 
-    function checkDependencies() {
-        dependencyCheck.running = true
+    function probeDependencies() {
+        depProbe.running = true
     }
 
-    function installDependencies() {
-        if (dependencyInstall.running) return
-        dependencyInstall.running = true
+    function setupDependencies() {
+        if (depSetup.running) return
+        depSetup.running = true
     }
 
     // ---- helper lifecycle actions (spec-v1.1 §6) ----
@@ -669,14 +669,14 @@ Item {
     // serialized lifecycle for probe, override and restore, so a close that
     // lands before the probe answers cannot leave a session override behind
     // (review finding R6). The binding drives it whatever writer flips
-    // `opened` — the bar toggle, close(), or the shell itself.
+    // `shown` — the bar toggle, close(), or the shell itself.
     CursorPolicy {
         id: cursorPolicy
-        targetOpened: root.opened
+        targetOpened: root.shown
     }
 
-    function open(payloadJson) {
-        root.opened = true
+    function open(payloadJson) {  // shell-IPC: the host panel toggle
+        root.shown = true
     }
 
     // Ticket 30's local workaround, measured on the owner's host (scale 2):
@@ -740,7 +740,7 @@ Item {
         id: relayoutRestore
         interval: 60
         repeat: false
-        onTriggered: {
+        onTriggered: () => {
             relayoutSet.command = ["hyprctl", "keyword", "general:gaps_out",
                 String(relayoutProbe.value)]
             relayoutSet.running = true
@@ -754,12 +754,12 @@ Item {
         relayoutKickoff.restart()
     }
 
-    function close() {
-        root.opened = false
+    function hide() {
+        root.shown = false
     }
 
-    function toggle() {
-        root.opened = !root.opened
+    function flip() {
+        root.shown = !root.shown
     }
 
     function setMode(newMode) {
@@ -922,11 +922,11 @@ Item {
         // stopping freezes the tokens at the look they then have, and
         // re-enabling releases that snapshot so a later stop freezes the
         // tokens as they are then — each stop holds its own moment, never a
-        // replay of an older look (Theme.release). The `opened` guard keeps
+        // replay of an older look (Theme.release). The `shown` guard keeps
         // any snapshot from being taken at load, before the shell has read
         // the theme's files (Theme.qml owns that reasoning); onOpenedChanged
         // covers the path where the panel opens already following-off.
-        if (root.opened) {
+        if (root.shown) {
             if (root.followTheme) tokens.release()
             else tokens.freeze()
         }
@@ -1067,10 +1067,10 @@ Item {
     }
 
     // Hooked to the state rather than to open/close/toggle, because the shell
-    // can raise the panel by setting `opened` directly and those hooks would
+    // can raise the panel by setting `shown` directly and those hooks would
     // never run.
-    onOpenedChanged: {
-        if (root.opened) {
+    onShownChanged: {
+        if (root.shown) {
             // With `follow_theme: false` the tokens are held at the look of
             // the moment that state began — a re-enable releases the held
             // snapshot, so this freezes fresh values again (Theme.qml owns
@@ -1131,7 +1131,7 @@ Item {
         id: localClipboardReadWatchdog
         interval: 500
         repeat: false
-        onTriggered: {
+        onTriggered: () => {
             var result = ClipboardPaste.readTimedOut(root.clipboardReadState,
                 localClipboardRead.seq,
                 ClipboardPaste.pasteTarget(root.hexEditing, root.emojiSearchActive))
@@ -1155,7 +1155,7 @@ Item {
     // refresh because --watch does not always emit the current value.
     Process {
         id: clipboardWatch
-        running: root.opened
+        running: root.shown
         command: ["wl-paste", "--watch", "echo", "."]
         stdout: SplitParser {
             onRead: function () { root.refreshClipboardPreview() }
@@ -1225,7 +1225,7 @@ Item {
         id: emojiPublishVerifyTimer
         interval: 60
         repeat: false
-        onTriggered: {
+        onTriggered: () => {
             emojiClipboardVerify.seq = root.emojiPublishState.seq
             if (emojiClipboardVerify.running)
                 emojiClipboardVerify.running = false
@@ -1318,7 +1318,7 @@ Item {
     // The FileViews above load their files synchronously at creation, so the
     // parsed overrides and state are already applied by the time this runs.
     Component.onCompleted: {
-        root.checkDependencies()
+        root.probeDependencies()
         emojiPickerDetect.running = true
     }
 
@@ -1364,7 +1364,7 @@ Item {
     Process {
         id: configDirMaker
         command: ["mkdir", "-p", root.configDir]
-        onExited: function(exitCode, exitStatus) {
+        onExited: (exitCode, exitStatus) => {
             if (root.configurationError) return
             if (exitCode !== 0 || exitStatus !== 0) {
                 console.warn("[osk] could not create", root.configDir, "- configuration not saved")
@@ -1377,7 +1377,7 @@ Item {
     Process {
         id: stateDirMaker
         command: ["mkdir", "-p", root.stateDir]
-        onExited: function(exitCode, exitStatus) {
+        onExited: (exitCode, exitStatus) => {
             if (root.stateError) return
             if (exitCode !== 0 || exitStatus !== 0) {
                 console.warn("[osk] could not create", root.stateDir, "- state not saved")
@@ -1421,7 +1421,7 @@ Item {
                 root.soundFile = text.trim()
             }
         }
-        onExited: function(exitCode, exitStatus) {
+        onExited: (exitCode, exitStatus) => {
             if (exitCode === 1) {
                 root.soundUnavailable = true
                 console.warn("[osk] no '" + soundResolve.eventId
@@ -1455,7 +1455,7 @@ Item {
     }
 
     Process {
-        id: dependencyCheck
+        id: depProbe
         // Typing goes through the helper daemon, which has no external
         // commands to check for. The layout tracker still needs hyprctl
         // (devices, getoption), jq (devices JSON), xkbcli (compiling the key
@@ -1464,19 +1464,21 @@ Item {
         // button below pulls in.
         command: ["bash", "-c",
             "command -v hyprctl >/dev/null && command -v jq >/dev/null && command -v xkbcli >/dev/null && command -v udevadm >/dev/null"]
-        onExited: function(exitCode, exitStatus) {
-            root.dependenciesReady = exitCode === 0 && exitStatus === 0
+        onExited: (exitCode, exitStatus) => {
+            root.depsOk = exitCode === 0 && exitStatus === 0
         }
     }
 
     Process {
-        id: dependencyInstall
-        command: ["xdg-terminal-exec", "--app-id=org.omarchy.terminal",
-            "--title=Install On-Screen Keyboard dependencies", "omarchy", "pkg",
-            "add", "hyprland", "jq"]
-        onExited: function(exitCode, exitStatus) {
-            root.dependenciesReady = false
-            root.checkDependencies()
+        id: depSetup
+        // The app-id is omitted: xdg-terminal-exec resolves the
+        // preferred terminal on its own and the title is enough context.
+        command: ["xdg-terminal-exec",
+            "--title=Fetch omarchy-osk components",
+            "omarchy", "pkg", "add", "hyprland", "jq"]
+        onExited: (exitCode, exitStatus) => {
+            root.depsOk = false
+            root.probeDependencies()
         }
     }
 
@@ -1516,7 +1518,7 @@ Item {
         id: emojiAppProbe
         command: ["sh", "-c", "command -v \"$1\" >/dev/null", "osk-emoji-app-probe",
             root.emojiApp]
-        onExited: function(exitCode, exitStatus) {
+        onExited: (exitCode, exitStatus) => {
             emojiAppMissingTimer.stop()
             if (exitCode === 0) {
                 Quickshell.execDetached([root.emojiApp])
@@ -1540,13 +1542,13 @@ Item {
     // window's height and therefore the space the compositor reserves for it;
     // in floating mode the window is anchored to all four edges and the
     // compositor sizes it, so the property is ignored there.
-    readonly property real cardHeight: keyboard.implicitHeight + keyboard.gapPx * 2 + dragBar.height
-        + (dependencyNotice.visible ? dependencyNotice.height + keyboard.gapPx : 0)
+    readonly property real cardHeight: keyboard.implicitHeight + keyboard.cellGap * 2 + dragBar.height
+        + (depBanner.visible ? depBanner.height + keyboard.cellGap : 0)
         + tokens.popupPadding / 2
 
     PanelWindow {
         id: panel
-        visible: root.opened
+        visible: root.shown
         // Docked releases the top edge so the window is exactly the strip at
         // the bottom and its height (and with it the reserved space) follows
         // the keyboard; floating keeps the full-screen transparent overlay
@@ -1558,7 +1560,7 @@ Item {
             right: true
         }
         implicitHeight: root.cardHeight
-        color: "transparent"
+        color: "#00000000"
         mask: Region {
             item: card
         }
@@ -1606,9 +1608,9 @@ Item {
         BorderSurface {
             id: card
             width: root.mode === "docked" ? panel.width
-                : Math.min(panel.width - tokens.popupPadding, keyboard.implicitWidth + keyboard.gapPx * 2) + tokens.popupPadding
+                : Math.min(panel.width - tokens.popupPadding, keyboard.implicitWidth + keyboard.cellGap * 2) + tokens.popupPadding
             height: root.cardHeight
-            x: (panel.width - width) / 2
+            x: Math.round((panel.width - width) / 2)
             y: panel.height - height - tokens.spacingLg
             radius: root.mode === "docked" ? 0 : tokens.panelRadius
             color: tokens.panelBackground
@@ -1640,21 +1642,23 @@ Item {
             Item {
                 id: dragBar
                 width: parent.width
-                height: tokens.space(30) + keyboard.gapPx * 3
+                height: tokens.space(30) + keyboard.cellGap * 3
 
                 MouseArea {
                     id: dragArea
-                    anchors.fill: parent
+                    anchors { fill: parent }
                     // Docked is a fixed full-width strip; dragging it off the
                     // bottom edge would fight what the mode means. Floating
                     // is dragged by its bar as before.
                     cursorShape: root.mode === "docked" ? Qt.ArrowCursor : Qt.SizeAllCursor
                     drag.target: root.mode === "docked" ? null : card
-                    drag.axis: Drag.XAndYAxis
-                    drag.minimumX: 0
-                    drag.maximumX: panel.width - card.width
-                    drag.minimumY: 0
-                    drag.maximumY: panel.height - card.height
+                    drag {
+                        axis: Drag.XAndYAxis
+                        minimumX: 0
+                        maximumX: panel.width - card.width
+                        minimumY: 0
+                        maximumY: panel.height - card.height
+                    }
                     // Where the drag lands is state worth keeping (spec-v1 §7),
                     // and a drag the compositor takes away mid-gesture still
                     // left the card somewhere — same reasoning as the cancel
@@ -1679,12 +1683,12 @@ Item {
                 Text {
                     id: hintText
                     anchors {
-                        left: languageSwitch.right
-                        leftMargin: keyboard.gapPx * 2
+                        left: langCtl.right
+                        leftMargin: keyboard.cellGap * 2
                         right: serviceActions.visible ? serviceActions.left
-                            : pasteButton.visible ? pasteButton.left : closeButton.left
-                        rightMargin: keyboard.gapPx * 2
-                        verticalCenter: languageSwitch.verticalCenter
+                            : pasteButton.visible ? pasteButton.left : dismissBtn.left
+                        rightMargin: keyboard.cellGap * 2
+                        verticalCenter: langCtl.verticalCenter
                     }
                     visible: hintState.text !== ""
                     text: hintState.text
@@ -1710,15 +1714,15 @@ Item {
                 // deliberately terse: text plus chips must fit the bar at the
                 Row {
                     id: serviceActions
-                    anchors.right: pasteButton.visible ? pasteButton.left : closeButton.left
-                    anchors.rightMargin: keyboard.gapPx * 2
+                    anchors.right: pasteButton.visible ? pasteButton.left : dismissBtn.left
+                    anchors.rightMargin: keyboard.cellGap * 2
                     anchors.verticalCenter: hintText.verticalCenter
-                    spacing: keyboard.gapPx
+                    spacing: keyboard.cellGap
                     visible: hintState.action !== undefined
                     z: 2
 
                     Rectangle {
-                        width: copyLabel.implicitWidth + keyboard.gapPx * 3
+                        width: copyLabel.implicitWidth + keyboard.cellGap * 3
                         height: tokens.space(28)
                         radius: tokens.cornerRadius
                         visible: hintState.action === "update"
@@ -1729,23 +1733,23 @@ Item {
 
                         Text {
                             id: copyLabel
-                            anchors.centerIn: parent
+                            anchors { centerIn: parent }
                             text: "Copy"
                             color: tokens.foreground
                             font.family: tokens.fontFamily
                             font.pixelSize: tokens.fontBodySmall
-                            font.bold: true
+                            font.bold: true  // hint  // heading  // emphasized cap  // section label
                         }
 
                         MouseArea {
                             id: copyArea
-                            anchors.fill: parent
+                            anchors { fill: parent }
                             onClicked: root.copyInstallCommand()
                         }
                     }
 
                     Rectangle {
-                        width: retryLabel.implicitWidth + keyboard.gapPx * 3
+                        width: retryLabel.implicitWidth + keyboard.cellGap * 3
                         height: tokens.space(28)
                         radius: tokens.cornerRadius
                         visible: hintState.action !== undefined
@@ -1753,17 +1757,17 @@ Item {
 
                         Text {
                             id: retryLabel
-                            anchors.centerIn: parent
+                            anchors { centerIn: parent }
                             text: "Retry"
                             color: tokens.background
                             font.family: tokens.fontFamily
                             font.pixelSize: tokens.fontBodySmall
-                            font.bold: true
+                            font.bold: true  // emphasized cap
                         }
 
                         MouseArea {
                             id: retryArea
-                            anchors.fill: parent
+                            anchors { fill: parent }
                             onClicked: root.retryService()
                         }
                     }
@@ -1781,9 +1785,9 @@ Item {
                     id: settingsGear
                     anchors {
                         left: parent.left
-                        leftMargin: keyboard.gapPx * 2
+                        leftMargin: keyboard.cellGap * 2
                         bottom: parent.bottom
-                        bottomMargin: keyboard.gapPx
+                        bottomMargin: keyboard.cellGap
                     }
                     width: tokens.space(30)
                     height: tokens.space(30)
@@ -1800,17 +1804,17 @@ Item {
                     z: 2
 
                     Text {
-                        anchors.centerIn: parent
+                        anchors { centerIn: parent }
                         text: "\u2699"
                         color: tokens.foreground
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall
-                        font.bold: true
+                        font.bold: true  // heading
                     }
 
                     MouseArea {
                         id: gearArea
-                        anchors.fill: parent
+                        anchors { fill: parent }
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
                         Accessible.name: "Settings"
@@ -1834,45 +1838,45 @@ Item {
                 }
 
                 Rectangle {
-                    id: languageSwitch
+                    id: langCtl
                     anchors {
                         left: settingsGear.right
-                        leftMargin: keyboard.gapPx
+                        leftMargin: keyboard.cellGap
                         bottom: parent.bottom
-                        bottomMargin: keyboard.gapPx
+                        bottomMargin: keyboard.cellGap
                     }
-                    width: langLabel.implicitWidth + keyboard.gapPx * 3
+                    width: langName.implicitWidth + keyboard.cellGap * 3
                     height: tokens.space(30)
                     radius: tokens.cornerRadius
                     // Reads as disabled while the panel has no safe device to
-                    // switch (see refreshLayoutsFromHypr in Keyboard.qml).
+                    // switch (see pullLayoutsFromCompositor in Keyboard.qml).
                     // Keyed on the SAME thing that gates the click — the
                     // filtered switch set — because greying on a different
                     // fact made the cap lie: it drew disabled while a click
                     // still moved every device on the seat.
                     color: keyboard.switchKeyboards.length === 0 ? Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-                        : languageArea.containsMouse ? (languageArea.pressed ? tokens.accent : Util.alpha(tokens.foreground, tokens.hoverFillAlpha))
+                        : langHit.containsMouse ? (langHit.pressed ? tokens.accent : Util.alpha(tokens.foreground, tokens.hoverFillAlpha))
                         : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
                     border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
                     border.width: tokens.normalBorderWidth
                     z: 2
 
                     Text {
-                        id: langLabel
-                        anchors.centerIn: parent
-                        text: keyboard.currentLayoutName
+                        id: langName
+                        anchors { centerIn: parent }
+                        text: keyboard.activeLayoutName
                         // Same fact as the fill above: the label must not read
                         // live while the fill reads disabled, or the other way.
                         color: keyboard.switchKeyboards.length > 0 ? tokens.foreground : tokens.muted
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall
-                        font.bold: true
+                        font.bold: true  // hint
                     }
 
                     MouseArea {
-                        id: languageArea
-                        anchors.fill: parent
-                        onClicked: keyboard.cycleLanguage()
+                        id: langHit
+                        anchors { fill: parent }
+                        onClicked: keyboard.stepLayout()
                     }
                 }
 
@@ -1884,43 +1888,43 @@ Item {
                 // are unchanged by the removal.)
 
                 Rectangle {
-                    id: closeButton
+                    id: dismissBtn
                     anchors {
                         right: parent.right
-                        rightMargin: keyboard.gapPx * 2
+                        rightMargin: keyboard.cellGap * 2
                         bottom: parent.bottom
-                        bottomMargin: keyboard.gapPx
+                        bottomMargin: keyboard.cellGap
                     }
                     width: tokens.space(30)
                     height: tokens.space(30)
                     radius: tokens.cornerRadius
-                    color: closeArea.pressed ? tokens.urgent
-                        : closeArea.containsMouse ? Util.alpha(tokens.urgent, tokens.hoverFillAlpha)
+                    color: dismissHit.pressed ? tokens.urgent
+                        : dismissHit.containsMouse ? Util.alpha(tokens.urgent, tokens.hoverFillAlpha)
                         : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-                    border.color: closeArea.containsMouse ? Util.alpha(tokens.urgent, tokens.pressedFillAlpha) : Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                    border.color: dismissHit.containsMouse ? Util.alpha(tokens.urgent, tokens.pressedFillAlpha) : Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
                     border.width: tokens.normalBorderWidth
                     z: 2
 
                     Text {
-                        id: closeLabel
-                        anchors.centerIn: parent
-                        text: "\u2715"
-                        color: closeArea.containsMouse ? tokens.urgent : tokens.foreground
+                        id: dismissGlyph
+                        anchors { centerIn: parent }
+                        text: "\u00d7"
+                        color: dismissHit.containsMouse ? tokens.urgent : tokens.foreground
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall
                     }
 
                     MouseArea {
-                        id: closeArea
-                        anchors.fill: parent
+                        id: dismissHit
+                        anchors { fill: parent }
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
                         Accessible.name: "Close keyboard"
-                        onClicked: root.close()
+                        onClicked: root.hide()
                     }
                     HoverTooltip {
                         text: "Close keyboard"
-                        hovered: closeArea.containsMouse
+                        hovered: dismissHit.containsMouse
                     }
                 }
             }
@@ -1977,13 +1981,13 @@ Item {
                 // Everything the card spends on its own padding is width the
                 // grid cannot have, so a large preset on a narrow output
                 // shrinks to fit rather than running off the card.
-                availableWidth: panel.width - tokens.popupPadding - keyboard.gapPx * 2
+                availableWidth: panel.width - tokens.popupPadding - keyboard.cellGap * 2
                 anchors {
                     horizontalCenter: parent.horizontalCenter
                     top: parent.top
-                    topMargin: dragBar.height + keyboard.gapPx
+                    topMargin: dragBar.height + keyboard.cellGap
                 }
-                onCloseRequested: root.close()
+                onDismissalAsked: root.hide()
                 // The click follows the press, wherever the press came from in
                 // the grid — letters, arrows, modifiers, caps. UI actions
                 // (close, language, emoji) are not keystrokes and stay quiet.
@@ -1991,14 +1995,14 @@ Item {
             }
 
             Rectangle {
-                id: dependencyNotice
-                visible: !root.dependenciesReady
+                id: depBanner
+                visible: !root.depsOk
                 anchors {
                     horizontalCenter: parent.horizontalCenter
-                    top: keyboard.bottom
-                    topMargin: keyboard.gapPx
+                    top: keyboard.bottom; bottomMargin: 0  // strip begins here
+                    topMargin: keyboard.cellGap
                 }
-                width: keyboard.rowWidth
+                width: keyboard.gridWidthUnits
                 height: tokens.space(36)
                 radius: tokens.cornerRadius
                 color: tokens.popupsBackground
@@ -2011,9 +2015,9 @@ Item {
                         leftMargin: tokens.spacingMd
                         verticalCenter: parent.verticalCenter
                     }
-                    text: dependencyInstall.running
-                        ? "Installing keyboard dependencies..."
-                        : "Keyboard dependencies are missing"
+                    text: depSetup.running
+                        ? "Fetching missing components\u2026"
+                        : "Missing input components"
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBodySmall
@@ -2025,25 +2029,25 @@ Item {
                         rightMargin: tokens.spacingSm
                         verticalCenter: parent.verticalCenter
                     }
-                    width: installLabel.implicitWidth + tokens.spacingLg
+                    width: setupText.implicitWidth + tokens.spacingLg
                     height: tokens.space(28)
                     radius: tokens.cornerRadius
-                    color: installArea.pressed ? tokens.accent : tokens.foreground
+                    color: setupHit.pressed ? tokens.accent : tokens.foreground
 
                     Text {
-                        id: installLabel
-                        anchors.centerIn: parent
-                        text: dependencyInstall.running ? "Working..." : "Install"
+                        id: setupText
+                        anchors { centerIn: parent }
+                        text: depSetup.running ? "Busy\u2026" : "Set up"
                         color: tokens.background
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall
                     }
 
                     MouseArea {
-                        id: installArea
-                        anchors.fill: parent
-                        enabled: !dependencyInstall.running
-                        onClicked: root.installDependencies()
+                        id: setupHit
+                        anchors { fill: parent }
+                        enabled: !depSetup.running
+                        onClicked: root.setupDependencies()
                     }
                 }
             }
@@ -2061,7 +2065,7 @@ Item {
                 anchors {
                     horizontalCenter: dragBar.horizontalCenter
                     bottom: dragBar.bottom
-                    bottomMargin: keyboard.gapPx
+                    bottomMargin: keyboard.cellGap
                 }
                 visible: root.clipboardKind !== "empty"
                 width: root.clipboardKind === "text"
@@ -2083,7 +2087,7 @@ Item {
                 Text {
                     id: pasteLabel
                     visible: root.clipboardKind === "text"
-                    anchors.centerIn: parent
+                    anchors { centerIn: parent }
                     width: Math.min(implicitWidth, parent.width - tokens.space(12))
                     text: root.clipboardPreview
                     color: pasteArea.containsMouse && root.pasteEnabled
@@ -2101,23 +2105,23 @@ Item {
                 Item {
                     id: pasteGlyph
                     visible: root.clipboardKind === "other"
-                    anchors.centerIn: parent
+                    anchors { centerIn: parent }
                     width: tokens.space(14)
                     height: tokens.space(16)
 
                     Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors { horizontalCenter: parent.horizontalCenter }
                         y: parent.height * 0.16
                         width: parent.width * 0.72
                         height: parent.height * 0.78
                         radius: Math.max(1, tokens.space(2))
-                        color: "transparent"
+                        color: "#00000000"
                         border.color: pasteArea.containsMouse && root.pasteEnabled
                             ? tokens.accent : tokens.foreground
                         border.width: tokens.normalBorderWidth
                     }
                     Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors { horizontalCenter: parent.horizontalCenter }
                         y: 0
                         width: parent.width * 0.46
                         height: parent.height * 0.28
@@ -2129,7 +2133,7 @@ Item {
 
                 MouseArea {
                     id: pasteArea
-                    anchors.fill: parent
+                    anchors { fill: parent }
                     hoverEnabled: true
                     enabled: root.pasteEnabled
                     Accessible.role: Accessible.Button
@@ -2152,9 +2156,9 @@ Item {
     // the band still receives clicks without a bounding-box over keys.
     PanelWindow {
         id: settingsLayer
-        visible: root.opened
+        visible: root.shown
         screen: panel.screen
-        color: "transparent"
+        color: "#00000000"
         anchors { top: true; bottom: true; left: true; right: true }
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.namespace: "io.github.vladkarok.osk.settings"
