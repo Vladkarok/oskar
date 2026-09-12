@@ -2,15 +2,56 @@
 
 // Each key: { t: base char, s: shifted char } for typed keys,
 // or { label, key: keysym/modifier-name, w: width factor } for special keys.
+//
+// A third shape belongs to the symbols page: { k: position, lvl: 1 | 2 } draws
+// exactly one level of one position and types that level, rather than the
+// base/shift pair a main-page cap carries. It has no built-in character at
+// all, because a fixed ASCII table is the lie this project exists to avoid —
+// an unresolved level draws blank and is reported like any other fallback.
+var functionRow = [
+    { label: "esc", key: "Escape", w: 1.25 },
+    { label: "F1", key: "F1" }, { label: "F2", key: "F2" }, { label: "F3", key: "F3" },
+    { label: "F4", key: "F4" }, { label: "F5", key: "F5" }, { label: "F6", key: "F6" },
+    { label: "F7", key: "F7" }, { label: "F8", key: "F8" }, { label: "F9", key: "F9" },
+    { label: "F10", key: "F10" }, { label: "F11", key: "F11" }, { label: "F12", key: "F12" },
+    { label: "Delete", key: "Delete", w: 1.25 }
+]
+
+// The row both pages end on, identical but for the page key's own label. It is
+// the row the pointer returns to most, so it is the one that must not move
+// between pages: same caps, same widths, same place (see the height pin in
+// Keyboard.qml).
+function commandRow(pageLabel) {
+    return [
+        { label: "Ctrl", key: "ctrl", w: 1.25 },
+        { label: "Super", key: "logo", w: 1.25 },
+        { label: "Alt", key: "alt", w: 1.25 },
+        { label: "", key: "emoji", w: 1.25 },
+        // The page switch (spec-v1 §4). A key, never a modifier: it changes
+        // what can be seen and nothing about what is held, and the label names
+        // where the next press goes rather than where you are.
+        { label: pageLabel, key: "page", w: 1.25 },
+        { t: " ", label: "", w: 4.25, k: "SPCE" },
+        { label: "AltGr", key: "altgr", w: 1.25 },
+        { label: "Super", key: "logo", w: 1.25 },
+        { label: "Ctrl", key: "ctrl", w: 1.25 },
+        // The four arrows sit together at the end of the row and are ordinary
+        // full-height caps, not a nested cluster of half-height ones. Arrows
+        // are the keys clicked most times in a row, so each one has to be a
+        // target the pointer can hit five times without re-aiming; the stacked
+        // up/down pair this replaces was a little under half the height of
+        // every other key on the panel. Being ordinary caps also puts them on
+        // the delegate's `onPressed` path rather than their own `onClicked`
+        // MouseAreas, so they act on the way down like everything else.
+        { label: "◀", key: "Left" },
+        { label: "▲", key: "Up" },
+        { label: "▼", key: "Down" },
+        { label: "▶", key: "Right" }
+    ]
+}
+
 var rows = [
-    [
-        { label: "esc", key: "Escape", w: 1.25 },
-        { label: "F1", key: "F1" }, { label: "F2", key: "F2" }, { label: "F3", key: "F3" },
-        { label: "F4", key: "F4" }, { label: "F5", key: "F5" }, { label: "F6", key: "F6" },
-        { label: "F7", key: "F7" }, { label: "F8", key: "F8" }, { label: "F9", key: "F9" },
-        { label: "F10", key: "F10" }, { label: "F11", key: "F11" }, { label: "F12", key: "F12" },
-        { label: "Delete", key: "Delete", w: 1.25 }
-    ],
+    functionRow,
     [
         { t: "`", s: "~", k: "TLDE" }, { t: "1", s: "!", k: "AE01" }, { t: "2", s: "@", k: "AE02" }, { t: "3", s: "#", k: "AE03" },
         { t: "4", s: "$", k: "AE04" }, { t: "5", s: "%", k: "AE05" }, { t: "6", s: "^", k: "AE06" }, { t: "7", s: "&", k: "AE07" },
@@ -38,18 +79,59 @@ var rows = [
         { t: ".", s: ">", k: "AB09" }, { t: "/", s: "?", k: "AB10" },
         { label: "Shift", key: "shift", w: 2.2 }
     ],
-    [
-        { label: "Ctrl", key: "ctrl", w: 1.25 },
-        { label: "Super", key: "logo", w: 1.25 },
-        { label: "Alt", key: "alt", w: 1.25 },
-        { label: "", key: "emoji", w: 1.25 },
-        { t: " ", label: "", w: 5.5, k: "SPCE" },
-        { label: "AltGr", key: "altgr", w: 1.25 },
-        { label: "Super", key: "logo", w: 1.25 },
-        { label: "Ctrl", key: "ctrl", w: 1.25 },
-        { cluster: "arrows", w: 3.75 }
-    ]
+    commandRow("&123")
 ]
+
+// The symbols page (spec-v1 §4). What it holds is a rule rather than a list:
+// the shift level of every non-letter position on the main page — which is
+// exactly what the alphanumeric block cannot reach in one press — plus the
+// base level of the punctuation cluster, which is one press on the main page
+// but a page switch out and back once you are here.
+//
+// Which characters those positions carry is the keymap's business, not ours.
+// On `us` the top row reads ~!@#$%^&*()_+; on a layout whose symbols sit
+// elsewhere it reads whatever that layout puts there, and a position with
+// nothing at that level draws blank and says so in the log rather than
+// borrowing a US character.
+//
+// The nav caps fill out the rows the symbol positions do not reach across.
+// They are fixed-label caps like the arrows, and they are the other thing a
+// pointer cannot otherwise get at.
+var punctuationPositions = ["AD11", "AD12", "BKSL", "AC10", "AC11", "AB08", "AB09", "AB10"]
+
+function levelCaps(positions, level) {
+    var out = []
+    for (var i = 0; i < positions.length; i++) {
+        out.push({ k: positions[i], lvl: level })
+    }
+    return out
+}
+
+var symbolRows = [
+    functionRow,
+    levelCaps(["TLDE", "AE01", "AE02", "AE03", "AE04", "AE05", "AE06", "AE07",
+               "AE08", "AE09", "AE10", "AE11", "AE12"], 2)
+        .concat([{ label: "Backspace", key: "BackSpace", w: 1.5 }]),
+    [{ label: "Tab", key: "Tab", w: 1.4 }]
+        .concat(levelCaps(punctuationPositions, 1))
+        .concat([
+            { label: "Home", key: "Home" },
+            { label: "End", key: "End" },
+            { label: "Ins", key: "Insert" }
+        ]),
+    // Shift is on this row because it is the one modifier the main page keeps
+    // outside the command row, and a locked modifier has to stay *indicated* as
+    // locked across a page switch, not merely stay held (spec-v1 §5).
+    [{ label: "Shift", key: "shift", w: 2.2 }]
+        .concat(levelCaps(punctuationPositions, 2))
+        .concat([
+            { label: "PgUp", key: "Prior" },
+            { label: "PgDn", key: "Next" },
+            { label: "Enter", key: "Return", w: 1.75 }
+        ]),
+    commandRow("ABC")
+]
+
 
 var tokenCharMap = {
     space: " ",
@@ -252,27 +334,6 @@ var cyrillicCharMap = {
     Cyrillic_u_macron: "\u04ef"
 }
 
-function cloneKey(keyData) {
-    var out = {}
-    for (var field in keyData) {
-        out[field] = keyData[field]
-    }
-    return out
-}
-
-function cloneRows(sourceRows) {
-    var out = []
-    for (var r = 0; r < sourceRows.length; r++) {
-        var row = sourceRows[r]
-        var clonedRow = []
-        for (var c = 0; c < row.length; c++) {
-            clonedRow.push(cloneKey(row[c]))
-        }
-        out.push(clonedRow)
-    }
-    return out
-}
-
 function tokenToText(token, fallback) {
     var normalized = String(token || "").trim()
     if (normalized === "") return fallback
@@ -294,30 +355,110 @@ function tokenToText(token, fallback) {
     return fallback
 }
 
-function applyLanguage(rowsSource, layoutCode, symbolMap) {
-    var layoutRows = cloneRows(rowsSource)
-    var label = String(layoutCode || "us").toUpperCase()
+// A cap that draws a fixed label — Esc, Enter, the arrows, and Space, whose
+// label is deliberately empty — shows the same thing on every layout and has
+// no keymap symbol to miss. Only the caps that are supposed to come out of the
+// compiled keymap can fall back to a built-in value, and only those are worth
+// reporting.
+function drawsFixedLabel(keyData) {
+    return keyData.hasOwnProperty("label")
+}
 
-    for (var r = 0; r < layoutRows.length; r++) {
-        for (var c = 0; c < layoutRows[r].length; c++) {
-            var keyData = layoutRows[r][c]
-            if (keyData.key === "lang") {
-                keyData.label = label
-                continue
-            }
-            if (!keyData.k || !symbolMap || !symbolMap[keyData.k]) continue
+// A missing token is a marker, not a character: `tokenToText` is asked for it
+// so that a keymap that really does resolve to an empty string cannot be
+// mistaken for a failure.
+var UNRESOLVED = " unresolved"
 
-            var symbols = symbolMap[keyData.k]
-            if (!Array.isArray(symbols) || symbols.length === 0) continue
-
-            keyData.t = tokenToText(symbols[0], keyData.t)
-            if (symbols.length > 1) {
-                keyData.s = tokenToText(symbols[1], keyData.s)
-            }
-        }
+/// What the compiled keymap has to say about one cap, expressed as the fields
+/// to lay over it — never as an edit to the cap itself. Positions the keymap
+/// does not cover are appended to `misses` and left for the caller to report;
+/// a miss is a reporting matter, not an error (§11).
+function capOverlay(keyData, symbols, misses) {
+    var levels = Array.isArray(symbols) ? symbols : []
+    var textAt = function (index) {
+        return tokenToText(index < levels.length ? levels[index] : "", UNRESOLVED)
     }
 
-    return layoutRows
+    // A symbols-page cap draws exactly one level and carries no built-in
+    // character, so there is nothing to fall back *to*: an unresolved level
+    // leaves the cap blank and is reported, which is the §11 rule with the
+    // silent substitution removed entirely.
+    if (keyData.lvl) {
+        var index = keyData.lvl - 1
+        var drawn = textAt(index)
+        var overlay = { t: drawn === UNRESOLVED ? "" : drawn }
+        if (drawn === UNRESOLVED) {
+            var token = index < levels.length ? String(levels[index]).trim() : ""
+            misses.push(keyData.k + (index > 0 ? "^" : "") + "="
+                + (levels.length > 0 ? (token || "<no symbol at this level>")
+                                     : "<no keymap entry>"))
+        }
+        // A latched or locked Shift applies to every press, including one on a
+        // base-level cap, so a base-level cap has to be able to show what Shift
+        // would actually produce — otherwise the page would draw `[` while
+        // typing `{`, which is the one thing this keyboard is for. It still
+        // draws as a single glyph (see isDualKey): the stacked pair belongs to
+        // the main page, and the shift level has a cap of its own here.
+        if (index === 0) {
+            var paired = textAt(1)
+            if (paired !== UNRESOLVED) overlay.s = paired
+        }
+        return overlay
+    }
+
+    if (levels.length === 0) {
+        if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "=<no keymap entry>")
+        return {}
+    }
+
+    // A main-page cap keeps whichever of its two built-in characters the keymap
+    // failed to supply, so the overlay carries only the levels that resolved.
+    var pair = {}
+    var base = tokenToText(levels[0], UNRESOLVED)
+    if (base !== UNRESOLVED) pair.t = base
+    else if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "=" + levels[0])
+
+    if (levels.length > 1 && String(levels[1] || "").trim() !== "") {
+        var shifted = tokenToText(levels[1], UNRESOLVED)
+        if (shifted !== UNRESOLVED) pair.s = shifted
+        else if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "^=" + levels[1])
+    }
+    return pair
+}
+
+/// A silent substitution is the failure mode decisions.md §11 records: the awk
+/// program broke, the map came back empty, and the built-in US table stayed on
+/// screen for days while the label said "Ukrainian". One line per rebuild
+/// rather than one per key, so a wholly empty map is loud without being sixty
+/// lines of noise.
+function reportMisses(misses, layoutCode) {
+    if (misses.length === 0) return
+    var shown = misses.slice(0, 12).join(" ")
+    if (misses.length > 12) shown += " … and " + (misses.length - 12) + " more"
+    console.error("[osk] keycap fallback to built-in table for " + layoutCode
+        + ": " + misses.length + " cap(s): " + shown)
+}
+
+/// The page's declared rows, resolved against a compiled keymap.
+///
+/// `rows` and `symbolRows` are module-level declarations that outlive every
+/// layout change, so this returns a fresh cap for each one rather than writing
+/// into them: a pass that edited them in place would leave the previous
+/// language's characters on any cap the new keymap does not cover. Deep-copying
+/// the whole table first would also do that, but building each cap as source
+/// plus overlay means there is no copy to keep in step with the declaration.
+function applyLanguage(rowsSource, layoutCode, symbolMap) {
+    var misses = []
+    var resolved = rowsSource.map(function (row) {
+        return row.map(function (keyData) {
+            var overlay = keyData.k
+                ? capOverlay(keyData, symbolMap ? symbolMap[keyData.k] : null, misses)
+                : {}
+            return Object.assign({}, keyData, overlay)
+        })
+    })
+    reportMisses(misses, layoutCode)
+    return resolved
 }
 
 // The rows label special keys by keysym ("Return", "BackSpace"). The daemon

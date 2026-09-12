@@ -97,9 +97,11 @@ Wrong answers we shipped and withdrew:
 What we do now: **reading** takes the first tier that answers — filtered
 `main:true` (Hyprland's `m_active`, the seat's current keyboard, which
 moves on every real keypress), then the device the last switch named,
-then layout progress. **Switching** only accepts the first two tiers;
-with no positive evidence the language button greys out rather than
-guessing, because advancing a guessed device is what poisoned the seat
+then layout progress. **Switching** only accepts the first two tiers, and
+ticket 19 strengthens both with a physical-device inventory gate; at startup
+that inventory seeds the named tier. With no positive evidence the language
+button greys out rather than guessing, because advancing a guessed device is
+what poisoned the seat
 before. Residual windows are documented in the code comments rather than
 pretended away: hotplug and mouse media keys can move the flag until the
 next keypress, `activelayout` also fires for hotplug and config reloads,
@@ -238,10 +240,13 @@ and imprecise. "The input path shares nothing with it now" was true and
 kept getting read as "none of this is derived any more." Measuring
 against upstream `e3771b6` — the last commit before our own PR merged
 into abdxdev's repo — said otherwise, counting substantive lines only:
-`BarWidget.qml` 11 of 13, `Panel.qml` 146 of 179, `Keyboard.qml` 341 of
-529, `KeyboardLayout.js` 115 of 279. The daemon, `systemd/` and `tools/`
-share nothing and never did. So the split was clean and the claim was
-not: **the input path is ours, the shell layer is his.**
+`BarWidget.qml` 11 of 13, `Panel.qml` 146 of 179, `Keyboard.qml` 345 of
+529, `KeyboardLayout.js` 115 of 279. (`Keyboard.qml` was counted by hand
+as 341 that day; `tools/provenance.py` later read 345 from the same tree
+while reproducing the other three exactly, so 345 is the number.) The
+daemon, `systemd/` and `tools/` share nothing and never did. So the split
+was clean and the claim was not: **the input path is ours, the shell
+layer is his.**
 
 Three options. Keep the attribution permanently and ship weeks earlier;
 flip to a sole copyright now and call the overlap convergent QML
@@ -266,6 +271,22 @@ reads zero. Until then the attribution stays accurate, because quietly
 dropping it while the scaffold commit is public reads as erasure even
 where it would be legally fine. Note it runs both ways — his repo carries
 our merged fix under his MIT, same as ours carries his.
+
+## 15. Startup device evidence comes from udev, not a seat guess
+
+At shell start, the seat's `main` keyboard can already be fcitx5 or this
+helper, so the two safe switch tiers from §5 have no physical device to name.
+The helper now snapshots kernel input devices and udev metadata: a candidate
+must have a physical bus and path, be tagged `ID_INPUT_KEYBOARD=1`, advertise
+the ordinary typing positions, have a libinput device group, and share that
+group with no mouse, touchpad, touchscreen or tablet. The pointer-group rule
+rejects gaming mice whose HID interfaces advertise a complete keyboard.
+Missing metadata rejects the candidate; it never becomes a reason to guess.
+
+The first positively identified name seeds §5's existing named-device tier.
+A real `activelayout` event replaces it, and the current-keyboard tier still
+wins. Hotplug is driven by one `udevadm monitor` event stream and fresh
+snapshots on add/remove; the former 30-second seat poll is gone. (`ticket 19`)
 
 ## Dead ends — do not retry
 
