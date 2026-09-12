@@ -349,3 +349,18 @@ function parseCapsReply(line) {
     }
     return { gen: gen, group: group, byPosition: byPosition }
 }
+
+/// The wire shape of one text delivery (ticket 24, step 4): the verb, one
+/// separator space, then the payload — which the helper takes as the whole
+/// rest of the line, spaces included, because the payload is the user's
+/// string and not a word list. The only refusals here are payloads that
+/// could not survive the line protocol at all: an empty string (the helper
+/// would not know a bare "text" as a command either) and one carrying a
+/// newline, the frame separator — an emoji sequence from the catalogue can
+/// carry neither, so the guard is the protocol's, not a data opinion.
+/// Returns "" for a refusal; the caller sends nothing.
+function textLine(s) {
+    var text = String(s === undefined || s === null ? "" : s)
+    if (text.length === 0 || text.indexOf("\n") >= 0) return ""
+    return "text " + text
+}

@@ -12,12 +12,22 @@
 var MODE_DOCKED = "docked"
 var MODE_FLOATING = "floating"
 
+// The Super cap's mark (ticket 22, 2026-09-09): what the modifier cap draws.
+// The word is the default; the others are one mark each — the Omarchy glyph
+// (U+E900 in the private font, decisions §27's mechanism) and three inline
+// vectors Keyboard.qml draws itself. `macos` draws the macOS command mark
+// (⌘), which is what that key carries on an Apple keyboard — not an apple.
+// One list here, so validation, the popover's segments and the tests cannot
+// disagree about the value space.
+var SUPER_MARKS = ["word", "omarchy", "windows", "macos", "penguin"]
+
 var CONFIG_FIELDS = [
     { file: "mode", value: "mode" },
     { file: "size_preset", value: "sizePreset" },
     { file: "sound", value: "sound" },
     { file: "follow_theme", value: "followTheme" },
     { file: "emoji_app", value: "emojiApp" },
+    { file: "super_mark", value: "superMark" },
     { file: "key_radius", value: "keyRadius" },
     { file: "panel_radius", value: "panelRadius" },
     { file: "key_background", value: "keyBackground" },
@@ -43,6 +53,11 @@ function maintainerDefaults() {
         // row offers every picker found on PATH; this default stands until
         // one is chosen.
         emojiApp: "omarchy-menu-emoji",
+        // The Super cap says what the key is (ticket 22): the Omarchy glyph
+        // stops being the unconditional drawing and becomes one chosen mark.
+        // Sparse-store semantics mean this key never appears in the file
+        // unless the user picked something.
+        superMark: "word",
         keyRadius: 8,
         panelRadius: 12,
         keyBackground: "#303030",
@@ -131,6 +146,12 @@ function validFieldValue(field, value) {
         return value === "medium" || value === "large" || value === "x-large"
     if (field.file === "sound" || field.file === "follow_theme")
         return typeof value === "boolean"
+    // Exactly the five marks the popover offers: anything else is a
+    // malformed edit with the §5 preservation semantics, never a guess. The
+    // QML side independently treats an unknown string as the word, so a
+    // value that could not reach the file can never blank the cap either.
+    if (field.file === "super_mark")
+        return SUPER_MARKS.indexOf(value) !== -1
     // The emoji picker is a bare PATH name the panel execs — never a path,
     // never arguments. Empty (or padding-only) is not a name.
     if (field.file === "emoji_app")

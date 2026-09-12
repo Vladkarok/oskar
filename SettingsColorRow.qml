@@ -2,9 +2,10 @@ import QtQuick
 import qs.Commons
 import "Config.js" as ConfigFile
 
-// One colour row (spec-v1.1 §5): label, then one control group — swatches,
-// hex draft, compact confirm, Custom, reset. Swatches belong to this row,
-// not a shared strip. The hex field is a local draft until confirm.
+// One colour row (spec-v1.1 §5): label, then one control group — the
+// current-colour indicator square, swatches, hex draft, compact confirm,
+// Custom, reset. Swatches belong to this row, not a shared strip. The hex
+// field is a local draft until confirm.
 Item {
     id: colorRow
 
@@ -13,6 +14,14 @@ Item {
     property string fieldName: ""
     property string labelText: ""
     property color effectiveColor: "transparent"
+    // The committed colour as the row last wrote it (ticket 23): the
+    // indicator square's fill. effectiveColor's binding does not notify
+    // (see adoptHex below), so the square must not read it; every commit
+    // point that writes the hex field writes this too — always a value a
+    // commit path already validated, never a raw draft. Transparent, not
+    // "": QML renders an empty-string colour as opaque black, and this sits
+    // one missed init away from the screen.
+    property string currentHex: "#00000000"
     property real controlX: 0
     signal customRequested()
 
@@ -31,6 +40,10 @@ Item {
         invalid = false
         draftDirty = false
         hexInput.text = effectiveHex
+        // Belt and braces only — this handler does not fire today (the
+        // binding does not notify), but if that ever changes the square
+        // must not be the one part of the row left stale.
+        currentHex = effectiveHex
     }
 
     function fieldFocusChanged(focused) {
@@ -53,6 +66,7 @@ Item {
         draftDirty = false
         panel.setOverride(colorRow.fieldName, result.value)
         hexInput.text = result.value
+        currentHex = String(result.value).toLowerCase()
         hexInput.focus = false
         if (panel.hexEditing && panel.hexEditField === colorRow.fieldName)
             panel.endHexEdit()
@@ -67,12 +81,14 @@ Item {
         draftDirty = false
         invalid = false
         hexInput.text = String(result.value).toLowerCase()
+        currentHex = String(result.value).toLowerCase()
     }
 
     function revertDraft() {
         draftDirty = false
         invalid = false
         hexInput.text = effectiveHex
+        currentHex = effectiveHex
     }
 
     function resetDraft() {
@@ -105,6 +121,66 @@ Item {
             width: parent.width
             spacing: tokens.space(6)
 
+            // The colour currently in force (ticket 23): one square that
+            // shows the committed colour as a colour, first in the row so a
+            // scan of the five rows reads five colours, not five hexes.
+            // Deliberately space(24) — the control line height, one step
+            // distinct from the 18-space preset swatches beside it. An
+            // indicator, not a control: no MouseArea, nothing clickable.
+            // The fill is currentHex, updated at the commit points; the
+            // checkerboard underlay (foreground at two ladder steps) shows
+            // through only when the committed colour carries alpha, and the
+            // foreground/background ring pair bounds every fill — very
+            // light, very dark or translucent — against either theme's card.
+            Rectangle {
+                id: currentColourSquare
+                width: tokens.space(24)
+                height: tokens.space(24)
+                radius: tokens.space(4)
+                color: Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+
+                Rectangle {
+                    width: parent.width / 2
+                    height: parent.height / 2
+                    color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                }
+
+                Rectangle {
+                    x: parent.width / 2
+                    y: parent.height / 2
+                    width: parent.width / 2
+                    height: parent.height / 2
+                    color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    radius: Math.max(0, tokens.space(4) - 1)
+                    color: colorRow.currentHex
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    radius: Math.max(0, tokens.space(4) - 1)
+                    color: "transparent"
+                    border.color: Util.alpha(tokens.background, 0.9)
+                    border.width: 1
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: tokens.space(4)
+                    color: "transparent"
+                    border.color: Util.alpha(tokens.foreground, 0.9)
+                    border.width: tokens.normalBorderWidth
+                }
+
+                Accessible.role: Accessible.Indicator
+                Accessible.name: colorRow.labelText + " is currently " + colorRow.currentHex
+            }
+
             Repeater {
                 model: panel.colorSwatches
 
@@ -129,6 +205,7 @@ Item {
                             colorRow.invalid = false
                             panel.setOverride(colorRow.fieldName, parent.hex)
                             hexInput.text = parent.hex
+                            currentHex = parent.hex
                         }
                     }
                 }
@@ -234,5 +311,6 @@ Item {
 
     Component.onCompleted: {
         if (!draftDirty) hexInput.text = colorRow.effectiveHex
+        currentHex = colorRow.effectiveHex
     }
 }

@@ -45,84 +45,24 @@ the reasons; this file records required behaviour.
   bottom-right slot; a Del cap ends the main page's second row.
 - Fn remains a session-only semantic toggle. It replaces the top row in
   place and never changes panel height or the docked exclusive zone.
-- The emoji cap displays `☺` and launches the configured picker. The default
-  picker is Omarchy's own default emoji app (`omarchy-menu-emoji`, verified
-  against Omarchy 4.0.2: it toggles the shell's own emoji overlay); the
-  settings popover's Emoji app row chooses among the pickers detected on
-  PATH, persisted as a sparse `emoji_app` override, and an override may name
-  any app. A configured picker missing from PATH raises the existing
-  transient hint, naming the configured app. (2026-09-06 amendment, ticket
-  08: replaces the v1.1 one-shot courtesy move.) After a standalone picker's
-  window maps, the panel fits it into a clear region of the same output in
-  one logical coordinate system: above the keyboard first — resizing the
-  picker shorter, scrollable, when it is taller than the space — then a
-  fitting side region; where no region can take the picker, the panel
-  exposes that constraint instead of declaring an overlapping placement
-  successful. Every placement is verified against the resulting rectangle,
-  not the dispatch's exit code. Placement recomputes on panel drag,
-  dock/float, preset, output removal and scale changes, without polling,
-  and moves only the window the panel's own launch identified. The picker
-  session is armed before that process is started, so a fast map cannot
-  arrive against a null session. Launch identity is bound once, after the
-  StartupWMClass probe completes or fails, and is not recomputed from later
-  openwindows; the executable-name fallback is not accepted until that
-  probe has settled, so a concurrent same-class or fallback-class window
-  that maps first cannot become the picker. Hyprland 0.56.2 has no
-  client-geometry socket event (`movewindow`/`movewindowv2` is
-  move-to-workspace; `resizewindow` is absent), so a picker-initiated
-  resize is noticed on the next panel or output event, or the bounded
-  re-observation that verifies the panel's own dispatch — not as a
-  dedicated compositor event. (2026-09-07, ticket 10: replaces the
-  shell-overlay placement exemption.) For Omarchy's own emoji overlay
-  (`omarchy-menu-emoji` → `omarchy.emojis`) the emoji cap uses the
-  shell's real open, hide, and open-state operations rather than a
-  blind toggle or backdrop dismissal. An opt-in OSK invocation payload
-  (`{"osk":true,…}`) carries the panel band, output box, and work area
-  in PickerFit.js logical units; the overlay fits its inner card with
-  `planPlacement` and subtracts the panel band from its input region so
-  OSK clicks land. Ordinary standalone invocation — `omarchy-menu-emoji`
-  with no OSK payload, Super+Period, the bar — keeps the existing
-  fullscreen Exclusive centred card. OSK invocation primes keyboard
-  focus with the shell KeyboardPanel Exclusive-then-OnDemand pattern so
-  picker search receives virtual-keyboard input while the panel stays
-  `WlrKeyboardFocus.None`; Exclusive is not held, because it routes
-  pointer events to the overlay and blocks the OSK. Rapid presses,
-  close while opening, selection, Escape (clear filter, then dismiss),
-  panel close, picker-app change, and output/geometry changes settle
-  through that open/hide/state contract. The overlay still inserts
-  through `omarchy-menu-emoji-insert`; the panel restores the recorded
-  client when it still exists and the user has not focused a different
-  application, and does not paste again. Moving an ordinary client is
-  not the overlay solution. For Emote the emoji cap owns one
-  observed picker session — closed, opening, open, or closing — of the
-  one appearance the launch bound. Closed → press starts Emote once and
-  records the intended client; open → press dismisses that window with
-  `closewindow` on its address, never a second `emote` exec (that
-  destroy/recreates the picker) and never a process-name kill. A second
-  press while opening cancels; a late map of the cancelled appearance is
-  closed, not adopted. Panel close or picker-app change while opening
-  keeps that closer until the window is gone or the mapping timeout
-  closewindows the late launch address. A press while closing retries
-  dismiss; a failed closewindow settles the session. An in-flight close
-  is not aborted by starting another handoff and is pinned to the address
-  that was closing — a later stay or map must not retarget it. Settle
-  drops any queued handoff so a leftover close cannot closewindow the
-  next appearance. Mashing ☺ while closing with no pin does not postpone
-  the closer. Selection, Escape, panel
-  close, picker-app change, process failure, and the bounded mapping
-  timeout settle the session.
-  A dead remembered openwindow is dropped so it cannot bind.
-  Ordinary OSK stays `WlrKeyboardFocus.None`. Picker search is the
-  deliberate external target: OSK presses type into it because Emote
-  remains the compositor keyboard target, not because the panel takes
-  focus. `stay_focused` on the identified window is unset for the
-  session (a true value wins pointer hit-testing before overlays and
-  blocks OSK clicks, including ☺ dismiss); it is not a class-wide rule
-  and is not the keyboard-target path (`hl.dsp.focus` still moves the
-  keyboard target). Click-away dismissal is not promised.
-  On settle, focus returns to the recorded client when it still exists
-  and the user has not focused a different application, before Emote's
-  own delayed paste, with exactly one insertion.
+- The emoji cap displays `☺` and opens the panel's own emoji page. The
+  page is searched with the keyboard's own keys, in every configured
+  layout, and never covers the keys (the settings card's rule, §5).
+  Choosing an entry delivers it to the focused client through the helper's
+  `text` command — once, and never by way of the clipboard. (2026-09-09
+  amendment, ticket 24 step 5: the cap no longer launches a picker, and the
+  external-picker machinery — the courtesy move, the managed session, the
+  shell-overlay payload and the fitting — is removed; decisions §24
+  records why the external route could not be made to work.) The
+  configured external app remains available from the page as an explicit
+  fallback: one chip execs it and the panel does nothing more — no window
+  management, no session; opening and closing the app is the user's
+  business. The default app is Omarchy's own (`omarchy-menu-emoji`,
+  verified against Omarchy 4.0.2); the settings popover's Emoji app row
+  chooses among the pickers detected on PATH, persisted as a sparse
+  `emoji_app` override, and an override may name any app. A configured app
+  missing from PATH, launched from the chip, raises the existing transient
+  hint, naming the configured app.
 
 ## 2. Modifier semantics
 
@@ -220,7 +160,13 @@ no-movement guarantee.
 Approved fields are: docked/floating mode, M/L/XL size, the emoji picker
 app, sound on/off, follow Omarchy theme, key radius, panel radius, key
 background, panel background, text colour, accent/active colour and border
-colour. Key radius 0–24 is relative to the medium preset so a stored 24
+colour — and, since the 2026-09-09 amendment (ticket 22), the Super cap's
+mark `super_mark`: the word `Super` by default, or a chosen mark of Omarchy,
+Windows, macOS or penguin. A value outside those five is a malformed edit
+with the preservation semantics above; whatever the setting says, the cap
+never draws blank — an unrenderable mark (the Omarchy glyph without its
+private font) falls back to the word. Key radius 0–24 is relative to the
+medium preset so a stored 24
 stays a circle at L and XL; panel radius is whole pixels. Key hover and
 press are a modest mix of the resting key fill toward the theme
 foreground — never a replacement fill that is the foreground itself —
@@ -234,6 +180,13 @@ theme's background, foreground, accent and muted colour, with maintained
 fallbacks when a token is unanswered and duplicate resolved colours removed —
 and clicking one immediately writes that resolved colour as an override. A
 later theme change must not silently rewrite a colour chosen this way.
+Each row also leads its control group with a small square showing the colour
+currently in effect (2026-09-09 amendment, ticket 23): a colour first, not
+six hex characters — checkerboard-backed so an alpha-carrying value reads as
+such, and edged in both the theme's foreground and background so very light
+and very dark fills stay visible against either theme's card. It is an
+indicator, not a control, and it follows every commit: hex Apply, Custom
+Apply, a swatch press, a reset.
 Besides the swatches, each row carries an editable hex field with a compact
 mouse-only confirm control next to it, a Custom colour control, and the
 per-override reset. Swatches sit on the same control group as that row's

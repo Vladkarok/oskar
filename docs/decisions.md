@@ -1081,6 +1081,153 @@ it is at zero across the tree. What would make it grow faster is cleaning up
 one of those categories — which is worth doing, and is not the same job as
 having a gate today.
 
+## 37. The emoji catalogue is generated from vendored Unicode data, not read from the system
+
+Status: adopted 2026-09-09 as step one of ticket 24, before any page exists,
+because the licence and the data shape decide everything built on them.
+
+The page needs a set of emoji, their names, and words to search them by. The
+shapes considered:
+
+- **A font** — Noto Color Emoji is on every Omarchy install and is what the
+  caps will render through — carries glyphs and no names. It is the rendering
+  path, never the data source.
+- **A system file read at runtime** (`/usr/share/unicode/emoji/emoji-test.txt`
+  on Arch) makes the panel depend on an optional package and buys names only,
+  no keywords, so search degrades to name substrings. A dependency the panel
+  does not control, for worse data.
+- **A generated table, vendored and committed.** Chosen. The inputs are
+  Unicode's `emoji-test.txt` 16.0 — the set, the order, the groups, the
+  skin-tone variant structure, and the names — and CLDR 46's `en`
+  annotations, which carry the search keywords and fall back as names. The
+  comments in `emoji-test.txt` are the primary name source because CLDR 46's
+  derived annotations are stale for the E15.1 facing-right families: ninety
+  toned sequences arrived nameless of their own skin tone, six visually
+  distinct caps sharing one name. All three files are vendored under
+  `third_party/emoji/` beside the Unicode License V3 that covers them, each
+  with its source URL and SHA-256; `tools/emoji/generate.py` turns them into
+  `EmojiCatalog.js`, a pure `.pragma library` module that both the panel and
+  an offscreen suite can load, and regeneration is offline and
+  byte-deterministic.
+
+Costs named rather than hidden: about 1.4 MB of vendored inputs and a
+generated module of a few hundred kilobytes, parsed once at panel load. And
+the catalogue goes stale as Unicode releases — deliberately: an emoji picker
+is not an exchange rate, and upgrading is a deliberate act (replace the three
+files, update the README table, regenerate, re-run the suite).
+
+One tension is recorded, not resolved: the catalogue is complete — every
+fully-qualified sequence of Emoji 16.0, 3781 of them — but delivery rides the
+helper's virtual keymap (§33), whose spare capacity is finite. Whether the
+page shows everything the catalogue holds or delivery constrains the page is
+decided when the page exists, with measurements, not now.
+
+Two more things review caught while the data was still cheap to fix:
+
+- **Search lowercases both sides, or capitalised names are unfindable by
+  their own words.** The first version lowercased only the query, and 388
+  entries with capitalised CLDR names — every flag among them — answered
+  nothing for `ukraine`. The suite's case test had passed, on `thumbs up`:
+  the easy-fixture trap again, third time in this project. The fixtures that
+  matter are the awkward shapes.
+- **The variant link does not reach every toned sequence.** It serves 655 of
+  the 1875: 1220 toned sequences hang off no base — 925 carry the tone
+  inside the sequence, where the generator's trailing-strip rule never
+  reaches, and 295 are two-tone couples whose tone-less shape Unicode does
+  not define. Stripping all tones would link 1060 of the 1220; the other 205
+  stay standalone under any such rule. A skin-tone UI keyed on base/variant
+  links silently skips the unlinked rest; the grouping decision belongs with
+  the page.
+
+## 38. Super's mark is a choice, and the word is the default
+
+Status: adopted 2026-09-09 after the owner reversed ticket 15's premise —
+"по дефолту писало super как обычно" — amending §27, which chose the Omarchy
+mark on his behalf and made it the only answer.
+
+§27's mechanism keeps exactly one job: the Omarchy arm still draws U+E900
+from the private `omarchy` font, still gated on the packaged TTF's presence,
+still falling back to the word rather than requesting a glyph Qt would
+substitute. What changed is who decides: the cap says `Super` unless a
+setting says otherwise, and the setting — `super_mark` in the §18 store,
+exactly word/omarchy/windows/apple/penguin, default word — belongs to the
+user. §27 chose between the four platforms' marks on the owner's behalf; a
+keyboard this project does not own the desktop for no longer should.
+
+The three new marks are drawn, not vendored: QtQuick.Shapes paths in the
+cap's own ink, monochrome, tinted by the same state colours the glyph rode —
+no raster art of anyone's trademark enters the repo. A mark the system
+cannot render degrades to the word, never to a blank cap; the store rejects
+unknown values as malformed (§5 preservation), and the drawing side answers
+anything outside the five to the word regardless, so the two authorities
+fail the same way. The mark is a label in every arm: ModifierReducer, the
+latch, the chords and the hit area do not know it changed.
+
+The load-proof for the new import is structural rather than a gate:
+`QtQuick/Shapes` is owned by qt6-declarative, which is both the offscreen
+runtime's QML source and a hard dependency of quickshell itself — the import
+cannot resolve in the suites yet be missing from the shell. Nothing in the
+repo yet refuses a dead import; §36's gate still catches only its one
+message.
+
+Amended 2026-09-10 by the owner's eye on the drawn marks: the apple
+silhouette became the looped square ⌘ — the mark an Apple keyboard actually
+carries on that key — the store value is `macos` where §38 first said
+`apple`, the Windows panes draw square-cornered, and the penguin was redrawn
+with a face. The chosen marks stay drawn vectors in the cap's own ink; no
+vendored art entered for any of them.
+
+## 39. An emoji is delivered through a transient keymap, and the settle is before the restore
+
+Status: adopted 2026-09-10, closing ticket 24's delivery step. Amends §35
+with a priced exception and bounds §33's refusals to what a transient can
+mean.
+
+A persistent keymap cannot carry the catalogue (§37's recorded tension), so
+a pick swaps: the helper builds a variant of the installed keymap — the
+requested codepoints on levels five to eight of ordinary letter positions,
+levels one to four byte-identical — publishes it, taps the sequence, then
+republishes the installed map and re-sends the modifiers with the group.
+§35's one-keymap invariant survives everything but the pick itself: two
+keymap events per pick on the focused client, zero on focus changes
+afterwards, the group re-asserted by the closing modifiers request because
+a keymap event resets it. Measured by the suite's observer leg: exactly
+two wire events, installed map back last with its original identity, six
+focus transitions carrying none.
+
+The defect that taught the most: XWayland clients resolved every pick
+against the previous map — a pick of 🙂 typed `й`. The first theory (the
+swap had not reached Xwayland before the taps) died by measurement: hold
+the restore back and the pick resolves at settle zero. The real race is
+the **restore upload** — Xwayland recompiles the restored installed map
+while its queued key events translate against the live one, so the taps
+must not share a flush with the restore. The fix is one Wayland roundtrip
+after the transient upload and a bounded settle between the last tap and
+the restore: threshold measured at 20 ms on the lab guest (six picks at
+5/10/15/20/30/50 ms), shipped default 50 ms, `OMARCHY_OSK_TEXT_SETTLE_MS`
+for a machine whose margin differs. A pick costs ~60 ms; the number is
+calibrated, not guaranteed, and the doc comment says which it is.
+
+§33's refusals are about the install's lifetime — a hosted position keeps
+its new chords for as long as the block exists — and a pick's lifetime is
+~60 ms, so the permanent gates (never answer to Lock, index must equal
+chord) do not transfer; applied anyway they refused all 26 letter
+positions on the owner's stock `us,ua` and delivery never happened. What
+the transient gate keeps is what the rewrite can express: at most four
+levels per group and one keysym per level, which still refuses `de(neo)`'s
+eight-level letters. The distinction — permanent gates for the block,
+expressibility gates for the pick — is recorded here so the next reader
+does not "fix" either direction. One window is named rather than hidden:
+for the ~60 ms of the swap the transient map is the seat's map, so a
+physical keystroke landing in that window resolves against it — plain
+typing is unaffected (levels one to four are byte-identical), but a
+CapsLocked letter loses its uppercasing and a held LevelFive chord types
+the picked codepoint for one keystroke, self-healed by the restore.
+
+Wine stays a recorded limit (§33): the keysyms arrive, Wine's Windows-VK
+world renders a box. The suite proves foot byte-exact, x11cat (XWayland)
+byte-exact, the clipboard untouched, and the pick once.
+
 ## Dead ends — do not retry
 
 - Subscribing to / mirroring the seat keymap (§3). Also: guarding its

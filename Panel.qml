@@ -6,8 +6,6 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "Config.js" as ConfigFile
-import "PickerFit.js" as PickerFit
-import "PickerSession.js" as PickerSession
 import "SettingsPlacement.js" as SettingsPlacement
 
 Item {
@@ -57,9 +55,6 @@ Item {
     // intentionally persist to different files even though both affect the
     // floating card.
     property string mode: maintainedDefaults.mode
-    // Dock/float moves the band the picker must stay clear of (full-width
-    // strip vs floating card), so it is one of the session's re-fit signals.
-    onModeChanged: root.requestPickerFit()
     property var floatingCenter: null
     property string sizePreset: maintainedDefaults.sizePreset
 
@@ -112,17 +107,29 @@ Item {
     }
     readonly property alias effectiveColorForField: effectiveColors
 
-    // The emoji picker (spec-v1.1 §1, 2026-09-05 amendment): the app the ☺
-    // cap execs, defaulting to Omarchy's own omarchy-menu-emoji and
-    // changeable from the popover's Emoji app row. `detectedEmojiPickers` is
-    // the PATH probe's answer, gathered once at load like the other
+    // The emoji picker (spec-v1.1 §1, 2026-09-09 amendment): an external
+    // app the user may prefer, defaulting to Omarchy's own
+    // omarchy-menu-emoji and changeable from the popover's Emoji app row.
+    // It is opt-in only now — the panel's own emoji page is the primary
+    // route, and the page's chip launches this app as an explicit
+    // fallback with no window management from us. `detectedEmojiPickers`
+    // is the PATH probe's answer, gathered once at load like the other
     // dependency checks; the row offers those, the override may still name
-    // any app (an external edit), and a configured name missing from PATH is
-    // the ☺ click's transient hint.
+    // any app (an external edit), and the chip's click-time probe is the
+    // authority either way — a name missing from PATH raises the
+    // transient hint.
     property string emojiApp: maintainedDefaults.emojiApp
+    // The chip's not-found answer (ticket 24 step 5): the same transient
+    // shape the old ☺ cap's probe raised — named failure in the hint
+    // line, auto-cleared after a few seconds without another event.
+    property bool emojiAppMissing: false
     property var detectedEmojiPickers: []
     readonly property var emojiPickerCandidates:
         ["omarchy-menu-emoji", "emote", "xmoji", "bmoji"]
+    // The Super cap's mark (ticket 22): the word by default, a chosen mark
+    // otherwise. Override, else the maintained default — the same plain
+    // preference shape as the mode and the emoji app.
+    property string superMark: maintainedDefaults.superMark
     // Colour-field entry — the panel's ONE sanctioned keyboard-focus
     // exception (spec-v1.1 §5). False except while a hex/RGB/HSV field is
     // the active entry: the popover or editor window that holds that field
@@ -166,6 +173,23 @@ Item {
     // binding would reset HSV from later theme/config changes while leaving
     // the hex draft stale, and Apply would then commit that stale hex.
     property color customEditorOldColor: "transparent"
+
+    // The panel's own emoji page (ticket 24, step 2): the ☺ cap toggles it,
+    // the settings layer hosts it at leftover centre, and it never covers
+    // the keys — step 3 types its search from those very keys. Panel-local
+    // state; nothing persists.
+    property bool emojiOpen: false
+
+    function toggleEmojiPage() {
+        var next = !root.emojiOpen
+        if (next) {
+            // One surface at a time in the leftover centre: the page
+            // replaces the settings card, it does not stack on it.
+            settingsPopover.visible = false
+            root.closeCustomEditor()
+        }
+        root.emojiOpen = next
+    }
 
     function colorForField(field) {
         if (field === "keyBackground") return root.effectiveKeyBackground
@@ -403,14 +427,9 @@ Item {
     // "retry" for a service that is not running, "update" for a protocol
     // mismatch (Copy install command plus Retry).
     readonly property var hintState: {
-        if (keyboard.emojiFailed)
+        if (root.emojiAppMissing)
             return {
-                text: keyboard.emojiAppName + " not found on PATH",
-                accent: true
-            }
-        if (root.pickerFitConstraint !== "")
-            return {
-                text: root.pickerFitConstraint + " can\u2019t open clear of the keyboard",
+                text: root.emojiApp + " not found on PATH",
                 accent: true
             }
         if (keyboard.lifecycleKind === "incompatible")
@@ -501,6 +520,15 @@ Item {
         // it last had; put it where floating actually left it.
         root.applyFloatingPosition()
         root.setOverride("mode", newMode)
+    }
+
+    // The Super cap's mark (ticket 22). setMode's shape: the health guard so
+    // a malformed external edit stands down every writer, and a no-op when
+    // the choice already stands — no movement, no config write.
+    function setSuperMark(mark) {
+        if (!root.configHealthy) return
+        if (root.superMark === mark) return
+        root.setOverride("superMark", mark)
     }
 
     // ---- which output, and where on it (spec-v1 §7) ----
@@ -610,22 +638,17 @@ Item {
         var effective = ConfigFile.merge(root.maintainedDefaults, root.userOverrides, null)
         root.mode = effective.mode
         root.sizePreset = effective.sizePreset
+        root.superMark = effective.superMark
         var soundChanged = root.sound !== effective.sound
         root.sound = effective.sound
         root.followTheme = effective.followTheme
         // The emoji picker is a plain preference like the mode: override,
-        // else the maintained default (Omarchy's own). The ☺ cap reads it at
-        // click time through the keyboard, the popover row mirrors it.
-        // Changing picker app ends the running picker session — the session
-        // belongs to the appearance of the app it was launched for.
-        if (root.emojiApp !== effective.emojiApp) {
+        // else the maintained default (Omarchy's own). The emoji page's
+        // chip reads it at launch time and the popover row mirrors it;
+        // changing it ends nothing — the external app is just an app
+        // (ticket 24 step 5).
+        if (root.emojiApp !== effective.emojiApp)
             root.emojiApp = effective.emojiApp
-            if (root.pickerSession)
-                root.settlePickerMachine(
-                    PickerSession.panelClosed(root.pickerSession, root.focusedAddress()))
-            else
-                root.endPickerSession()
-        }
         // A follow-theme flip while the panel is on screen is immediate:
         // stopping freezes the tokens at the look they then have, and
         // re-enabling releases that snapshot so a later stop freezes the
@@ -801,14 +824,7 @@ Item {
         root.closeCustomEditor()
         settingsPopover.visible = false
         settingsPopover.resetAllArmed = false
-        // The picker session is the panel's too: with the panel gone there is
-        // no band to keep the picker clear of. A managed Emote appearance is
-        // dismissed with the panel so it cannot outlive the keyboard.
-        if (root.pickerSession)
-            root.settlePickerMachine(
-                PickerSession.panelClosed(root.pickerSession, root.focusedAddress()))
-        else
-            root.endPickerSession()
+        root.emojiOpen = false
         // Locked Shift is genuinely held down at the device, so closing the
         // panel has to let go of it before the keyboard disappears.
         keyboard.releaseModifiers()
@@ -1055,7 +1071,8 @@ Item {
     // pickers this system could actually launch. Gathered once at load, in
     // the same one-shot shape as the dependency check — no poll. The row
     // offers what this finds; the override itself may still name any app (an
-    // external edit), and the ☺ click's probe is the authority either way.
+    // external edit), and the page chip's click-time probe is the authority
+    // at launch time.
     Process {
         id: emojiPickerDetect
         command: ["bash", "-c",
@@ -1071,791 +1088,39 @@ Item {
         }
     }
 
-    // ---- picker fitting (spec-v1.1 §1; ticket 08) ----
-    //
-    // A picker opened from the ☺ cap must open in a usable nearby region on
-    // this output and STAY clear while panel or picker geometry changes. The
-    // owner-settled policy (ticket 08 Comments) is PickerFit.planPlacement:
-    // above the keyboard first — shorter, scrollable, if the picker is
-    // taller than the space — then a fitting side region; where the app's
-    // minimum size prevents every region from fitting, the panel says so
-    // (pickerFitConstraint, the header hint) instead of declaring an
-    // overlapping placement a success.
-    //
-    // One logical coordinate system: Quickshell's screens, `hyprctl clients`
-    // at/size and the move/resize dispatchers all speak compositor layout
-    // units on the inspected stack (scale 2 included — the old divide-by-DPR
-    // here was the demonstrated defect; PickerFit.js records the one
-    // remaining physical-unit field, monitors -j width/height). No polling:
-    // the watch rides the compositor's event stream and the panel's own
-    // geometry notifications, with bounded one-shot settle timers, and moves
-    // only the one window the session identified. Hyprland 0.56.2 has no
-    // client-geometry event, so a picker-initiated resize is noticed on the
-    // next panel/output event or the dispatch-verify timer.
-    property string pickerFitConstraint: ""
-    // One identified appearance: the configured app, the window classes it
-    // may map as, the pinned address once found, and the attempt history
-    // that keeps a stubborn placement from looping forever. Null while no
-    // picker from the ☺ cap is being watched.
-    property var pickerSession: null
-    property var pickerHandoffPending: null
-    // Stamped onto each observe so a result cannot identify a window for
-    // a session that started after the query left. beginPickerSession
-    // bumps it; a stale exit is dropped.
-    property int pickerQueryGen: 0
-
-    function pickerBand(mon) {
-        var s = panel.screen
-        if (!s) return null
-        if (root.mode === "docked") {
-            // Hyprland stacks a bottom-anchored Overlay above any existing
-            // bottom exclusive zone, so the strip is the top of that stack
-            // rather than the output's bottom edge. reserved[3] is logical.
-            var output = mon
-                ? PickerFit.logicalMonitorBox(mon)
-                : { x: s.x, y: s.y, w: s.width, h: s.height }
-            var bottom = (mon && mon.reserved && mon.reserved[3]) ? mon.reserved[3] : 0
-            return PickerFit.dockedBand(output, root.cardHeight, bottom)
-        }
-        // Floating: the card is the band, wherever the drag left it.
-        return { x: s.x + card.x, y: s.y + card.y, w: card.width, h: card.height }
+    // The emoji page's external-app chip (ticket 24 step 5): the click-time
+    // PATH probe the old ☺ cap ran, now serving the explicit fallback. On
+    // PATH the app is exec'd detached and that is all — no window
+    // management, no session, no fitting; opening and closing it is the
+    // user's business. Absent, the transient hint names the configured app
+    // and clears itself.
+    function launchEmojiApp() {
+        emojiAppProbe.running = false
+        emojiAppProbe.running = true
     }
 
-    // The ☺ cap arms one session before execDetached. Emote is a managed
-    // toggle (PickerSession.js): a second press closes the identified
-    // window. Unmanaged apps still launch and the newest launch owns the
-    // fit watch.
-    function focusedClient() {
-        var top = Hyprland.activeToplevel
-        if (!top || !top.lastIpcObject) return null
-        var obj = top.lastIpcObject
-        var addr = String(obj.address || "")
-        if (!addr) return null
-        return { address: addr, className: String(obj["class"] || "") }
-    }
-
-    function focusedAddress() {
-        var client = root.focusedClient()
-        return client ? client.address : ""
-    }
-
-    function beginPickerSession(app, machine) {
-        if (!panel.screen) return
-        var created = machine || PickerSession.create(app, root.focusedClient())
-        root.pickerSession = {
-            app: app,
-            classes: PickerFit.resolveClasses(app, ""),
-            address: created.address || "",
-            opened: [],
-            seen: [],
-            probeSettled: false,
-            gen: 0,
-            attempts: 0,
-            cycleKey: "",
-            settled: false,
-            settleTries: 0,
-            pickerMin: null,
-            lastTarget: null,
-            pendingResize: false,
-            phase: created.phase,
-            managed: created.managed,
-            kind: created.kind || "client",
-            target: created.target,
-            stayApplied: created.stayApplied,
-            cancelMap: created.cancelMap,
-            oskPayload: null
-        }
-        root.pickerQueryGen += 1
-        root.pickerSession.gen = root.pickerQueryGen
-        root.pickerFitConstraint = ""
-        if (root.pickerSession.kind !== "shell") {
-            emojiIdentity.app = app
-            emojiIdentity.gen = root.pickerSession.gen
-            emojiIdentity.running = false
-            emojiIdentity.running = true
-        }
-        emojiPlaceTimeout.restart()
-        root.requestPickerFit()
-    }
-
-    function handleEmojiCap(app) {
-        var session = root.pickerSession
-        var current = root.focusedAddress()
-        var target = root.focusedClient()
-        if (session && session.address && PickerFit.sameAddress(current, session.address))
-            target = session.target
-        var result = PickerSession.capPressed(session, app, target, current)
-        var launched = false
-        for (var i = 0; i < result.actions.length; i++) {
-            if (result.actions[i].op === "launch"
-                || result.actions[i].op === "shellSummon")
-                launched = true
-        }
-        if (launched)
-            root.beginPickerSession(app, result.session)
-        else
-            root.pickerSession = result.session
-        root.playPickerActions(result.actions)
-        if (PickerSession.rearmCloser(root.pickerSession))
-            emojiPlaceTimeout.restart()
-    }
-
-    function oskPayloadFromScreen(mon) {
-        var s = panel.screen
-        if (!s) return null
-        var output = mon
-            ? PickerFit.logicalMonitorBox(mon)
-            : { x: s.x, y: s.y, w: s.width, h: s.height }
-        var band = root.pickerBand(mon)
-        if (!band) return null
-        var workArea = mon
-            ? PickerFit.workAreaOf(mon)
-            : {
-                x: output.x,
-                y: output.y,
-                w: output.w,
-                h: Math.max(0, band.y - output.y)
-            }
-        return PickerFit.oskPayload(band, output, workArea)
-    }
-
-    function playShellPicker(op) {
-        var session = root.pickerSession
-        var method = "summon"
-        var payload = "{}"
-        if (op === "shellHide") {
-            method = "hide"
-        } else if (op === "shellFit") {
-            method = "fit"
-            payload = session && session.oskPayload
-                ? JSON.stringify(session.oskPayload) : ""
-            if (!payload || payload === "{}") {
-                root.requestPickerFit()
-                return
-            }
-        } else {
-            var geom = session && session.oskPayload
-                ? session.oskPayload : root.oskPayloadFromScreen()
-            if (geom) {
-                if (session) session.oskPayload = geom
-                payload = JSON.stringify(geom)
-            }
-        }
-        if (shellPickerIpc.running) {
-            shellPickerIpc.queued = { method: method, payload: payload }
-            return
-        }
-        shellPickerIpc.queued = null
-        shellPickerIpc.method = method
-        shellPickerIpc.payload = payload
-        shellPickerIpc.running = false
-        shellPickerIpc.running = true
-    }
-
-    function playPickerActions(actions) {
-        if (!actions || !actions.length) return
-        var windowActions = []
-        for (var i = 0; i < actions.length; i++) {
-            var op = actions[i].op
-            if (op === "shellSummon" || op === "shellHide" || op === "shellFit")
-                root.playShellPicker(op)
-            else
-                windowActions.push(actions[i])
-        }
-        if (!windowActions.length) return
-        var plan = PickerSession.queueHandoff({
-            running: pickerHandoff.running,
-            closeWin: pickerHandoff.closeWin,
-            pending: root.pickerHandoffPending
-        }, windowActions)
-        for (var i = 0; i < plan.launches.length; i++)
-            Quickshell.execDetached([plan.launches[i].app])
-        if (!plan.start) {
-            if (plan.pending) root.pickerHandoffPending = plan.pending
-            return
-        }
-        var handoff = plan.handoff
-        if (!handoff) return
-        root.pickerHandoffPending = null
-        pickerHandoff.addr = handoff.addr
-        pickerHandoff.stay = handoff.stay
-        pickerHandoff.closeWin = handoff.closeWin
-        pickerHandoff.focusAddr = handoff.focusAddr
-        pickerHandoff.running = false
-        pickerHandoff.running = true
-    }
-
-    function settlePickerMachine(result) {
-        if (!result) return
-        root.playPickerActions(result.actions)
-        if (!result.session || result.session.phase === "closed")
-            root.endPickerSession()
-        else if (result.session.phase === "open")
-            emojiPlaceTimeout.stop()
-        else if (PickerSession.rearmCloser(result.session))
-            emojiPlaceTimeout.restart()
-    }
-
-    function endPickerSession() {
-        root.pickerHandoffPending = null
-        shellPickerIpc.queued = null
-        if (!root.pickerSession) return
-        root.pickerSession = null
-        root.pickerFitConstraint = ""
-        emojiPlaceTimeout.stop()
-        pickerFitDebounce.stop()
-        pickerSettleTimer.stop()
-        pickerVerifyTimer.stop()
-    }
-
-    // Every recompute path funnels here. The one-shot debounce coalesces
-    // event storms (a drag fires dozens of moves) into one observation when
-    // the geometry stops moving — bounded settling, not polling.
-    function requestPickerFit() {
-        if (!root.pickerSession) return
-        pickerFitDebounce.restart()
-    }
-
-    function runPickerFit() {
-        var session = root.pickerSession
-        var s = panel.screen
-        var band = root.pickerBand()
-        if (!session || !s || !band) return
-        emojiObserve.monName = s.name || ""
-        emojiObserve.centerX = Math.round(band.x + band.w / 2)
-        emojiObserve.centerY = Math.round(band.y + band.h / 2)
-        emojiObserve.classes = session.classes.join(",")
-        // An event landing while a query is in flight is not dropped: it
-        // queues exactly one re-run, consumed when the query exits. Do not
-        // stamp gen until this process actually starts, or a stale exit
-        // would inherit the new session's generation.
-        if (emojiObserve.running) {
-            emojiObserve.queued = true
-            return
-        }
-        emojiObserve.queued = false
-        emojiObserve.gen = session.gen
-        emojiObserve.running = true
-    }
-
-    function handlePickerObservation(json) {
-        var session = root.pickerSession
-        if (!session || !json || !json.monitor) return
-        var band = root.pickerBand(json.monitor)
-        if (!band) return
-
-        if (session.kind === "shell") {
-            var payload = root.oskPayloadFromScreen(json.monitor)
-            if (payload) session.oskPayload = payload
-            var natural = { x: 0, y: 0, w: 400, h: 500 }
-            var plan = PickerFit.overlayCardPlan(payload, natural, session.pickerMin)
-            if (!plan || plan.status === "unfit") {
-                root.pickerFitConstraint = session.app
-                if (plan)
-                    console.warn("[osk] overlay cannot fit clear of the keyboard:",
-                        plan.reason)
-            } else if (root.pickerFitConstraint !== "") {
-                root.pickerFitConstraint = ""
-            }
-            if (session.phase === "open")
-                root.playPickerActions(PickerSession.fitActions(session))
-            return
-        }
-
-        var client = PickerFit.pickClient(json.clients, session.address, session.opened)
-        if (!client) {
-            // Nothing mapped under the accepted classes: the watch stays
-            // armed for the openwindow event until the hard timeout. A
-            // PINNED address that has gone is a close of the appearance
-            // (selection, Escape, or our closewindow).
-            if (session.address !== "")
-                root.settlePickerMachine(
-                    PickerSession.closed(session, session.address, root.focusedAddress()))
-            return
-        }
-
-        if (session.phase === "closing")
-            return
-
-        if (session.address === "") {
-            var mapped = PickerSession.mapped(session, client.address)
-            root.settlePickerMachine(mapped)
-            if (session.phase !== "open") return
-            emojiPlaceTimeout.stop()
-        } else if (!PickerFit.sameAddress(session.address, client.address)) {
-            var adopted = PickerSession.mapped(session, client.address)
-            root.playPickerActions(adopted.actions)
-            if (session.phase !== "open") return
-            session.attempts = 0
-            session.settled = false
-            session.pickerMin = null
-            session.lastTarget = null
-            session.pendingResize = false
-            session.settleTries = 0
-        }
-
-        var rect = {
-            x: client.at[0], y: client.at[1],
-            w: client.size[0], h: client.size[1]
-        }
-        if (PickerFit.needsSettling(rect)) {
-            // A freshly mapped window can answer 0x0 before its first
-            // commit settles. One bounded re-check covers it even if no
-            // further compositor event arrives; the plan runs on real
-            // geometry only. After five zero observations the hard
-            // timeout has already been stopped, so end rather than stall.
-            if (session.settleTries >= 5) {
-                console.warn("[osk] picker geometry never settled")
-                root.settlePickerMachine(
-                    PickerSession.closed(session, session.address, root.focusedAddress()))
-                return
-            }
-            if (!pickerSettleTimer.running) {
-                session.settleTries += 1
-                pickerSettleTimer.restart()
-            }
-            return
-        }
-        session.settleTries = 0
-
-        // A requested shrink that did not happen records the picker's real
-        // minimum: the next plan stops offering the shorter above-region
-        // and the side regions are measured against it.
-        if (session.pendingResize) {
-            session.pendingResize = false
-            if (session.lastTarget && rect.h > session.lastTarget.h + 2)
-                session.pickerMin = { w: rect.w, h: rect.h }
-        }
-
-        var plan = PickerFit.planPlacement({
-            output: PickerFit.logicalMonitorBox(json.monitor),
-            workArea: PickerFit.workAreaOf(json.monitor),
-            band: band,
-            picker: rect,
-            pickerMin: session.pickerMin
-        })
-
-        if (plan.status === "unfit") {
-            // Minimum size beats every region: say so, move nothing, keep
-            // watching — a panel or output change can still make it
-            // fit later, and the hint clears the moment a plan fits.
-            root.pickerFitConstraint = session.app
-            console.warn("[osk] picker cannot fit clear of the keyboard:", plan.reason)
-            return
-        }
-        if (root.pickerFitConstraint !== "") root.pickerFitConstraint = ""
-
-        // A new band or work area (panel drag, dock/float, preset, output)
-        // starts a fresh convergence cycle. Size-chasing — a stubborn
-        // client whose observed size changes the plan target after each
-        // dispatch — keeps burning the same cycle's cap.
-        var cycleKey = PickerFit.placementCycleKey(band, PickerFit.workAreaOf(json.monitor))
-        session.attempts = PickerFit.nextAttempts(session.attempts, session.cycleKey, cycleKey)
-        session.cycleKey = cycleKey
-
-        if (PickerFit.sameRect(rect, plan.target, 2)) {
-            if (!session.settled) {
-                session.settled = true
-                console.log("[osk] picker placed", plan.region,
-                    JSON.stringify(plan.target), "on", json.monitor.name)
-            }
-            return
-        }
-
-        if (session.attempts >= 3) {
-            // Three dispatches in this band/work-area cycle moved nothing:
-            // positioning failed, and an overlapping placement must not
-            // pass for success.
-            root.pickerFitConstraint = session.app
-            console.warn("[osk] picker did not move to",
-                JSON.stringify(plan.target), "after", session.attempts, "attempts")
-            return
-        }
-
-        session.attempts += 1
-        session.lastTarget = plan.target
-        session.pendingResize = plan.resized
-        pickerDispatch.addr = client.address
-        pickerDispatch.needFloat = !client.floating
-        pickerDispatch.tx = Math.round(plan.target.x)
-        pickerDispatch.ty = Math.round(plan.target.y)
-        pickerDispatch.rw = plan.resized ? Math.round(plan.target.w) : 0
-        pickerDispatch.rh = plan.resized ? Math.round(plan.target.h) : 0
-        pickerDispatch.running = false
-        pickerDispatch.running = true
-        // Our own move/resize dispatches emit no socket events on Hyprland
-        // 0.56.2, so the one-shot timer re-observes the resulting rectangle.
-        // Successful process exit alone is never treated as proof the
-        // picker moved.
-        pickerVerifyTimer.restart()
-    }
-
-    // One-shot: the configured app's desktop-entry StartupWMClass, so the
-    // accepted window classes come from the entry's own declaration where
-    // one exists. The executable name is only ever the fallback after this
-    // probe exits (success or failure); until then opened stays empty so a
-    // fallback-class map cannot steal the pin. The recorded table carries
-    // the classes an app is known to surface on other stacks (PickerFit.js:
-    // the installed Emote maps as "emote", its GTK application_id
-    // com.tomjwatson.Emote is what other versions may report). Applies to
-    // the live session whose generation the probe printed, so a stale prior
-    // run cannot widen a newer session. No poll.
     Process {
-        id: emojiIdentity
-        property string app: ""
-        property int gen: 0
-        command: ["bash", "-c",
-            "printf '%s\\n' \"$1\"\n"
-          + "app=$2\n"
-          + "for base in ${3//:/ } ${4//:/ }; do\n"
-          + "  for f in \"$base\"/applications/*.desktop; do\n"
-          + "    [ -f \"$f\" ] || continue\n"
-          + "    cls=$(awk -F= -v app=\"$app\" '\n"
-          + "      /^\\[Desktop Entry\\]$/ { inentry = 1; next }\n"
-          + "      /^\\[/ { inentry = 0 }\n"
-          + "      inentry && $1 == \"Exec\" { n = split($2, a, \" \");"
-          + " sub(/.*\\//, \"\", a[1]); exec = (a[1] == app) }\n"
-          + "      inentry && $1 == \"StartupWMClass\" { wm = $2 }\n"
-          + "      END { if (exec) print wm }' \"$f\")\n"
-          + "    [ -n \"$cls\" ] && { printf '%s' \"$cls\"; exit 0; }\n"
-          + "  done\n"
-          + "done\n"
-          + "exit 1\n",
-            "omarchy-osk-emoji-identity", String(emojiIdentity.gen), emojiIdentity.app,
-            Quickshell.env("XDG_DATA_HOME") || ((Quickshell.env("HOME") || "") + "/.local/share"),
-            Quickshell.env("XDG_DATA_DIRS") || "/usr/local/share:/usr/share"]
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                var session = root.pickerSession
-                var lines = text.split("\n")
-                var probeGen = parseInt(lines[0], 10)
-                var wmClass = lines.slice(1).join("\n").trim()
-                if (!session || session.gen !== probeGen) return
-                session.probeSettled = true
-                var merged = PickerFit.resolveClasses(session.app, wmClass, true)
-                session.classes = merged
-                session.opened = PickerFit.bindLaunch(
-                    session.opened, session.seen, merged, true, session.app)
-                if (session.cancelMap && session.opened.length)
-                    root.settlePickerMachine(
-                        PickerSession.mapped(session, session.opened[0]))
-                else
-                    // A class the first observation could not know about may
-                    // already be mapped; re-run now that the accepted list grew.
-                    root.requestPickerFit()
-            }
-        }
-    }
-
-    // ONE monitors+clients query per fit run — the query only GATHERS; the
-    // decision is the pure PickerFit policy and the move is a separate
-    // dispatch whose outcome the next observation verifies. Exit 0 always
-    // carries the JSON (clients may be empty); 4/5 mean the compositor could
-    // not answer yet — the event watch stays armed either way. Pin
-    // preference lives in pickClient, not in the jq.
-    Process {
-        id: emojiObserve
-        property string monName: ""
-        property int centerX: 0
-        property int centerY: 0
-        property string classes: ""
-        property int gen: 0
-        property bool queued: false
-        property string result: ""
-        command: ["bash", "-c",
-            "classes=$1; monName=$2; cx=$3; cy=$4\n"
-          + "mons=$(hyprctl monitors -j 2>/dev/null) || exit 4\n"
-          + "mon=$(printf '%s' \"$mons\" | jq -c --arg name \"$monName\" \\\n"
-          + "    --argjson cx \"$cx\" --argjson cy \"$cy\" '\n"
-          + "  (map(select(.name == $name))[0])\n"
-          + "  // (map(select((.disabled != true) and (.x <= $cx)\n"
-          + "                and ($cx < .x + .width / .scale)\n"
-          + "                and (.y <= $cy) and ($cy < .y + .height / .scale)))[0])\n"
-          + "  // null')\n"
-          + "[[ -z \"$mon\" || \"$mon\" == \"null\" ]] && exit 5\n"
-          + "hyprctl clients -j 2>/dev/null | jq -c --arg classes \"$classes\" \\\n"
-          + "    --argjson mon \"$mon\" '\n"
-          + "  ($classes | split(\",\")) as $want\n"
-          + "  | [.[]\n"
-          + "    | select(.mapped)\n"
-          + "    | ((.class // \"\") | ascii_downcase) as $c\n"
-          + "    | ((.initialClass // \"\") | ascii_downcase) as $ic\n"
-          + "    | select(($want | index($c)) != null or ($want | index($ic)) != null)\n"
-          + "    | {address: .address, at: .at, size: .size, floating: .floating,\n"
-          + "       focusHistoryID: .focusHistoryID}]\n"
-          + "  | {monitor: $mon, clients: .}'\n",
-            "omarchy-osk-emoji-observe",
-            emojiObserve.classes, emojiObserve.monName,
-            String(emojiObserve.centerX), String(emojiObserve.centerY)]
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: emojiObserve.result = text
-        }
-        onExited: function(exitCode) {
-            var again = emojiObserve.queued
-            emojiObserve.queued = false
-            var session = root.pickerSession
+        id: emojiAppProbe
+        command: ["sh", "-c", "command -v \"$1\" >/dev/null", "osk-emoji-app-probe",
+            root.emojiApp]
+        onExited: function(exitCode, exitStatus) {
+            emojiAppMissingTimer.stop()
             if (exitCode === 0) {
-                if (session && session.gen === emojiObserve.gen)
-                    root.handlePickerObservation(emojiObserve.parsed())
-            } else if (exitCode !== 4 && exitCode !== 5)
-                console.warn("[osk] picker observation failed with exit", exitCode)
-            emojiObserve.result = ""
-            if (again && root.pickerSession) root.runPickerFit()
-        }
-        function parsed() {
-            try {
-                return JSON.parse(emojiObserve.result)
-            } catch (error) {
-                return null
-            }
-        }
-    }
-
-    // The placement dispatch: float the identified window if it mapped
-    // tiled (a picker tiled into the layout cannot be positioned), resize
-    // first when the plan shrinks it (shorter/scrollable), then move.
-    // Runtime dispatches of the one window the session owns — never a
-    // config write, never another window. The Lua dispatcher form is what
-    // the running compositor accepts (the pre-0.56 CLI dispatcher is gone
-    // under the Lua parser, the same quirk the cursor-hide probe records
-    // for `hyprctl keyword`).
-    Process {
-        id: pickerDispatch
-        property string addr: ""
-        property bool needFloat: false
-        property int tx: 0
-        property int ty: 0
-        property int rw: 0
-        property int rh: 0
-        command: ["bash", "-c",
-            "addr=$1; tx=$2; ty=$3; rw=$4; rh=$5; flt=$6\n"
-          + "if [[ $flt == 1 ]]; then\n"
-          + "  hyprctl eval \"hl.dispatch(hl.dsp.window.float({ window = \\\"address:$addr\\\", action = \\\"set\\\" }))\" >/dev/null 2>&1 || exit 1\n"
-          + "fi\n"
-          + "if (( rw > 0 && rh > 0 )); then\n"
-          + "  hyprctl eval \"hl.dispatch(hl.dsp.window.resize({ window = \\\"address:$addr\\\", x = $rw, y = $rh, relative = false }))\" >/dev/null 2>&1 || exit 2\n"
-          + "fi\n"
-          + "hyprctl eval \"hl.dispatch(hl.dsp.window.move({ window = \\\"address:$addr\\\", x = $tx, y = $ty, relative = false }))\" >/dev/null 2>&1 || exit 3\n"
-          + "exit 0",
-            "omarchy-osk-emoji-dispatch",
-            pickerDispatch.addr,
-            String(pickerDispatch.tx), String(pickerDispatch.ty),
-            String(pickerDispatch.rw), String(pickerDispatch.rh),
-            pickerDispatch.needFloat ? "1" : "0"]
-        onExited: function(exitCode) {
-            if (exitCode !== 0)
-                console.warn("[osk] picker dispatch failed with exit", exitCode)
-        }
-    }
-
-    // Runtime policy for the identified appearance only: stay_focused on
-    // that address, closewindow of that address, restore the recorded
-    // target. Never a class-wide rule, never pkill.
-    Process {
-        id: pickerHandoff
-        property string addr: ""
-        property string stay: ""
-        property bool closeWin: false
-        property string focusAddr: ""
-        command: ["bash", "-c",
-            "addr=$1; stay=$2; close=$3; focus=$4\n"
-          + "stay_rc=0; close_rc=0; focus_rc=0\n"
-          + "if [[ -n $stay ]]; then\n"
-          + "  hyprctl eval \"hl.dispatch(hl.dsp.window.set_prop({ window = \\\"address:$addr\\\", prop = \\\"stay_focused\\\", value = \\\"$stay\\\" }))\" >/dev/null 2>&1 || stay_rc=1\n"
-          + "fi\n"
-          + "if [[ $close == 1 ]]; then\n"
-          + "  hyprctl eval \"hl.dispatch(hl.dsp.window.close({ window = \\\"address:$addr\\\" }))\" >/dev/null 2>&1 || close_rc=1\n"
-          + "fi\n"
-          + "if [[ -n $focus ]]; then\n"
-          + "  hyprctl eval \"hl.dispatch(hl.dsp.focus({ window = \\\"address:$focus\\\" }))\" >/dev/null 2>&1 || focus_rc=1\n"
-          + "fi\n"
-          + "if (( close_rc != 0 )); then exit 2; fi\n"
-          + "if (( stay_rc != 0 )); then exit 1; fi\n"
-          + "if (( focus_rc != 0 )); then exit 3; fi\n"
-          + "exit 0",
-            "omarchy-osk-picker-handoff",
-            pickerHandoff.addr, pickerHandoff.stay,
-            pickerHandoff.closeWin ? "1" : "0", pickerHandoff.focusAddr]
-        onExited: function(exitCode) {
-            if (exitCode !== 0)
-                console.warn("[osk] picker handoff failed with exit", exitCode)
-            var session = root.pickerSession
-            var pending = root.pickerHandoffPending
-            root.pickerHandoffPending = null
-            if (session && session.phase === "closing" && exitCode !== 0) {
-                root.settlePickerMachine(
-                    PickerSession.failed(session, root.focusedAddress()))
+                Quickshell.execDetached([root.emojiApp])
                 return
             }
-            if (pending && (pending.stay || pending.closeWin || pending.focusAddr))
-                root.playPickerActions(PickerSession.handoffActions(pending))
+            root.emojiAppMissing = true
+            emojiAppMissingTimer.restart()
         }
     }
 
-    // Shell overlay open/hide/fit. Summon is not a blind toggle: if the
-    // overlay is already open (standalone Super+Period), hide it. Ordinary
-    // `omarchy-menu-emoji` without an OSK payload is unchanged.
-    Process {
-        id: shellPickerIpc
-        property string method: "summon"
-        property string payload: "{}"
-        property var queued: null
-        property string result: ""
-        command: shellPickerIpc.method === "hide"
-            ? ["omarchy-shell", "shell", "hide", "omarchy.emojis"]
-            : shellPickerIpc.method === "fit"
-                ? ["omarchy-shell", "shell", "call", "omarchy.emojis", "oskFit",
-                    shellPickerIpc.payload]
-                : ["bash", "-c",
-                    "payload=$1\n"
-                  + "state=$(omarchy-shell shell isOpen omarchy.emojis 2>/dev/null || echo closed)\n"
-                  + "if [[ $state == open ]]; then\n"
-                  + "  omarchy-shell shell hide omarchy.emojis\n"
-                  + "  printf dismissed\n"
-                  + "  exit 0\n"
-                  + "fi\n"
-                  + "omarchy-shell shell summon omarchy.emojis \"$payload\" || exit 2\n"
-                  + "printf summoned\n",
-                    "omarchy-osk-shell-summon", shellPickerIpc.payload]
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: shellPickerIpc.result = text
-        }
-        onExited: function(exitCode) {
-            var queued = shellPickerIpc.queued
-            shellPickerIpc.queued = null
-            var session = root.pickerSession
-            var out = String(shellPickerIpc.result || "").trim()
-            shellPickerIpc.result = ""
-            if (shellPickerIpc.method === "summon" && session) {
-                if (out.indexOf("dismissed") === 0)
-                    root.settlePickerMachine(
-                        PickerSession.overlayClosed(session, root.focusedAddress()))
-                else if (exitCode === 0)
-                    root.settlePickerMachine(PickerSession.overlayOpened(session))
-                else
-                    root.settlePickerMachine(
-                        PickerSession.failed(session, root.focusedAddress()))
-            } else if (shellPickerIpc.method === "hide" && session) {
-                if (exitCode !== 0 && session.phase === "closing")
-                    root.settlePickerMachine(
-                        PickerSession.failed(session, root.focusedAddress()))
-                else if (exitCode === 0)
-                    root.settlePickerMachine(
-                        PickerSession.overlayClosed(session, root.focusedAddress()))
-            }
-            if (queued) {
-                shellPickerIpc.method = queued.method
-                shellPickerIpc.payload = queued.payload
-                shellPickerIpc.running = false
-                shellPickerIpc.running = true
-            }
-        }
-    }
-
-    // The single hard timeout bounding the INITIAL watch and a cancelled
-    // or slow close. Stopped the moment an address is pinned open; re-armed
-    // while closing only once that address is known, so mashing ☺ cannot
-    // postpone a pinless closer. A shell overlay is opened by IPC, not a
-    // client map; overlayOpened stops this timer.
     Timer {
-        id: emojiPlaceTimeout
-        interval: 6000
+        id: emojiAppMissingTimer
+        // A few seconds of "<app> not found on PATH", then the hint line
+        // returns to its mode text without another event being needed.
+        interval: 4000
         repeat: false
-        onTriggered: {
-            if (!root.pickerSession) return
-            var late = (root.pickerSession.opened && root.pickerSession.opened.length)
-                ? root.pickerSession.opened[0] : ""
-            root.settlePickerMachine(
-                PickerSession.timeout(root.pickerSession, root.focusedAddress(), late))
-        }
-    }
-
-    // Bounded one-shots: the debounce coalesces geometry-change storms, the
-    // settle re-check covers zero/unstable initial geometry, and the verify
-    // re-observation checks a dispatch's resulting rectangle when no
-    // compositor event lands. None repeats.
-    Timer {
-        id: pickerFitDebounce
-        interval: 150
-        repeat: false
-        onTriggered: root.runPickerFit()
-    }
-    Timer {
-        id: pickerSettleTimer
-        interval: 300
-        repeat: false
-        onTriggered: root.runPickerFit()
-    }
-    Timer {
-        id: pickerVerifyTimer
-        interval: 350
-        repeat: false
-        onTriggered: root.requestPickerFit()
-    }
-
-    // The compositor's event stream drives the watch: no polling. Every
-    // openwindow is remembered; launch identity is bound once after the
-    // class probe settles, never recomputed from later maps. closewindow
-    // and title/float events filter on the pinned address. Monitor/config
-    // events cover output removal and scale changes. Addresses are
-    // compared through PickerFit.sameAddress: the socket omits the 0x
-    // prefix that clients -j includes. eventAction drops movewindow(v2)
-    // (workspace move) and the absent resizewindow(v2).
-    Connections {
-        target: Hyprland
-        function onRawEvent(event) {
-            var session = root.pickerSession
-            if (!session || !event) return
-            var fields = String(event.data || "").split(",")
-            var action = PickerFit.eventAction(event.name)
-            if (action === "open") {
-                session.seen = PickerFit.rememberOpenwindow(session.seen, fields[0], fields[2] || "")
-                var wasEmpty = !session.opened || session.opened.length === 0
-                session.opened = PickerFit.bindLaunch(
-                    session.opened, session.seen, session.classes,
-                    session.probeSettled, session.app)
-                if (wasEmpty && session.opened.length) {
-                    if (session.cancelMap)
-                        root.settlePickerMachine(
-                            PickerSession.mapped(session, session.opened[0]))
-                    else
-                        root.requestPickerFit()
-                }
-                return
-            }
-            if (action === "close") {
-                var rebound = PickerFit.rebindAfterClose(
-                    session.opened, session.seen, fields[0],
-                    session.classes, session.probeSettled, session.app)
-                session.seen = rebound.seen
-                session.opened = rebound.opened
-                if (PickerFit.sameAddress(fields[0], session.address)) {
-                    root.settlePickerMachine(
-                        PickerSession.closed(session, fields[0], root.focusedAddress()))
-                    return
-                }
-                if (!session.address && session.opened.length)
-                    root.requestPickerFit()
-                return
-            }
-            if (action === "refit") {
-                if (PickerFit.sameAddress(fields[0], session.address))
-                    root.requestPickerFit()
-                return
-            }
-            if (action === "output")
-                root.requestPickerFit()
-            if (session.kind === "shell" && String(event.data || "") === "omarchy-emojis") {
-                if (action === "layerOpen")
-                    root.settlePickerMachine(PickerSession.overlayOpened(session))
-                else if (action === "layerClose")
-                    root.settlePickerMachine(
-                        PickerSession.overlayClosed(session, root.focusedAddress()))
-            }
-        }
+        onTriggered: root.emojiAppMissing = false
     }
 
     // The height the docked strip needs. In docked mode it is also the
@@ -1888,21 +1153,9 @@ Item {
         // The surface has no size until it is mapped, and it changes size again
         // when the panel moves to an output of a different shape — both of
         // which are when a remembered floating position has to be re-applied
-        // and re-clamped. The picker session re-fits on the same signals: a
-        // panel resize (preset, output shape) is a geometry change it must
-        // answer.
-        onWidthChanged: {
-            root.applyFloatingPosition()
-            root.requestPickerFit()
-        }
-        onHeightChanged: {
-            root.applyFloatingPosition()
-            root.requestPickerFit()
-        }
-        // An output change (the drag-to-monitor handoff in finishDrag, or
-        // the output itself going away) moves the band and the work area
-        // the picker is fitted against.
-        onScreenChanged: root.requestPickerFit()
+        // and re-clamped.
+        onWidthChanged: root.applyFloatingPosition()
+        onHeightChanged: root.applyFloatingPosition()
 
         // Never take keyboard focus: the app being typed into keeps it, and
         // the helper's keystrokes land there. Colour-field entry is the one
@@ -1965,19 +1218,11 @@ Item {
             // no-op while a drag is held: whatever resizes the card
             // mid-drag — an external config reload, not just the chooser —
             // must not steal the placement from the hand (the guard in
-            // applyFloatingPosition). The picker session re-fits on the
-            // same changes (drag, dock/float, preset): any movement of the
-            // band is a geometry change it answers.
-            onXChanged: root.requestPickerFit()
-            onYChanged: root.requestPickerFit()
-            onWidthChanged: {
-                root.applyFloatingPosition()
-                root.requestPickerFit()
-            }
-            onHeightChanged: {
-                root.applyFloatingPosition()
-                root.requestPickerFit()
-            }
+            // applyFloatingPosition).
+            onXChanged: root.applyFloatingPosition()
+            onYChanged: root.applyFloatingPosition()
+            onWidthChanged: root.applyFloatingPosition()
+            onHeightChanged: root.applyFloatingPosition()
 
             Item {
                 id: dragBar
@@ -2155,6 +1400,10 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         onClicked: {
+                            // The page and the card are mutually exclusive
+                            // leftover-centre surfaces (toggleEmojiPage's
+                            // rule); the gear restores the card.
+                            root.emojiOpen = false
                             if (settingsPopover.visible || root.customEditorField !== "") {
                                 root.closeCustomEditor()
                                 settingsPopover.visible = false
@@ -2255,16 +1504,30 @@ Item {
                 id: keyboard
                 theme: tokens
                 uiScale: root.sizeScale
-                // The app the ☺ cap execs (spec-v1.1 §1): the panel resolves
-                // override over default; the keyboard probes PATH at click
-                // time and raises the transient hint when it is absent.
-                emojiAppName: root.emojiApp
-                // A standalone picker launched from the ☺ cap is fitted to a
-                // clear region by the picker session in beginPickerSession.
-                // Omarchy's shell overlay is summoned with an opt-in OSK
-                // payload and fitted through PickerFit.planPlacement on its
-                // inner card — not by moving a client.
-                onEmojiCapActivated: function(app) { root.handleEmojiCap(app) }
+                // What the Super cap draws (ticket 22): the panel resolves
+                // override over default; the keyboard picks the arm with the
+                // pure choice in KeyboardLayout.js, so an unknown value and
+                // an absent Omarchy font both land on the word, never a
+                // blank cap.
+                superMark: root.superMark
+                // The ☺ cap toggles the panel's own emoji page: open on
+                // press, dismiss on a second press. The keyboard stays
+                // mapped and clickable underneath — that is the point.
+                onEmojiCapActivated: root.toggleEmojiPage()
+                // Step 3: while the page stands the keys feed its search
+                // and reach nothing else. The binding (not an assignment)
+                // is what ends the interception on every close route — the
+                // page dies with emojiOpen by whatever hand closed it. The
+                // Esc cap closes the page like the ☺ cap does; every other
+                // intercepted key only moves the query.
+                searchMode: root.emojiOpen
+                onSearchInput: function (action, text) {
+                    if (action === "escape") {
+                        root.emojiOpen = false
+                        return
+                    }
+                    emojiPage.applySearchKey(action, text)
+                }
                 // Everything the card spends on its own padding is width the
                 // grid cannot have, so a large preset on a narrow output
                 // shrinks to fit rather than running off the card.
@@ -2451,8 +1714,12 @@ Item {
                                    : WlrKeyboardFocus.Exclusive)
             : WlrKeyboardFocus.None
 
-        readonly property bool settingsOpen: settingsPopover.visible
+        // Any leftover-centre surface: the settings card, the custom
+        // colour editor, or the emoji page (ticket 24). The mask and the
+        // dismiss area arm on this, and never on the keyboard band.
+        readonly property bool overlayOpen: settingsPopover.visible
             || root.customEditorField !== ""
+            || root.emojiOpen
         readonly property var overlayBox: ({
             x: 0, y: 0, w: settingsLayer.width, h: settingsLayer.height
         })
@@ -2467,12 +1734,15 @@ Item {
         readonly property var editorPlace: SettingsPlacement.centreInLeftover(
             overlayBox, bandBox,
             { w: customColorEditor.width, h: customColorEditor.height })
+        readonly property var emojiPlace: SettingsPlacement.centreInLeftover(
+            overlayBox, bandBox,
+            { w: emojiPage.width, h: emojiPage.height })
 
         mask: Region {
-            x: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.x : 0
-            y: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.y : 0
-            width: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.w : 0
-            height: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.h : 0
+            x: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.x : 0
+            y: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.y : 0
+            width: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.w : 0
+            height: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.h : 0
             Region {
                 x: settingsPopover.x
                 y: settingsPopover.y
@@ -2487,14 +1757,21 @@ Item {
                 height: customColorEditor.visible ? customColorEditor.height : 0
                 intersection: Intersection.Combine
             }
+            Region {
+                x: emojiPage.x
+                y: emojiPage.y
+                width: emojiPage.visible ? emojiPage.width : 0
+                height: emojiPage.visible ? emojiPage.height : 0
+                intersection: Intersection.Combine
+            }
         }
 
         MouseArea {
             x: settingsLayer.leftoverBox.x
             y: settingsLayer.leftoverBox.y
-            width: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.w : 0
-            height: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.h : 0
-            enabled: settingsLayer.settingsOpen
+            width: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.w : 0
+            height: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.h : 0
+            enabled: settingsLayer.overlayOpen
             z: 0
             onClicked: function (mouse) {
                 if (settingsPopover.visible
@@ -2509,12 +1786,19 @@ Item {
                     && mouse.y + y >= customColorEditor.y
                     && mouse.y + y <= customColorEditor.y + customColorEditor.height)
                     return
+                if (emojiPage.visible
+                    && mouse.x + x >= emojiPage.x
+                    && mouse.x + x <= emojiPage.x + emojiPage.width
+                    && mouse.y + y >= emojiPage.y
+                    && mouse.y + y <= emojiPage.y + emojiPage.height)
+                    return
                 root.endHexEdit()
                 if (root.customEditorField !== "") {
                     root.closeCustomEditor()
                     return
                 }
                 settingsPopover.visible = false
+                root.emojiOpen = false
             }
         }
 
@@ -2558,6 +1842,38 @@ Item {
             y: settingsLayer.editorPlace.y
             z: 2
             onDismissed: root.closeCustomEditor()
+        }
+
+        // The panel's own emoji page (ticket 24, step 2), hosted by the
+        // same leftover-centre mechanism as the card and the editor. The
+        // keyboard underneath stays live — the page rides the overlay
+        // window, never the key grid.
+        EmojiPage {
+            id: emojiPage
+            tokens: tokens
+            uiScale: root.sizeScale
+            hostWidth: settingsLayer.leftoverBox.w
+            hostHeight: settingsLayer.leftoverBox.h
+            x: settingsLayer.emojiPlace.x
+            y: settingsLayer.emojiPlace.y
+            z: 1
+            visible: root.emojiOpen
+            // The explicit fallback (ticket 24 step 5): the configured
+            // external app, launched bare from the chip — the panel runs
+            // the process and nothing more.
+            externalApp: root.emojiApp
+            onExternalAppRequested: root.launchEmojiApp()
+            // Step 4: the choice delivers. One click is one send and one
+            // close: the sequence rides keyboard.sendText to the focused
+            // client (an unready helper makes it the send's own silent
+            // no-op), and the page closes by the same route the cap uses —
+            // emojiOpen falls, searchMode with it, and the query dies on
+            // the page's open edge. Nothing is kept; there is no repeat.
+            onEmojiChosen: function (entry) {
+                keyboard.sendText(entry.emoji)
+                root.emojiOpen = false
+            }
+            onDismissed: root.emojiOpen = false
         }
     }
 }

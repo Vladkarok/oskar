@@ -41,6 +41,14 @@
 //!                     character text), `x<keysym>` (a symbol that produces no
 //!                     character) or `n` (no symbol at this level). Without a
 //!                     position list every named key is answered.
+//!   text <utf8>       deliver the string's codepoints as typed keys (ticket
+//!                     24): a transient variant of the installed keymap
+//!                     carrying them on levels five to eight of letter
+//!                     positions is uploaded, tapped, and the installed keymap
+//!                     uploaded back — exactly two keymap events per pick on
+//!                     the focused client and none at any other time, with the
+//!                     group restored by re-sending modifiers because a
+//!                     keymap event resets it (decisions §35, §37).
 //! Replies are `ok`, `hello <n>`, `configured<TAB><generation>`, `pong`,
 //! `keyboards<TAB>name...`, `caps<TAB><generation><TAB><group><TAB><records>`,
 //! or `err <reason>`.
@@ -79,6 +87,9 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 /// reinstalling the helper says so instead of failing silently. Version 4 adds
 /// the keycap-facts reply and the generation on `configured`; the panel learned
 /// both in the same release, so the version gate is what keeps the pair honest.
+/// `text` (ticket 24) deliberately did not bump it: the command is additive,
+/// an updated panel against an installed old helper gets `err unknown command`
+/// for each pick, and no existing reply changed shape.
 const PROTOCOL_VERSION: u32 = 4;
 
 /// How long a non-modifier code may stay held before the helper lifts it
@@ -98,6 +109,26 @@ fn hold_cap() -> Duration {
             .and_then(|raw| raw.trim().parse::<u64>().ok())
             .filter(|ms| *ms > 0)
             .map_or(DEFAULT_HOLD_CAP, Duration::from_millis)
+    })
+}
+
+/// How long a `text` pick waits between the last tap and the restore upload,
+/// so an XWayland client has translated the taps against the transient map
+/// before the installed map comes back (see `deliver_text`, which measures
+/// this). Fifty milliseconds is two and a half times the VM's measured
+/// threshold.
+const DEFAULT_TEXT_SETTLE_MS: u64 = 50;
+
+/// The settle, overridable for the same reason the hold cap is: the default
+/// was calibrated in the VM against the nested suite's XWayland leg, and a
+/// recalibration needs the knob without a rebuild per value. Read once.
+fn text_settle() -> Duration {
+    static SETTLE: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *SETTLE.get_or_init(|| {
+        std::env::var("OMARCHY_OSK_TEXT_SETTLE_MS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .map_or(Duration::from_millis(DEFAULT_TEXT_SETTLE_MS), Duration::from_millis)
     })
 }
 
@@ -752,6 +783,546 @@ fn extend_with_reserved(keymap: &str) -> Option<String> {
     Some(out)
 }
 
+/// How many codepoints one `text` command may carry.
+///
+/// The longest RGI emoji sequences are eleven scalars; sixteen covers them
+/// about one and a half times over, and the cap is what keeps a pick to four
+/// positions' worth of slots and the tap sequence bounded.
+const MAX_TEXT_SCALARS: usize = 16;
+
+/// The letter rows a `text` pick may host, in order (ticket 24): eleven on
+/// AD, ten on AC, five on AB. Four levels each, so the sixteen-scalar cap
+/// never needs more than the first four positions; the rest is spare for the
+/// day the cap moves.
+///
+/// Letters rather than the digit row the reserved block lives on, because the
+/// block's own hosts are wanted by the block: a pick would otherwise silently
+/// replace catalogue symbols for the length of the swap. The digit row's
+/// levels one to four would be safe to ride above — that is §33's own
+/// invariant — but there is no reason to spend the block's seats when
+/// twenty-six letter positions are sitting unused.
+const TEXT_ROWS: [&str; 26] = [
+    "AD01", "AD02", "AD03", "AD04", "AD05", "AD06", "AD07", "AD08", "AD09", "AD10", "AD11",
+    "AC01", "AC02", "AC03", "AC04", "AC05", "AC06", "AC07", "AC08", "AC09", "AC10",
+    "AB01", "AB02", "AB03", "AB04", "AB05",
+];
+
+/// One planned slot: the letter position that will carry a codepoint, the
+/// evdev code to tap, and the level (five to eight) it carries it on.
+#[derive(Clone)]
+struct TextSlot {
+    position: &'static str,
+    code: u32,
+    level: u8,
+}
+
+/// Assigns the string's codepoints to slots, or `None` when the keymap
+/// cannot host them all — a truncated pick would deliver a different string
+/// than the one the user chose, so it is refused whole.
+///
+/// Positions are taken in `TEXT_ROWS` order. A position the installed keymap
+/// does not define is skipped — no keycode entry, or no key statement in the
+/// symbols section to rewrite — and so is one a connection currently holds:
+/// the device holds a key once, so a duplicate press would be invisible and
+/// the release would end someone else's hold.
+///
+/// The rest are skipped on behaviour, `text_hostable`'s question: can the
+/// rewrite express this position faithfully — four levels or fewer, at most
+/// one keysym per level, in every group. That gate is deliberately narrower
+/// than the installed block's (§33 refuses whatever answers to Lock,
+/// Control, Alt or Super): a block sits in the keymap for its install's
+/// whole life, a pick's rewrite sits there for the length of the swap and
+/// then the installed map — chords, uppercasing and all — goes back up. On
+/// the owner's stock `us,ua` map the strict gate refuses every one of the
+/// twenty-six letter positions, because every letter answers to Lock and
+/// falls through on AltGr; refusing them here would refuse every pick on
+/// every real layout. Whatever fails is skipped, not handled, and a request
+/// the survivors cannot cover in full earns `err no slots` with the
+/// installed keymap untouched.
+fn plan_text_slots(
+    keymap: &str,
+    codes: &std::collections::HashMap<String, u32>,
+    wanted: usize,
+    skip: &std::collections::HashSet<u32>,
+) -> Option<Vec<TextSlot>> {
+    use xkbcommon::xkb;
+
+    // The gates below are behavioural, so the installed text is compiled and
+    // probed here the way the block's allocator probes it. It compiled once
+    // to be installed; a text that no longer compiles hosts nothing.
+    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+    let compiled = xkb::Keymap::new_from_string(
+        &context,
+        keymap.to_string(),
+        xkb::KEYMAP_FORMAT_TEXT_V1,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    )?;
+
+    let mut slots: Vec<TextSlot> = Vec::new();
+    'rows: for position in TEXT_ROWS {
+        let Some(code) = codes.get(position) else {
+            continue;
+        };
+        let code = *code;
+        if skip.contains(&code) || key_statement_bounds(keymap, position).is_none() {
+            continue;
+        }
+        if !text_hostable(&compiled, code) {
+            continue;
+        }
+        for level in 5u8..=8 {
+            slots.push(TextSlot { position, code, level });
+            if slots.len() == wanted {
+                break 'rows;
+            }
+        }
+    }
+    (slots.len() == wanted).then_some(slots)
+}
+
+/// Whether a `text` pick may ride levels five to eight of this position.
+///
+/// The pick's own gate, deliberately narrower than the block allocator's
+/// `carried_levels`. The block refuses a position whose answer moves under
+/// Lock, Control, Alt or Super because its refusal is permanent: the
+/// eight-level type it writes would cost the position those chords for as
+/// long as the keymap stays installed, and §33 will not spend a letter's
+/// CapsLock uppercasing that way. A pick's rewrite costs the same chords
+/// for the length of the swap — every real letter answers to Lock and falls
+/// through on AltGr, so the block's gate here would refuse every pick on
+/// every real layout (measured on `us,ua`: all twenty-six `TEXT_ROWS`
+/// positions refused, the suite's pick legs unreachable) — and then the
+/// installed map, chords included, goes back up before the reply.
+///
+/// What must hold is what the rewrite can express. The builder writes each
+/// chosen position back as one flat eight-entry symbol list under the
+/// block's type, reading the old levels by index, so:
+///
+/// - **Four levels or fewer, in every group.** An eight-level position has
+///   nothing to ride above — its own levels five to eight answer to
+///   LevelFive, the block's own modifier — and the rewrite would clobber
+///   what it already carries there (`de(neo)`, the same refusal §33's
+///   allocator makes).
+/// - **At most one keysym per level, in every group.** Two keysyms on one
+///   level would land as two entries of the flat list and shift every level
+///   after them: the rewrite would silently re-point the position's
+///   characters, the one thing it promises not to do.
+fn text_hostable(compiled: &xkbcommon::xkb::Keymap, code: u32) -> bool {
+    use xkbcommon::xkb;
+
+    let keycode = xkb::Keycode::from(code + 8);
+    for group in 0..compiled.num_layouts() {
+        let levels = compiled.num_levels_for_key(keycode, group);
+        if levels > 4 {
+            return false;
+        }
+        for level in 0..levels {
+            if compiled.key_get_syms_by_level(keycode, group, level).len() > 1 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The Unicode keysym of one scalar value: `0x01000000 + ucs4`, for every
+/// scalar alike.
+///
+/// Emoji are all above 0xFFFF, where this is the only spelling there is; the
+/// point of applying it below 0x10000 too is that a slot then never has to
+/// know what it is carrying — a Latin letter delivered this way arrives as
+/// that Unicode character, not as a keyboard's opinion of `a`.
+fn unicode_keysym(scalar: char) -> u32 {
+    0x0100_0000 + scalar as u32
+}
+
+/// The scalar values of a `text` payload, or the error reply it earns.
+///
+/// Rejections are total: `String` is valid UTF-8 and Rust's `char` is a
+/// scalar value by construction, so the surrogate and lone-continuation
+/// shapes the line protocol could carry in a byte-oriented language cannot
+/// even be spelled here — that half of the check is the type system's job,
+/// and it has already done it by the time this runs.
+fn text_scalars(payload: &str) -> Result<Vec<char>, String> {
+    let scalars: Vec<char> = payload.chars().collect();
+    if scalars.is_empty() {
+        return Err("err empty text".to_string());
+    }
+    if scalars.len() > MAX_TEXT_SCALARS {
+        return Err("err text too long".to_string());
+    }
+    Ok(scalars)
+}
+
+/// What building the transient keymap can die of. Both leave the installed
+/// keymap published and untouched — a failed pick is the user's keymap minus
+/// one emoji, never a dead device.
+#[derive(Debug)]
+enum TextBuildError {
+    /// Fewer hostable slots than codepoints.
+    NoSlots,
+    /// The rewritten text is not a keymap, or its level-five chord opens
+    /// nothing.
+    Keymap,
+}
+
+/// Builds the transient variant of the installed keymap that carries one
+/// `text` payload (ticket 24).
+///
+/// The installed text is the only input — never a recompile from the
+/// configure's RMLVO, because the keymap the user actually has may be a
+/// custom one edited at its own path (ticket 06), and the pick must ride the
+/// same map the caps draw from. Each codepoint gets one slot: a level from
+/// five to eight of a letter position. A chosen position's levels one to four
+/// are read off the installed keymap's own behaviour, per group, and written
+/// back under the block's eight-level type — the same shape
+/// `extend_with_reserved` produces, so the one chord the panel already uses
+/// for the reserved block opens these slots too. §33's character invariant
+/// holds the cheap way it is allowed to here: the levels-one-to-four bytes
+/// are not edited, and the compile-plus-chord check at the end refuses to
+/// hand back anything that would not type.
+///
+/// A position the block already hosts is rewritten like any other: its
+/// levels one to four survive, its levels five to eight stop carrying the
+/// catalogue for the length of the swap. With the sixteen-scalar cap that
+/// never happens — four positions of `TEXT_ROWS` host the lot, and the block
+/// sits above the digit row — but the code does not lean on that.
+fn build_text_keymap(installed: &str, typed: &[(TextSlot, char)]) -> Result<String, TextBuildError> {
+    use xkbcommon::xkb;
+
+    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+    let compiled = xkb::Keymap::new_from_string(
+        &context,
+        installed.to_string(),
+        xkb::KEYMAP_FORMAT_TEXT_V1,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    )
+    .ok_or(TextBuildError::Keymap)?;
+    let groups = compiled.num_layouts();
+
+    // The positions in first-use order, each with the four codepoints its
+    // levels five to eight carry — or None where the string ran out.
+    let mut positions: Vec<(&'static str, u32, [Option<char>; 4])> = Vec::new();
+    for (slot, scalar) in typed {
+        let index = (slot.level - 5) as usize;
+        match positions.iter_mut().find(|(name, _, _)| *name == slot.position) {
+            Some((_, _, above)) => above[index] = Some(*scalar),
+            None => {
+                let mut above = [None; 4];
+                above[index] = Some(*scalar);
+                positions.push((slot.position, slot.code, above));
+            }
+        }
+    }
+
+    let mut keys = String::new();
+    for (position, code, above) in &positions {
+        keys.push_str(&format!("\tkey <{position}> {{\n"));
+        for group in 1..=groups {
+            keys.push_str(&format!("\t\ttype[{group}]= \"OSK_RESERVED\",\n"));
+        }
+        for group in 0..groups {
+            let tail = if group + 1 < groups { "," } else { "" };
+            let mut symbols: Vec<String> = Vec::with_capacity(8);
+            for level in 0..4u32 {
+                let syms = compiled
+                    .key_get_syms_by_level(xkb::Keycode::from(code + 8), group, level);
+                if syms.is_empty() {
+                    // An empty level is a level: spelled out, so the rewritten
+                    // key keeps the shape it had.
+                    symbols.push("NoSymbol".to_string());
+                } else {
+                    symbols.extend(syms.iter().map(|sym| xkb::keysym_get_name(*sym)));
+                }
+            }
+            for entry in above {
+                symbols.push(match entry {
+                    Some(scalar) => format!("0x{:x}", unicode_keysym(*scalar)),
+                    None => "NoSymbol".to_string(),
+                });
+            }
+            keys.push_str(&format!(
+                "\t\tsymbols[{}]= [ {} ]{tail}\n",
+                group + 1,
+                symbols.join(", ")
+            ));
+        }
+        keys.push_str("\t};\n");
+    }
+
+    // The chosen positions' old statements are cut in one pass over ranges
+    // all found in the original text, then the new keys — and the type, when
+    // the installed keymap never hosted the block and so never declared it —
+    // are inserted the way `extend_with_reserved` assembles its block.
+    let mut cuts: Vec<(usize, usize)> = positions
+        .iter()
+        .filter_map(|(position, _, _)| key_statement_bounds(installed, position))
+        .collect();
+    cuts.sort();
+    let mut trimmed = String::with_capacity(installed.len());
+    let mut at = 0usize;
+    for (start, end) in cuts {
+        trimmed.push_str(&installed[at..start]);
+        at = end;
+    }
+    trimmed.push_str(&installed[at..]);
+
+    let needs_type = !trimmed.contains("type \"OSK_RESERVED\"");
+    let (_, types_end) = section_bounds(&trimmed, "xkb_types").ok_or(TextBuildError::Keymap)?;
+    let (_, symbols_end) = section_bounds(&trimmed, "xkb_symbols").ok_or(TextBuildError::Keymap)?;
+    let mut out = String::with_capacity(trimmed.len() + keys.len() + RESERVED_TYPE.len());
+    out.push_str(&trimmed[..types_end]);
+    if needs_type {
+        out.push_str(RESERVED_TYPE);
+    }
+    out.push_str(&trimmed[types_end..symbols_end]);
+    out.push_str(&keys);
+    out.push_str(&trimmed[symbols_end..]);
+
+    // It is only there if it types: compile the result, then ask the built
+    // keymap whether the level-five chord reaches the first slot — the same
+    // proof `extend_with_reserved` demands of the block (decisions §33).
+    let built = xkb::Keymap::new_from_string(
+        &context,
+        out.clone(),
+        xkb::KEYMAP_FORMAT_TEXT_V1,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    )
+    .ok_or(TextBuildError::Keymap)?;
+    let probe = LevelProbe::new(&built).ok_or(TextBuildError::Keymap)?;
+    let (first_slot, first_scalar) = typed.first().ok_or(TextBuildError::NoSlots)?;
+    let wanted = xkb::Keysym::from(unicode_keysym(*first_scalar));
+    if syms_with_mods(&built, 0, probe.level_five, first_slot.code) != vec![wanted] {
+        eprintln!("<LVL5> does not open the transient text keymap; pick refused");
+        return Err(TextBuildError::Keymap);
+    }
+    Ok(out)
+}
+
+/// Types one `text` payload against the focused client and leaves the device
+/// exactly as it found it (ticket 24).
+///
+/// Everything here runs under the caller's lock, start to finish — a second
+/// `text` from the same connection simply queues behind it, which is the
+/// whole concurrency story; there is no other guard. The costs are the ones
+/// decisions §37 recorded and accepted: exactly two keymap events per pick
+/// on the focused client (the transient map out, the installed one back),
+/// and the group restored by re-sending modifiers, because a keymap event
+/// resets it (§35).
+///
+/// The state that exists when the pick arrives is read from `shared` and
+/// honoured, never invented: the group, the mask the device really still
+/// holds, and the level keys' own bits out of the per-group mask table. The
+/// chord is the panel's own exact-level shape (the reducer's: `<LVL5>`, then
+/// `<LVL3>`, then Shift around the position), and what a connection holds
+/// that would move a level is lifted around each tap and put back after it —
+/// the same lift-around a locked Shift gets under the panel's `&123` caps.
+///
+/// **The XWayland beat, measured.** The swap's three moves reach every
+/// client in wire order — transient map, taps, installed map back — because
+/// ordering on one connection is guaranteed, and native Wayland clients
+/// (foot) resolve the taps byte-exact on that order alone. XWayland needs
+/// one thing more, and it is why a pick of 🙂 used to type `й` there: it
+/// recompiles each arriving keymap asynchronously (the xkbcomp report pairs
+/// in the compositor's log), and an X11 client translates its queued key
+/// events against the server's LIVE keymap at processing time. With the
+/// restore upload flush-adjacent to the taps, the installed map is what is
+/// live when the client gets to the taps — every tap resolves at level one
+/// of the installed map, deterministic at every upload-to-tap pacing tried
+/// (0-30ms), while the same pick with the restore upload held back reads
+/// `🙂` at settle zero: the transient's own recompile was never the race.
+/// So the pick spends its one wait — `text_settle`, flushed taps first —
+/// between the last tap and the restore upload. Calibrated in the VM
+/// against an isolated pick, per settle value, six picks each: 5ms 0/6,
+/// 10ms 1/6, 15ms 3/6, 20ms 6/6, 30ms 6/6 — a ~20ms threshold, shipped at
+/// 50ms for a 2.5x margin. A roundtrip after the transient upload is kept
+/// (free) to put the compositor's processing of the swap ahead of the taps;
+/// settles between upload and first tap and between chord and tap were
+/// measured unnecessary (the roundtrip ordering plus the restore-side wait
+/// cover both), so none are spent there. Pick wall time is tens of
+/// milliseconds — ~55ms with the default settle against ~7-20ms of
+/// compile-and-plan work at settle zero.
+fn deliver_text(
+    shared: &Shared,
+    connection: &Connection,
+    keyboard: &ZwpVirtualKeyboardV1,
+    payload: &str,
+) -> String {
+    let scalars = match text_scalars(payload) {
+        Ok(scalars) => scalars,
+        Err(reply) => return reply,
+    };
+    let Some(installed) = shared.installed_keymap.clone() else {
+        return "err no keymap yet".to_string();
+    };
+
+    let skip: std::collections::HashSet<u32> = shared.held.keys().copied().collect();
+    let Some(slots) = plan_text_slots(&installed, &shared.codes, scalars.len(), &skip) else {
+        eprintln!("text: no hostable slots for {} scalar(s)", scalars.len());
+        return "err no slots".to_string();
+    };
+
+    // The level keys, as the panel plays them for the reserved block. Names
+    // resolved through the keymap's own table, bits through the per-group
+    // mask the install computed — a bit is a fact of the group being typed,
+    // and the zero tuples left when a level needs neither are inert.
+    let bit_of = |name: &str| -> Option<(u32, u32)> {
+        let code = shared.codes.get(name).copied()?;
+        let per_group = shared.modifier_masks.get(&code)?;
+        let bit = *per_group
+            .get(shared.group as usize)
+            .or_else(|| per_group.first())?;
+        (bit != 0).then_some((code, bit))
+    };
+    let needs_shift = slots.iter().any(|slot| slot.level == 6 || slot.level == 8);
+    let needs_level3 = slots.iter().any(|slot| slot.level == 7 || slot.level == 8);
+    let Some(level5) = bit_of("LVL5") else {
+        return "err no level keys".to_string();
+    };
+    let shift = if needs_shift { bit_of("LFSH") } else { Some((0, 0)) };
+    let level3 = if needs_level3 { bit_of("LVL3") } else { Some((0, 0)) };
+    let (Some(shift), Some(level3)) = (shift, level3) else {
+        return "err no level keys".to_string();
+    };
+
+    let typed: Vec<(TextSlot, char)> = slots.into_iter().zip(scalars).collect();
+    let transient = match build_text_keymap(&installed, &typed) {
+        Ok(transient) => transient,
+        Err(TextBuildError::NoSlots) => return "err no slots".to_string(),
+        Err(TextBuildError::Keymap) => {
+            eprintln!("text: the transient keymap would not type; installed keymap untouched");
+            return "err keymap".to_string();
+        }
+    };
+
+    // Wall time for the log line below: a pick's cost is a decision this
+    // file is asked to defend with numbers, and the suite reads this line.
+    let started = std::time::Instant::now();
+
+    let group = shared.group;
+    let base = shared.modifier_mask();
+    let mut current = base;
+
+    if let Err(error) = upload_keymap(keyboard, &transient) {
+        eprintln!("text: cannot upload the transient keymap: {error}");
+        return "err keymap".to_string();
+    }
+    // The keymap event reset the client's group (§35); put it back, under
+    // the mask the device still holds, before anything is tapped.
+    keyboard.modifiers(current, 0, 0, group);
+
+    // The swap's three moves reach every client in order — transient map,
+    // taps, installed map back — because ordering on one connection is
+    // guaranteed. Order is not timing, and XWayland is the consumer the
+    // order is not enough for: it recompiles each arriving keymap
+    // asynchronously (the xkbcomp report pairs in the compositor's log),
+    // and an X11 client translates its queued key events against the
+    // server's LIVE keymap at processing time, not at delivery time. So
+    // this roundtrip puts the swap ahead of the taps by one compositor
+    // pass, which gives the transient's recompile a head start; what the
+    // taps themselves must not outlive is the transient's reign, and that
+    // is the settle below, after them.
+    let _ = connection.roundtrip();
+
+    // Bits that would move a level if a connection held them across a tap.
+    let perturbing = level5.1 | shift.1 | level3.1;
+    for (slot, _) in &typed {
+        let wanted = level5.1
+            | if slot.level == 6 || slot.level == 8 { shift.1 } else { 0 }
+            | if slot.level == 7 || slot.level == 8 { level3.1 } else { 0 };
+
+        // Lift what is held that the level does not want, and put it back
+        // after the tap — only shared state answers for this, a held key's
+        // own bit at the group being typed.
+        let lifts: Vec<(u32, u32)> = shared
+            .held
+            .keys()
+            .filter_map(|code| {
+                let per_group = shared.modifier_masks.get(code)?;
+                let bit = *per_group
+                    .get(group as usize)
+                    .or_else(|| per_group.first())?;
+                ((bit & perturbing) != 0 && (bit & wanted) == 0).then_some((*code, bit))
+            })
+            .collect();
+        for (code, bit) in &lifts {
+            keyboard.key(stamp(), *code, 0);
+            current &= !bit;
+            keyboard.modifiers(current, 0, 0, group);
+        }
+
+        // The level keys the level wants, in the block's own press order
+        // (<LVL5>, then <LVL3>, then Shift), skipped when already down.
+        let mut chord: Vec<(u32, u32)> = Vec::with_capacity(3);
+        if !shared.held.contains_key(&level5.0) {
+            chord.push(level5);
+        }
+        if (wanted & level3.1) != 0 && !shared.held.contains_key(&level3.0) {
+            chord.push(level3);
+        }
+        if (wanted & shift.1) != 0 && !shared.held.contains_key(&shift.0) {
+            chord.push(shift);
+        }
+        for (code, bit) in &chord {
+            keyboard.key(stamp(), *code, 1);
+            current |= bit;
+            keyboard.modifiers(current, 0, 0, group);
+        }
+
+        // The position itself, one press-release round trip like `tap`.
+        keyboard.key(stamp(), slot.code, 1);
+        keyboard.key(stamp(), slot.code, 0);
+
+        for (code, bit) in chord.iter().rev() {
+            keyboard.key(stamp(), *code, 0);
+            current &= !bit;
+            keyboard.modifiers(current, 0, 0, group);
+        }
+        for (code, bit) in &lifts {
+            keyboard.key(stamp(), *code, 1);
+            current |= bit;
+            keyboard.modifiers(current, 0, 0, group);
+        }
+    }
+
+    // The settle, and the one measured mechanism this pick rests on. The
+    // taps are flushed now and the installed map goes back up only after
+    // the wait: XWayland recompiles whatever keymap arrives last, and the
+    // X11 client translates the queued taps against the LIVE map when it
+    // processes them — with the restore flush-adjacent to the taps, the
+    // installed map is what is live by then, and every pick reads `й`
+    // (measured, deterministic; a 400ms-idle pick that never restores
+    // reads `🙂` at settle zero, so the transient's own recompile was never
+    // the race). The wait bounds the whole chain — recompile of the
+    // transient, delivery of the key events, the client's translation —
+    // with no completion signal readable from here, so the default is the
+    // measured threshold plus margin (the numbers are on
+    // `DEFAULT_TEXT_SETTLE_MS`).
+    let _ = connection.flush();
+    let settle = text_settle();
+    if !settle.is_zero() {
+        thread::sleep(settle);
+    }
+
+    // The installed keymap goes back through the one upload path, and the
+    // group rides home on the closing modifiers request. `current` is `base`
+    // again by construction; when nothing was held, that is the
+    // `modifiers(0, 0, 0, group)` §35's reset is compensated with.
+    if let Err(error) = upload_keymap(keyboard, &installed) {
+        eprintln!("text: typed, but the installed keymap did not go back up: {error}");
+        let _ = connection.flush();
+        return "err keymap".to_string();
+    }
+    keyboard.modifiers(current, 0, 0, group);
+    let _ = connection.flush();
+    eprintln!(
+        "text: delivered {} scalar(s) in {:.1}ms",
+        typed.len(),
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    "ok".to_string()
+}
+
 /// Pulls `<AD01> = 24;` pairs out of the keymap's xkb_keycodes section.
 ///
 /// Callers name keys the way xkb does, and the numbers are resolved here rather
@@ -888,6 +1459,11 @@ enum Command {
     /// in the named group of the installed keymap. No positions means every
     /// named key the keymap carries.
     Caps { group: u32, positions: Vec<String> },
+    /// Delivers an arbitrary Unicode string (ticket 24): the payload rides a
+    /// transient variant of the installed keymap, one codepoint per slot on
+    /// levels five to eight of a letter position, and the installed keymap is
+    /// uploaded back afterwards.
+    Text(String),
 }
 
 /// The two separator bytes of a `caps` reply. Both are outside everything a
@@ -1037,6 +1613,13 @@ struct Shared {
     /// installed keymap (see `keycap_facts_for_groups`). Rebuilt exactly when
     /// `caps_gen` is bumped, so a `caps` request compiles nothing.
     caps_per_group: Vec<String>,
+    /// The exact text installed at the device, kept as the single source for
+    /// a `text` pick's transient keymap (ticket 24): the transient variant is
+    /// built from THIS, never from a recompile of the configure's RMLVO, so a
+    /// custom keymap edited at its own path (ticket 06) stays the keymap the
+    /// pick types through. Replaced on every changed-keymap install; a
+    /// same-keymap reconfigure leaves it alone.
+    installed_keymap: Option<String>,
     /// Which compiled layout is active.
     group: u32,
     config: Option<XkbConfig>,
@@ -1158,6 +1741,7 @@ impl Shared {
             config.layouts,
             text.len()
         );
+        self.installed_keymap = Some(text);
         self.ready
     }
 }
@@ -1481,6 +2065,13 @@ fn parse(line: &str) -> Option<Command> {
             positions: parts.map(str::to_string).collect(),
         });
     }
+    // `text` takes the whole rest of the line, spaces included: the payload
+    // is the user's string, not a word list, and nothing after the one
+    // separator space is ours to trim. A bare "text" is no command at all —
+    // like a bare "tap" — and answers "err unknown command".
+    if let Some(rest) = line.strip_prefix("text ") {
+        return Some(Command::Text(rest.to_string()));
+    }
     let mut parts = line.split_whitespace();
     let verb = parts.next()?;
     let raw = parts.next()?;
@@ -1799,6 +2390,15 @@ fn apply_locked(
         return "err no keymap yet".to_string();
     }
 
+    // A `text` payload is refused for what it is before any device state is
+    // consulted: an empty or oversized string is the panel's bug, not a
+    // reason to report the keymap.
+    if let Command::Text(ref payload) = command {
+        if let Err(reply) = text_scalars(payload) {
+            return reply;
+        }
+    }
+
     // Held-key bookkeeping below mutates `shared`, so drop the borrow the
     // proxy carries by cloning it — proxies are cheap handles, and the Group
     // arm already does this.
@@ -1907,6 +2507,14 @@ fn apply_locked(
                 Some(reply) => reply,
                 None => "err bad group".to_string(),
             };
+        }
+        // Arbitrary Unicode through a transient keymap (see deliver_text):
+        // nothing is claimed, nothing is left held, and the installed world
+        // goes back before the reply. It runs under the caller's lock like
+        // every arm here, which is what makes a pick atomic — a second
+        // `text` queues behind the first.
+        Command::Text(ref payload) => {
+            return deliver_text(shared, connection, &keyboard, payload);
         }
         Command::Configure(_) => unreachable!("handled above"),
     }
@@ -3080,6 +3688,564 @@ mod tests {
         assert!(parse("caps").is_none());
         assert!(parse("capsfoo 1").is_none());
         assert!(parse("caps x").is_none());
+    }
+
+    /// Builds a transient keymap for `installed` and hands it back with the
+    /// plan it used, so the tests below can name the positions it chose.
+    fn text_build_on(installed: &str, payload: &str) -> (String, Vec<TextSlot>) {
+        let scalars = text_scalars(payload).expect("payload is deliverable");
+        let codes = parse_keycodes(installed);
+        let skip = std::collections::HashSet::new();
+        let slots = plan_text_slots(installed, &codes, scalars.len(), &skip)
+            .expect("the fixture hosts the payload");
+        let typed: Vec<(TextSlot, char)> = slots.clone().into_iter().zip(scalars).collect();
+        let transient = build_text_keymap(installed, &typed).expect("the transient keymap builds");
+        (transient, slots)
+    }
+
+    /// A stock-shaped letter map, spelled the way the real layouts spell one:
+    /// four levels per position, reached by the block's own chords, Lock
+    /// answering nothing, and the level modifiers bound the way every
+    /// compiled keymap binds them — their keysyms on the level keys, over
+    /// `modifier_map Mod5 { <LVL3> }` and `Mod3 { <LVL5> }` (decisions §33).
+    /// Without the keysyms the virtual modifiers never reach the types, the
+    /// chords go inert and nothing is hostable — a property of the fixture,
+    /// not of the gates. `<AB11>` is declared and carries no key statement,
+    /// so it is the one free position `extend_with_reserved` can fill.
+    const TEXT_FIXTURE: &str = "xkb_keymap {\n\
+        xkb_keycodes {\n\
+            <AD01> = 24;\n\
+            <AD02> = 25;\n\
+            <AC01> = 38;\n\
+            <LVL3> = 50;\n\
+            <LVL5> = 94;\n\
+            <AB11> = 97;\n\
+        };\n\
+        xkb_types {\n\
+            virtual_modifiers LevelThree, LevelFive;\n\
+            type \"FOUR_LEVEL\" {\n\
+                modifiers = Shift + LevelThree;\n\
+                map[None] = Level1;\n\
+                map[Shift] = Level2;\n\
+                map[LevelThree] = Level3;\n\
+                map[Shift+LevelThree] = Level4;\n\
+            };\n\
+        };\n\
+        xkb_compat {\n\
+            interpret 0xfe03+AnyOf(all) {\n\
+                virtualModifier= LevelThree;\n\
+                useModMapMods=level1;\n\
+                action= SetMods(modifiers=LevelThree,clearLocks);\n\
+            };\n\
+            interpret 0xfe11+AnyOf(all) {\n\
+                virtualModifier= LevelFive;\n\
+                useModMapMods=level1;\n\
+                action= SetMods(modifiers=LevelFive,clearLocks);\n\
+            };\n\
+        };\n\
+        xkb_symbols {\n\
+            key <AD01> {\n\
+                type[1]= \"FOUR_LEVEL\", type[2]= \"FOUR_LEVEL\",\n\
+                symbols[1]= [1, exclam, onesuperior, exclamdown],\n\
+                symbols[2]= [2, at, oneeighth, threeeighths]\n\
+            };\n\
+            key <AC01> {\n\
+                type[1]= \"FOUR_LEVEL\", type[2]= \"FOUR_LEVEL\",\n\
+                symbols[1]= [3, numbersign, sterling, section],\n\
+                symbols[2]= [4, dollar, onequarter, currency]\n\
+            };\n\
+            key <LVL3> { [ISO_Level3_Shift] };\n\
+            key <LVL5> { [ISO_Level5_Shift] };\n\
+            modifier_map Mod5 { <LVL3> };\n\
+            modifier_map Mod3 { <LVL5> };\n\
+        };\n\
+    };";
+
+    /// The block composed onto the stock-shaped fixture: `<AB11>` takes the
+    /// catalogue's head, the letter rows stay as the fixture spells them.
+    fn text_fixture_with_block() -> String {
+        extend_with_reserved(TEXT_FIXTURE).expect("the block composes on the fixture")
+    }
+
+
+    /// Slot finding for `text`: letters found in `TEXT_ROWS` order, positions
+    /// the keymap does not define are skipped, and a string the keymap cannot
+    /// host whole is refused rather than silently truncated.
+    #[test]
+    fn text_slots_find_defined_letters_skip_missing_and_refuse_overflow() {
+        let keymap = TEXT_FIXTURE;
+        let codes = parse_keycodes(keymap);
+        let skip = std::collections::HashSet::new();
+
+        // AD02 is declared and carries no key statement: passed over, not
+        // hosted. Five scalars fill AD01's four levels and open AC01's fifth.
+        let plan = plan_text_slots(keymap, &codes, 5, &skip).expect("two hosts fit five");
+        assert_eq!(plan[0].position, "AD01");
+        assert_eq!(plan[0].code, 16);
+        assert_eq!(plan[0].level, 5);
+        assert_eq!(plan[3].level, 8);
+        assert_eq!(plan[4].position, "AC01");
+        assert_eq!(plan[4].level, 5);
+
+        // Capacity: two hostable positions carry eight codepoints, no more.
+        assert_eq!(
+            plan_text_slots(keymap, &codes, 8, &skip).map(|plan| plan.len()),
+            Some(8)
+        );
+        assert!(
+            plan_text_slots(keymap, &codes, 9, &skip).is_none(),
+            "nine codepoints cannot fit two hosts"
+        );
+
+        // A position a connection currently holds is passed over too.
+        let held: std::collections::HashSet<u32> = [16].into_iter().collect();
+        let plan = plan_text_slots(keymap, &codes, 1, &held).expect("AC01 still hosts");
+        assert_eq!(plan[0].position, "AC01");
+    }
+
+    /// A position whose maps reach the levels in an order other than the
+    /// block's chords do is still hosted: the pick's rewrite reaches them
+    /// the block's way for the length of the swap, and the installed type —
+    /// this position's reordered chords included — goes back up with the
+    /// restore upload. What the gate must still refuse here is nothing: the
+    /// position has four levels and one keysym per level, which is
+    /// everything the rewrite needs to express it.
+    #[test]
+    fn text_slots_host_a_position_whose_index_and_chord_readings_disagree() {
+        let keymap = "xkb_keymap {\n\
+            xkb_keycodes {\n\
+                <AD01> = 24;\n\
+                <AC01> = 38;\n\
+                <LVL3> = 50;\n\
+                <LVL5> = 94;\n\
+            };\n\
+            xkb_types {\n\
+                virtual_modifiers LevelThree, LevelFive;\n\
+                type \"CHORDS_SWAPPED\" {\n\
+                    modifiers = Shift + LevelThree;\n\
+                    map[None] = Level1;\n\
+                    map[Shift] = Level3;\n\
+                    map[LevelThree] = Level2;\n\
+                    map[Shift+LevelThree] = Level4;\n\
+                };\n\
+                type \"FOUR_LEVEL\" {\n\
+                    modifiers = Shift + LevelThree;\n\
+                    map[None] = Level1;\n\
+                    map[Shift] = Level2;\n\
+                    map[LevelThree] = Level3;\n\
+                    map[Shift+LevelThree] = Level4;\n\
+                };\n\
+            };\n\
+            xkb_compat {\n\
+                interpret 0xfe03+AnyOf(all) {\n\
+                    virtualModifier= LevelThree;\n\
+                    useModMapMods=level1;\n\
+                    action= SetMods(modifiers=LevelThree,clearLocks);\n\
+                };\n\
+                interpret 0xfe11+AnyOf(all) {\n\
+                    virtualModifier= LevelFive;\n\
+                    useModMapMods=level1;\n\
+                    action= SetMods(modifiers=LevelFive,clearLocks);\n\
+                };\n\
+            };\n\
+            xkb_symbols {\n\
+                key <AD01> { type= \"CHORDS_SWAPPED\", [a, b, c, d] };\n\
+                key <AC01> { type= \"FOUR_LEVEL\", [1, exclam, onesuperior, exclamdown] };\n\
+                key <LVL3> { [ISO_Level3_Shift] };\n\
+                key <LVL5> { [ISO_Level5_Shift] };\n\
+                modifier_map Mod5 { <LVL3> };\n\
+                modifier_map Mod3 { <LVL5> };\n\
+            };\n\
+        };";
+        let codes = parse_keycodes(keymap);
+        let skip = std::collections::HashSet::new();
+
+        let plan = plan_text_slots(keymap, &codes, 1, &skip).expect("both positions host");
+        assert_eq!(plan[0].position, "AD01", "TEXT_ROWS order, not the type's opinion");
+
+        // Two hosted positions carry eight codepoints; nine cannot fit.
+        assert_eq!(
+            plan_text_slots(keymap, &codes, 8, &skip).map(|plan| plan.len()),
+            Some(8)
+        );
+        assert!(plan_text_slots(keymap, &codes, 9, &skip).is_none());
+    }
+
+    /// A position that already reaches past four levels is skipped the way
+    /// `carried_levels` refuses `de(neo)`'s digit row: an eight-level type
+    /// has nothing for the block to ride above, and its upper levels answer
+    /// to LevelFive, which the block's own type also carries.
+    #[test]
+    fn text_slots_skip_a_position_that_reaches_past_four_levels() {
+        let keymap = "xkb_keymap {\n\
+            xkb_keycodes {\n\
+                <AD01> = 24;\n\
+                <AC01> = 38;\n\
+                <LVL3> = 50;\n\
+                <LVL5> = 94;\n\
+            };\n\
+            xkb_types {\n\
+                virtual_modifiers LevelThree, LevelFive;\n\
+                type \"EIGHT_LEVEL\" {\n\
+                    modifiers = Shift + LevelThree + LevelFive;\n\
+                    map[None] = Level1;\n\
+                    map[Shift] = Level2;\n\
+                    map[LevelThree] = Level3;\n\
+                    map[Shift+LevelThree] = Level4;\n\
+                    map[LevelFive] = Level5;\n\
+                    map[Shift+LevelFive] = Level6;\n\
+                    map[LevelThree+LevelFive] = Level7;\n\
+                    map[Shift+LevelThree+LevelFive] = Level8;\n\
+                };\n\
+                type \"FOUR_LEVEL\" {\n\
+                    modifiers = Shift + LevelThree;\n\
+                    map[None] = Level1;\n\
+                    map[Shift] = Level2;\n\
+                    map[LevelThree] = Level3;\n\
+                    map[Shift+LevelThree] = Level4;\n\
+                };\n\
+            };\n\
+            xkb_compat {\n\
+                interpret 0xfe03+AnyOf(all) {\n\
+                    virtualModifier= LevelThree;\n\
+                    useModMapMods=level1;\n\
+                    action= SetMods(modifiers=LevelThree,clearLocks);\n\
+                };\n\
+                interpret 0xfe11+AnyOf(all) {\n\
+                    virtualModifier= LevelFive;\n\
+                    useModMapMods=level1;\n\
+                    action= SetMods(modifiers=LevelFive,clearLocks);\n\
+                };\n\
+            };\n\
+            xkb_symbols {\n\
+                key <AD01> { type= \"EIGHT_LEVEL\", [a, b, c, d, e, f, g, h] };\n\
+                key <AC01> { type= \"FOUR_LEVEL\", [1, exclam, onesuperior, exclamdown] };\n\
+                key <LVL3> { [ISO_Level3_Shift] };\n\
+                key <LVL5> { [ISO_Level5_Shift] };\n\
+                modifier_map Mod5 { <LVL3> };\n\
+                modifier_map Mod3 { <LVL5> };\n\
+            };\n\
+        };";
+        let codes = parse_keycodes(keymap);
+
+        let plan = plan_text_slots(keymap, &codes, 1, &std::collections::HashSet::new())
+            .expect("AC01 still hosts");
+        assert_eq!(plan[0].position, "AC01", "<AD01> already reaches level eight");
+    }
+
+    /// A level carrying several keysyms cannot be re-expressed by the flat
+    /// eight-entry list the rewrite writes: hosting the position would point
+    /// one of those keysyms at a codepoint and silently re-point the other.
+    /// The gate's second surviving clause refuses exactly this shape.
+    #[test]
+    fn text_slots_skip_a_position_with_two_keysyms_on_a_level() {
+        let keymap = "xkb_keymap {\n\
+            xkb_keycodes {\n\
+                <AD01> = 24;\n\
+                <AC01> = 38;\n\
+                <LVL3> = 50;\n\
+                <LVL5> = 94;\n\
+            };\n\
+            xkb_types {\n\
+                virtual_modifiers LevelThree, LevelFive;\n\
+                type \"FOUR_LEVEL\" {\n\
+                    modifiers = Shift + LevelThree;\n\
+                    map[None] = Level1;\n\
+                    map[Shift] = Level2;\n\
+                    map[LevelThree] = Level3;\n\
+                    map[Shift+LevelThree] = Level4;\n\
+                };\n\
+            };\n\
+            xkb_compat {\n\
+                interpret 0xfe03+AnyOf(all) {\n\
+                    virtualModifier= LevelThree;\n\
+                    useModMapMods=level1;\n\
+                    action= SetMods(modifiers=LevelThree,clearLocks);\n\
+                };\n\
+                interpret 0xfe11+AnyOf(all) {\n\
+                    virtualModifier= LevelFive;\n\
+                    useModMapMods=level1;\n\
+                    action= SetMods(modifiers=LevelFive,clearLocks);\n\
+                };\n\
+            };\n\
+            xkb_symbols {\n\
+                key <AD01> { type= \"FOUR_LEVEL\", [ {a, b}, exclam, at, numbersign ] };\n\
+                key <AC01> { type= \"FOUR_LEVEL\", [1, exclam, onesuperior, exclamdown] };\n\
+                key <LVL3> { [ISO_Level3_Shift] };\n\
+                key <LVL5> { [ISO_Level5_Shift] };\n\
+                modifier_map Mod5 { <LVL3> };\n\
+                modifier_map Mod3 { <LVL5> };\n\
+            };\n\
+        };";
+        let codes = parse_keycodes(keymap);
+
+        let plan = plan_text_slots(keymap, &codes, 1, &std::collections::HashSet::new())
+            .expect("AC01 still hosts");
+        assert_eq!(
+            plan[0].position,
+            "AC01",
+            "<AD01>'s first level carries two keysyms"
+        );
+    }
+
+    /// A position that answers to Lock is hosted, and this is the deliberate
+    /// difference from §33's allocator (which skips it, not handles it): the
+    /// block lives in the keymap for its install's whole life, so hosting a
+    /// CapsLocked position there would cost it its uppercasing permanently.
+    /// A pick's rewrite costs the same chord for the length of the swap, and
+    /// the installed map — Lock behaviour included — is back before the
+    /// reply. Every real letter answers to Lock; refusing them would refuse
+    /// every pick on every real layout.
+    #[test]
+    fn text_slots_host_a_position_that_answers_to_lock() {
+        let keymap = "xkb_keymap {\n\
+            xkb_keycodes {\n\
+                <AD01> = 24;\n\
+                <AC01> = 38;\n\
+                <LVL3> = 50;\n\
+                <LVL5> = 94;\n\
+            };\n\
+            xkb_types {\n\
+                virtual_modifiers LevelThree, LevelFive;\n\
+                type \"ALPHABETIC\" {\n\
+                    modifiers = Shift + LevelThree + Lock;\n\
+                    map[None] = Level1;\n\
+                    map[Shift] = Level2;\n\
+                    map[LevelThree] = Level3;\n\
+                    map[Shift+LevelThree] = Level4;\n\
+                    map[Lock] = Level2;\n\
+                    map[Shift+Lock] = Level1;\n\
+                    map[Lock+LevelThree] = Level3;\n\
+                    map[Shift+Lock+LevelThree] = Level4;\n\
+                };\n\
+                type \"FOUR_LEVEL\" {\n\
+                    modifiers = Shift + LevelThree;\n\
+                    map[None] = Level1;\n\
+                    map[Shift] = Level2;\n\
+                    map[LevelThree] = Level3;\n\
+                    map[Shift+LevelThree] = Level4;\n\
+                };\n\
+            };\n\
+            xkb_compat {\n\
+                interpret 0xfe03+AnyOf(all) {\n\
+                    virtualModifier= LevelThree;\n\
+                    useModMapMods=level1;\n\
+                    action= SetMods(modifiers=LevelThree,clearLocks);\n\
+                };\n\
+                interpret 0xfe11+AnyOf(all) {\n\
+                    virtualModifier= LevelFive;\n\
+                    useModMapMods=level1;\n\
+                    action= SetMods(modifiers=LevelFive,clearLocks);\n\
+                };\n\
+            };\n\
+            xkb_symbols {\n\
+                key <AD01> { type= \"ALPHABETIC\", [a, A, ae, AE] };\n\
+                key <AC01> { type= \"FOUR_LEVEL\", [1, exclam, onesuperior, exclamdown] };\n\
+                key <LVL3> { [ISO_Level3_Shift] };\n\
+                key <LVL5> { [ISO_Level5_Shift] };\n\
+                modifier_map Mod5 { <LVL3> };\n\
+                modifier_map Mod3 { <LVL5> };\n\
+            };\n\
+        };";
+        let codes = parse_keycodes(keymap);
+
+        let plan = plan_text_slots(keymap, &codes, 1, &std::collections::HashSet::new())
+            .expect("the CapsLocked letter hosts a pick");
+        assert_eq!(plan[0].position, "AD01", "TEXT_ROWS order, Lock notwithstanding");
+    }
+
+    /// The owner's stock `us,ua` map — the exact keymap the nested suite's
+    /// pick legs configure, block included — hosts the picks. Every
+    /// `TEXT_ROWS` position is a two-level letter in at least one group: its
+    /// AltGr chord falls through to level one today, and its letter answers
+    /// to Lock. The block's own gate would refuse all twenty-six on both
+    /// counts and no pick could ever be delivered; the pick's narrower
+    /// question — can the rewrite express the position — hosts them all,
+    /// and the pick's bounded cost is that its chords answer the block's way
+    /// for the length of the swap (see `text_hostable`).
+    #[test]
+    fn the_stock_us_ua_map_hosts_the_picks_the_suite_drives() {
+        let installed = with_reserved_symbols(fixture_keymap("us,ua", "grp:caps_toggle"));
+        let codes = parse_keycodes(&installed);
+        let skip = std::collections::HashSet::new();
+
+        // The suite's two payloads: one scalar, and the five-scalar family
+        // with two ZWJ joins.
+        let one = plan_text_slots(&installed, &codes, 1, &skip).expect("one letter hosts");
+        assert_eq!(one[0].position, "AD01");
+        assert_eq!(one[0].level, 5);
+
+        let five = plan_text_slots(&installed, &codes, 5, &skip).expect("four fill one position");
+        assert_eq!(five[0].position, "AD01");
+        assert_eq!(five[4].position, "AD02", "the fifth scalar opens the next position");
+        assert_eq!(five[4].level, 5);
+
+        // And the sixteen-scalar cap fits four positions, as the builder's
+        // doc promises.
+        let sixteen = plan_text_slots(&installed, &codes, MAX_TEXT_SCALARS, &skip)
+            .expect("the cap fits TEXT_ROWS");
+        assert_eq!(sixteen[15].position, "AD04");
+        assert_eq!(sixteen[15].level, 8);
+    }
+
+    /// Every scalar rides the same formula, so a slot never has to know what
+    /// it is carrying: `0x01000000 + ucs4` for emoji and for a plain `a`
+    /// alike.
+    #[test]
+    fn every_text_slot_spells_its_codepoint_as_the_unicode_keysym() {
+        // 0x01000000 + 0x1F600: the Unicode keysym spelling libxkbcommon
+        // itself writes for U+1F600.
+        assert_eq!(unicode_keysym('\u{1F600}'), 0x0101_F600);
+        assert_eq!(unicode_keysym('\u{10FFFF}'), 0x0110_FFFF);
+        assert_eq!(unicode_keysym('a'), 0x0100_0061);
+        assert_eq!(unicode_keysym('\u{A9}'), 0x0100_00A9);
+    }
+
+    /// §33's invariant, asserted per rewritten position of a transient pick:
+    /// levels one to four still carry exactly what they carried, in every
+    /// group. The baseline here is a plain compiled keymap, so the type the
+    /// builder must add when the installed keymap never hosted the block is
+    /// exercised too.
+    #[test]
+    fn text_rewrite_leaves_levels_one_to_four_of_every_chosen_position_in_place() {
+        use xkbcommon::xkb;
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let installed = TEXT_FIXTURE.to_string();
+        let (transient, slots) = text_build_on(&installed, "👍🙂");
+
+        let compile = |text: &str| {
+            xkb::Keymap::new_from_string(
+                &context,
+                text.to_string(),
+                xkb::KEYMAP_FORMAT_TEXT_V1,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("the text compiles")
+        };
+        let before = compile(&installed);
+        let after = compile(&transient);
+        let codes = parse_keycodes(&installed);
+
+        let positions: std::collections::HashSet<&str> =
+            slots.iter().map(|slot| slot.position).collect();
+        assert_eq!(positions, ["AD01"].into_iter().collect(), "two scalars fit one position");
+        for position in positions {
+            // The old statement was cut, not shadowed: one definition left.
+            assert_eq!(
+                transient.matches(&format!("key <{position}>")).count(),
+                1,
+                "<{position}> is defined twice after the rewrite"
+            );
+            for group in 0..before.num_layouts() {
+                for level in 0..4u32 {
+                    assert_eq!(
+                        before.key_get_syms_by_level(
+                            xkb::Keycode::from(codes[position] + 8),
+                            group,
+                            level
+                        ),
+                        after.key_get_syms_by_level(
+                            xkb::Keycode::from(codes[position] + 8),
+                            group,
+                            level
+                        ),
+                        "<{position}> group {group} level {} moved",
+                        level + 1
+                    );
+                }
+            }
+            // And the slots past the string's end are empty, not stale.
+            for level in 6..8u32 {
+                assert!(
+                    after
+                        .key_get_syms_by_level(xkb::Keycode::from(codes[position] + 8), 0, level)
+                        .is_empty(),
+                    "<{position}> level {} should carry nothing",
+                    level + 1
+                );
+            }
+        }
+    }
+
+    /// The pick's whole proof, on the keymap shape the helper really
+    /// installs — the block already inside it, on the fixture's free
+    /// position: the transient variant compiles, and holding `<LVL5>` (with
+    /// Shift and `<LVL3>` as the level asks) reaches each slot's codepoint in
+    /// EVERY group, the same way the panel's exact-level caps are played.
+    #[test]
+    fn the_transient_keymap_types_the_string_the_way_the_block_is_played() {
+        use xkbcommon::xkb;
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let installed = text_fixture_with_block();
+        let (transient, slots) = text_build_on(&installed, "👍🙂🔥🎉");
+
+        let built = xkb::Keymap::new_from_string(
+            &context,
+            transient,
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .expect("the transient keymap compiles");
+        let probe = LevelProbe::new(&built).expect("the fixture names its modifiers");
+        let codes = parse_keycodes(&installed);
+        let scalars: Vec<char> = "👍🙂🔥🎉".chars().collect();
+        let (shift, lvl3) = (probe.chords[1], probe.chords[2]);
+
+        for group in 0..built.num_layouts() {
+            for (slot, scalar) in slots.iter().zip(&scalars) {
+                let mods = probe.level_five
+                    | if slot.level == 6 || slot.level == 8 { shift } else { 0 }
+                    | if slot.level == 7 || slot.level == 8 { lvl3 } else { 0 };
+                assert_eq!(
+                    syms_with_mods(&built, group, mods, codes[slot.position]),
+                    vec![xkb::Keysym::from(unicode_keysym(*scalar))],
+                    "<{}> group {group} level {} must type {}",
+                    slot.position,
+                    slot.level,
+                    scalar
+                );
+            }
+        }
+
+        // The block rode out the swap untouched: the same chord still opens
+        // its catalogue head on the free position, in every group.
+        for group in 0..built.num_layouts() {
+            assert_eq!(
+                syms_with_mods(&built, group, probe.level_five, codes["AB11"]),
+                vec![xkb::keysym_from_name("exclam", xkb::KEYSYM_NO_FLAGS)],
+                "<AB11> group {group} lost the catalogue's head to the pick"
+            );
+        }
+    }
+
+    /// `text` takes the whole rest of the line as its payload, a multi-scalar
+    /// sequence arrives as one string, and the empty and oversized shapes are
+    /// refused before any device state is consulted.
+    #[test]
+    fn text_parses_the_whole_rest_of_the_line_and_validates_the_payload() {
+        match parse("text 👍") {
+            Some(Command::Text(payload)) => assert_eq!(payload, "👍"),
+            other => panic!("expected a text command, got {other:?}"),
+        }
+        // A ZWJ family arrives as one payload of its five scalars.
+        match parse("text 👨‍👩‍👧") {
+            Some(Command::Text(payload)) => assert_eq!(payload.chars().count(), 5),
+            other => panic!("expected a text command, got {other:?}"),
+        }
+        // Interior spaces belong to the string, like any other character.
+        match parse("text a b") {
+            Some(Command::Text(payload)) => assert_eq!(payload, "a b"),
+            other => panic!("expected a text command, got {other:?}"),
+        }
+        // A bare "text" is not a command, like a bare "tap"; neither is a
+        // verb that merely starts the same way.
+        assert!(parse("text").is_none());
+        assert!(parse("textfoo x").is_none());
+
+        assert_eq!(text_scalars("").unwrap_err(), "err empty text");
+        assert_eq!(text_scalars("👍").unwrap().len(), 1);
+        assert_eq!(text_scalars(&"a".repeat(MAX_TEXT_SCALARS)).unwrap().len(), MAX_TEXT_SCALARS);
+        assert_eq!(text_scalars(&"a".repeat(MAX_TEXT_SCALARS + 1)).unwrap_err(), "err text too long");
     }
 }
 

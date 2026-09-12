@@ -19,6 +19,8 @@ QtObject {
                 followTheme: true,
                 // Omarchy 4.0.2's own default emoji picker (2026-09-05).
                 emojiApp: "omarchy-menu-emoji",
+                // The Super cap says what the key is (ticket 22).
+                superMark: "word",
                 keyRadius: 8,
                 panelRadius: 12,
                 keyBackground: "#303030",
@@ -58,6 +60,58 @@ QtObject {
             // And it round-trips under the file's snake_case name.
             T.equal(Config.serializeOverrides({ emojiApp: "xmoji" }),
                 '{\n  "emoji_app": "xmoji"\n}\n')
+        })
+
+        T.test("the Super mark is one of five words, the word by default", function () {
+            // Ticket 22: what the Super cap draws is a preference in the same
+            // validated store as the rest. The popover offers five marks and
+            // nothing else is one; the canonical snake_case name and its
+            // camelCase alias are the same field with the same rule.
+            var marks = ["word", "omarchy", "windows", "macos", "penguin"]
+            for (var i = 0; i < marks.length; i++) {
+                var parsed = Config.reloadOverrides({}, '{"super_mark":"' + marks[i] + '"}')
+                T.equal(parsed.error, "")
+                T.deepEqual(parsed.value, { superMark: marks[i] })
+                T.equal(Config.serializeOverrides(parsed.value),
+                    '{\n  "super_mark": "' + marks[i] + '"\n}\n')
+            }
+
+            // An unknown value is a malformed edit with the §5 preservation
+            // semantics — the last valid map stands, the file is not touched.
+            // The QML independently treats an unknown string as the word, so
+            // a value that could not reach the file cannot blank the cap.
+            var previous = { superMark: "penguin" }
+            var unknown = Config.reloadOverrides(previous, '{"super_mark":"tux"}')
+            T.equal(unknown.value, previous)
+            T.equal(unknown.error, "Invalid value for super_mark")
+            var nonString = Config.reloadOverrides(previous, '{"super_mark":7}')
+            T.equal(nonString.value, previous)
+            T.equal(nonString.error, "Invalid value for super_mark")
+
+            // Alias spellings validate identically.
+            var aliasOk = Config.reloadOverrides({}, '{"superMark":"windows"}')
+            T.equal(aliasOk.error, "")
+            T.deepEqual(aliasOk.value, { superMark: "windows" })
+            var aliasBad = Config.reloadOverrides(previous, '{"superMark":"tux"}')
+            T.equal(aliasBad.value, previous)
+            T.equal(aliasBad.error, "Invalid value for superMark")
+            // Duplicate semantic names resolve canonically in both orders.
+            var canonicalA = Config.reloadOverrides(
+                {}, '{"super_mark":"word","superMark":"macos"}')
+            T.deepEqual(canonicalA.value, { superMark: "word" })
+            var canonicalB = Config.reloadOverrides(
+                {}, '{"superMark":"macos","super_mark":"word"}')
+            T.deepEqual(canonicalB.value, { superMark: "word" })
+
+            // Sparse: nothing materializes the default — a fresh install's
+            // file carries no super_mark at all, and merge answers the
+            // maintained default for it.
+            var absent = Config.reloadOverrides({}, "{}")
+            T.equal(absent.error, "")
+            T.equal(Config.owns(absent.value, "superMark"), false)
+            T.equal(Config.serializeOverrides(absent.value), "{}\n")
+            var effective = Config.merge(Config.maintainerDefaults(), absent.value, null)
+            T.equal(effective.superMark, "word")
         })
 
         T.test("sparse overrides merge over theme tokens and shipped fallbacks", function () {

@@ -27,6 +27,23 @@ var functionRow = [
     { label: "⌫", key: "BackSpace", w: 1.5 }
 ]
 
+// ---- the Super cap's mark (ticket 22, decisions §27 as amended) ----
+//
+// Which arm of the settings choice the Super cap draws. Pure so the host
+// suite can drive it: `mark` is the setting string, `omarchyFontPresent` the
+// packaged-TTF gate, and the answer names the one arm Keyboard.qml shows.
+//
+// The word is the default and the landing place for everything undrawable:
+// an unknown setting string (the store rejects them, but the QML treats one
+// as the word anyway so nothing can ever draw a blank cap) and the Omarchy
+// choice when the private font is absent (§27: the gate stays attached to
+// that arm alone — an absent file never requests U+E900).
+function superMarkArm(mark, omarchyFontPresent) {
+    if (mark === "omarchy") return omarchyFontPresent ? "omarchy" : "word"
+    if (mark === "windows" || mark === "macos" || mark === "penguin") return mark
+    return "word"
+}
+
 // The row both pages end on, identical but for the page key's own label. It is
 // the row the pointer returns to most, so it is the one that must not move
 // between pages: same caps, same widths, same place (see the height pin in
@@ -38,14 +55,15 @@ function commandRow(pageLabel) {
         // Fn is a panel display control: it swaps the top row in place and
         // never emits a key position or participates in modifier latching.
         { label: "Fn", key: "fn" },
-        // Super's cap draws U+E900 from the packaged omarchy TTF in
-        // Keyboard.qml when that file is present. This label is the
-        // accessible name and the missing-font fallback (spec-v1.1 §1).
+        // Super's cap draws this label by default (ticket 22): the word is
+        // the default arm of the mark setting, this label is the accessible
+        // name of every arm, and it is the missing-font fallback of the
+        // Omarchy glyph arm (spec-v1.1 §1, decisions §27 as amended).
         { label: "Super", key: "logo" },
         { label: "Alt", key: "alt" },
-        // The emoji cap (spec-v1.1 §1): a fixed label naming the app the
-        // cap launches. Like the arrows, it is artwork, not a character
-        // any level of the keymap produces.
+        // The emoji cap (spec-v1.1 §1): a fixed label for the cap that
+        // opens the panel's own emoji page. Like the arrows, it is artwork,
+        // not a character any level of the keymap produces.
         { label: "☺", key: "emoji" },
         { t: " ", label: "", w: 4.5, k: "SPCE" },
         { label: "AltGr", key: "altgr" },
