@@ -147,8 +147,12 @@ ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for d in $XDG_RUNTIME
   configure in 2 s; daemon killed mid-flight → re-configure in 2 s;
   cold boot → panel configured 1 s after the daemon.
 - Keycap pipeline green after `8c8546c` (Ukrainian symbols collected).
-- The integration seam runs in the guest, from a clone of
-  `spec/v1-keyboard`: 5 passed, four compositor keymap rebuilds.
+- The integration seam runs in the guest: 25 passed, 20 compositor keymap
+  rebuild log lines (ceiling 30). It now includes Electron 43 on native
+  Ozone/Wayland for the DomCode regression and a compiled public Wayland
+  observer for the one-keymap/focus regression. The observer build needs
+  `cc`, `pkg-config`, `wayland-scanner`, `wayland-client`, `xkbcommon`, and
+  `wayland-protocols`; all are installed in the lab VM.
 - Three-group cycling (ticket 10): with `kb_layout = us,ua,de` and the
   physical Caps Lock, the caps walked us → de → us (wrapped) → ua with
   the panel untouched, the helper's device following each switch and

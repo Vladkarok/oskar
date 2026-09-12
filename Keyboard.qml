@@ -5,6 +5,9 @@ import Quickshell.Hyprland
 import qs.Commons
 import "KeyboardLayout.js" as Layout
 import "ModifierReducer.js" as Modifiers
+import "KeyboardSession.js" as Session
+import "Config.js" as ConfigFile
+import "LayoutDevices.js" as LayoutDevices
 
 Item {
     id: root
@@ -15,20 +18,19 @@ Item {
     // &123 is pressed. The grid is anchored to the bottom, so the command row —
     // modifiers, space, arrows, and the page key itself — stays under the
     // pointer across a switch and the slack appears at the top.
-    readonly property int maxPageRows: Math.max(Layout.rows.length, Layout.symbolRows("").length,
-        Layout.curatedMaxRows)
+    readonly property int maxPageRows: Math.max(Layout.rows.length,
+        Layout.symbolRows("").length)
     implicitHeight: maxPageRows * keyHeight + (maxPageRows - 1) * gapPx
     signal closeRequested()
     // Emitted for every keystroke-shaped press — letters, arrows, modifier
     // clicks, Caps Lock — and never for the panel's own UI actions. The panel
     // plays the key click sound on it (spec-v1 §10).
     signal keyPressed()
-    // The ☺ cap launched the configured picker (spec-v1.1 §1, 2026-09-05
-    // amendment). The panel answers with its runtime courtesy positioning —
-    // a standalone picker window is moved clear of the panel's band; an
-    // overlay-style picker never becomes a client window and finds nothing
-    // to move.
-    signal emojiPickerLaunched(string app)
+    // The ☺ cap's PATH probe succeeded (spec-v1.1 §1). The panel owns the
+    // session: Emote is toggled (closewindow of the identified appearance,
+    // never a second exec); other apps still launch. Arm happens before
+    // execDetached so a fast map cannot arrive against a null session.
+    signal emojiCapActivated(string app)
 
     // The size preset's multiplier on top of the theme's own scaling
     // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
@@ -49,9 +51,11 @@ Item {
     // ---- Design tokens, copied 1:1 from the reference HTML/CSS ----
     readonly property real gapPx: Math.max(1, Math.round(root.theme.spacingMd * uiScale))
     readonly property real keyHeight: root.theme.space(42) * uiScale
-    // Key radius is the facade's resolved token: an explicit user override,
-    // else the shared corner rounding (Theme.qml owns the precedence).
-    readonly property real keyRadius: root.theme.keyRadius
+    // Key radius is the facade's resolved 0–24 value at medium, scaled by
+    // the size preset so 24 stays a circle at L/XL (spec-v1.1 §4). Panel
+    // radius is a separate pixel control and does not use this.
+    readonly property real keyRadius: ConfigFile.effectiveKeyRadius(
+        root.theme.keyRadius, uiScale)
     readonly property real containerMaxWidth: availableWidth > 0
         ? Math.min(root.theme.space(820) * uiScale, availableWidth)
         : root.theme.space(820) * uiScale
@@ -113,9 +117,9 @@ Item {
     readonly property real edgeOutset: gapPx
 
     // The three key fills are the facade's resolved tokens: an explicit key
-    // background override pins the resting fill, and hover/press keep the
-    // theme's move-toward-the-foreground language either way (Theme.qml owns
-    // that derivation and the precedence).
+    // background override pins the resting fill, and hover/press are a
+    // modest mix of that resting cap toward the theme foreground either
+    // way (Theme.qml owns that derivation and the precedence).
     readonly property color keyBg: root.theme.keyFill
     readonly property color keyHoverBg: root.theme.keyHoverFill
     readonly property color keyActiveBg: root.theme.keyActiveFill
@@ -142,6 +146,27 @@ Item {
     readonly property int latchedBorderWidth: Math.max(2 * keyBorderWidth, root.theme.focusBorderWidth)
     readonly property int keyFontSize: Math.max(1, Math.round(root.theme.fontBody * uiScale))
     readonly property int keySmallFontSize: Math.max(1, Math.round(root.theme.fontBodySmall * uiScale))
+    // Super's compact mark (spec-v1.1 §1): U+E900 / family `omarchy`, the
+    // same request the bar menu launcher makes. Qt.fontFamilies(),
+    // FontLoader, fontInfo.family, and a zero-width paint miss or
+    // substitute this private family, so the packaged TTF path is the
+    // gate: an absent file never requests U+E900 and the Super label
+    // stays readable. Sized to the cap so it stays recognizable at M/L/XL.
+    FileView {
+        id: omarchyIconFontFile
+        path: "/usr/share/fonts/omarchy/omarchy.ttf"
+        preload: true
+        blockLoading: true
+        printErrors: false
+        property bool present: false
+        onLoaded: present = true
+        onLoadFailed: function (error) {
+            present = error !== FileViewError.FileNotFound
+        }
+    }
+    readonly property bool omarchyFontPresent: omarchyIconFontFile.present
+    readonly property int superLogoSize: Math.max(root.keyFontSize,
+        Math.round(root.keyHeight * 0.5))
 
     // Every modifier's idle/latched state, Shift's additional locked state,
     // and Caps' dedicated boolean state, owned by the reducer (spec-v1 §15,
@@ -159,8 +184,11 @@ Item {
     // The keyboard the switch is applied to. Switching "all" moves every device
     // on the seat, including pseudo-keyboards that never advance on their own,
     // which is how they end up sitting on different layouts from each other.
-    property string typedKeyboard: ""
     property string typedKeyboardName: ""
+    // Every device carrying the same layout list. A language-button click
+    // moves this set to one absolute group, matching the shell's layout
+    // widget and converging a seat whose per-device groups drifted apart.
+    property var switchKeyboards: []
     // Names positively identified from the kernel/udev snapshot. A mouse's
     // keyboard-shaped HID interface is rejected before it reaches this list.
     property var startupKeyboards: []
@@ -176,28 +204,6 @@ Item {
         var name = layoutNameMap[currentLayout]
         return name ? name : currentLayout.toUpperCase()
     }
-    property var symbolMap: ({})
-    // Whether symbolMap is the compiled keymap's answer for the layout now
-    // active, and whether the last attempt to make it so failed outright
-    // (spec-v1.1 §3). `keycapsReady` starts false deliberately: the equality
-    // shortcut below used to skip the first load whenever the detected layout
-    // equalled the `us` default here, which left the map empty at cold start
-    // and every symbols-page level cap blank until a layout change happened
-    // to run. `keycapsFailed` is the keymap-wide state, not a per-cap miss —
-    // a pipeline that failed, or exited cleanly having resolved nothing, is
-    // decisions.md §11's silent failure, and the panel shows it instead of
-    // letting the built-in table pass for the keymap.
-    property bool keycapsReady: false
-    property bool keycapsFailed: false
-    // The full configure payload the loaded keycaps were built under —
-    // rules, model, layouts, variants, options, kb_file, group — not just
-    // the active layout code. Keycaps and curated availability are answers
-    // of the whole RMLVO identity: an options or variant or kb_file edit
-    // that keeps the same code still reconfigures typing, and comparing
-    // codes alone left the caps stale until an unrelated reload. A
-    // byte-identical reconfigure (the helper short-circuits those) matches
-    // here too and stays free.
-    property string lastKeycapConfigure: ""
     // Configure transaction bookkeeping for the device-held-modifier
     // handshake. The helper drains every key it holds for us when — and only
     // when — a configure CHANGES the keymap (its same-keymap short-circuit
@@ -230,90 +236,94 @@ Item {
     //   readiness answer: typing stays gated until the queue is fully
     //   settled, because an outstanding configure may still be compiling
     //   the keymap a press would land in.
-    readonly property QtObject configureBook: QtObject {
-        property var queue: []
-        property string acked: ""
-        property int sends: 0
-
-        /// The keymap identity the helper will have installed when the next
-        /// line reaches the front — the newest outstanding entry, or the
-        /// last acked one when the queue is empty.
-        function installed() {
-            return queue.length > 0 ? queue[queue.length - 1].identity : acked
-        }
-
-        /// The configure line's keymap identity: every field the helper's
-        /// same-keymap short-circuit compares — rules, model, layouts,
-        /// variants, options, kb_file — without the trailing group, which
-        /// can move on its own without draining anything. The panel's copy
-        /// of the helper's "will this configure drain the held keys" test.
-        function identityOf(payload) {
-            var parts = String(payload || "").split("\t")
-            return parts.slice(0, 7).join("\t")
-        }
-
-        /// Records one configure about to be written. Callers write the
-        /// payload themselves right after, so the seq stamp and the socket
-        /// order agree.
-        function enqueue(payload) {
-            var identity = identityOf(payload)
-            sends += 1
-            var entry = {
-                payload: payload,
-                identity: identity,
-                changed: identity !== installed(),
-                seq: sends
-            }
-            queue.push(entry)
-            return entry
-        }
-
-        /// Pops the oldest outstanding transaction for the reply that just
-        /// arrived, and records its identity as installed.
-        function settle() {
-            var entry = queue.shift()
-            if (entry) acked = entry.identity
-            return entry
-        }
-
-        /// A configure the helper refused lifted nothing: its own entry
-        /// drops, and the helper still has the last acked keymap installed,
-        /// so every surviving entry's drain test re-runs against that
-        /// instead of against the refused payload.
-        function rebaseAfterFailure() {
-            var entry = queue.shift()
-            if (!entry) return
-            var installedNow = acked
-            for (var i = 0; i < queue.length; i++) {
-                queue[i].changed = queue[i].identity !== installedNow
-                installedNow = queue[i].identity
+    // The keyboard session (KeyboardSession.js, ticket 04): connection
+    // handshake, configure transactions, and the keymap-generation
+    // correlation for the keycap facts. Reassigned wholesale on every
+    // transition, so every binding that reads it re-fires. The invariants
+    // the queue carries are unchanged:
+    //
+    // The socket is ordered, so a reply always settles the OLDEST
+    // outstanding configure — configures pipeline (an event storm around a
+    // reload refreshes layouts faster than replies come back), so pairing
+    // a reply with the newest sent payload attributed the wrong identity
+    // whenever two were in flight.
+    //
+    // `sends` — a monotonic send counter, incremented when the configure is
+    //   WRITTEN. Chords are stamped with it at press (the pending record
+    //   carries it), so an equal stamp means the configure was sent before
+    //   the press — the helper drains it ahead of the press lines — and a
+    //   press stamped later happened after the send.
+    //
+    // Version 4 adds the generation: every `configured` reply names the
+    // keymap install it produced and every `caps` reply names the install
+    // its facts were computed from (decisions §23). The session accepts
+    // facts only when generation AND group match the acknowledged world,
+    // which is what makes a superseded reply discardable and keeps the
+    // drawn caps from ever describing a keymap the helper no longer has.
+    property var session: Session.initial()
+    // Every drawn cap's facts (decisions §23). Since ticket 18 there is no
+    // second source: the §11 xkbcli pipeline that used to supply the curated
+    // page was removed once every cap became a glyph cap, so nothing spawns a
+    // compile per layout change and nothing can report a keymap unavailable
+    // for a map no cap draws from. Null while the acknowledged world has no
+    // facts — the built-in table then draws as the gated last-resort fallback,
+    // silently (the status line owns saying why).
+    readonly property var capsFacts: Session.capsMap(session)
+    // Set when a caps request went unanswered in a way that proves
+    // disagreement (an unreadable reply, `err bad group`), and cleared only
+    // by accepted facts. Panel-hint state: an honest keymap-wide unavailable,
+    // never per-cap.
+    property bool capsFactsFailed: false
+    // Every positioned cap the panel can draw, in declaration order — the
+    // position list a caps request carries. Built once from the page
+    // declarations: the helper resolves what the panel actually shows, not
+    // every key the keymap happens to define.
+    readonly property string capsPositions: {
+        var seen = {}
+        var out = []
+        var pages = [Layout.rows, Layout.symbolRows("")]
+        for (var p = 0; p < pages.length; p++) {
+            for (var r = 0; r < pages[p].length; r++) {
+                for (var c = 0; c < pages[p][r].length; c++) {
+                    var pos = pages[p][r][c].k
+                    if (pos && !seen[pos]) {
+                        seen[pos] = true
+                        out.push(pos)
+                    }
+                }
             }
         }
-
-        /// Whether any configure the helper will drain sits ahead of
-        /// whatever lines are written next. The queue is FIFO: every entry
-        /// in it was written before this moment, so the helper processes
-        /// each one before anything written from here on.
-        function hasDrainAhead() {
-            for (var i = 0; i < queue.length; i++) {
-                if (queue[i].changed) return true
+        if (!seen.RALT) out.push("RALT")
+        // The reserved block's positions (ticket 18). They appear in no page
+        // declaration — a glyph cap names a character and lets the keymap say
+        // which position carries it — so they are asked for by name here.
+        for (var i = 0; i < Layout.reservedPositions.length; i++) {
+            var reserved = Layout.reservedPositions[i]
+            if (!seen[reserved]) {
+                seen[reserved] = true
+                out.push(reserved)
             }
-            return false
         }
+        return out.join(" ")
+    }
 
-        /// True when no configure is outstanding — the only state in which
-        /// the keymap on the device is fully known and typing may be
-        /// enabled.
-        function settled() {
-            return queue.length === 0
-        }
+    /// The caps request for one group: the group, then the declared
+    /// positions. The helper answers per level from the keymap it installed,
+    /// tagged with that install's generation.
+    function capsRequestLine(group) {
+        return "caps " + group + (capsPositions !== "" ? " " + capsPositions : "")
+    }
 
-        /// A new connection acknowledges nothing and has sent nothing.
-        function reset() {
-            queue = []
-            acked = ""
-            sends = 0
-        }
+    // How many groups the configured keymap carries — one per layout in the
+    // RMLVO list, which is how libxkbcommon builds it and how the helper
+    // counts the groups it pre-resolves. Clamped to xkbcommon's own maximum
+    // so an over-long layout list cannot make the panel ask for a group the
+    // compiled keymap does not have.
+    readonly property int groupCount: {
+        var listed = String(xkbLayouts || "").split(",").filter(function (code) {
+            return code.trim().length > 0
+        }).length
+        return Math.max(1, Math.min(listed, 4))
     }
     // The emoji cap's spawn answer (spec-v1.1 §1), raised when the configured
     // picker cannot be found on PATH at click time. Same swap the keymap
@@ -326,24 +336,11 @@ Item {
     // The app the ☺ cap execs — the panel's resolved override-over-default
     // (spec-v1.1 §1). Bare PATH name; the probe and the hint both name it.
     property string emojiAppName: "omarchy-menu-emoji"
-    // Incremented every time a keycap load starts, and captured by the
-    // process for the run it is about to begin. A compile that is stopped
-    // to make room for a newer load still dies by SIGTERM and still
-    // delivers onExited; the captured generation is how that exit is told
-    // apart from the live run's.
-    property int keycapGeneration: 0
-    // Which page is drawn (spec-v1 §4): main, symbols, or the curated page 2
-    // (spec-v1.1 §3). A page is not a mode and not a modifier: it changes
-    // what can be seen and nothing else — not the keymap, not the group, not
-    // what any modifier is holding.
+    // Which page is drawn: main or symbols. A page is not a mode and not a
+    // modifier: it changes what can be seen and nothing else — not the
+    // keymap, not the group, not what any modifier is holding.
     property string page: "main"
-    // Page 2's rows and its availability count, derived from symbolMap in the
-    // same rebuild that feeds the keycaps — never per click (spec-v1.1 §3).
-    // Availability is the active keymap's answer about itself, so it changes
-    // when the keymap does: on a configured-layout change, a group switch, or
-    // a keycap pipeline failure, each of which reloads symbolMap.
-    property var curatedPage: Layout.curatedPageRows(symbolMap)
-    property var layoutRows: Layout.applyLanguage(pageRows(), currentLayout, symbolMap)
+    property var layoutRows: Layout.applyLanguage(pageRows(), currentLayout, capsFacts)
     // A row that misses gridUnits is a defect, not a style choice: under the
     // shared pitch a short row stops short of the card's right edge and a
     // long one runs past it. A width off the half-unit lattice — anything
@@ -369,51 +366,50 @@ Item {
         }
     }
 
-    // Page 2 exists only when eight or more of its symbols resolve in the
-    // active keymap (spec-v1.1 §3). The gate, the cycle and the page key's
-    // label all read this one predicate, so they cannot disagree.
-    function curatedPageExists() {
-        return curatedPage.available >= Layout.curatedMinimum
-    }
-
-    // The page key's label names where the next press goes (spec-v1 §4): on
-    // the main page that is always the symbols page; past it, the curated
-    // page when it exists and the main page when it does not.
+    // The page key's label names where the next press goes.
     function pageLabel() {
-        if (page === "main") return "&123"
-        if (page === "curated") return "ABC"
-        return curatedPageExists() ? "€±§" : "ABC"
+        return page === "main" ? "&123" : "ABC"
     }
 
     function pageRows() {
-        var rows = page === "curated" ? curatedPage.rows
-            : page === "symbols" ? Layout.symbolRows(pageLabel()) : Layout.rows
+        var rows = page === "symbols" ? Layout.symbolRows(pageLabel()) : Layout.rows
         if (!modifierState.fn) return rows
+        if (page === "symbols") return Layout.symbolFunctionRows(pageLabel())
         var replaced = rows.slice()
         replaced[0] = Layout.functionRow
         return replaced
     }
 
+    // `layoutRows` is the Repeater's model, and reassigning it destroys and
+    // rebuilds every row and every cap delegate under it — a few hundred QML
+    // objects, enough main-thread work to be seen. A language switch used to
+    // do that four times over: once for the load, once when the facts were
+    // invalidated, once when they came back, once when the symbol pipeline
+    // exited. Most of those rebuilds produced rows identical to the ones
+    // already on screen, so compare first and only reassign when the caps
+    // actually differ. The caps are flat objects of primitives built from the
+    // same declarations in the same order, so serialising is a sound identity
+    // test and costs far less than the rebuild it avoids.
     function updateLayoutRows() {
-        // A keymap change while page 2 is on screen can drop it below the
-        // eight-symbol threshold; the page then no longer exists, and the
-        // grid falls back to the main page rather than drawing a stub.
-        if (page === "curated" && !curatedPageExists())
+        if (page !== "main" && page !== "symbols")
             page = "main"
-        layoutRows = Layout.applyLanguage(pageRows(), currentLayout, symbolMap)
+        var next = Layout.applyLanguage(pageRows(), currentLayout, capsFacts)
+        if (JSON.stringify(next) === JSON.stringify(layoutRows)) return
+        layoutRows = next
     }
+
+    // Keycap facts arrive after the configure acknowledgement. `layoutRows`
+    // is assigned imperatively so identical rows can avoid rebuilding the
+    // delegates; refresh it when the facts it draws from change.
+    onCapsFactsChanged: updateLayoutRows()
 
     /// The one key in and the same key out. The reducer is told, so that what
     /// the modifiers do across a switch is decided in the one place the seam
     /// covers rather than here; it holds everything where it was, which is why
     /// locked Shift is still locked and still drawn locked on the far side.
-    /// The cycle is main → symbols → curated → main, and the curated hop
-    /// exists only when page 2 does (eight or more symbols available,
-    /// spec-v1.1 §3) — the label always names the destination, so when the
-    /// hop is missing the symbols page's key reads "ABC" again.
+    /// Cycle: main → symbols → main. The label names the destination.
     function togglePage() {
-        page = page === "main" ? "symbols"
-            : page === "symbols" && curatedPageExists() ? "curated" : "main"
+        page = page === "main" ? "symbols" : "main"
         updateLayoutRows()
         applyModifierEvent({ type: "pageSwitch" })
     }
@@ -432,37 +428,12 @@ Item {
             .map(function (line) { return line.split("\t") })
     }
 
-    /// Resolves the pipeline's tab records over symbolMap and returns how
-    /// many records resolved. Nothing is installed for a record-less run:
-    /// the caller owns the §11 decision, and pre-installing an empty map
-    /// here would be the silent-empty class this gate exists to close.
-    function parseLayoutSymbolOutput(text) {
-        var map = ({})
-        var records = 0
-        tabRecords(text).forEach(function (parts) {
-            if (parts.length < 2) return
-            // Every level the pipeline carried: two for as long as the
-            // symbols page cared, four now that the curated page resolves
-            // the keymap's AltGr levels too (spec-v1.1 §3). Missing levels
-            // stay empty strings, which the overlay and the curated index
-            // both read as "nothing here".
-            map[parts[0]] = parts.slice(1)
-            records += 1
-        })
-        if (records > 0) {
-            symbolMap = map
-            updateLayoutRows()
-        }
-        return records
-    }
-
-
-    /// Queues and writes one configure transaction. The book assigns the
+    /// Queues and writes one configure transaction. The session assigns the
     /// transaction's seq BEFORE the write, so a chord stamped sends ===
     /// entry.seq was pressed at or after the send — the ordering the drain
     /// decision below rests on.
     function sendConfigure(configure) {
-        configureBook.enqueue(configure)
+        session = Session.reduce(session, { type: "configureSent", payload: configure })
         sendCommandUnchecked(configure)
     }
 
@@ -470,64 +441,193 @@ Item {
     /// transaction. A changed-keymap entry settles the device world as
     /// authoritative (configureDrain — the reducer's device-held modifiers
     /// reset without emitting); a same-keymap entry leaves holds and
-    /// reducer state exactly as they are.
-    function settleConfigureReply() {
-        var entry = configureBook.settle()
+    /// reducer state exactly as they are. The reply's generation becomes
+    /// the acknowledged one, which is also what instantly invalidates any
+    /// keycap facts computed from the superseded install (decisions §23).
+    function settleConfigureReply(gen) {
+        // The FIFO head is the transaction this reply settles; the session
+        // pops the same entry, so capture its facts first.
+        var entry = session.queue.length > 0 ? session.queue[0] : null
+        session = Session.reduce(session, { type: "configureAck", gen: gen })
         if (!entry) return
         if (!entry.changed) return
         modifierState = Modifiers.reduce(modifierState,
             { type: "configureDrain", stamp: entry.seq }).state
     }
 
+    // The file the helper publishes its installed keymap to, and the
+    // generation this panel last pointed the compositor at.
+    //
+    // One keymap on the seat or two: with two, the compositor hands a focused
+    // client whichever keyboard is active and the client's group resets on
+    // every swap, so applications that do not re-read it type the previous
+    // alphabet until any modifier key arrives (decisions §35). Pointing
+    // `input:kb_file` at what the helper installed makes the compositor
+    // compile the same keymap for every physical keyboard, and the swap has
+    // nothing left to swap between.
+    readonly property string publishedKeymap: "/omarchy-osk/keymap.xkb"
+    property int sharedKeymapGen: 0
+    // The `kb_file` the USER configured, remembered across the moment this
+    // panel replaces it with the published one. Without it the compositor's
+    // own setting is the only record of it, and pointing `kb_file` at the
+    // published keymap erases that record: the next refresh reads our path,
+    // has nothing to fall back to, and the helper rebuilds from `kb_layout`
+    // alone — the user's custom keymap silently dropped for the rest of the
+    // session.
+    property string userKeymapFile: ""
+    function shareKeymapWithCompositor() {
+        if (session.ackedGen === 0 || sharedKeymapGen === session.ackedGen) return
+        shareProcess.wanted = session.ackedGen
+        if (!shareProcess.running) shareProcess.running = true
+        // Cleared and set rather than set: assigning the same path again is a
+        // no-op, and a republished file under the same name has to be re-read
+        // or the compositor keeps compiling the keymap before this one.
+        //
+        // `hyprctl eval`, not `hyprctl keyword`: the Lua config parser refuses
+        // keyword outright ("keyword can't work with non-legacy parsers").
+    }
+
+    /// Points the compositor at the published keymap, and only records the
+    /// generation as shared when it actually landed.
+    ///
+    /// The first version marked the generation before running and threw every
+    /// error away: a file not yet published, an `hyprctl eval` a compositor
+    /// refused, anything at all, and the panel would never try that generation
+    /// again and never say so. The seat then carries two keymaps for the rest
+    /// of the session, which is the defect §35 exists to end.
+    Process {
+        id: shareProcess
+        property int wanted: 0
+        property int attempts: 0
+        command: ["bash", "-c",
+            "path=\"$XDG_RUNTIME_DIR" + root.publishedKeymap + "\"; "
+            + "[[ -s \"$path\" ]] || exit 3; "
+            + "hyprctl eval \"hl.config({input = {kb_file = ''}})\" >/dev/null || exit 4; "
+            + "hyprctl eval \"hl.config({input = {kb_file = '$path'}})\" >/dev/null || exit 4; "
+            // Read back rather than trust: `eval` answers `ok` for a config
+            // call the parser accepted, which is not the same as the value
+            // being in place.
+            + "[[ \"$(hyprctl getoption input:kb_file -j | jq -r .str)\" == \"$path\" ]]"]
+        onExited: function (code, status) {
+            if (code === 0 && status === 0) {
+                root.sharedKeymapGen = wanted
+                attempts = 0
+                return
+            }
+            // Exit 3 is "the helper has not written the file yet", which is
+            // an ordinary race at startup: the configure is acknowledged
+            // before the publish lands. Retrying is the answer, not a line in
+            // the journal. Everything else gets retried too and then said out
+            // loud, because a seat left with two keymaps is a defect the user
+            // will otherwise report as the layout switch being broken.
+            attempts += 1
+            if (attempts <= 5) {
+                shareRetry.restart()
+                return
+            }
+            attempts = 0
+            console.error("[osk] could not give the compositor the published"
+                + " keymap (exit " + code + ", five attempts): the seat is"
+                + " carrying two keymaps and a client's layout group will"
+                + " reset on every focus change (decisions §35).")
+        }
+    }
+
+    Timer {
+        id: shareRetry
+        interval: 400
+        repeat: false
+        onTriggered: if (!shareProcess.running) shareProcess.running = true
+    }
+
+    // Whatever the compositor had before this panel pointed it at the
+    // published keymap. A session that ends with the OSK closed must not be
+    // left compiling every physical keyboard from a file no running process
+    // owns — §35's claim that a stale `kb_file` cannot outlive the thing that
+    // set it is only true if something puts it back.
+    Component.onDestruction: {
+        if (sharedKeymapGen === 0) return
+        Quickshell.execDetached(["bash", "-c",
+            "hyprctl eval \"hl.config({input = {kb_file = '$1'}})\" >/dev/null 2>&1",
+            "onscreen-keyboard-restore", userKeymapFile])
+    }
+
     function parseHyprLayoutOutput(text) {
-        var active = ""
-        var detected = []
+        var devices = []
+        var kbFile = ""
         var names = ({})
-        var configGroup = 0
 
         tabRecords(text).forEach(function (parts) {
-            if (parts[0] === "DEVICE") {
-                // Cleared unconditionally: a refresh that finds no safe
-                // target must not leave the language button aiming at a
-                // device that has gone missing or was never safe to advance.
-                // An empty name lands here as a bare "DEVICE" after the line
-                // trim, so this branch has to come before the field-count
-                // guard below.
-                typedKeyboard = String(parts[1] || "").trim()
-                return
-            }
             if (parts.length < 2) return
-            if (parts[0] === "ACTIVE") {
-                active = String(parts[1] || "").trim()
+            if (parts[0] === "DEVICES") {
+                try { devices = JSON.parse(parts[1]) } catch (error) { devices = [] }
                 return
             }
-            if (parts[0] === "CONFIG" && parts.length >= 8) {
-                xkbRules = parts[1]
-                xkbModel = parts[2]
-                xkbLayouts = parts[3]
-                xkbVariants = parts[4]
-                xkbOptions = parts[5]
-                xkbFile = parts[6] === "[[EMPTY]]" ? "" : parts[6]
-                configGroup = parseInt(parts[7]) || 0
+            if (parts[0] === "KBFILE") {
+                kbFile = parts[1] === "[[EMPTY]]" ? "" : String(parts[1] || "")
                 return
-            }
-            if (parts[0] === "LAYOUT") {
-                detected.push(String(parts[1] || "").trim())
             }
             if (parts[0] === "NAME" && parts.length >= 3) {
                 names[String(parts[1] || "").trim()] = String(parts[2] || "").trim()
             }
         })
 
-        detected = detected.filter(function(layout) { return layout.length > 0 })
-        if (detected.length > 0) {
-            languageCycle = detected
-        }
-        // Merge any newly discovered names into the map
+        // Merge any newly discovered names into the map. Done before the
+        // selection can bail out: the names are a property of the machine's
+        // xkb rules, not of which keyboard answers today.
         var merged = ({})
         for (var k in layoutNameMap) merged[k] = layoutNameMap[k]
         for (var k in names) merged[k] = names[k]
         layoutNameMap = merged
+
+        var picked = LayoutDevices.select(devices, typedKeyboardName, startupKeyboards)
+        // Cleared unconditionally: a refresh that finds no safe target must
+        // not leave the language button aiming at a device that has gone
+        // missing or was never safe to advance.
+        switchKeyboards = picked.switchSet
+        // Sticky, and only from the seat's own flag. The flag lands on the
+        // helper's virtual keyboard for a moment after every OSK keystroke,
+        // so "no answer" has to mean "keep what we knew", not "forget".
+        if (picked.typing) typedKeyboardName = picked.typing
+        if (!picked.reading) return
+
+        var reading = picked.reading
+        var detected = String(reading.layout || "us").split(",")
+            .map(function (code) { return String(code || "").trim() })
+            .filter(function (code) { return code.length > 0 })
+        if (detected.length > 0) {
+            languageCycle = detected
+        }
+        var active = LayoutDevices.activeLayout(reading)
+        var configGroup = reading.active_layout_index || 0
+        xkbRules = String(reading.rules || "")
+        xkbModel = String(reading.model || "")
+        xkbLayouts = String(reading.layout || "")
+        xkbVariants = String(reading.variant || "")
+        xkbOptions = String(reading.options || "")
+        // A kb_file that is the helper's own published keymap is not an input
+        // to the helper: feeding it back would compile our own output and
+        // freeze the layout list, so the compositor's configured RMLVO stays
+        // the source and the published file stays the compositor's copy of
+        // the result. A kb_file the USER set is a real input and is passed on.
+        // Ours or the user's. When the compositor is on the published keymap
+        // the helper is fed whatever the user had configured — remembered
+        // above — so `kb_layout` edits and a custom keymap both keep working.
+        // When it is NOT on the published keymap, something dropped it: a
+        // `hyprctl reload` for a theme change resets a runtime `kb_file` to
+        // whatever the config file says, and the configure that follows is
+        // byte-identical, so the helper's generation never moves and the
+        // once-per-generation guard would never fire again. Re-arm instead.
+        if (kbFile.indexOf(publishedKeymap) !== -1) {
+            xkbFile = userKeymapFile
+        } else {
+            userKeymapFile = kbFile
+            xkbFile = kbFile
+            if (sharedKeymapGen !== 0) {
+                sharedKeymapGen = 0
+                shareKeymapWithCompositor()
+            }
+        }
 
         // Always follow the system. The old code adopted the layout once and
         // then froze, so a switch made with Caps Lock or the bar indicator left
@@ -536,6 +636,11 @@ Item {
         var selected = active
         if (!selected && detected.length > 0) selected = detected[0]
         if (selected) {
+            // The compositor is authoritative for both the group and its
+            // human-facing layout code. The old keycap loader used to assign
+            // this as a side effect; after that pipeline was removed the
+            // header stayed on the initial "us" forever.
+            currentLayout = selected
             // The group index is the compositor's own `active_layout_index`,
             // not the position of the active layout code in the list. The
             // two differ exactly when a code repeats — `us,us` with distinct
@@ -544,27 +649,25 @@ Item {
             // answering group 0's variant while typing used the active
             // group. The index is authoritative; the code is a label.
             layoutCycleIndex = configGroup
-            inputReady = false
-            inputStatus = "configuring"
             var configure = "configure\t" + xkbRules + "\t" + xkbModel
                 + "\t" + xkbLayouts + "\t" + xkbVariants + "\t" + xkbOptions
                 + "\t" + xkbFile + "\t" + configGroup
+            // Only a configure that will CHANGE the keymap closes the typing
+            // gate up front. The helper compiles and installs for that one,
+            // draining every key it holds on the way in, and a press that
+            // straddled it would land in a keymap neither side has agreed on.
+            // A group-only configure — every ordinary language switch — does
+            // none of that: the same-keymap short-circuit moves the group, the
+            // socket is ordered so the move lands ahead of anything written
+            // after it, and the facts for the destination group are already in
+            // hand. Dropping readiness for it dimmed the whole keyboard and
+            // raised the service-starting notice for the length of the round
+            // trip, which is the flicker the user sees on every switch.
+            if (Session.identityOf(configure) !== Session.installed(session)) {
+                inputReady = false
+                inputStatus = "configuring"
+            }
             sendConfigure(configure)
-            // Load when the keymap's own answer is not in hand, or whenever
-            // the configure identity moved — not merely when the layout code
-            // did. The code-equality test alone was the cold-start defect:
-            // `currentLayout` starts at "us", so a session opening on `us` —
-            // the default guest config — never asked the keycap pipeline at
-            // all, and the symbols page drew one blank cap per position. It
-            // was also the stale-caps defect: a rules/model/variant/options/
-            // kb_file edit that kept the code reconfigured typing but left
-            // caps and curated availability answering the old keymap. The
-            // second half of the condition is also the retry: a failed or
-            // empty pipeline leaves `keycapsReady` false, so the next layout
-            // event (a helper recovery, a config reload, the keyboards
-            // inventory) tries again on its own. No polling.
-            if (selected !== currentLayout || configure !== lastKeycapConfigure || !keycapsReady)
-                loadLanguageLayout(selected, configure)
         }
     }
 
@@ -608,133 +711,47 @@ Item {
         // One caveat the JSON cannot answer: tied-at-zero devices are assumed
         // to share the seat's RMLVO, which holds unless the user configures
         // per-device keymaps (device:name { kb_layout }).
-        layoutDetectProcess.command = ["bash", "-lc",
+        // The shell only fetches. Which device answers for the layout, and
+        // which ones the language button moves, is decided in
+        // LayoutDevices.js — where it can be tested. It used to be a jq
+        // program inside this string, and it broke three times without a
+        // single suite noticing (tests/layout-devices.qml carries the zoo).
+        //
+        // Layout names are looked up for every code any keyboard carries,
+        // not just the chosen device's, so the selection can happen after
+        // this process has already exited.
+        layoutDetectProcess.command = ["bash", "-c",
             "devices=$(hyprctl devices -j 2>/dev/null); "
-            + "selection=$(printf '%s' \"$devices\" | jq -c --arg named \"$1\" --arg safe \"$2\" '"
-            + "[.keyboards[] | select((.name | test(\"^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)|omarchy-osk\"; \"i\")) | not)] as $typed | "
-        + "def safe_name($name): $safe | split(\"\\n\") | any(. as $base | $base != \"\" and ($name == $base or (($name | startswith($base + \"-\")) and ($name[($base | length) + 1:] | test(\"^[0-9]+$\"))))); "
-        + "[$typed[] | select(safe_name(.name))] as $safe_typed | "
-        + "($typed | map(select(.main == true)) | .[0]) as $current | "
-        + "($typed | map(select(.name == $named)) | .[0]) as $named_device | "
-        + "($safe_typed | map(select(.main == true)) | .[0]) as $safe_current | "
-        + "($safe_typed | map(select(.name == $named)) | .[0]) as $safe_named | "
-        + "{keyboard: ($current // $named_device // ($typed | max_by(.active_layout_index // 0)) // null), "
-        + "switchable: (($safe_current // $safe_named // {name: \"\"}) | .name)}' 2>/dev/null); "
-        + "keyboard=$(printf '%s' \"$selection\" | jq -c '.keyboard // empty'); "
-        + "[[ -n \"$keyboard\" ]] || exit 1; "
-        + "switchable=$(printf '%s' \"$selection\" | jq -r '.switchable // \"\"'); "
-            + "layouts_csv=$(printf '%s' \"$keyboard\" | jq -r '.layout // \"us\"'); "
-            + "group=$(printf '%s' \"$keyboard\" | jq -r '.active_layout_index // 0'); "
-            + "active=$(printf '%s' \"$layouts_csv\" | cut -d, -f$((group + 1))); "
-            + "rules=$(printf '%s' \"$keyboard\" | jq -r '.rules // \"\"'); "
-            + "model=$(printf '%s' \"$keyboard\" | jq -r '.model // \"\"'); "
-            + "variants=$(printf '%s' \"$keyboard\" | jq -r '.variant // \"\"'); "
-            + "options=$(printf '%s' \"$keyboard\" | jq -r '.options // \"\"'); "
+            + "[[ -n \"$devices\" ]] || exit 1; "
+            + "compact=$(printf '%s' \"$devices\" | jq -c "
+            + "'[.keyboards[] | {name, main, active_layout_index, layout, rules, model, variant, options}]' 2>/dev/null); "
+            + "[[ -n \"$compact\" ]] || exit 1; "
+            + "printf 'DEVICES\\t%s\\n' \"$compact\"; "
             + "kb_file=$(hyprctl getoption input:kb_file -j 2>/dev/null | jq -r '.str // \"\"'); "
-            + "printf 'ACTIVE\\t%s\\nDEVICE\\t%s\\nCONFIG\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "
-            + "\"$active\" \"$switchable\" \"$rules\" \"$model\" \"$layouts_csv\" \"$variants\" \"$options\" \"$kb_file\" \"$group\"; "
-            + "layouts=$(printf '%s' \"$layouts_csv\" | tr ',' '\\n' | sed '/^$/d'); "
-            + "echo \"$layouts\" | awk '{print \"LAYOUT\\t\" $0}'; "
-            + "echo \"$layouts\" | while read code; do "
+            + "printf 'KBFILE\\t%s\\n' \"${kb_file:-[[EMPTY]]}\"; "
+            + "printf '%s' \"$compact\" | jq -r '[.[].layout // \"\"] | join(\",\")' "
+            + "| tr ',' '\\n' | sed '/^$/d' | sort -u | while read code; do "
             + "  name=$(awk -v c=\"$code\" 'BEGIN{s=0} /^! layout/{s=1;next} /^!/{if(s) exit} s && NF>=2 && $1==c { $1=\"\"; sub(/^ +/,\"\",$0); print $0; exit }' /usr/share/X11/xkb/rules/base.lst 2>/dev/null); "
             + "  [[ -n \"$name\" ]] && printf 'NAME\\t%s\\t%s\\n' \"$code\" \"$name\"; "
-            + "done", "onscreen-keyboard", typedKeyboardName, startupKeyboards.join("\n")]
+            + "done", "onscreen-keyboard"]
         layoutDetectProcess.running = true
     }
 
-    function loadLanguageLayout(layoutCode, configure) {
-        console.log("[osk] loadLanguageLayout:", layoutCode, "variant-index:", layoutCycleIndex)
-        // A load is now in flight: only its own successful result may say the
-        // caps are ready. Cleared here rather than left at its old value so a
-        // failure mid-switch cannot strand the panel reporting a map that
-        // belongs to the previous layout.
-        keycapsReady = false
-        currentLayout = layoutCode
-        // The load compiles under this configure identity, so this is the
-        // payload future configures must differ from to earn a reload of
-        // their own. Recorded at issue, not on success: a failed load leaves
-        // `keycapsReady` false, and that is what earns the retry.
-        lastKeycapConfigure = configure || ""
-        updateLayoutRows()
-        // Compile the layout with xkbcli rather than reading
-        // /usr/share/X11/xkb/symbols/<code> directly: most layouts define their
-        // real keys in an include (ua's default variant is `include "ua(legacy)"`
-        // plus overrides, ru's is `include "ru(common)"`), so parsing the raw
-        // file only ever sees the handful of override keys. A compiled keymap is
-        // flat, so a plain line match over `key <X> { [ a, b ] }` is enough.
-        // xkbcli ships with libxkbcommon, which Hyprland already depends on.
-        // A Process that is already running ignores `running = true` and keeps
-        // the command it started with, so a second switch while the first
-        // compile is in flight would apply the old layout's symbols to the new
-        // one and never correct itself. Stop it first.
-        // A load that is still running gets stopped for this one, and its
-        // death by SIGTERM still delivers onExited. The counter increment is
-        // what marks every run before this one superseded; the process
-        // records the generation only when a run actually starts, which is
-        // what lets the exit handler attribute each exit to its run.
-        root.keycapGeneration += 1
-        layoutLoadProcess.running = false
-        var variantList = String(xkbVariants || "").split(",")
-        var activeVariant = variantList[layoutCycleIndex] || ""
-        // pipefail so a failed xkbcli is not masked by awk exiting 0, which
-        // would install an empty map and silently leave the keyboard blank.
-        layoutLoadProcess.command = ["bash", "-lc",
-            // A key definition spans one line for simple keys but several when
-            // it carries an explicit type, which is how xkbcli emits most
-            // alphabetic keys on ara, in, il, kz, uz and lk:
-            //     key <AD01> {
-            //         type= "FOUR_LEVEL",
-            //         symbols[1]= [ U094C, U0914, NoSymbol, NoSymbol ]
-            //     };
-            // Matching only the single-line form loses every letter on those
-            // layouts and leaves a US keyboard on screen. Buffer the whole
-            // definition instead, then take the symbol list from it. Reading
-            // `symbols[N]=` first matters: `symbols[1]` would otherwise be
-            // mistaken for the bracketed list by a plain `[...]` match.
-            "set -o pipefail; "
-            + "if [[ -n \"$7\" ]]; then source=(--keymap \"$7\"); wanted=$8; "
-            + "else source=(--rules \"${1:-evdev}\" --model \"${2:-pc105}\" --layout \"$3\" --variant \"$4\" --options \"$5\"); wanted=1; fi; "
-            + "xkbcli compile-keymap \"${source[@]}\" 2>/dev/null | awk -v wanted=\"$wanted\" '\n"
-            + " match($0, /key[[:space:]]*<([A-Z0-9]+)>/, k) { name=k[1]; buf=\"\"; inkey=1 }\n"
-            + " inkey {\n"
-            + "   buf = buf \" \" $0\n"
-            + "   if (index($0, \"}\")) {\n"
-            + "     typed = \"symbols\\\\[\" wanted \"\\\\][[:space:]]*=[[:space:]]*\\\\[([^]]+)\\\\]\"\n"
-            + "     if (match(buf, typed, s) || (wanted == 1 &&\n"
-            + "         match(buf, /\\{[[:space:]]*\\[([^]]+)\\]/, s))) {\n"
-            + "       split(s[1], arr, /,/)\n"
-            + "       gsub(/[[:space:]]+/, \"\", arr[1])\n"
-            + "       gsub(/[[:space:]]+/, \"\", arr[2])\n"
-            + "       gsub(/[[:space:]]+/, \"\", arr[3])\n"
-            + "       gsub(/[[:space:]]+/, \"\", arr[4])\n"
-            + "       print name \"\\t\" arr[1] \"\\t\" arr[2] \"\\t\" arr[3] \"\\t\" arr[4]\n"
-            + "     }\n"
-            + "     inkey=0\n"
-            + "   }\n"
-            + " }\n"
-            // Passed as an argument rather than concatenated into the script:
-            // the code comes from hyprctl, and splicing it in would let a stray
-            // space or shell metacharacter change the command.
-            + "'", "onscreen-keyboard", xkbRules, xkbModel, layoutCode,
-            activeVariant, xkbOptions, "", xkbFile, String(layoutCycleIndex + 1)]
-        layoutLoadProcess.running = true
-        console.log("[osk] keycaps process starting for", layoutCode)
-    }
-
     function cycleLanguage() {
-        if (languageCycle.length < 2) return
-        // Advance our local index so we know exactly what layout is next,
-        // independent of the system's virtual keyboard reporting wrong index.
-        // switchxkblayout is a hyprctl command, not a dispatcher, so it cannot
-        // go over the dispatch socket — the built-in layout widget runs it the
-        // same way. This is a one-off on a button press rather than anything on
-        // the typing path, which stays free of spawned processes.
-        //
-        // Nothing is applied locally: the activelayout event reports what
-        // actually happened, and guessing here is what let the panel drift out
-        // of step with the compositor.
-        if (!typedKeyboard) return
-        Quickshell.execDetached(["hyprctl", "switchxkblayout", typedKeyboard, "next"])
+        if (languageCycle.length < 2 || switchKeyboards.length === 0) return
+        var next = (layoutCycleIndex + 1) % languageCycle.length
+        // Hyprland stores the group per device. Move every device with this
+        // layout list to one absolute index; switching one guessed physical
+        // keyboard changed the panel while another keyboard kept typing the
+        // previous group. One shell process keeps the operations ordered.
+        var command = ["bash", "-c",
+            "next=$1; shift; for keyboard in \"$@\"; do "
+                + "hyprctl switchxkblayout \"$keyboard\" \"$next\" >/dev/null 2>&1 || true; "
+                + "done",
+            "onscreen-keyboard-switch", String(next)]
+        for (var i = 0; i < switchKeyboards.length; i++)
+            command.push(String(switchKeyboards[i]))
+        Quickshell.execDetached(command)
     }
 
     Component.onCompleted: refreshLayoutsFromHypr()
@@ -756,69 +773,6 @@ Item {
         }
     }
 
-    Process {
-        id: layoutLoadProcess
-        property string collected: ""
-        // The generation of the run actually executing, recorded at start —
-        // not at request. Quickshell defers a start requested while the
-        // previous run is still dying until that run's exit has been
-        // delivered, so a superseded run's exit arrives after the request
-        // counter has already moved on but before any newer process exists.
-        // Attributing each exit to the generation that was started is the
-        // only comparison that survives that window; request-time slots and
-        // isRunning() both read as current and wave the stale exit through.
-        property int startedGeneration: 0
-        onStarted: startedGeneration = root.keycapGeneration
-        stdout: SplitParser {
-            onRead: function(data) {
-                layoutLoadProcess.collected += data + "\n"
-            }
-        }
-        onRunningChanged: {
-            console.log("[osk] keycaps process running:", running)
-            if (running) collected = ""
-        }
-        onExited: function(exitCode, exitStatus) {
-            var cleanExit = exitCode === 0 && exitStatus === 0
-            console.log("[osk] keycaps process exited:", exitCode, exitStatus, "collected bytes:", collected.length)
-            // A superseded compile dies by SIGTERM when the next load stops
-            // it, and that exit is delivered after the request counter has
-            // moved on but before the replacement process has started. An
-            // exit whose run began under an older generation therefore says
-            // nothing about the load now pending: it must not drop the map
-            // or raise the failure state — the live run's own exit decides
-            // that.
-            if (layoutLoadProcess.startedGeneration !== root.keycapGeneration) {
-                console.log("[osk] keycaps exit superseded; the live load decides")
-                return
-            }
-            if (cleanExit) {
-                // Records, not bytes: a clean exit whose stdout holds only a
-                // stray non-record line resolves nothing, and counting its
-                // bytes would install an empty map as ready — the §11
-                // silent-empty class this gate exists to close.
-                var records = root.parseLayoutSymbolOutput(layoutLoadProcess.collected)
-                if (records > 0) {
-                    root.keycapsReady = true
-                    root.keycapsFailed = false
-                    return
-                }
-                console.error("[osk] keycap pipeline resolved 0 records for "
-                    + root.currentLayout)
-            } else {
-                console.error("[osk] keycap pipeline failed for "
-                    + root.currentLayout + " (exit " + exitCode + "/" + exitStatus + ")")
-            }
-            // Both failure shapes are the §11 mode, not an empty layout: a
-            // compiled keymap always names its key positions, so a failed or
-            // record-less run means the pipeline answered the wrong question.
-            // Drop the map and raise the panel's keymap-wide state.
-            root.symbolMap = ({})
-            root.keycapsReady = false
-            root.keycapsFailed = true
-            root.updateLayoutRows()
-        }
-    }
 
     // The compositor is the single source of truth for which layout is active.
     //
@@ -833,17 +787,15 @@ Item {
         function onRawEvent(event) {
             if (!event || !event.name) return
             var name = String(event.name)
-            if (name === "activelayout") {
-                var parts = null
-                try { if (event.parse) parts = event.parse(2) } catch (error) {}
-                if (!parts) parts = String(event.data || "").split(",")
-                var named = String(parts[0] || "")
-                var lower = named.toLowerCase()
-                if (named && lower.indexOf("hl-virtual-keyboard") !== 0
-                        && lower.indexOf("omarchy-osk") === -1) {
-                    root.typedKeyboardName = named
-                }
-            }
+            // Deliberately NOT where the typing keyboard is learned. Every
+            // `switchxkblayout` this panel issues emits `activelayout` naming
+            // the device it moved, so adopting the event's device made the
+            // anchor point at whatever the panel itself touched last. The
+            // panel then read its own echo, rearranged the seat around it,
+            // and could drag the user's keyboard back out of the group they
+            // had just switched it into. The seat's own `main` flag is the
+            // evidence; see the refresh.
+            //
             // A reload can add or remove layouts without moving anything, so it
             // changes what the panel may cycle through even with no switch.
             if (name.indexOf("activelayout") !== -1 || name === "configreloaded") {
@@ -911,7 +863,7 @@ Item {
             || event.type === "release"
             || event.type === "releaseAll")
         if (!inputReady && !alwaysLive) return
-        var dropRestore = event.type === "release" && configureBook.hasDrainAhead()
+        var dropRestore = event.type === "release" && Session.hasDrainAhead(session)
         // No speculative settle here, deliberately: a release that runs
         // before the outstanding configure's reply must leave the reducer
         // state as the release made it, because the reply decides what the
@@ -927,6 +879,21 @@ Item {
         for (var i = 0; i < outcome.lines.length; i++) {
             sendCommandUnchecked(outcome.lines[i])
         }
+    }
+
+    /// Current-content paste (spec-v1.1 §1): an exact chord through the
+    /// reducer, never a held cap and never mixed with latched Ctrl/Alt/Super.
+    /// `wmClass` selects the CLIPBOARD chord (terminals: Ctrl+Shift+V; else
+    /// Shift+Insert). Empty class uses the terminal chord so PRIMARY is not
+    /// sent into a terminal the lookup failed to name.
+    function pasteCurrent(wmClass) {
+        var chord = Modifiers.pasteChordForClass(wmClass)
+        applyModifierEvent({
+            type: "paste",
+            ctrl: chord.ctrl === true,
+            shift: chord.shift === true,
+            position: chord.position
+        })
     }
 
     /// Lifts locked Shift and returns every modifier to idle. The panel closing
@@ -970,14 +937,11 @@ Item {
     // `dual` flag and are dual here even when their shifted level resolved
     // to nothing — a valid base-only cap still renders the stacked pair
     // with an empty shifted slot, never a centered impostor. Main-page caps
-    // without the flag stay dual the old way (both levels resolved, not a
-    // letter), and a `lvl` cap (the curated page's) never is: it stands for
-    // one level, and the levels above it have their own press semantics
-    // (`exact`), not a stacked pair.
+    // without the flag stay dual the old way: both levels resolved, and not
+    // a letter.
     function isDualKey(keyData) {
-        return !keyData.lvl
-            && (keyData.dual === true
-                || (!!keyData.s && !isLetterKey(keyData)))
+        return keyData.dual === true
+            || (!!keyData.s && !isLetterKey(keyData))
     }
 
     // Input goes to the helper over a unix socket; the panel never
@@ -1004,6 +968,14 @@ Item {
     // stopped.
     readonly property bool serviceConnected: daemonSocket ? daemonSocket.connected : false
     property bool serviceIncompatible: false
+    // spec-v1.1 §6 + decisions §23: the header's helper/keymap kind. A
+    // connected caps mismatch is unavailable, never the starting notice.
+    readonly property string lifecycleKind: Session.lifecycleKind({
+        inputReady: inputReady,
+        serviceConnected: serviceConnected,
+        serviceIncompatible: serviceIncompatible,
+        capsFactsFailed: capsFactsFailed
+    })
     // Set when the socket reaches `connected`, consumed by the hello reply:
     // only a genuinely new connection may reset device-held modifier state,
     // never the repair timer's re-hello of a live one. See the hello handler.
@@ -1052,13 +1024,25 @@ Item {
                 } else {
                     root.inputReady = false
                     root.inputStatus = "reconnecting"
+                    // The handshake no longer holds on this dead socket; the
+                    // queue and facts stay until a new connection's fresh
+                    // hello restarts them (a live helper may still answer for
+                    // the transaction a reconnect is racing).
+                    root.session = Session.reduce(root.session, { type: "connectionDown" })
+                    // A restarted helper counts its installs from one again,
+                    // so the generation this panel last shared can come round
+                    // a second time and the once-per-generation guard would
+                    // skip a keymap the compositor has never seen. The path
+                    // does not change, so nothing would make it re-read the
+                    // file either: two keymaps on the seat, silently.
+                    root.sharedKeymapGen = 0
                 }
             }
 
             parser: SplitParser {
                 onRead: function (line) {
                     var reply = String(line).trim()
-                    if (reply === "hello 3") {
+                    if (reply === "hello " + Session.PROTOCOL_VERSION) {
                         root.serviceIncompatible = false
                         root.inputReady = false
                         root.inputStatus = "configuring"
@@ -1083,15 +1067,22 @@ Item {
                         // Shift down under an idle panel.
                         if (root.socketReconnected) {
                             root.socketReconnected = false
+                            root.capsFactsFailed = false
                             root.modifierState = Modifiers.reduce(
                                 root.modifierState, { type: "releaseAll" }).state
-                            // Configure bookkeeping starts over with the
+                            // Session bookkeeping starts over with the
                             // connection: the next configure's identity must
                             // be compared against what THIS helper instance
                             // has acknowledged, and no reply can still arrive
                             // for a transaction a predecessor was holding.
-                            configureBook.reset()
+                            root.session = Session.reduce(root.session,
+                                { type: "helloAcked", fresh: true })
                             daemon.write("mods 0\n")
+                        } else {
+                            // The repair timer's re-hello of a live socket:
+                            // the handshake holds, nothing resets.
+                            root.session = Session.reduce(root.session,
+                                { type: "helloAcked", fresh: false })
                         }
                         daemon.write("keyboards\n")
                         daemon.flush()
@@ -1113,7 +1104,7 @@ Item {
                                 root.typedKeyboardName = root.startupKeyboardName
                         }
                         root.refreshLayoutsFromHypr()
-                    } else if (reply === "configured") {
+                    } else if (reply.indexOf("configured") === 0) {
                         // Mirror the helper's own configure behaviour, for
                         // THE ENTRY THIS REPLY SETTLES — the oldest
                         // outstanding transaction, not the newest sent
@@ -1136,20 +1127,74 @@ Item {
                         // writes whatever the reducer emits, restorative
                         // downs included — except across a drain, where
                         // the reducer itself withholds the restore).
-                        root.settleConfigureReply()
-                        // Readiness waits for the WHOLE queue: an older
-                        // reply does not make typing safe while a pipelined
-                        // configure is still compiling the keymap a press
-                        // would land in — a chord allowed through now would
-                        // straddle that drain and lose its release. The caps
-                        // enable only when the last outstanding configure
-                        // has been acknowledged.
-                        if (configureBook.settled()) {
-                            root.inputReady = true
-                            root.inputStatus = "ready"
-                        } else {
+                        // The reply names the keymap generation it installed
+                        // (protocol 4, decisions §23). A reply without one is
+                        // not a helper this panel can reason about: the shapes
+                        // moved together with the version, so this is an
+                        // installation mismatch, not a recoverable error.
+                        var gen = parseInt(reply.split("\t")[1])
+                        if (!isFinite(gen) || gen <= 0) {
+                            root.serviceIncompatible = true
                             root.inputReady = false
-                            root.inputStatus = "configuring"
+                            root.inputStatus = "configured without a keymap generation"
+                        } else {
+                            root.settleConfigureReply(gen)
+                            // Readiness waits for the WHOLE queue: an older
+                            // reply does not make typing safe while a pipelined
+                            // configure is still compiling the keymap a press
+                            // would land in — a chord allowed through now would
+                            // straddle that drain and lose its release. It also
+                            // waits for keycap facts that answer the generation
+                            // this reply just installed (decisions §23): request
+                            // them the moment the queue is settled and anything
+                            // current has been invalidated.
+                            if (Session.settled(root.session)) {
+                                // Every group of this install, not just the
+                                // one being drawn. The helper resolved them
+                                // all when it installed the keymap, so asking
+                                // for the rest now costs one extra reply each
+                                // and makes the next language switch a lookup
+                                // instead of a round trip through an
+                                // invalidated, gated, dimmed keyboard.
+                                var missing = Session.missingCapGroups(
+                                    root.session, root.groupCount)
+                                if (missing.length > 0)
+                                    console.log("[osk] caps requested for group(s)",
+                                        missing.join(","), "of", root.groupCount)
+                                for (var mg = 0; mg < missing.length; mg++)
+                                    sendCommandUnchecked(capsRequestLine(missing[mg]))
+                            }
+                            root.inputReady = Session.typingReady(root.session)
+                            root.inputStatus = root.inputReady ? "ready" : "configuring"
+                        }
+                    } else if (reply.indexOf("caps\t") === 0) {
+                        // The helper's keycap facts for the world it has
+                        // installed (decisions §23). The session refuses any
+                        // reply whose generation or group no longer matches
+                        // the acknowledged one — a superseded answer computed
+                        // from a keymap the helper no longer has can never
+                        // enable caps, and while nothing current exists the
+                        // typing gate stays shut.
+                        var parsed = Session.parseCapsReply(reply)
+                        if (!parsed) {
+                            // A reply the parser refuses is protocol drift,
+                            // not an empty keymap: refuse the world rather
+                            // than draw a guessed level.
+                            console.error("[osk] unreadable keycap facts reply")
+                            root.capsFactsFailed = true
+                            root.inputReady = false
+                            root.inputStatus = "unreadable keycap facts"
+                        } else {
+                            var applied = Session.applyCapsReply(root.session, parsed)
+                            root.session = applied.state
+                            if (applied.accepted) {
+                                root.capsFactsFailed = false
+                                root.shareKeymapWithCompositor()
+                                if (Session.typingReady(root.session)) {
+                                    root.inputReady = true
+                                    root.inputStatus = "ready"
+                                }
+                            }
                         }
                     } else if (reply.indexOf("err") === 0) {
                         if (reply.indexOf("err protocol") === 0) {
@@ -1177,6 +1222,28 @@ Item {
                             // surfacing in the status without bricking the
                             // keyboard.
                             root.inputStatus = reply
+                        } else if (reply === "err bad group") {
+                            // Only a caps request can earn this: the helper
+                            // refused to answer facts for a group its keymap
+                            // does not carry. For the group being DRAWN that
+                            // is keymap-wide disagreement about the world, and
+                            // the hint says so instead of letting the built-in
+                            // table pass for it. For one of the other groups
+                            // the panel pre-fetches it is not: the drawn group
+                            // still has current facts, typing is still
+                            // answering the installed keymap, and the only
+                            // consequence is that switching INTO that group
+                            // will go the slow way. Refusing the whole world
+                            // over it would gate a keyboard that is working.
+                            root.capsFactsFailed = !Session.capsCurrent(root.session)
+                            if (root.capsFactsFailed) {
+                                root.inputReady = false
+                                root.inputStatus = reply
+                            } else {
+                                console.error("[osk] helper has no facts for a"
+                                    + " pre-fetched group; that group will"
+                                    + " resolve on switch")
+                            }
                         } else if (reply === "err cannot configure keymap") {
                             // A FAILED configure is authoritative about the
                             // device world in a way the error text cannot
@@ -1208,7 +1275,8 @@ Item {
                             // left the lock standing here on purpose (the
                             // reply owns the settle), so the capture above
                             // still sees the modifiers it must lift.
-                            configureBook.rebaseAfterFailure()
+                            root.session = Session.reduce(root.session,
+                                { type: "configureFailed" })
                             var lockedPositions = []
                             for (var m = 0; m < Modifiers.ORDER.length; m++) {
                                 if (modifierState[Modifiers.ORDER[m]] === "locked")
@@ -1276,7 +1344,11 @@ Item {
         repeat: false
         onTriggered: {
             if (root.daemonSocket) {
-                root.daemonSocket.write("hello 3\n")
+                // The version the session negotiates, never a literal: the
+                // reply matcher above compares against the same constant, and
+                // a stale literal here reads as an installation mismatch
+                // against a helper this panel is actually compatible with.
+                root.daemonSocket.write("hello " + Session.PROTOCOL_VERSION + "\n")
                 root.daemonSocket.flush()
             }
         }
@@ -1297,16 +1369,11 @@ Item {
         }
     }
 
-    // The emoji cap's launch path (spec-v1.1 §1, 2026-09-05 amendment: the
-    // picker is configured, not hardcoded). The configured app by bare PATH
-    // name, never an absolute path, and no shortcut synthesis —
-    // single-instance behaviour is the picker's own. execDetached reports
-    // nothing, so the only failure that matters (the app absent from PATH)
-    // is answered first by the same short-process check the socket probe
-    // uses; the launch itself stays a true detach, because an emoji picker
-    // must not live or die with the panel that opened it. On a successful
-    // probe the panel is told, so its runtime courtesy positioning can watch
-    // for the picker's window.
+    // The emoji cap's PATH probe (spec-v1.1 §1). The configured app by bare
+    // PATH name, never an absolute path. execDetached is the panel's: Emote
+    // is a managed session (ticket 09) and a second exec would recreate the
+    // picker rather than dismiss it. The probe still answers "not on PATH"
+    // before anything is launched.
     Process {
         id: emojiProbe
         command: ["sh", "-c", "command -v \"$1\" >/dev/null", "osk-emoji-probe",
@@ -1315,8 +1382,7 @@ Item {
             emojiFailTimer.stop()
             if (exitCode === 0) {
                 root.emojiFailed = false
-                Quickshell.execDetached([root.emojiAppName])
-                root.emojiPickerLaunched(root.emojiAppName)
+                root.emojiCapActivated(root.emojiAppName)
                 return
             }
             root.emojiFailed = true
@@ -1337,7 +1403,15 @@ Item {
         id: reconnectTimer
         interval: 2000
         repeat: true
-        running: !root.inputReady
+        // Also while a configure is outstanding. Readiness alone stopped being
+        // enough once a group-only configure no longer lowers `inputReady`
+        // (ticket 16): a socket that stays `connected` but never answers
+        // `configured` would leave the panel ready-looking, drawing the acked
+        // group while the helper types the queued one, with no tick to notice.
+        // A configure is answered in well under this interval — the helper
+        // replies before it compiles anything — so an entry still outstanding
+        // when this fires is a lost reply, not a slow one.
+        running: !root.inputReady || !Session.settled(root.session)
         onTriggered: {
             // An open socket is never torn down, whatever the handshake is
             // doing: a configure round trip can outlast this tick, and
@@ -1372,11 +1446,23 @@ Item {
     // the key caps are drawn with, so what is shown is what is typed — the
     // reducer decides both, from the same `letter` and `caps` facts.
     function pressChar(keyData) {
-        if (!keyData.k) return
+        // The ten symbol/digit caps use Shift to pick the digit chord. The
+        // latch already selected the layer, so the reducer receives an exact
+        // chord and temporarily lifts Shift to type the digit's level 1.
+        // `sk` alone: a cap either carries a resolved Shift half or it does
+        // not. The old `|| keyData.shiftToken` arm outlived the token caps
+        // that used it, and its guard below could only ever have swallowed a
+        // press in silence.
+        var wantShiftLayer = !!keyData.s && shiftActive() && !!keyData.sk
+        var position = wantShiftLayer ? keyData.sk : keyData.k
+        if (!position) return
+        var level = wantShiftLayer
+            ? (keyData.slvl || 1)
+            : (keyData.baseLvl !== undefined ? keyData.baseLvl : 1)
         root.keyPressed()
         applyModifierEvent({
             type: "press",
-            position: keyData.k,
+            position: position,
             letter: isLetterKey(keyData),
             // A level cap draws one level and has to type that level. Same
             // treatment as Caps Lock: real modifier presses around the key,
@@ -1387,19 +1473,33 @@ Item {
             // caps are `exact`: a latched Shift or AltGr is never APPLIED
             // by one — the chord is the level's, not the latch's — but it
             // is always CONSUMED by one, as §2 spends any non-modifier
-            // key's latches. The symbols page's dual caps carry no `lvl`,
-            // so none of this applies to them: they are ordinary paired
-            // caps, and a latched or locked Shift applies to their press
-            // exactly as it does on the main page — which is what makes
-            // the level the cap's emphasis shows the typed one.
-            shift: keyData.lvl === 2 || keyData.lvl === 4,
-            altgr: keyData.lvl === 3 || keyData.lvl === 4,
-            exact: keyData.exact === true,
+            // key's latches. Pair caps wrap AltGr intrinsically and apply
+            // a latched or locked Shift; they are not exact. The symbol/digit
+            // caps on &123 are exact too: the latch already chose the layer.
+            shift: Layout.levelChord(level).shift,
+            altgr: Layout.levelChord(level).level3,
+            // Levels five to eight are the reserved block's own (decisions
+            // §33): <LVL5> opens them and Shift and <LVL3> choose among the
+            // four, so a glyph resolved up there presses one more real
+            // modifier than one resolved below and nothing else changes.
+            level5: Layout.levelChord(level).level5,
+            // Which key carries AltGr for THIS chord. A glyph cap resolved at
+            // level 3 or 4 (ticket 18) needs ISO_Level3_Shift, and RALT is
+            // only that on some layouts — `us` makes it Alt_R, which is the
+            // layout dependence the reserved block exists to remove. <LVL3>
+            // is ISO_Level3_Shift in every group of every compiled keymap.
+            // A dual glyph cap resolves its two halves independently, so the
+            // half being typed is what decides — the base can sit at level 1
+            // of one position while the Shift glyph sits at level 3 of
+            // another.
+            level3Position: (wantShiftLayer ? keyData.shiftLevel3 : keyData.level3) === true
+                ? "LVL3" : "",
+            exact: keyData.exact === true || keyData.baseLvl !== undefined,
             // Where this chord sits in the configure-send sequence. A
             // configure queued after it drains at the helper ahead of the
             // chord's release, and the stamp is how the reply and the
             // release each tell that apart — see the queue above.
-            configureStamp: configureBook.sends
+            configureStamp: session.sends
         })
     }
 
@@ -1413,9 +1513,9 @@ Item {
     function pressSpecial(keyData, doubleClick) {
         switch (keyData.key) {
         case "close": closeRequested(); return
-        // The ☺ cap (spec-v1.1 §1) probes PATH for the configured picker,
-        // then launches it detached — see emojiProbe. A second click while
-        // the probe is already running needs no queue: the pending probe's
+        // The ☺ cap (spec-v1.1 §1) probes PATH for the configured picker.
+        // The panel decides launch vs dismiss. A second click while the
+        // probe is already running needs no queue: the pending probe's
         // exit resolves for both.
         case "emoji":
             if (!emojiProbe.running) emojiProbe.running = true
@@ -1448,7 +1548,7 @@ Item {
         root.keyPressed()
         applyModifierEvent({
             type: "press", position: position,
-            configureStamp: configureBook.sends
+            configureStamp: session.sends
         })
     }
 
@@ -1554,6 +1654,7 @@ Item {
                             property bool inputGated: !root.inputReady
                                 && producesInput
                             property bool disabled: unavailable || inputGated
+                            property bool isSuper: keyData.key === "logo"
 
                             color: disabled ? root.keyBg
                                 : (locked || toggleOn) ? root.lockedFill
@@ -1566,7 +1667,27 @@ Item {
                             border.width: latched ? root.latchedBorderWidth : root.keyBorderWidth
 
                             Text {
+                                id: superLogo
+                                // Same request as the bar launcher, but only
+                                // after the packaged TTF is present so Qt
+                                // cannot substitute another family's U+E900.
+                                visible: !keyRect.isDual && keyRect.isSuper
+                                    && root.omarchyFontPresent
+                                anchors.centerIn: parent
+                                text: root.omarchyFontPresent ? "\ue900" : ""
+                                textFormat: Text.PlainText
+                                renderType: Text.NativeRendering
+                                color: keyRect.disabled ? root.textDim
+                                    : (keyRect.locked || keyRect.toggleOn)
+                                    ? root.lockedText : root.textMain
+                                font.family: "omarchy"
+                                font.pixelSize: root.superLogoSize
+                                Accessible.name: "Super"
+                            }
+
+                            Text {
                                 visible: !keyRect.isDual
+                                    && (!keyRect.isSuper || !root.omarchyFontPresent)
                                 anchors.centerIn: parent
                                 text: keyData.label
                                     ? keyData.label

@@ -25,7 +25,15 @@
 
 /// The roster, in the order modifiers are pressed around a key. Releases go in
 /// the reverse order, the way a hand would let go.
-var ORDER = ["ctrl", "alt", "logo", "altgr", "shift"]
+///
+/// `level5` is in the roster but on no cap: it is the reserved symbol block's
+/// own level opener (decisions §33), asked for by an exact-level press and by
+/// nothing else. It never latches and never locks, so every loop that reads a
+/// modifier's state simply passes over it.
+var ORDER = ["ctrl", "alt", "logo", "level5", "altgr", "shift"]
+
+/// The roster minus `level5`: the modifiers a cap can name and a user click.
+var CLICKABLE = ["ctrl", "alt", "logo", "altgr", "shift"]
 
 /// The positions that carry each modifier. Positions rather than names because
 /// the panel sends positions and the compositor decides what they mean; this
@@ -34,6 +42,7 @@ var POSITIONS = {
     ctrl: "LCTL",
     alt: "LALT",
     logo: "LWIN",
+    level5: "LVL5",
     altgr: "RALT",
     shift: "LFSH"
 }
@@ -60,8 +69,14 @@ function initialState() {
     return state
 }
 
+/// Whether a cap key names a modifier the user can click.
+///
+/// Not `POSITIONS.hasOwnProperty`: `level5` is in that table because a press
+/// has to know which position carries it, but it is on no cap and has no
+/// click, latch or lock. Answering yes for it would let a cap named "level5"
+/// latch a modifier that then joined every chord.
 function isModifier(name) {
-    return POSITIONS.hasOwnProperty(String(name || ""))
+    return CLICKABLE.indexOf(String(name || "")) !== -1
 }
 
 /// True while the modifier is doing something — latched or locked. What the
@@ -92,12 +107,14 @@ function unchanged(state) {
 ///   { type: "fnClick" }
 ///   { type: "click",        modifier }
 ///   { type: "doubleClick",  modifier }
-///   { type: "press",        position, letter, shift, altgr, configureStamp }
+///   { type: "press",        position, letter, shift, altgr, level5,
+///                           level3Position, exact, configureStamp }
 ///   { type: "release",      dropRestore }
 ///   { type: "configureDrain", stamp }
 ///   { type: "pageSwitch" }
 ///   { type: "languageSwitch" }
 ///   { type: "releaseAll" }
+///   { type: "paste",        ctrl, shift, position }
 ///
 /// `shift` on a press means the cap draws the position's shift level and must
 /// type that level — the symbols page (spec-v1 §4). Like Caps Lock it is
@@ -141,8 +158,56 @@ function reduce(state, event) {
         return unchanged(state)
     case "releaseAll":
         return releaseAll(state)
+    case "paste":
+        return paste(state, event)
     }
     return unchanged(state)
+}
+
+/// Classes whose CLIPBOARD paste is Ctrl+Shift+V, not Shift+Insert.
+/// Shift+Insert is PRIMARY in typical terminals (foot.ini primary-paste,
+/// kitty paste_from_selection). Empty/stale class must not fail open to
+/// that PRIMARY chord — prefer the terminal CLIPBOARD chord instead.
+/// Reverse-DNS last components (org.kde.konsole → konsole) share the map.
+var TERMINAL_CLIPBOARD_CLASSES = {
+    "foot": true,
+    "footclient": true,
+    "kitty": true,
+    "alacritty": true,
+    "ghostty": true,
+    "wezterm": true,
+    "kgx": true,
+    "console": true,
+    "gnome-terminal": true,
+    "gnome-terminal-server": true,
+    "terminal": true,
+    "konsole": true,
+    "xfce4-terminal": true,
+    "agterm": true
+}
+
+/// The paste chord the header control sends for a focused client class.
+/// CLIPBOARD, not PRIMARY: terminals bind Shift+Insert to primary-paste and
+/// Ctrl+Shift+V to clipboard-paste; GTK binds Shift+Insert to paste-clipboard.
+/// Ctrl+V is not universal (terminals type a literal). Unknown non-empty
+/// classes keep the GTK chord, which is the native and XWayland path already
+/// proven. Empty class uses the terminal CLIPBOARD chord so a stale lookup
+/// cannot send PRIMARY into a terminal.
+///
+/// V is AB04 (z x c v). AB06 is N. Ctrl+Shift+N opens a new window in
+/// kitty, ghostty, and agterm — the chord this used to send.
+function pasteChordForClass(wmClass) {
+    var cls = String(wmClass || "").toLowerCase()
+    if (!cls || usesTerminalClipboardChord(cls))
+        return { ctrl: true, shift: true, position: "AB04" }
+    return { ctrl: false, shift: true, position: "INS" }
+}
+
+function usesTerminalClipboardChord(cls) {
+    if (TERMINAL_CLIPBOARD_CLASSES[cls]) return true
+    var dot = cls.lastIndexOf(".")
+    if (dot < 0) return false
+    return TERMINAL_CLIPBOARD_CLASSES[cls.slice(dot + 1)] === true
 }
 
 /// The protocol lines that carry a modifier from one state to another. Only
@@ -311,17 +376,38 @@ function press(state, event) {
         wants.altgr = true
     }
 
+    // Levels five to eight the same way, one modifier further out: <LVL5> is
+    // ISO_Level5_Shift in every group of every compiled keymap, and only an
+    // exact-level press ever asks for it. There is no cap and no latch to
+    // weigh — the level either wants it or does not.
+    if (event.level5 === true) wants.level5 = true
+
     var wrap = []
     for (var d = 0; d < ORDER.length; d++) {
         if (wants[ORDER[d]]) wrap.push(ORDER[d])
     }
 
+    // Which key actually carries each modifier for THIS press. AltGr is the
+    // one that can move: the panel's AltGr cap means RALT, whatever the
+    // layout makes of it, but a cap resolved at level 3 or 4 of the reserved
+    // symbol block (ticket 18) needs a position that is ISO_Level3_Shift in
+    // every group — RALT is not, on `us`. The event names it; nothing else
+    // about the chord changes, and the release below lifts what was pressed
+    // rather than what POSITIONS says today.
+    var positions = {}
+    if (typeof event.level3Position === "string" && event.level3Position !== "") {
+        positions.altgr = event.level3Position
+    }
+    var positionOf = function (modifier) {
+        return positions[modifier] || POSITIONS[modifier]
+    }
+
     var lines = []
     for (var r = restore.length - 1; r >= 0; r--) {
-        lines.push("up " + POSITIONS[restore[r]])
+        lines.push("up " + positionOf(restore[r]))
     }
     for (var k = 0; k < wrap.length; k++) {
-        lines.push("down " + POSITIONS[wrap[k]])
+        lines.push("down " + positionOf(wrap[k]))
     }
     // `down`, not `tap`: the key stays down for as long as the mouse button
     // does, and the compositor repeats it at the user's own repeat_delay and
@@ -337,6 +423,9 @@ function press(state, event) {
         position: position,
         wrap: wrap,
         restore: restore,
+        // The override travels with the chord: a release that recomputed it
+        // would lift RALT for a key that went down on LVL3.
+        positions: positions,
         configureStamp: typeof event.configureStamp === "number"
             ? event.configureStamp : 0
     }
@@ -359,17 +448,21 @@ function release(state, event) {
     if (!state.pending) return unchanged(state)
     var next = copy(state)
     next.pending = null
+    var held = state.pending.positions || {}
+    var lifted = function (modifier) {
+        return held[modifier] || POSITIONS[modifier]
+    }
     var lines = ["up " + state.pending.position]
     for (var u = ORDER.length - 1; u >= 0; u--) {
         if (state.pending.wrap.indexOf(ORDER[u]) !== -1) {
-            lines.push("up " + POSITIONS[ORDER[u]])
+            lines.push("up " + lifted(ORDER[u]))
         }
     }
     if (event !== false && !(event && event.dropRestore === true)) {
         var restore = state.pending.restore || []
         for (var r = 0; r < ORDER.length; r++) {
             if (restore.indexOf(ORDER[r]) !== -1) {
-                lines.push("down " + POSITIONS[ORDER[r]])
+                lines.push("down " + lifted(ORDER[r]))
             }
         }
     }
@@ -406,6 +499,16 @@ function configureDrain(state, event) {
             position: pending.position,
             wrap: pending.wrap,
             restore: [],
+            // The per-chord AltGr key survives the drain with everything else
+            // it describes. Dropping it here sent `up RALT` for a key that
+            // went down on LVL3 — and a refused configure is exactly the path
+            // where the helper did NOT drain, so that key really is still
+            // held. Mod5 would then stay asserted for the rest of the
+            // session: the cap is exempt from the fifteen-second lift
+            // (modifiers are), AltGr can never be locked so the err handler's
+            // lock sweep misses it, and the helper re-derives its mask from
+            // what it holds, so `mods 0` cannot clear it either.
+            positions: pending.positions || {},
             configureStamp: pending.configureStamp
         }
     }
@@ -418,6 +521,36 @@ function configureDrain(state, event) {
 function shiftWanted(state, event, shiftLatched) {
     if (!event.letter) return shiftLatched
     return state.caps ? !shiftLatched : shiftLatched
+}
+
+/// An explicit current-content paste (spec-v1.1 §1): a complete exact chord
+/// in one event, never a held cap. `ctrl`/`shift`/`position` are the chord
+/// the caller chose; latched Ctrl/Alt/Super are spent and never mixed in,
+/// and locked Shift is lifted around a chord that does not want it so a
+/// lock cannot silently turn Ctrl+V into Ctrl+Shift+V. A key already held
+/// is left alone — paste does not interleave with a press still down.
+function paste(state, event) {
+    var position = String(event && event.position || "")
+    if (!position || state.pending) return unchanged(state)
+
+    var next = copy(state)
+    for (var i = 0; i < ORDER.length; i++) {
+        if (next[ORDER[i]] === "latched") next[ORDER[i]] = "idle"
+    }
+
+    var wantCtrl = event.ctrl === true
+    var wantShift = event.shift === true
+    var shiftLocked = state.shift === "locked"
+    var lines = []
+    if (shiftLocked && !wantShift) lines.push("up " + POSITIONS.shift)
+    if (wantCtrl) lines.push("down " + POSITIONS.ctrl)
+    if (wantShift && !shiftLocked) lines.push("down " + POSITIONS.shift)
+    lines.push("down " + position)
+    lines.push("up " + position)
+    if (wantShift && !shiftLocked) lines.push("up " + POSITIONS.shift)
+    if (wantCtrl) lines.push("up " + POSITIONS.ctrl)
+    if (shiftLocked && !wantShift) lines.push("down " + POSITIONS.shift)
+    return { state: next, lines: lines }
 }
 
 /// Lifts everything the device is holding for us and returns to idle. Used

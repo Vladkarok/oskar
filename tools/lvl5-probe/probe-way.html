@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PROBE-WAY|boot</title>
+</head>
+<body>
+<p>levels 5-8 probe, native Wayland leg. Title records every keydown.</p>
+<script>
+// Every keydown appends one token: the DOM key plus the DOM code, separated
+// by MIDDLE DOT so a token is matchable without ambiguity (`£·KeyQ`). The
+// DOM code is `-` when Chromium has no DomCode for the keycode — the same
+// table whose drops ticket 20 measured. Modifiers record too; positive steps
+// match `char·`, so their tokens are immune to modifier noise.
+document.title = "PROBE-WAY|ready";
+addEventListener("keydown", function (e) {
+  var k = (e.key === undefined || e.key === null) ? "null" : e.key;
+  document.title += k + "\u00b7" + (e.code || "-") + " ";
+});
+</script>
+</body>
+</html>

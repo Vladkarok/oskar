@@ -27,6 +27,11 @@
 // - Probe failure (hyprctl missing, non-zero, unparseable): hands off; the
 //   user's setting stays exactly as it was, and there is nothing to restore.
 // - Originally disabled hiding: nothing to suspend, nothing to restore.
+// - An unconfirmed write (watchdog timeout of a still-running process)
+//   stays in flight until physical completion or destruction: writeSeq
+//   is kept, so a queued restore cannot verify against the still-running
+//   write. The restore obligation stands. A confirmed startup failure
+//   is a real failure and releases the host's process slot.
 // - Restore only an override this lifecycle measured and applied. Before the
 //   undo write, one fresh read verifies the override is still what the
 //   compositor holds: a config reload or an external change mid-lifecycle
@@ -34,9 +39,14 @@
 //   be restoring a guess.
 // - A config reload supersedes a live override (a reload re-applies the
 //   config file and wipes running-session `eval` changes), so the override
-//   is dropped and close restores nothing. A reload landing while the
-//   suspension write is still in flight keeps the undo owed: our write lands
-//   after the reload either way.
+//   is dropped and close restores nothing. A reload landing while a write
+//   is in flight is recorded and reconciled after that write settles —
+//   the write is not assumed to land after the reload. A reload landing
+//   while a probe is in flight retires that sample and reissues.
+// - A reopen mid-verify rides a confirmed still-live override (`false`)
+//   or a failed verify (ownership is kept; re-probing a still-live
+//   `false` would assume hiding was originally disabled). A true verify
+//   re-establishes the suspension.
 // - Panel destruction with the override live: one best-effort restore of the
 //   recorded measurement (the host sends it detached, since tracked
 //   processes die with the object). If the whole shell dies with the panel
@@ -46,20 +56,22 @@
 // Residuals, documented rather than pretended away: a direct external
 // `hyprctl eval` disabling hiding mid-lifecycle is indistinguishable at
 // verify time from our own override (both read false), so the restore
-// undoes it; a config reload racing the suspension write inside its
-// few-millisecond window keeps the undo owed (see above), so the recorded
-// value is written even if the reload carried a deliberate `false` —
-// self-healing on the next reload, and visible in the journal via the
-// host's outcome logging; a failed suspension write stands down honestly
-// for that open — hiding was never disabled, and the next open re-probes; a
-// failed undo write keeps the obligation and is retried at the next
-// open+close, but if the panel is never reopened and the shell dies
-// uncleanly, hiding stays disabled until a config reload, with the journal
-// line as the only signal; a reload landing while the probe is in flight
-// leaves the probe's answer authoritative (the close-time verify read is
-// what guards the recorded value against the same race); and a destruction
-// while the suspension write is still in flight races it, so the best-effort
-// restore write cannot be ordered after the destruction's own detached send.
+// undoes it; a write that actually lands after a racing reload may leave
+// hiding disabled until the next reload (the recorded value is not
+// restored, because the write may equally have applied before the reload
+// wiped it); a still-running write that never exits leaves restore queued
+// until destruction's best-effort write; a failed reopen verify that
+// actually meant the override was gone leaves the panel open unsuspended
+// until the next close restores the recorded value; a failed suspension
+// write stands down honestly for that open — hiding was never disabled,
+// and the next open re-probes; a failed undo write keeps the obligation
+// and is retried at the next open+close, but if the panel is never
+// reopened and the shell dies uncleanly, hiding stays disabled until a
+// config reload, with the journal line as the only signal; a reload
+// landing while the probe is in flight retires that sample and reissues
+// the probe; and a destruction while the suspension write is still in
+// flight races it, so the best-effort restore write cannot be ordered
+// after the destruction's own detached send.
 
 // A fresh model. `seq` is a monotonic generation counter bumped on every
 // async operation issued; `probeSeq`/`restoreSeq`/`writeSeq` hold the
@@ -79,6 +91,7 @@ function create() {
         writeValue: "",       // the value of the write in flight ("false"=suspension, "true"=undo)
         overrideLive: false,  // our `false` is applied and believed current
         recorded: "",         // the measured pre-open value, kept for the undo
+        reloadDuringWrite: false, // a reload landed while a write was in flight
         outcome: "idle"
     }
 }
@@ -196,14 +209,24 @@ function readResult(m, kind, seq, enabled) {
     }
     m.restoreSeq = 0
     if (m.opened) {
-        // The panel reopened before the verify settled: the override —
-        // still believed live, still wanted — simply continues under the
-        // new lifecycle. No undo write, no fresh probe (either would flap
-        // the compositor setting); the reopen's own close will verify and
-        // restore.
         m.probeQueued = false
-        m.outcome = "verify superseded by reopen; the override continues"
-        return []
+        if (enabled === false) {
+            // Confirmed still live: ride it rather than flapping the
+            // compositor setting. This lifecycle's close will restore.
+            m.outcome = "verify superseded by reopen; the override continues"
+            return []
+        }
+        if (enabled === null) {
+            // Unknown is not gone. Re-probing can read our still-live
+            // false and assume hiding was originally disabled.
+            m.outcome = "verify failed during reopen; the override obligation stands"
+            return []
+        }
+        // The override is gone (true): re-establish.
+        m.overrideLive = false
+        m.recorded = ""
+        m.outcome = "verify showed the override gone; re-establishing"
+        return startProbe(m)
     }
     var actions = []
     var undo = m.recorded
@@ -237,10 +260,33 @@ function readResult(m, kind, seq, enabled) {
 
 function writeResult(m, seq, ok) {
     if (seq !== m.writeSeq) return []
+    if (ok !== true && ok !== false) {
+        // Still running: keep writeSeq so a queued restore cannot verify
+        // concurrently, and so a later exit still matches this generation.
+        m.outcome = m.writeValue === "false"
+            ? "suspension write unconfirmed; restore obligation stands"
+            : "restore write unconfirmed; the undo obligation stands"
+        return []
+    }
     m.writeSeq = 0
     var value = m.writeValue
     m.writeValue = ""
-    if (!ok) {
+    if (m.reloadDuringWrite) {
+        // The write may have applied before the reload wiped it, or after.
+        // Either way the reload owns the configured value; do not restore
+        // a recorded guess. Re-measure if the panel is still open.
+        m.reloadDuringWrite = false
+        m.restoreQueued = false
+        m.overrideLive = false
+        m.recorded = ""
+        m.outcome = "write settled after a config reload; reconciling"
+        if (m.opened) {
+            m.probeQueued = false
+            return startProbe(m)
+        }
+        return []
+    }
+    if (ok === false) {
         if (value === "false") {
             // The suspension write failed: hiding was never disabled, so
             // there is nothing to undo and nothing to restore later.
@@ -280,15 +326,21 @@ function writeResult(m, seq, ok) {
 
 function configReloaded(m) {
     if (m.writeSeq !== 0) {
-        // Our write lands after the reload, so the reload never held the
-        // value: keep the undo obligation and let the normal close verify.
-        m.outcome = "config reload during the suspension write; undo stays owed"
+        // The write may already have applied, or it may land after this
+        // reload. Record the race and reconcile when the write settles.
+        m.reloadDuringWrite = true
+        m.outcome = "config reload during a write; will reconcile after it settles"
         return []
     }
     if (m.restoreSeq !== 0) {
         // The reload already answered the restore question; a late verify
         // result must not write over the config's own value.
         m.restoreSeq = 0
+    }
+    if (m.probeSeq !== 0) {
+        // A pre-reload sample is obsolete: the reload may have changed the
+        // configured value, and applying it would restore a guess on close.
+        m.probeSeq = 0
     }
     var superseded = m.overrideLive
     m.overrideLive = false
@@ -314,6 +366,7 @@ function destroyed(m) {
     m.writeValue = ""
     m.probeQueued = false
     m.restoreQueued = false
+    m.reloadDuringWrite = false
     m.overrideLive = false
     m.recorded = ""
     m.outcome = value !== ""

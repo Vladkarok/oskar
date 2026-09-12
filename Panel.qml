@@ -7,6 +7,8 @@ import qs.Commons
 import qs.Ui
 import "Config.js" as ConfigFile
 import "PickerFit.js" as PickerFit
+import "PickerSession.js" as PickerSession
+import "SettingsPlacement.js" as SettingsPlacement
 
 Item {
     id: root
@@ -69,7 +71,7 @@ Item {
     // config file lands on `medium`, which is what the chips' label
     // fallback in the settings popover already does below.
     readonly property var sizePresetOrder: ["medium", "large", "x-large"]
-    readonly property var sizePresetScales: ({ "medium": 1.0, "large": 1.2, "x-large": 1.45 })
+    readonly property var sizePresetScales: ConfigFile.SIZE_PRESET_SCALES
     readonly property var sizePresetLabels: ({ "medium": "M", "large": "L", "x-large": "XL" })
     readonly property real sizeScale: root.sizePresetScales[root.sizePreset] || 1.0
 
@@ -82,7 +84,7 @@ Item {
     readonly property var colorSwatches: ConfigFile.recommendedSwatches({
         background: tokens.background,
         foreground: tokens.foreground,
-        accent: tokens.accent,
+        accent: tokens.themeAccent,
         muted: tokens.muted
     })
 
@@ -91,14 +93,24 @@ Item {
     // the popover) and the custom editor read. Function-formed consumers
     // keep the first binding evaluation, in whatever order the engine runs
     // it, from ever handing a row undefined.
-    readonly property var effectiveColorForField: ({
-        keyBackground: tokens.keyFill,
-        panelBackground: tokens.panelBackground,
-        textColor: tokens.textColor,
-        accentColor: tokens.accent,
-        borderColor: tokens.cardBorderSpec && tokens.cardBorderSpec.color
-            ? tokens.cardBorderSpec.color : "transparent"
-    })
+    // Real color properties so settings rows rebind when Custom Apply
+    // writes an override. A JS object map does not notify.
+    readonly property color effectiveKeyBackground: tokens.keyFill
+    readonly property color effectivePanelBackground: tokens.panelBackground
+    readonly property color effectiveTextColor: tokens.textColor
+    readonly property color effectiveAccentColor: tokens.accent
+    readonly property color effectiveBorderColor: tokens.cardBorderSpec
+        && tokens.cardBorderSpec.color
+        ? tokens.cardBorderSpec.color : "transparent"
+    QtObject {
+        id: effectiveColors
+        readonly property color keyBackground: root.effectiveKeyBackground
+        readonly property color panelBackground: root.effectivePanelBackground
+        readonly property color textColor: root.effectiveTextColor
+        readonly property color accentColor: root.effectiveAccentColor
+        readonly property color borderColor: root.effectiveBorderColor
+    }
+    readonly property alias effectiveColorForField: effectiveColors
 
     // The emoji picker (spec-v1.1 §1, 2026-09-05 amendment): the app the ☺
     // cap execs, defaulting to Omarchy's own omarchy-menu-emoji and
@@ -111,16 +123,11 @@ Item {
     property var detectedEmojiPickers: []
     readonly property var emojiPickerCandidates:
         ["omarchy-menu-emoji", "emote", "xmoji", "bmoji"]
-    // The popover's typed-hex state — the panel's ONE sanctioned keyboard-
-    // focus exception (spec-v1.1 §5). False for the panel's whole life except
-    // while a hex field is being typed into: the layer surface then asks the
-    // compositor for OnDemand keyboard focus (see the PanelWindow below), and
-    // gives it back when the entry ends. The OSK's own hex-entry pad does not
-    // need any of this — it edits the field locally — but a physical keyboard
-    // typing into the field, and the compositor's key routing while the field
-    // is the active entry, still do. One field at a time, panel-owned: the
-    // field that holds active focus is the entry. Fields in the settings
-    // popover and in the custom colour editor both report to here.
+    // Colour-field entry — the panel's ONE sanctioned keyboard-focus
+    // exception (spec-v1.1 §5). False except while a hex/RGB/HSV field is
+    // the active entry: the popover or editor window that holds that field
+    // then asks for Exclusive then OnDemand so the main OSK types into it.
+    // The keyboard panel itself stays None. One field at a time, panel-owned.
     property bool hexEditing: false
     property string hexEditField: ""
 
@@ -129,24 +136,58 @@ Item {
         root.hexEditing = true
     }
 
-    function endHexEdit() {
-        root.hexEditing = false
-        root.hexEditField = ""
+    function colourSurfaceKeyboardFocus(ownsField) {
+        if (!root.hexEditing || !ownsField)
+            return WlrKeyboardFocus.None
+        return root.hexFocusPrimed ? WlrKeyboardFocus.OnDemand
+                                   : WlrKeyboardFocus.Exclusive
     }
 
-    // The custom colour editor (spec-v1.1 §5, 2026-09-06 amendment): which
-    // field it is open for, empty when closed. Opening it never resizes the
-    // panel — the editor overlays the key grid inside the card.
+    function endHexEdit() {
+        var released = ConfigFile.hexEditRelease()
+        root.hexEditing = released.hexEditing
+        root.hexEditField = released.hexEditField
+        // Park on a stable non-TextInput in the window that held the field
+        // so a later hide cannot recapture §5. Custom/Cancel/leftover call
+        // this because their MouseAreas do not steal focus on their own.
+        if (released.dropItemFocus) {
+            if (root.customEditorField !== "")
+                editorFocusSink.forceActiveFocus()
+            else
+                popoverFocusSink.forceActiveFocus()
+        }
+    }
+
+    // The custom colour editor (spec-v1.1 §5): which field it is open for,
+    // empty when closed. It sits on its own overlay window, never on the grid.
     property string customEditorField: ""
     property string customEditorLabel: ""
+    // Snapshot of the effective colour at open — the editor's "old". A live
+    // binding would reset HSV from later theme/config changes while leaving
+    // the hex draft stale, and Apply would then commit that stale hex.
+    property color customEditorOldColor: "transparent"
+
+    function colorForField(field) {
+        if (field === "keyBackground") return root.effectiveKeyBackground
+        if (field === "panelBackground") return root.effectivePanelBackground
+        if (field === "textColor") return root.effectiveTextColor
+        if (field === "accentColor") return root.effectiveAccentColor
+        if (field === "borderColor") return root.effectiveBorderColor
+        return "transparent"
+    }
 
     function openCustomEditor(field, label) {
         if (!root.configHealthy) return
+        root.customEditorOldColor = root.colorForField(field)
         root.customEditorField = field
         root.customEditorLabel = label
     }
 
     function closeCustomEditor() {
+        // Always restore OSK routing before clearing the field name: the
+        // editor's hide/focus handlers compare hexEditField against
+        // fieldName, which is about to become empty.
+        root.endHexEdit()
         root.customEditorField = ""
         root.customEditorLabel = ""
     }
@@ -154,11 +195,12 @@ Item {
     // The focus prime (Omarchy's own KeyboardPanel pattern, Ui/
     // KeyboardPanel.qml): Hyprland focuses an OnDemand layer surface when it
     // MAPS, but not when an already-mapped surface flips None -> OnDemand —
-    // which is exactly what beginHexEdit does to this one. A brief Exclusive
-    // prime acquires the compositor's keyboard focus; OnDemand then settles
-    // in for the rest of the entry, releasing compositor-wide pointer
-    // hit-testing while keeping the focus the prime acquired. 75 ms —
-    // several commit cycles, imperceptible.
+    // which is exactly what beginHexEdit does to the popover or editor
+    // window that holds the field. A brief Exclusive prime acquires the
+    // compositor's keyboard focus; OnDemand then settles in for the rest of
+    // the entry, releasing compositor-wide pointer hit-testing while keeping
+    // the focus the prime acquired. 75 ms — several commit cycles,
+    // imperceptible.
     property bool hexFocusPrimed: false
     Timer {
         id: hexFocusPrimeTimer
@@ -256,9 +298,88 @@ Item {
         Quickshell.clipboardText = root.installCommand
     }
 
+    // Current-content paste (spec-v1.1 §1, ticket 14). Never writes
+    // CLIPBOARD. An active hex draft is the local target and the one path
+    // that reads the selection (to insert it); otherwise the helper sends
+    // the proven paste chord at whoever already has focus. Empty clipboard
+    // hides the chip. The control stays clickable whenever it can deliver —
+    // Quickshell's clipboard getter is not a reliable empty check and is
+    // not the hex-insert source (it stays empty/stale here).
+    readonly property bool pasteEnabled: root.hexEditing || keyboard.inputReady
+    // CLIPBOARD observation for the chip: empty / text / other. Refreshed
+    // on panel open, on paste click, and by wl-paste --watch — never polled.
+    property string clipboardKind: "empty"
+    property string clipboardPreview: ""
+    property int clipboardSeq: 0
+    // Last non-empty focused class: a layer click can briefly clear
+    // activeToplevel, and terminals vs GTK pick different CLIPBOARD chords.
+    property string lastClientClass: ""
+
+    function focusedClientClass() {
+        var top = Hyprland.activeToplevel
+        var cls = ""
+        if (top && top.lastIpcObject)
+            cls = String(top.lastIpcObject["class"] || "")
+        if (cls) root.lastClientClass = cls
+        return cls || root.lastClientClass
+    }
+
+    function pasteCurrentContent() {
+        if (!root.pasteEnabled) return
+        if (root.hexEditing) {
+            // wl-paste reads compositor CLIPBOARD. Quickshell.clipboardText
+            // is empty/stale in this stack, so it cannot be the insert path.
+            if (hexClipboardRead.running)
+                hexClipboardRead.running = false
+            hexClipboardRead.running = true
+            root.refreshClipboardPreview()
+            return
+        }
+        keyboard.pasteCurrent(root.focusedClientClass())
+        root.refreshClipboardPreview()
+    }
+
+    function refreshClipboardPreview() {
+        root.clipboardSeq += 1
+        clipboardTypes.seq = root.clipboardSeq
+        if (clipboardTypes.running)
+            clipboardTypes.running = false
+        clipboardTypes.running = true
+    }
+
+    function applyClipboardTypes(text, seq, exitCode) {
+        if (seq !== root.clipboardSeq) return
+        var kind = ConfigFile.clipboardKind(text, exitCode)
+        // Text stays hidden until wl-paste --no-newline returns a
+        // non-empty preview; empty/other apply immediately.
+        root.clipboardKind = ConfigFile.pasteChipKind(kind, "", false)
+        root.clipboardPreview = ""
+        if (kind !== "text") return
+        clipboardText.seq = seq
+        if (clipboardText.running)
+            clipboardText.running = false
+        clipboardText.running = true
+    }
+
+    function applyClipboardText(text, seq, exitOk) {
+        if (seq !== root.clipboardSeq) return
+        var preview = ConfigFile.pastePreviewText(text)
+        root.clipboardKind = ConfigFile.pasteChipKind("text", preview, exitOk)
+        root.clipboardPreview = root.clipboardKind === "text" ? preview : ""
+    }
+
+    function insertHexClipboard(raw) {
+        var text = String(raw || "")
+        if (text.length && text.charAt(text.length - 1) === "\n")
+            text = text.slice(0, -1)
+        if (!root.hexEditing || !text.length) return
+        if (root.customEditorField !== "") customColorEditor.insertHexText(text)
+        else settingsPopover.insertHexText(text)
+    }
+
     // The hint line's one state table (spec-v1.1 §3, §1, §6). The newest
     // answer to a click wins: a failure names itself here — text plus whether
-    // it draws in the accent colour — instead of the mode hint, and hands the
+    // it draws in the accent colour — instead of a clear header, and hands the
     // hint back when it recovers or auto-clears; the keymap failure, if one
     // is also standing, re-shows then. One readonly property rather than a
     // function re-invoked in every binding: the table is evaluated once per
@@ -272,15 +393,15 @@ Item {
     // this ticket caught it).
     //
     // The helper lifecycle states (spec-v1.1 §6) sit between the transient
-    // click answers and the keymap failure: without the service nothing can
-    // type, so its state outranks a keymap mismatch (which re-shows on
-    // recovery, when it is the thing left standing). All four read the
-    // socket client's own states — no poll behind them. Ready is absent on
-    // purpose: the notice disappears once the handshake succeeds and the
-    // line falls through to the ordinary hint. `action` carries the
-    // affordance the chips below draw: "retry" for a service that is not
-    // running, "update" for a protocol mismatch (Copy install command plus
-    // Retry).
+    // click answers and a clear header. Kind comes from the session
+    // (Keyboard.lifecycleKind): incompatible and stopped outrank a keymap
+    // mismatch because without a usable service nothing can type, but a
+    // connected mismatch is unavailable — never the starting notice
+    // (decisions §23). Ready is absent on purpose: the notice disappears
+    // once the handshake succeeds and the line stays empty. `action`
+    // carries the affordance the chips below draw:
+    // "retry" for a service that is not running, "update" for a protocol
+    // mismatch (Copy install command plus Retry).
     readonly property var hintState: {
         if (keyboard.emojiFailed)
             return {
@@ -292,35 +413,56 @@ Item {
                 text: root.pickerFitConstraint + " can\u2019t open clear of the keyboard",
                 accent: true
             }
-        if (!keyboard.inputReady) {
-            if (keyboard.serviceIncompatible)
-                return {
-                    text: "omarchy-osk.service needs updating",
-                    accent: true,
-                    action: "update"
-                }
-            if (keyboard.serviceConnected)
-                return {
-                    text: "Starting omarchy-osk.service\u2026",
-                    accent: false
-                }
+        if (keyboard.lifecycleKind === "incompatible")
+            return {
+                text: "omarchy-osk.service needs updating",
+                accent: true,
+                action: "update"
+            }
+        if (keyboard.lifecycleKind === "stopped")
             return {
                 text: "omarchy-osk.service is not running",
                 accent: true,
                 action: "retry"
             }
-        }
-        if (keyboard.keycapsFailed || keyboard.capsFactsFailed)
+        if (keyboard.lifecycleKind === "unavailable")
             return {
                 text: "Keymap unavailable — drawn caps may not match what typing produces",
                 accent: true
             }
+        if (keyboard.lifecycleKind === "starting" && root.startingNoticeDue)
+            return {
+                text: "Starting omarchy-osk.service\u2026",
+                accent: false
+            }
         return {
-            text: root.mode === "docked"
-                ? "\u2328 Docked \u00b7 Double-click Shift to lock"
-                : "\u2328 Drag to move \u00b7 Double-click Shift to lock",
+            text: "",
             accent: false
         }
+    }
+
+    // The starting notice answers a helper the panel is genuinely waiting on,
+    // which is a thing that takes a visible moment — a service ordered against
+    // graphical-session.target, a socket rebuilt after a drop. It is not the
+    // right answer to a state that resolves inside a couple of frames: a
+    // reconfigure that briefly closes the typing gate would otherwise paint
+    // the notice and take it away again, which reads as a glitch rather than
+    // as information. So the state has to hold before it is named. Falling out
+    // of it clears the delay immediately — a notice that outlived its state
+    // would be worse than a late one.
+    // Cleared when the STATE leaves, not when the timer stops. A one-shot
+    // Timer sets `running` false immediately after `triggered`, so clearing on
+    // `runningChanged` undid the flag in the same turn that set it and the
+    // notice could never paint at all — the delay deleted the thing it was
+    // meant to delay. Verified under Qt 6: the two handlers run back to back
+    // and the flag is true for zero frames.
+    readonly property bool helperStarting: keyboard.lifecycleKind === "starting"
+    property bool startingNoticeDue: false
+    onHelperStartingChanged: if (!helperStarting) startingNoticeDue = false
+    Timer {
+        interval: 400
+        running: root.helperStarting
+        onTriggered: root.startingNoticeDue = true
     }
 
     // Cursor hiding (spec-v1 §9) is owned by CursorPolicy (CursorPolicy.qml
@@ -478,7 +620,11 @@ Item {
         // belongs to the appearance of the app it was launched for.
         if (root.emojiApp !== effective.emojiApp) {
             root.emojiApp = effective.emojiApp
-            root.endPickerSession()
+            if (root.pickerSession)
+                root.settlePickerMachine(
+                    PickerSession.panelClosed(root.pickerSession, root.focusedAddress()))
+            else
+                root.endPickerSession()
         }
         // A follow-theme flip while the panel is on screen is immediate:
         // stopping freezes the tokens at the look they then have, and
@@ -558,6 +704,13 @@ Item {
         root.commitOverrides(next)
     }
 
+    // Custom colour Apply: persist the override and put that hex in the
+    // settings row. Swatches already write the field; Custom must too.
+    function applyColourOverride(name, value) {
+        root.setOverride(name, value)
+        settingsPopover.adoptAppliedColour(name, value)
+    }
+
     // The sparse override map stays behind the panel API: the popover's
     // views ask whether an override exists, they never inspect the map.
     function hasOverride(name) {
@@ -632,6 +785,7 @@ Item {
             // the why of here-not-at-load). freeze() no-ops while a snapshot
             // is already held, and no-ops entirely while following.
             if (!root.followTheme) tokens.freeze()
+            root.refreshClipboardPreview()
             root.moveToPointerScreen(function (pointer, pointerScreen) {
                 if (pointerScreen) panel.screen = pointerScreen
                 root.applyFloatingPosition()
@@ -643,13 +797,18 @@ Item {
         // state, so it dies with it. The hex entry and the custom editor's
         // uncommitted draft die with it too — the focus exception and the
         // draft must never outlive the surface that sanctioned them.
-        settingsPopover.visible = false
-        settingsPopover.resetAllArmed = false
         root.endHexEdit()
         root.closeCustomEditor()
+        settingsPopover.visible = false
+        settingsPopover.resetAllArmed = false
         // The picker session is the panel's too: with the panel gone there is
-        // no band to keep the picker clear of, and no watch should outlive it.
-        root.endPickerSession()
+        // no band to keep the picker clear of. A managed Emote appearance is
+        // dismissed with the panel so it cannot outlive the keyboard.
+        if (root.pickerSession)
+            root.settlePickerMachine(
+                PickerSession.panelClosed(root.pickerSession, root.focusedAddress()))
+        else
+            root.endPickerSession()
         // Locked Shift is genuinely held down at the device, so closing the
         // panel has to let go of it before the keyboard disappears.
         keyboard.releaseModifiers()
@@ -658,6 +817,54 @@ Item {
     // Reports {"x": n, "y": n} in compositor coordinates, which is the same
     // space Quickshell's screens are laid out in. A failure leaves the panel on
     // whatever output it already had rather than guessing at one.
+    Process {
+        id: hexClipboardRead
+        command: ["wl-paste", "--no-newline"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: root.insertHexClipboard(this.text)
+        }
+    }
+
+    // CLIPBOARD watch (spec-v1.1 §1): event-driven, not a poll. --watch
+    // fires on each change; open and paste click still do a one-shot
+    // refresh because --watch does not always emit the current value.
+    Process {
+        id: clipboardWatch
+        running: root.opened
+        command: ["wl-paste", "--watch", "echo", "."]
+        stdout: SplitParser {
+            onRead: function () { root.refreshClipboardPreview() }
+        }
+    }
+
+    Process {
+        id: clipboardTypes
+        property int seq: 0
+        command: ["wl-paste", "--list-types"]
+        stdout: StdioCollector {
+            id: clipboardTypesOut
+            waitForEnd: true
+        }
+        onExited: function (exitCode) {
+            root.applyClipboardTypes(clipboardTypesOut.text, clipboardTypes.seq, exitCode)
+        }
+    }
+
+    Process {
+        id: clipboardText
+        property int seq: 0
+        command: ["wl-paste", "--no-newline"]
+        stdout: StdioCollector {
+            id: clipboardTextOut
+            waitForEnd: true
+        }
+        onExited: function (exitCode) {
+            root.applyClipboardText(clipboardTextOut.text, clipboardText.seq,
+                exitCode === 0)
+        }
+    }
+
     Process {
         id: cursorProbe
         command: ["hyprctl", "cursorpos", "-j"]
@@ -882,54 +1089,216 @@ Item {
     // remaining physical-unit field, monitors -j width/height). No polling:
     // the watch rides the compositor's event stream and the panel's own
     // geometry notifications, with bounded one-shot settle timers, and moves
-    // only the one window the session identified.
+    // only the one window the session identified. Hyprland 0.56.2 has no
+    // client-geometry event, so a picker-initiated resize is noticed on the
+    // next panel/output event or the dispatch-verify timer.
     property string pickerFitConstraint: ""
     // One identified appearance: the configured app, the window classes it
     // may map as, the pinned address once found, and the attempt history
     // that keeps a stubborn placement from looping forever. Null while no
     // picker from the ☺ cap is being watched.
     property var pickerSession: null
+    property var pickerHandoffPending: null
+    // Stamped onto each observe so a result cannot identify a window for
+    // a session that started after the query left. beginPickerSession
+    // bumps it; a stale exit is dropped.
+    property int pickerQueryGen: 0
 
-    function pickerBand() {
+    function pickerBand(mon) {
         var s = panel.screen
         if (!s) return null
         if (root.mode === "docked") {
-            // The docked strip: the output's full width, cardHeight tall,
-            // along the bottom edge.
-            return { x: s.x, y: s.y + s.height - root.cardHeight,
-                     w: s.width, h: root.cardHeight }
+            // Hyprland stacks a bottom-anchored Overlay above any existing
+            // bottom exclusive zone, so the strip is the top of that stack
+            // rather than the output's bottom edge. reserved[3] is logical.
+            var output = mon
+                ? PickerFit.logicalMonitorBox(mon)
+                : { x: s.x, y: s.y, w: s.width, h: s.height }
+            var bottom = (mon && mon.reserved && mon.reserved[3]) ? mon.reserved[3] : 0
+            return PickerFit.dockedBand(output, root.cardHeight, bottom)
         }
         // Floating: the card is the band, wherever the drag left it.
         return { x: s.x + card.x, y: s.y + card.y, w: card.width, h: card.height }
     }
 
-    // The ☺ cap's launch (Keyboard's emojiProbe) arms one session. A second
-    // press while armed restarts the watch — the launcher's own single-
-    // instance behaviour decides what maps, and the newest launch owns the
-    // session.
-    function beginPickerSession(app) {
+    // The ☺ cap arms one session before execDetached. Emote is a managed
+    // toggle (PickerSession.js): a second press closes the identified
+    // window. Unmanaged apps still launch and the newest launch owns the
+    // fit watch.
+    function focusedClient() {
+        var top = Hyprland.activeToplevel
+        if (!top || !top.lastIpcObject) return null
+        var obj = top.lastIpcObject
+        var addr = String(obj.address || "")
+        if (!addr) return null
+        return { address: addr, className: String(obj["class"] || "") }
+    }
+
+    function focusedAddress() {
+        var client = root.focusedClient()
+        return client ? client.address : ""
+    }
+
+    function beginPickerSession(app, machine) {
         if (!panel.screen) return
+        var created = machine || PickerSession.create(app, root.focusedClient())
         root.pickerSession = {
             app: app,
             classes: PickerFit.resolveClasses(app, ""),
-            address: "",
+            address: created.address || "",
+            opened: [],
+            seen: [],
+            probeSettled: false,
+            gen: 0,
             attempts: 0,
+            cycleKey: "",
             settled: false,
             settleTries: 0,
             pickerMin: null,
-            lastObserved: null,
             lastTarget: null,
-            pendingResize: false
+            pendingResize: false,
+            phase: created.phase,
+            managed: created.managed,
+            kind: created.kind || "client",
+            target: created.target,
+            stayApplied: created.stayApplied,
+            cancelMap: created.cancelMap,
+            oskPayload: null
         }
+        root.pickerQueryGen += 1
+        root.pickerSession.gen = root.pickerQueryGen
         root.pickerFitConstraint = ""
-        emojiIdentity.app = app
-        emojiIdentity.running = false
-        emojiIdentity.running = true
+        if (root.pickerSession.kind !== "shell") {
+            emojiIdentity.app = app
+            emojiIdentity.gen = root.pickerSession.gen
+            emojiIdentity.running = false
+            emojiIdentity.running = true
+        }
         emojiPlaceTimeout.restart()
         root.requestPickerFit()
     }
 
+    function handleEmojiCap(app) {
+        var session = root.pickerSession
+        var current = root.focusedAddress()
+        var target = root.focusedClient()
+        if (session && session.address && PickerFit.sameAddress(current, session.address))
+            target = session.target
+        var result = PickerSession.capPressed(session, app, target, current)
+        var launched = false
+        for (var i = 0; i < result.actions.length; i++) {
+            if (result.actions[i].op === "launch"
+                || result.actions[i].op === "shellSummon")
+                launched = true
+        }
+        if (launched)
+            root.beginPickerSession(app, result.session)
+        else
+            root.pickerSession = result.session
+        root.playPickerActions(result.actions)
+        if (PickerSession.rearmCloser(root.pickerSession))
+            emojiPlaceTimeout.restart()
+    }
+
+    function oskPayloadFromScreen(mon) {
+        var s = panel.screen
+        if (!s) return null
+        var output = mon
+            ? PickerFit.logicalMonitorBox(mon)
+            : { x: s.x, y: s.y, w: s.width, h: s.height }
+        var band = root.pickerBand(mon)
+        if (!band) return null
+        var workArea = mon
+            ? PickerFit.workAreaOf(mon)
+            : {
+                x: output.x,
+                y: output.y,
+                w: output.w,
+                h: Math.max(0, band.y - output.y)
+            }
+        return PickerFit.oskPayload(band, output, workArea)
+    }
+
+    function playShellPicker(op) {
+        var session = root.pickerSession
+        var method = "summon"
+        var payload = "{}"
+        if (op === "shellHide") {
+            method = "hide"
+        } else if (op === "shellFit") {
+            method = "fit"
+            payload = session && session.oskPayload
+                ? JSON.stringify(session.oskPayload) : ""
+            if (!payload || payload === "{}") {
+                root.requestPickerFit()
+                return
+            }
+        } else {
+            var geom = session && session.oskPayload
+                ? session.oskPayload : root.oskPayloadFromScreen()
+            if (geom) {
+                if (session) session.oskPayload = geom
+                payload = JSON.stringify(geom)
+            }
+        }
+        if (shellPickerIpc.running) {
+            shellPickerIpc.queued = { method: method, payload: payload }
+            return
+        }
+        shellPickerIpc.queued = null
+        shellPickerIpc.method = method
+        shellPickerIpc.payload = payload
+        shellPickerIpc.running = false
+        shellPickerIpc.running = true
+    }
+
+    function playPickerActions(actions) {
+        if (!actions || !actions.length) return
+        var windowActions = []
+        for (var i = 0; i < actions.length; i++) {
+            var op = actions[i].op
+            if (op === "shellSummon" || op === "shellHide" || op === "shellFit")
+                root.playShellPicker(op)
+            else
+                windowActions.push(actions[i])
+        }
+        if (!windowActions.length) return
+        var plan = PickerSession.queueHandoff({
+            running: pickerHandoff.running,
+            closeWin: pickerHandoff.closeWin,
+            pending: root.pickerHandoffPending
+        }, windowActions)
+        for (var i = 0; i < plan.launches.length; i++)
+            Quickshell.execDetached([plan.launches[i].app])
+        if (!plan.start) {
+            if (plan.pending) root.pickerHandoffPending = plan.pending
+            return
+        }
+        var handoff = plan.handoff
+        if (!handoff) return
+        root.pickerHandoffPending = null
+        pickerHandoff.addr = handoff.addr
+        pickerHandoff.stay = handoff.stay
+        pickerHandoff.closeWin = handoff.closeWin
+        pickerHandoff.focusAddr = handoff.focusAddr
+        pickerHandoff.running = false
+        pickerHandoff.running = true
+    }
+
+    function settlePickerMachine(result) {
+        if (!result) return
+        root.playPickerActions(result.actions)
+        if (!result.session || result.session.phase === "closed")
+            root.endPickerSession()
+        else if (result.session.phase === "open")
+            emojiPlaceTimeout.stop()
+        else if (PickerSession.rearmCloser(result.session))
+            emojiPlaceTimeout.restart()
+    }
+
     function endPickerSession() {
+        root.pickerHandoffPending = null
+        shellPickerIpc.queued = null
         if (!root.pickerSession) return
         root.pickerSession = null
         root.pickerFitConstraint = ""
@@ -957,44 +1326,72 @@ Item {
         emojiObserve.centerY = Math.round(band.y + band.h / 2)
         emojiObserve.classes = session.classes.join(",")
         // An event landing while a query is in flight is not dropped: it
-        // queues exactly one re-run, consumed when the query exits.
+        // queues exactly one re-run, consumed when the query exits. Do not
+        // stamp gen until this process actually starts, or a stale exit
+        // would inherit the new session's generation.
         if (emojiObserve.running) {
             emojiObserve.queued = true
             return
         }
         emojiObserve.queued = false
+        emojiObserve.gen = session.gen
         emojiObserve.running = true
     }
 
     function handlePickerObservation(json) {
         var session = root.pickerSession
-        var band = root.pickerBand()
-        if (!session || !band || !json || !json.monitor) return
+        if (!session || !json || !json.monitor) return
+        var band = root.pickerBand(json.monitor)
+        if (!band) return
 
-        var client = json.client && json.client.address ? json.client : null
-        if (!client) {
-            // Nothing mapped under the accepted classes: the watch stays
-            // armed for the openwindow event until the hard timeout (the
-            // shell-overlay case never maps as a client and simply times
-            // out). A PINNED address that has gone means the appearance was
-            // dismissed — that settles the session.
-            if (session.address !== "") root.endPickerSession()
+        if (session.kind === "shell") {
+            var payload = root.oskPayloadFromScreen(json.monitor)
+            if (payload) session.oskPayload = payload
+            var natural = { x: 0, y: 0, w: 400, h: 500 }
+            var plan = PickerFit.overlayCardPlan(payload, natural, session.pickerMin)
+            if (!plan || plan.status === "unfit") {
+                root.pickerFitConstraint = session.app
+                if (plan)
+                    console.warn("[osk] overlay cannot fit clear of the keyboard:",
+                        plan.reason)
+            } else if (root.pickerFitConstraint !== "") {
+                root.pickerFitConstraint = ""
+            }
+            if (session.phase === "open")
+                root.playPickerActions(PickerSession.fitActions(session))
             return
         }
 
+        var client = PickerFit.pickClient(json.clients, session.address, session.opened)
+        if (!client) {
+            // Nothing mapped under the accepted classes: the watch stays
+            // armed for the openwindow event until the hard timeout. A
+            // PINNED address that has gone is a close of the appearance
+            // (selection, Escape, or our closewindow).
+            if (session.address !== "")
+                root.settlePickerMachine(
+                    PickerSession.closed(session, session.address, root.focusedAddress()))
+            return
+        }
+
+        if (session.phase === "closing")
+            return
+
         if (session.address === "") {
-            session.address = client.address
+            var mapped = PickerSession.mapped(session, client.address)
+            root.settlePickerMachine(mapped)
+            if (session.phase !== "open") return
             emojiPlaceTimeout.stop()
-        } else if (session.address !== client.address) {
-            // The appearance recreated itself under the same identity (an
-            // app like Emote destroys and re-maps on a second activation):
-            // adopt the new window as this session's appearance and reset
-            // the attempt history — the old address no longer exists.
-            session.address = client.address
+        } else if (!PickerFit.sameAddress(session.address, client.address)) {
+            var adopted = PickerSession.mapped(session, client.address)
+            root.playPickerActions(adopted.actions)
+            if (session.phase !== "open") return
             session.attempts = 0
             session.settled = false
             session.pickerMin = null
-            session.lastObserved = null
+            session.lastTarget = null
+            session.pendingResize = false
+            session.settleTries = 0
         }
 
         var rect = {
@@ -1005,8 +1402,15 @@ Item {
             // A freshly mapped window can answer 0x0 before its first
             // commit settles. One bounded re-check covers it even if no
             // further compositor event arrives; the plan runs on real
-            // geometry only.
-            if (!pickerSettleTimer.running && session.settleTries < 5) {
+            // geometry only. After five zero observations the hard
+            // timeout has already been stopped, so end rather than stall.
+            if (session.settleTries >= 5) {
+                console.warn("[osk] picker geometry never settled")
+                root.settlePickerMachine(
+                    PickerSession.closed(session, session.address, root.focusedAddress()))
+                return
+            }
+            if (!pickerSettleTimer.running) {
                 session.settleTries += 1
                 pickerSettleTimer.restart()
             }
@@ -1023,12 +1427,6 @@ Item {
                 session.pickerMin = { w: rect.w, h: rect.h }
         }
 
-        // Anything observed different from last time resets the attempt
-        // budget: only consecutive no-change dispatch loops are bounded.
-        if (!PickerFit.sameRect(session.lastObserved, rect, 2))
-            session.attempts = 0
-        session.lastObserved = rect
-
         var plan = PickerFit.planPlacement({
             output: PickerFit.logicalMonitorBox(json.monitor),
             workArea: PickerFit.workAreaOf(json.monitor),
@@ -1039,13 +1437,21 @@ Item {
 
         if (plan.status === "unfit") {
             // Minimum size beats every region: say so, move nothing, keep
-            // watching — a picker resize or panel change can still make it
+            // watching — a panel or output change can still make it
             // fit later, and the hint clears the moment a plan fits.
             root.pickerFitConstraint = session.app
             console.warn("[osk] picker cannot fit clear of the keyboard:", plan.reason)
             return
         }
         if (root.pickerFitConstraint !== "") root.pickerFitConstraint = ""
+
+        // A new band or work area (panel drag, dock/float, preset, output)
+        // starts a fresh convergence cycle. Size-chasing — a stubborn
+        // client whose observed size changes the plan target after each
+        // dispatch — keeps burning the same cycle's cap.
+        var cycleKey = PickerFit.placementCycleKey(band, PickerFit.workAreaOf(json.monitor))
+        session.attempts = PickerFit.nextAttempts(session.attempts, session.cycleKey, cycleKey)
+        session.cycleKey = cycleKey
 
         if (PickerFit.sameRect(rect, plan.target, 2)) {
             if (!session.settled) {
@@ -1057,8 +1463,9 @@ Item {
         }
 
         if (session.attempts >= 3) {
-            // Three dispatches moved nothing: positioning failed, and an
-            // overlapping placement must not pass for success.
+            // Three dispatches in this band/work-area cycle moved nothing:
+            // positioning failed, and an overlapping placement must not
+            // pass for success.
             root.pickerFitConstraint = session.app
             console.warn("[osk] picker did not move to",
                 JSON.stringify(plan.target), "after", session.attempts, "attempts")
@@ -1076,26 +1483,31 @@ Item {
         pickerDispatch.rh = plan.resized ? Math.round(plan.target.h) : 0
         pickerDispatch.running = false
         pickerDispatch.running = true
-        // The dispatch's own compositor events re-run the fit and so VERIFY
-        // the resulting rectangle; the one-shot timer below is the bounded
-        // fallback should no event land. Successful process exit alone is
-        // never treated as proof the picker moved.
+        // Our own move/resize dispatches emit no socket events on Hyprland
+        // 0.56.2, so the one-shot timer re-observes the resulting rectangle.
+        // Successful process exit alone is never treated as proof the
+        // picker moved.
         pickerVerifyTimer.restart()
     }
 
     // One-shot: the configured app's desktop-entry StartupWMClass, so the
     // accepted window classes come from the entry's own declaration where
-    // one exists. The executable name is only ever the fallback, and the
-    // recorded table carries the classes an app is known to surface on
-    // other stacks (PickerFit.js: the installed Emote maps as "emote", its
-    // GTK application_id com.tomjwatson.Emote is what other versions may
-    // report). Merges into the live session; no poll.
+    // one exists. The executable name is only ever the fallback after this
+    // probe exits (success or failure); until then opened stays empty so a
+    // fallback-class map cannot steal the pin. The recorded table carries
+    // the classes an app is known to surface on other stacks (PickerFit.js:
+    // the installed Emote maps as "emote", its GTK application_id
+    // com.tomjwatson.Emote is what other versions may report). Applies to
+    // the live session whose generation the probe printed, so a stale prior
+    // run cannot widen a newer session. No poll.
     Process {
         id: emojiIdentity
         property string app: ""
+        property int gen: 0
         command: ["bash", "-c",
-            "app=$1\n"
-          + "for base in ${2//:/ } ${3//:/ }; do\n"
+            "printf '%s\\n' \"$1\"\n"
+          + "app=$2\n"
+          + "for base in ${3//:/ } ${4//:/ }; do\n"
           + "  for f in \"$base\"/applications/*.desktop; do\n"
           + "    [ -f \"$f\" ] || continue\n"
           + "    cls=$(awk -F= -v app=\"$app\" '\n"
@@ -1109,21 +1521,29 @@ Item {
           + "  done\n"
           + "done\n"
           + "exit 1\n",
-            "omarchy-osk-emoji-identity", emojiIdentity.app,
+            "omarchy-osk-emoji-identity", String(emojiIdentity.gen), emojiIdentity.app,
             Quickshell.env("XDG_DATA_HOME") || ((Quickshell.env("HOME") || "") + "/.local/share"),
             Quickshell.env("XDG_DATA_DIRS") || "/usr/local/share:/usr/share"]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
                 var session = root.pickerSession
-                var wmClass = text.trim()
-                if (!session || session.app !== emojiIdentity.app || wmClass === "") return
-                var merged = PickerFit.resolveClasses(session.app, wmClass)
-                for (var i = 0; i < merged.length; i++)
-                    if (session.classes.indexOf(merged[i]) === -1) session.classes.push(merged[i])
-                // A class the first observation could not know about may
-                // already be mapped; re-run now that the accepted list grew.
-                root.requestPickerFit()
+                var lines = text.split("\n")
+                var probeGen = parseInt(lines[0], 10)
+                var wmClass = lines.slice(1).join("\n").trim()
+                if (!session || session.gen !== probeGen) return
+                session.probeSettled = true
+                var merged = PickerFit.resolveClasses(session.app, wmClass, true)
+                session.classes = merged
+                session.opened = PickerFit.bindLaunch(
+                    session.opened, session.seen, merged, true, session.app)
+                if (session.cancelMap && session.opened.length)
+                    root.settlePickerMachine(
+                        PickerSession.mapped(session, session.opened[0]))
+                else
+                    // A class the first observation could not know about may
+                    // already be mapped; re-run now that the accepted list grew.
+                    root.requestPickerFit()
             }
         }
     }
@@ -1131,14 +1551,16 @@ Item {
     // ONE monitors+clients query per fit run — the query only GATHERS; the
     // decision is the pure PickerFit policy and the move is a separate
     // dispatch whose outcome the next observation verifies. Exit 0 always
-    // carries the JSON (client may be null); 4/5 mean the compositor could
-    // not answer yet — the event watch stays armed either way.
+    // carries the JSON (clients may be empty); 4/5 mean the compositor could
+    // not answer yet — the event watch stays armed either way. Pin
+    // preference lives in pickClient, not in the jq.
     Process {
         id: emojiObserve
         property string monName: ""
         property int centerX: 0
         property int centerY: 0
         property string classes: ""
+        property int gen: 0
         property bool queued: false
         property string result: ""
         command: ["bash", "-c",
@@ -1159,11 +1581,10 @@ Item {
           + "    | select(.mapped)\n"
           + "    | ((.class // \"\") | ascii_downcase) as $c\n"
           + "    | ((.initialClass // \"\") | ascii_downcase) as $ic\n"
-          + "    | select(($want | index($c)) != null or ($want | index($ic)) != null)]\n"
-          + "  | sort_by(.focusHistoryID)\n"
-          + "  | (.[0]\n"
-          + "    | {address: .address, at: .at, size: .size, floating: .floating}) as $client\n"
-          + "| {monitor: $mon, client: $client}'\n",
+          + "    | select(($want | index($c)) != null or ($want | index($ic)) != null)\n"
+          + "    | {address: .address, at: .at, size: .size, floating: .floating,\n"
+          + "       focusHistoryID: .focusHistoryID}]\n"
+          + "  | {monitor: $mon, clients: .}'\n",
             "omarchy-osk-emoji-observe",
             emojiObserve.classes, emojiObserve.monName,
             String(emojiObserve.centerX), String(emojiObserve.centerY)]
@@ -1174,8 +1595,11 @@ Item {
         onExited: function(exitCode) {
             var again = emojiObserve.queued
             emojiObserve.queued = false
-            if (exitCode === 0) root.handlePickerObservation(emojiObserve.parsed())
-            else if (exitCode !== 4 && exitCode !== 5)
+            var session = root.pickerSession
+            if (exitCode === 0) {
+                if (session && session.gen === emojiObserve.gen)
+                    root.handlePickerObservation(emojiObserve.parsed())
+            } else if (exitCode !== 4 && exitCode !== 5)
                 console.warn("[osk] picker observation failed with exit", exitCode)
             emojiObserve.result = ""
             if (again && root.pickerSession) root.runPickerFit()
@@ -1208,7 +1632,7 @@ Item {
         command: ["bash", "-c",
             "addr=$1; tx=$2; ty=$3; rw=$4; rh=$5; flt=$6\n"
           + "if [[ $flt == 1 ]]; then\n"
-          + "  hyprctl eval \"hl.dispatch(hl.dsp.window.float({ window = \\\"address:$addr\\\" }))\" >/dev/null 2>&1 || exit 1\n"
+          + "  hyprctl eval \"hl.dispatch(hl.dsp.window.float({ window = \\\"address:$addr\\\", action = \\\"set\\\" }))\" >/dev/null 2>&1 || exit 1\n"
           + "fi\n"
           + "if (( rw > 0 && rh > 0 )); then\n"
           + "  hyprctl eval \"hl.dispatch(hl.dsp.window.resize({ window = \\\"address:$addr\\\", x = $rw, y = $rh, relative = false }))\" >/dev/null 2>&1 || exit 2\n"
@@ -1226,15 +1650,127 @@ Item {
         }
     }
 
-    // The single hard timeout bounding the INITIAL watch: a picker that
-    // never maps as a client window (the shell-overlay case) ends the
-    // session silently. Stopped the moment an address is pinned; from there
-    // the session lives on events alone.
+    // Runtime policy for the identified appearance only: stay_focused on
+    // that address, closewindow of that address, restore the recorded
+    // target. Never a class-wide rule, never pkill.
+    Process {
+        id: pickerHandoff
+        property string addr: ""
+        property string stay: ""
+        property bool closeWin: false
+        property string focusAddr: ""
+        command: ["bash", "-c",
+            "addr=$1; stay=$2; close=$3; focus=$4\n"
+          + "stay_rc=0; close_rc=0; focus_rc=0\n"
+          + "if [[ -n $stay ]]; then\n"
+          + "  hyprctl eval \"hl.dispatch(hl.dsp.window.set_prop({ window = \\\"address:$addr\\\", prop = \\\"stay_focused\\\", value = \\\"$stay\\\" }))\" >/dev/null 2>&1 || stay_rc=1\n"
+          + "fi\n"
+          + "if [[ $close == 1 ]]; then\n"
+          + "  hyprctl eval \"hl.dispatch(hl.dsp.window.close({ window = \\\"address:$addr\\\" }))\" >/dev/null 2>&1 || close_rc=1\n"
+          + "fi\n"
+          + "if [[ -n $focus ]]; then\n"
+          + "  hyprctl eval \"hl.dispatch(hl.dsp.focus({ window = \\\"address:$focus\\\" }))\" >/dev/null 2>&1 || focus_rc=1\n"
+          + "fi\n"
+          + "if (( close_rc != 0 )); then exit 2; fi\n"
+          + "if (( stay_rc != 0 )); then exit 1; fi\n"
+          + "if (( focus_rc != 0 )); then exit 3; fi\n"
+          + "exit 0",
+            "omarchy-osk-picker-handoff",
+            pickerHandoff.addr, pickerHandoff.stay,
+            pickerHandoff.closeWin ? "1" : "0", pickerHandoff.focusAddr]
+        onExited: function(exitCode) {
+            if (exitCode !== 0)
+                console.warn("[osk] picker handoff failed with exit", exitCode)
+            var session = root.pickerSession
+            var pending = root.pickerHandoffPending
+            root.pickerHandoffPending = null
+            if (session && session.phase === "closing" && exitCode !== 0) {
+                root.settlePickerMachine(
+                    PickerSession.failed(session, root.focusedAddress()))
+                return
+            }
+            if (pending && (pending.stay || pending.closeWin || pending.focusAddr))
+                root.playPickerActions(PickerSession.handoffActions(pending))
+        }
+    }
+
+    // Shell overlay open/hide/fit. Summon is not a blind toggle: if the
+    // overlay is already open (standalone Super+Period), hide it. Ordinary
+    // `omarchy-menu-emoji` without an OSK payload is unchanged.
+    Process {
+        id: shellPickerIpc
+        property string method: "summon"
+        property string payload: "{}"
+        property var queued: null
+        property string result: ""
+        command: shellPickerIpc.method === "hide"
+            ? ["omarchy-shell", "shell", "hide", "omarchy.emojis"]
+            : shellPickerIpc.method === "fit"
+                ? ["omarchy-shell", "shell", "call", "omarchy.emojis", "oskFit",
+                    shellPickerIpc.payload]
+                : ["bash", "-c",
+                    "payload=$1\n"
+                  + "state=$(omarchy-shell shell isOpen omarchy.emojis 2>/dev/null || echo closed)\n"
+                  + "if [[ $state == open ]]; then\n"
+                  + "  omarchy-shell shell hide omarchy.emojis\n"
+                  + "  printf dismissed\n"
+                  + "  exit 0\n"
+                  + "fi\n"
+                  + "omarchy-shell shell summon omarchy.emojis \"$payload\" || exit 2\n"
+                  + "printf summoned\n",
+                    "omarchy-osk-shell-summon", shellPickerIpc.payload]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: shellPickerIpc.result = text
+        }
+        onExited: function(exitCode) {
+            var queued = shellPickerIpc.queued
+            shellPickerIpc.queued = null
+            var session = root.pickerSession
+            var out = String(shellPickerIpc.result || "").trim()
+            shellPickerIpc.result = ""
+            if (shellPickerIpc.method === "summon" && session) {
+                if (out.indexOf("dismissed") === 0)
+                    root.settlePickerMachine(
+                        PickerSession.overlayClosed(session, root.focusedAddress()))
+                else if (exitCode === 0)
+                    root.settlePickerMachine(PickerSession.overlayOpened(session))
+                else
+                    root.settlePickerMachine(
+                        PickerSession.failed(session, root.focusedAddress()))
+            } else if (shellPickerIpc.method === "hide" && session) {
+                if (exitCode !== 0 && session.phase === "closing")
+                    root.settlePickerMachine(
+                        PickerSession.failed(session, root.focusedAddress()))
+                else if (exitCode === 0)
+                    root.settlePickerMachine(
+                        PickerSession.overlayClosed(session, root.focusedAddress()))
+            }
+            if (queued) {
+                shellPickerIpc.method = queued.method
+                shellPickerIpc.payload = queued.payload
+                shellPickerIpc.running = false
+                shellPickerIpc.running = true
+            }
+        }
+    }
+
+    // The single hard timeout bounding the INITIAL watch and a cancelled
+    // or slow close. Stopped the moment an address is pinned open; re-armed
+    // while closing only once that address is known, so mashing ☺ cannot
+    // postpone a pinless closer. A shell overlay is opened by IPC, not a
+    // client map; overlayOpened stops this timer.
     Timer {
         id: emojiPlaceTimeout
         interval: 6000
         repeat: false
-        onTriggered: root.endPickerSession()
+        onTriggered: {
+            if (!root.pickerSession) return
+            var late = (root.pickerSession.opened && root.pickerSession.opened.length)
+                ? root.pickerSession.opened[0] : ""
+            root.settlePickerMachine(
+                PickerSession.timeout(root.pickerSession, root.focusedAddress(), late))
+        }
     }
 
     // Bounded one-shots: the debounce coalesces geometry-change storms, the
@@ -1260,39 +1796,64 @@ Item {
         onTriggered: root.requestPickerFit()
     }
 
-    // The compositor's event stream drives the watch: no polling. Window
-    // events are filtered to the session's identity (class for a first
-    // appearance, pinned address afterwards) and monitor/config events
-    // cover output removal and scale changes.
+    // The compositor's event stream drives the watch: no polling. Every
+    // openwindow is remembered; launch identity is bound once after the
+    // class probe settles, never recomputed from later maps. closewindow
+    // and title/float events filter on the pinned address. Monitor/config
+    // events cover output removal and scale changes. Addresses are
+    // compared through PickerFit.sameAddress: the socket omits the 0x
+    // prefix that clients -j includes. eventAction drops movewindow(v2)
+    // (workspace move) and the absent resizewindow(v2).
     Connections {
         target: Hyprland
         function onRawEvent(event) {
             var session = root.pickerSession
             if (!session || !event) return
             var fields = String(event.data || "").split(",")
-            switch (event.name) {
-            case "openwindow":
-                if (fields.length >= 3
-                    && PickerFit.classMatches(fields[2], "", session.classes))
+            var action = PickerFit.eventAction(event.name)
+            if (action === "open") {
+                session.seen = PickerFit.rememberOpenwindow(session.seen, fields[0], fields[2] || "")
+                var wasEmpty = !session.opened || session.opened.length === 0
+                session.opened = PickerFit.bindLaunch(
+                    session.opened, session.seen, session.classes,
+                    session.probeSettled, session.app)
+                if (wasEmpty && session.opened.length) {
+                    if (session.cancelMap)
+                        root.settlePickerMachine(
+                            PickerSession.mapped(session, session.opened[0]))
+                    else
+                        root.requestPickerFit()
+                }
+                return
+            }
+            if (action === "close") {
+                var rebound = PickerFit.rebindAfterClose(
+                    session.opened, session.seen, fields[0],
+                    session.classes, session.probeSettled, session.app)
+                session.seen = rebound.seen
+                session.opened = rebound.opened
+                if (PickerFit.sameAddress(fields[0], session.address)) {
+                    root.settlePickerMachine(
+                        PickerSession.closed(session, fields[0], root.focusedAddress()))
+                    return
+                }
+                if (!session.address && session.opened.length)
                     root.requestPickerFit()
-                break
-            case "closewindow":
-                if (fields[0] === session.address) root.endPickerSession()
-                break
-            case "movewindow":
-            case "movewindowv2":
-            case "resizewindow":
-            case "resizewindowv2":
-            case "changefloatingmode":
-            case "windowtitle":
-                if (fields[0] === session.address) root.requestPickerFit()
-                break
-            case "configreloaded":
-            case "monitoradded":
-            case "monitoraddedv2":
-            case "monitorremoved":
+                return
+            }
+            if (action === "refit") {
+                if (PickerFit.sameAddress(fields[0], session.address))
+                    root.requestPickerFit()
+                return
+            }
+            if (action === "output")
                 root.requestPickerFit()
-                break
+            if (session.kind === "shell" && String(event.data || "") === "omarchy-emojis") {
+                if (action === "layerOpen")
+                    root.settlePickerMachine(PickerSession.overlayOpened(session))
+                else if (action === "layerClose")
+                    root.settlePickerMachine(
+                        PickerSession.overlayClosed(session, root.focusedAddress()))
             }
         }
     }
@@ -1343,27 +1904,10 @@ Item {
         // the picker is fitted against.
         onScreenChanged: root.requestPickerFit()
 
-        // The whole point: never take keyboard focus, so the app window
-        // you're typing into keeps it, and the helper's keystrokes land
-        // there. Clicks on the keys still work fine with keyboardFocus: None
-        // — only keyboard input routing is refused at the compositor level.
-        //
-        // The one sanctioned exception (spec-v1.1 §5, 2026-09-05): while a
-        // hex entry in the settings popover is active, the surface asks for
-        // keyboard focus — the user explicitly asked to type hex, and a
-        // field nobody can type into is furniture. The entry OPENS with a
-        // brief Exclusive prime and settles to OnDemand for the rest of the
-        // entry (see hexFocusPrimeTimer above — Hyprland does not focus an
-        // already-mapped surface that merely flips to OnDemand). It lasts
-        // exactly the length of the entry: beginHexEdit/endHexEdit are the
-        // only writers of hexEditing, and every exit path (Enter, Escape,
-        // outside click, popover close) runs endHexEdit, after which this is
-        // a non-focus-taking surface again. No other control, on any other
-        // row, ever changes this.
-        WlrLayershell.keyboardFocus: root.hexEditing
-            ? (root.hexFocusPrimed ? WlrKeyboardFocus.OnDemand
-                                   : WlrKeyboardFocus.Exclusive)
-            : WlrKeyboardFocus.None
+        // Never take keyboard focus: the app being typed into keeps it, and
+        // the helper's keystrokes land there. Colour-field entry is the one
+        // exception, and it lives on the settings overlay, not here.
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         WlrLayershell.namespace: "io.github.vladkarok.osk"
         WlrLayershell.layer: WlrLayer.Overlay
         // Docked reserves its height along the bottom edge — windows move up
@@ -1470,36 +2014,46 @@ Item {
                 // shifts left by half the whole notice's width — chips plus
                 // the margin to the text — so the notice as a group sits
                 // centred.
+                // Current-content paste sits on the card (pasteButton below)
+                // so its z can outrank the settings/editor dismiss layers.
+                // Hint and service chips still anchor to it.
+
                 Text {
                     id: hintText
                     anchors {
-                        horizontalCenter: parent.horizontalCenter
-                        horizontalCenterOffset: serviceActions.visible
-                            ? -(serviceActions.width + keyboard.gapPx * 2) / 2 : 0
+                        left: languageSwitch.right
+                        leftMargin: keyboard.gapPx * 2
+                        right: serviceActions.visible ? serviceActions.left
+                            : pasteButton.visible ? pasteButton.left : closeButton.left
+                        rightMargin: keyboard.gapPx * 2
                         verticalCenter: languageSwitch.verticalCenter
                     }
+                    visible: hintState.text !== ""
                     text: hintState.text
                     color: hintState.accent ? tokens.accent : tokens.muted
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBodySmall
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignRight
                     z: 1
                 }
 
                 // The lifecycle affordances, drawn beside the state they
-                // belong to. Anchored to the hint text, so appearing and
-                // leaving moves nothing else: no height change, no docked
-                // reservation churn. Retry is the solid chip — the one
-                // action that fixes "not running" — and starts the user
-                // unit detached; the socket client's existing repair path
-                // reconnects from there. Copy is the outlined chip and
-                // exists only on a protocol mismatch, where starting cannot
-                // help until the helper is reinstalled; it hands the
-                // install command to the clipboard and never runs anything. The chip is
+                // belong to. Anchored to the paste control so appearing and
+                // leaving moves the hint, not the reserved centre place: no
+                // height change, no docked reservation churn. Retry is the
+                // solid chip — the one action that fixes "not running" —
+                // and starts the user unit detached; the socket client's
+                // existing repair path reconnects from there. Copy is the
+                // outlined chip and exists only on a protocol mismatch,
+                // where starting cannot help until the helper is
+                // reinstalled; it hands the install command to the
+                // clipboard and never runs anything. The chip is
                 // deliberately terse: text plus chips must fit the bar at the
                 Row {
                     id: serviceActions
-                    anchors.left: hintText.right
-                    anchors.leftMargin: keyboard.gapPx * 2
+                    anchors.right: pasteButton.visible ? pasteButton.left : closeButton.left
+                    anchors.rightMargin: keyboard.gapPx * 2
                     anchors.verticalCenter: hintText.verticalCenter
                     spacing: keyboard.gapPx
                     visible: hintState.action !== undefined
@@ -1600,7 +2154,14 @@ Item {
                         id: gearArea
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: settingsPopover.visible = !settingsPopover.visible
+                        onClicked: {
+                            if (settingsPopover.visible || root.customEditorField !== "") {
+                                root.closeCustomEditor()
+                                settingsPopover.visible = false
+                            } else {
+                                settingsPopover.visible = true
+                            }
+                        }
                     }
                 }
 
@@ -1615,11 +2176,13 @@ Item {
                     width: langLabel.implicitWidth + keyboard.gapPx * 3
                     height: tokens.space(30)
                     radius: tokens.cornerRadius
-                    // Reads as disabled while the panel has no safe switch
-                    // target (see refreshLayoutsFromHypr in Keyboard.qml):
-                    // clicking still calls cycleLanguage, which refuses to
-                    // guess rather than advance a device nobody typed on.
-                    color: !keyboard.typedKeyboard ? Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                    // Reads as disabled while the panel has no safe device to
+                    // switch (see refreshLayoutsFromHypr in Keyboard.qml).
+                    // Keyed on the SAME thing that gates the click — the
+                    // filtered switch set — because greying on a different
+                    // fact made the cap lie: it drew disabled while a click
+                    // still moved every device on the seat.
+                    color: keyboard.switchKeyboards.length === 0 ? Util.alpha(tokens.foreground, tokens.normalFillAlpha)
                         : languageArea.containsMouse ? (languageArea.pressed ? tokens.accent : Util.alpha(tokens.foreground, tokens.hoverFillAlpha))
                         : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
                     border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
@@ -1630,7 +2193,9 @@ Item {
                         id: langLabel
                         anchors.centerIn: parent
                         text: keyboard.currentLayoutName
-                        color: keyboard.typedKeyboard ? tokens.foreground : tokens.muted
+                        // Same fact as the fill above: the label must not read
+                        // live while the fill reads disabled, or the other way.
+                        color: keyboard.switchKeyboards.length > 0 ? tokens.foreground : tokens.muted
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall
                         font.bold: true
@@ -1644,53 +2209,11 @@ Item {
                 }
 
                 // The owner's 2026-09-05 call, agreed: no size button in the
-                // header. It began as the bar's one-glance size reading that
-                // opened the popover, and the reading was not worth the
-                // chrome — size lives only in the settings popover now, so
-                // the header reads gear, language, hint, mode, close. (The
-                // popover's per-row reset and §4's no-movement guarantee are
-                // unchanged by the removal.)
-
-                // The other mode, one click away. The label names the action
-                // rather than the state: docked offers Float, floating
-                // offers Dock. The choice is remembered through the config
-                // file (spec-v1 §7: modes are switched from the panel and
-                // remembered).
-                Rectangle {
-                    id: modeButton
-                    anchors {
-                        right: closeButton.left
-                        rightMargin: keyboard.gapPx
-                        bottom: parent.bottom
-                        bottomMargin: keyboard.gapPx
-                    }
-                    width: modeLabel.implicitWidth + keyboard.gapPx * 3
-                    height: tokens.space(30)
-                    radius: tokens.cornerRadius
-                    color: modeArea.pressed ? tokens.accent
-                        : modeArea.containsMouse ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
-                        : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-                    border.color: modeArea.containsMouse ? Util.alpha(tokens.accent, tokens.pressedFillAlpha) : Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-                    border.width: tokens.normalBorderWidth
-                    z: 2
-
-                    Text {
-                        id: modeLabel
-                        anchors.centerIn: parent
-                        text: root.mode === "docked" ? "Float" : "Dock"
-                        color: tokens.foreground
-                        font.family: tokens.fontFamily
-                        font.pixelSize: tokens.fontBodySmall
-                        font.bold: true
-                    }
-
-                    MouseArea {
-                        id: modeArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: root.setMode(root.mode === "docked" ? "floating" : "docked")
-                    }
-                }
+                // header. Dock/Float followed it out on 2026-09-08: mode
+                // lives only in Settings, so the header reads gear,
+                // language, hint, paste, close.
+                // (The popover's per-row reset and §4's no-movement guarantee
+                // are unchanged by the removal.)
 
                 Rectangle {
                     id: closeButton
@@ -1737,10 +2260,11 @@ Item {
                 // time and raises the transient hint when it is absent.
                 emojiAppName: root.emojiApp
                 // A standalone picker launched from the ☺ cap is fitted to a
-                // clear region by the picker session in beginPickerSession;
-                // a picker that never becomes a client window (the Omarchy
-                // shell's own overlay) simply finds nothing to place.
-                onEmojiPickerLaunched: function(app) { root.beginPickerSession(app) }
+                // clear region by the picker session in beginPickerSession.
+                // Omarchy's shell overlay is summoned with an opt-in OSK
+                // payload and fitted through PickerFit.planPlacement on its
+                // inner card — not by moving a client.
+                onEmojiCapActivated: function(app) { root.handleEmojiCap(app) }
                 // Everything the card spends on its own padding is width the
                 // grid cannot have, so a large preset on a narrow output
                 // shrinks to fit rather than running off the card.
@@ -1816,91 +2340,224 @@ Item {
             }
 
 
-            // ---- settings surface (spec-v1.1 §5; extracted and amended
-            // 2026-09-06, ticket 07) ----
-            //
-            // The popover, the custom colour editor and their dismissal
-            // surfaces live in their own files. All four are declared above
-            // the keyboard (z 3, 4 and 5 against the grid's default) because
-            // the gear they hang from sits in the bar underneath, and
-            // anchors may only cross a parent boundary, not a sibling's
-            // child — hence the x arithmetic off settingsGear.
-            MouseArea {
-                id: settingsDismiss
-                anchors.fill: parent
-                visible: settingsPopover.visible
-                z: 3
-                // Outside click closes, the same contract the chooser kept.
-                // Card-local by construction: the window's input mask is the
-                // card (the Region on the PanelWindow below), so a click off
-                // the card is never this surface's to see in the first
-                // place. A click that lands here while a hex entry is active
-                // is also the exit that hands the keyboard back, and while
-                // the custom editor is open it drops only that editor's
-                // uncommitted draft first.
-                onClicked: {
-                    if (root.customEditorField !== "") {
-                        root.closeCustomEditor()
-                        return
+            // Current-content paste (spec-v1.1 §1): the reserved top-centre
+            // header place. Empty CLIPBOARD hides the chip. Text shows a
+            // single-line preview elided to the chip width; non-text keeps
+            // the clipboard glyph. Click pastes CLIPBOARD without writing
+            // it. Settings live on a separate overlay with a hole over this
+            // card, so the chip does not fight a dismiss mask. Hex insert
+            // reads CLIPBOARD via wl-paste, not Quickshell.clipboardText.
+            Rectangle {
+                id: pasteButton
+                anchors {
+                    horizontalCenter: dragBar.horizontalCenter
+                    bottom: dragBar.bottom
+                    bottomMargin: keyboard.gapPx
+                }
+                visible: root.clipboardKind !== "empty"
+                width: root.clipboardKind === "text"
+                    ? Math.min(Math.max(tokens.space(30),
+                        pasteLabel.implicitWidth + tokens.space(16)),
+                        tokens.space(240))
+                    : tokens.space(30)
+                height: tokens.space(30)
+                radius: tokens.cornerRadius
+                color: !root.pasteEnabled ? Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                    : pasteArea.pressed ? tokens.accent
+                    : pasteArea.containsMouse ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
+                    : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                border.width: tokens.normalBorderWidth
+                z: 6
+                opacity: root.pasteEnabled ? 1 : 0.55
+
+                Text {
+                    id: pasteLabel
+                    visible: root.clipboardKind === "text"
+                    anchors.centerIn: parent
+                    width: Math.min(implicitWidth, parent.width - tokens.space(12))
+                    text: root.clipboardPreview
+                    color: pasteArea.containsMouse && root.pasteEnabled
+                        ? tokens.accent : tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBodySmall
+                    elide: Text.ElideRight
+                    wrapMode: Text.NoWrap
+                    maximumLineCount: 1
+                }
+
+                // Drawn clipboard, not a font glyph: the header's other
+                // icons are unicode, but a clipboard is not reliably in
+                // the theme font and must not blank.
+                Item {
+                    id: pasteGlyph
+                    visible: root.clipboardKind === "other"
+                    anchors.centerIn: parent
+                    width: tokens.space(14)
+                    height: tokens.space(16)
+
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: parent.height * 0.16
+                        width: parent.width * 0.72
+                        height: parent.height * 0.78
+                        radius: Math.max(1, tokens.space(2))
+                        color: "transparent"
+                        border.color: pasteArea.containsMouse && root.pasteEnabled
+                            ? tokens.accent : tokens.foreground
+                        border.width: tokens.normalBorderWidth
                     }
-                    settingsPopover.visible = false
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: 0
+                        width: parent.width * 0.46
+                        height: parent.height * 0.28
+                        radius: Math.max(1, tokens.space(1))
+                        color: pasteArea.containsMouse && root.pasteEnabled
+                            ? tokens.accent : tokens.foreground
+                    }
+                }
+
+                MouseArea {
+                    id: pasteArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: root.pasteEnabled
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Paste"
+                    onClicked: root.pasteCurrentContent()
                 }
             }
+        }
+    }
 
-            // The compact settings popover (SettingsPopover.qml): theme
-            // swatches, hex drafts with Apply, the emoji chooser, reset —
-            // reading the store's effective values and issuing changes
-            // through the panel API, with no persistence policy of its own.
-            SettingsPopover {
-                id: settingsPopover
-                panel: root
-                tokens: tokens
-                gearX: settingsGear.x
-                barHeight: dragBar.height
-                cardWidth: card.width
-                cardHeight: card.height
-                z: 4
-                onCustomColourRequested: function (fieldName, labelText) {
-                    root.openCustomEditor(fieldName, labelText)
+    // One settings overlay (spec-v1.1 §5). Separate PanelWindows for the
+    // popover/editor failed to remap after the first hide (gear opens
+    // once, then needs a shell restart) and leftover clicks ate the card.
+    // This window stays mapped while the keyboard is open; the mask is
+    // empty until settings open, then leftover ∪ the card so Custom on
+    // the band still receives clicks without a bounding-box over keys.
+    PanelWindow {
+        id: settingsLayer
+        visible: root.opened
+        screen: panel.screen
+        color: "transparent"
+        anchors { top: true; bottom: true; left: true; right: true }
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.namespace: "io.github.vladkarok.osk.settings"
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: root.hexEditing
+            ? (root.hexFocusPrimed ? WlrKeyboardFocus.OnDemand
+                                   : WlrKeyboardFocus.Exclusive)
+            : WlrKeyboardFocus.None
+
+        readonly property bool settingsOpen: settingsPopover.visible
+            || root.customEditorField !== ""
+        readonly property var overlayBox: ({
+            x: 0, y: 0, w: settingsLayer.width, h: settingsLayer.height
+        })
+        readonly property var bandBox: SettingsPlacement.overlayBand(
+            root.mode, overlayBox,
+            { x: card.x, y: card.y, w: card.width, h: card.height })
+        readonly property var leftoverBox: SettingsPlacement.overlayInputRect(
+            overlayBox, bandBox)
+        readonly property var popoverPlace: SettingsPlacement.centreInLeftover(
+            overlayBox, bandBox,
+            { w: settingsPopover.width, h: settingsPopover.height })
+        readonly property var editorPlace: SettingsPlacement.centreInLeftover(
+            overlayBox, bandBox,
+            { w: customColorEditor.width, h: customColorEditor.height })
+
+        mask: Region {
+            x: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.x : 0
+            y: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.y : 0
+            width: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.w : 0
+            height: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.h : 0
+            Region {
+                x: settingsPopover.x
+                y: settingsPopover.y
+                width: settingsPopover.visible ? settingsPopover.width : 0
+                height: settingsPopover.visible ? settingsPopover.height : 0
+                intersection: Intersection.Combine
+            }
+            Region {
+                x: customColorEditor.x
+                y: customColorEditor.y
+                width: customColorEditor.visible ? customColorEditor.width : 0
+                height: customColorEditor.visible ? customColorEditor.height : 0
+                intersection: Intersection.Combine
+            }
+        }
+
+        MouseArea {
+            x: settingsLayer.leftoverBox.x
+            y: settingsLayer.leftoverBox.y
+            width: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.w : 0
+            height: settingsLayer.settingsOpen ? settingsLayer.leftoverBox.h : 0
+            enabled: settingsLayer.settingsOpen
+            z: 0
+            onClicked: function (mouse) {
+                if (settingsPopover.visible
+                    && mouse.x + x >= settingsPopover.x
+                    && mouse.x + x <= settingsPopover.x + settingsPopover.width
+                    && mouse.y + y >= settingsPopover.y
+                    && mouse.y + y <= settingsPopover.y + settingsPopover.height)
+                    return
+                if (customColorEditor.visible
+                    && mouse.x + x >= customColorEditor.x
+                    && mouse.x + x <= customColorEditor.x + customColorEditor.width
+                    && mouse.y + y >= customColorEditor.y
+                    && mouse.y + y <= customColorEditor.y + customColorEditor.height)
+                    return
+                root.endHexEdit()
+                if (root.customEditorField !== "") {
+                    root.closeCustomEditor()
+                    return
                 }
+                settingsPopover.visible = false
             }
+        }
 
-            // The custom editor's own dismissal mask, between the popover
-            // and the editor: with the editor open, an outside click drops
-            // only the editor's uncommitted draft — previously applied
-            // settings and the popover itself survive.
-            MouseArea {
-                id: editorDismiss
-                anchors.fill: parent
-                visible: root.customEditorField !== ""
-                z: 4
-                onClicked: root.closeCustomEditor()
-            }
+        Item {
+            id: popoverFocusSink
+            width: 0
+            height: 0
+        }
 
-            // The larger custom colour editor (SettingsColorEditor.qml): a
-            // local preview for the selected setting — plane, hue and
-            // brightness, synchronized hex with the same local OSK pad —
-            // with explicit Apply and Cancel. It overlays the grid and never
-            // changes the card's size, so no editor interaction can churn
-            // the docked reservation.
-            SettingsColorEditor {
-                id: customColorEditor
-                panel: root
-                tokens: tokens
-                fieldName: root.customEditorField
-                labelText: root.customEditorLabel
-                visible: root.customEditorField !== ""
-                oldColor: root.customEditorField !== ""
-                    ? root.effectiveColorForField[root.customEditorField]
-                    : "transparent"
-                width: Math.min(card.width - tokens.space(12), tokens.space(320))
-                height: Math.min(card.height - dragBar.height - tokens.space(18),
-                    tokens.space(420))
-                x: Math.max(tokens.space(6), (card.width - width) / 2)
-                y: dragBar.height + tokens.space(6)
-                z: 5
-                onDismissed: root.closeCustomEditor()
+        Item {
+            id: editorFocusSink
+            width: 0
+            height: 0
+        }
+
+        SettingsPopover {
+            id: settingsPopover
+            panel: root
+            tokens: tokens
+            hostWidth: settingsLayer.leftoverBox.w
+            hostHeight: settingsLayer.leftoverBox.h
+            x: settingsLayer.popoverPlace.x
+            y: settingsLayer.popoverPlace.y
+            z: 1
+            onCustomColourRequested: function (fieldName, labelText) {
+                root.openCustomEditor(fieldName, labelText)
             }
+        }
+
+        SettingsColorEditor {
+            id: customColorEditor
+            panel: root
+            tokens: tokens
+            fieldName: root.customEditorField
+            labelText: root.customEditorLabel
+            visible: root.customEditorField !== ""
+            oldColor: root.customEditorOldColor
+            hostWidth: settingsLayer.leftoverBox.w
+            hostHeight: settingsLayer.leftoverBox.h
+            x: settingsLayer.editorPlace.x
+            y: settingsLayer.editorPlace.y
+            z: 2
+            onDismissed: root.closeCustomEditor()
         }
     }
 }

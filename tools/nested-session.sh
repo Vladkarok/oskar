@@ -18,6 +18,14 @@
 #
 set -uo pipefail
 
+# A nested compositor still opens a window in its parent desktop. Default
+# graphical tests to the VM; host use requires a deliberate manual override.
+if [[ "${OSK_ALLOW_HOST_NESTED:-}" != "1" ]] \
+    && ! systemd-detect-virt --vm --quiet 2>/dev/null; then
+    echo "Graphical tests run in omarchy-vm. Host nested Hyprland is disabled; explicitly authorised manual runs may set OSK_ALLOW_HOST_NESTED=1." >&2
+    exit 1
+fi
+
 if ! command -v Hyprland >/dev/null; then
     echo "Hyprland is not installed" >&2
     exit 1
@@ -32,10 +40,17 @@ mkdir -p "$runtime"
 chmod 700 "$runtime"
 
 cleanup() {
-    local pids
+    local pids status=$?
     pids=$(jobs -p)
     [[ -n "$pids" ]] && kill $pids 2>/dev/null
-    rm -rf "$workdir"
+    # A failed run keeps its workdir — compositor log included — because the
+    # difference between a product fault and a flaky nested compositor is
+    # exactly what that log says.
+    if (( status == 0 )); then
+        rm -rf "$workdir"
+    else
+        echo "--- workdir kept for inspection: $workdir" >&2
+    fi
 }
 trap cleanup EXIT
 
@@ -58,7 +73,30 @@ hl.config({
 CONF
 
 host_runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+# A nested compositor is a Wayland client of the session that launched this
+# script. An ssh shell carries no WAYLAND_DISPLAY, and libwayland's default
+# (wayland-0) is not where this session publishes its socket — the nested
+# Hyprland then dies in CBackend::create() before its own socket ever
+# appears (measured 2026-09-09, ticket 20's levels-5-8 probe). Default to
+# the live session's own display; a per-run override still wins.
+if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    for sock in "$host_runtime"/wayland-*; do
+        [[ -S "$sock" ]] || continue
+        WAYLAND_DISPLAY=${sock##*/}
+        export WAYLAND_DISPLAY
+        break
+    done
+fi
+
 before=$(ls "$host_runtime"/wayland-* 2>/dev/null | grep -v '\.lock$' | sort)
+# Snapshot the instance directories too — both sets are compared after
+# launch, so both must be taken before it.
+before_hypr=$(/bin/ls "$host_runtime/hypr" 2>/dev/null | sort)
+# Same discipline for the X sockets: the live session's XWayland owns :0,
+# and an X11 test client pointed at the wrong display maps a window on the
+# desktop you are working in — exactly what this script exists to prevent.
+before_x=$(/bin/ls /tmp/.X11-unix 2>/dev/null | sort)
 
 # Take the socket snapshot before launch; a fast compositor can publish its
 # socket before the next shell command and would otherwise become invisible to
@@ -88,10 +126,17 @@ fi
 # still reach the compositor and its event socket.
 ln -sf "$host_runtime/$display" "$runtime/$display"
 
+# Same set-difference discipline as the display above, for the same reason:
+# "newest directory wins" is wrong the moment a stale instance directory
+# outlives its compositor, and then every hyprctl call under test talks to
+# the wrong (or a dead) instance while the window under test waits for a
+# focus check that never looks at it.
 signature=""
 for _ in $(seq 1 20); do
-    signature=$(ls -t "$host_runtime/hypr" 2>/dev/null | head -1)
-    [[ -n "$signature" && "$signature" != "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] && break
+    signature=$(comm -13 \
+        <(echo "$before_hypr") \
+        <(/bin/ls "$host_runtime/hypr" 2>/dev/null | sort) | head -1)
+    [[ -n "$signature" ]] && break
     sleep 0.5
 done
 
@@ -100,8 +145,24 @@ if [[ -n "$signature" ]]; then
     ln -sfn "$host_runtime/hypr/$signature" "$runtime/hypr/$signature"
 fi
 
-echo "nested compositor: $display  (private runtime $runtime)"
+echo "nested compositor: $display  (instance $signature, private runtime $runtime)"
 echo "--- running: $* ---"
+
+# Hyprland spawns XWayland eagerly once it is up (observed: the new socket
+# appears within the same seconds as the Wayland one). Wait briefly for it;
+# if it never appears the X11 tests must refuse rather than fall back to
+# the live display.
+xdisplay=""
+for _ in $(seq 1 20); do
+    new_x=$(comm -13 <(echo "$before_x") <(/bin/ls /tmp/.X11-unix 2>/dev/null | sort) \
+        | grep -v '_$' | head -1)
+    [[ -n "$new_x" ]] && break
+    sleep 0.5
+done
+if [[ -n "$new_x" ]]; then
+    xdisplay=":${new_x#X}"
+fi
+echo "nested XWayland: ${xdisplay:-none}"
 
 before_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 
@@ -110,9 +171,10 @@ before_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 # setting Hyprland applies to devices at config time, `hyprctl keyword` being
 # refused outright by the Lua parser.
 export OSK_NEST_CONFIG="$workdir/hypr.lua"
+export OSK_NESTED_SESSION=1
 
 WAYLAND_DISPLAY="$display" XDG_RUNTIME_DIR="$runtime" \
-    HYPRLAND_INSTANCE_SIGNATURE="$signature" "$@"
+    HYPRLAND_INSTANCE_SIGNATURE="$signature" OSK_NEST_XDISPLAY="$xdisplay" "$@"
 status=$?
 
 # The cost of this class of bug lands in the compositor, not in the subject
@@ -120,15 +182,44 @@ status=$?
 # daemon's own log stays quiet. Counting here is what makes it visible.
 #
 # The counter is Hyprland's log lines mentioning xkbcomp, and Hyprland 0.56
-# emits two warning lines per keymap installed, not one per compile: the
-# smoke test's four maps (default, three-group, configured, swap) land on
-# ten. That is the expected floor, not churn — a feedback loop grows far
-# beyond it almost immediately, so the guard sits at twice the floor and
-# must fail in the disposable session.
+# emits a PAIR for an ordinary keymap install. The ceiling is derived, not
+# observed — a guard whose number came from "what we measured last time" is a
+# guard that ratchets upward every time someone adds a test:
+#
+#   What is counted is the COMPOSITOR's rebuilds, so what has to be
+#   enumerated is the changes to what the COMPOSITOR compiles — not every
+#   helper install. A helper upload goes to its own virtual keyboard; the
+#   compositor recompiles when the seat's keymap identity changes, which in
+#   the nested session means startup and whatever the suite points
+#   `input:kb_file` at. There is no panel here, so nothing else moves it.
+#
+#   The ordered seat identities are:
+#     default us; us,ua,de; us,ua(pc105); us,ua(pc104); us,ua,de;
+#     us,ua(pc105); us,us(variants); us,ua(capslock-cancel);
+#     us,ua(normal); ua,ru; us,ua(normal).
+#   That is 11 including startup. The Electron gate then changes the
+#   compositor input identity empty -> published (its preceding clear is an
+#   empty -> empty no-op). The §35 gate changes published -> empty -> published.
+#   Those are 3 more: 14 possible identity changes in total.
+#
+#   14 possible identity changes x 2 lines = 28.
+#
+#   Ticket 06's custom-keymap test installs four more keymaps in the HELPER
+#   (a kb_file rewritten twice and the restore), and deliberately adds nothing
+#   here: those never reach the seat, which is the distinction this count
+#   turns on. A run that starts counting them is a run where something began
+#   re-pointing the compositor, and that is worth failing over.
+#
+# 30 allows one more pair for compositor startup variance. A feedback loop
+# grows by dozens almost immediately — the incident above was 56,547 in five
+# minutes — so 30 still fails closed on the churn this guard exists to catch.
+#
+# If this number has to move again, re-derive it: count the identity changes,
+# not the maps.
 after_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 rebuilds=$((after_xkb - before_xkb))
 echo "--- exited with $status; compositor keymap rebuilds during run: $rebuilds ---"
-if (( rebuilds > 20 )); then
+if (( rebuilds > 30 )); then
     echo "unsafe keymap churn detected" >&2
     exit 1
 fi

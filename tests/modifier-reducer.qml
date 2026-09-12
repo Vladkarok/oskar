@@ -558,6 +558,50 @@ QtObject {
             }
         })
 
+        // ---- pair caps (ticket 12): AltGr is intrinsic, Shift is
+        // latch-applied, the press is not exact, and the cap is not a letter.
+
+        T.test("a pair cap press wraps AltGr and applies a latched Shift", function () {
+            var out = Reducer.reduce(idle, {
+                type: "press", position: "AE03", letter: false,
+                shift: false, altgr: true, exact: false })
+            T.deepEqual(out.lines, ["down RALT", "down AE03"])
+            T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
+                        ["up AE03", "up RALT"])
+
+            var latched = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
+            out = Reducer.reduce(latched, {
+                type: "press", position: "AE03", letter: false,
+                shift: false, altgr: true, exact: false })
+            T.deepEqual(out.lines, ["down RALT", "down LFSH", "down AE03"])
+            T.equal(out.state.shift, "idle")
+            T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
+                        ["up AE03", "up LFSH", "up RALT"])
+        })
+
+        T.test("a locked Shift stays down around a pair cap and Caps does not join", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "capsClick" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "AB08", letter: false,
+                shift: false, altgr: true, exact: false })
+            T.deepEqual(out.lines, ["down RALT", "down AB08"])
+            T.equal(out.state.shift, "locked")
+            T.equal(out.state.caps, true)
+            T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
+                        ["up AB08", "up RALT"])
+        })
+
+        T.test("a latched AltGr is consumed once by a pair cap, not doubled", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "altgr" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "AE05", letter: false,
+                shift: false, altgr: true, exact: false })
+            T.deepEqual(out.lines, ["down RALT", "down AE05"])
+            T.equal(out.state.altgr, "idle")
+            T.deepEqual(out.state.pending.wrap, ["altgr"])
+        })
+
         // ---- caps lock, which is emulated with Shift rather than the CAPS
         // position (grp:caps_toggle makes the real key a layout switch) ----
 
@@ -857,6 +901,298 @@ QtObject {
             T.equal(Reducer.isActive(state, "shift"), true)
             T.equal(Reducer.isActive(state, "ctrl"), false)
             T.equal(Reducer.isActive(Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state, "shift"), true)
+        })
+
+        // ---- current-content paste (spec-v1.1 §1, ticket 14) ----
+        //
+        // A header click, not a held cap: the chord is complete in one
+        // event, exact (latches never join it), and locked Shift is lifted
+        // around a chord that does not want it. The position and whether
+        // Ctrl/Shift wrap are the caller's: the reducer does not invent a
+        // delivery path.
+
+        T.test("idle paste of Ctrl+V is a complete exact chord", function () {
+            var out = Reducer.reduce(idle, {
+                type: "paste", ctrl: true, shift: false, position: "AB04" })
+            T.deepEqual(out.lines, ["down LCTL", "down AB04", "up AB04", "up LCTL"])
+            T.equal(out.state.ctrl, "idle")
+            T.equal(out.state.pending, null)
+        })
+
+        T.test("idle paste of Shift+Insert is a complete exact chord", function () {
+            var out = Reducer.reduce(idle, {
+                type: "paste", ctrl: false, shift: true, position: "INS" })
+            T.deepEqual(out.lines, ["down LFSH", "down INS", "up INS", "up LFSH"])
+            T.equal(out.state.shift, "idle")
+            T.equal(out.state.pending, null)
+        })
+
+        T.test("idle paste of Ctrl+Shift+V wraps Ctrl then Shift", function () {
+            var out = Reducer.reduce(idle, {
+                type: "paste", ctrl: true, shift: true, position: "AB04" })
+            T.deepEqual(out.lines, [
+                "down LCTL", "down LFSH", "down AB04",
+                "up AB04", "up LFSH", "up LCTL"
+            ])
+        })
+
+        T.test("latched Alt is spent and not mixed into a paste chord", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "alt" }).state
+            var out = Reducer.reduce(state, {
+                type: "paste", ctrl: true, shift: false, position: "AB04" })
+            T.equal(out.state.alt, "idle")
+            T.deepEqual(out.lines, ["down LCTL", "down AB04", "up AB04", "up LCTL"])
+        })
+
+        T.test("latched Super is spent and not mixed into a paste chord", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "logo" }).state
+            var out = Reducer.reduce(state, {
+                type: "paste", ctrl: false, shift: true, position: "INS" })
+            T.equal(out.state.logo, "idle")
+            T.deepEqual(out.lines, ["down LFSH", "down INS", "up INS", "up LFSH"])
+        })
+
+        T.test("latched Ctrl is spent; a Ctrl paste still wraps Ctrl once", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "ctrl" }).state
+            var out = Reducer.reduce(state, {
+                type: "paste", ctrl: true, shift: false, position: "AB04" })
+            T.equal(out.state.ctrl, "idle")
+            T.deepEqual(out.lines, ["down LCTL", "down AB04", "up AB04", "up LCTL"])
+        })
+
+        T.test("latched Ctrl is not mixed into a Shift+Insert paste", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "ctrl" }).state
+            var out = Reducer.reduce(state, {
+                type: "paste", ctrl: false, shift: true, position: "INS" })
+            T.equal(out.state.ctrl, "idle")
+            T.deepEqual(out.lines, ["down LFSH", "down INS", "up INS", "up LFSH"])
+        })
+
+        T.test("locked Shift is lifted around a Ctrl+V paste and restored", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(state, {
+                type: "paste", ctrl: true, shift: false, position: "AB04" })
+            T.deepEqual(out.lines, [
+                "up LFSH", "down LCTL", "down AB04",
+                "up AB04", "up LCTL", "down LFSH"
+            ])
+            T.equal(out.state.shift, "locked")
+            T.equal(out.state.pending, null)
+        })
+
+        T.test("locked Shift stays down for a Shift+Insert paste", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(state, {
+                type: "paste", ctrl: false, shift: true, position: "INS" })
+            T.deepEqual(out.lines, ["down INS", "up INS"])
+            T.equal(out.state.shift, "locked")
+        })
+
+        T.test("locked Shift stays down for a Ctrl+Shift+V paste", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(state, {
+                type: "paste", ctrl: true, shift: true, position: "AB04" })
+            T.deepEqual(out.lines, [
+                "down LCTL", "down AB04", "up AB04", "up LCTL"
+            ])
+            T.equal(out.state.shift, "locked")
+        })
+
+        T.test("paste with a key already held is a no-op", function () {
+            var held = Reducer.reduce(idle, { type: "press", position: "AD01" })
+            var out = Reducer.reduce(held.state, {
+                type: "paste", ctrl: true, shift: false, position: "AB04" })
+            T.deepEqual(out.lines, [])
+            T.equal(out.state.pending.position, "AD01")
+        })
+
+        T.test("paste without a position is a no-op", function () {
+            var out = Reducer.reduce(idle, { type: "paste", ctrl: true, shift: false })
+            T.deepEqual(out.lines, [])
+            T.equal(JSON.stringify(out.state), JSON.stringify(idle))
+        })
+
+        T.test("paste leaves Caps and Fn untouched", function () {
+            var state = Reducer.reduce(idle, { type: "capsClick" }).state
+            state = Reducer.reduce(state, { type: "fnClick" }).state
+            var out = Reducer.reduce(state, {
+                type: "paste", ctrl: false, shift: true, position: "INS" })
+            T.equal(out.state.caps, true)
+            T.equal(out.state.fn, true)
+        })
+
+        T.test("pasteChordForClass names Ctrl+Shift+V for foot", function () {
+            T.deepEqual(Reducer.pasteChordForClass("foot"),
+                { ctrl: true, shift: true, position: "AB04" })
+            T.deepEqual(Reducer.pasteChordForClass("footclient"),
+                { ctrl: true, shift: true, position: "AB04" })
+            T.deepEqual(Reducer.pasteChordForClass("Foot"),
+                { ctrl: true, shift: true, position: "AB04" })
+        })
+
+        T.test("pasteChordForClass names Ctrl+Shift+V for typical terminals", function () {
+            var chord = { ctrl: true, shift: true, position: "AB04" }
+            var classes = [
+                "kitty", "Alacritty", "ghostty", "wezterm", "kgx",
+                "gnome-terminal", "konsole", "xfce4-terminal", "agterm",
+                "org.wezfurlong.wezterm", "com.mitchellh.ghostty",
+                "org.kde.konsole", "org.gnome.Terminal", "org.gnome.Console",
+                "com.umputun.agterm"
+            ]
+            for (var i = 0; i < classes.length; i++)
+                T.deepEqual(Reducer.pasteChordForClass(classes[i]), chord)
+        })
+
+        T.test("pasteChordForClass prefers CLIPBOARD chord when class is empty", function () {
+            T.deepEqual(Reducer.pasteChordForClass(""),
+                { ctrl: true, shift: true, position: "AB04" })
+            T.deepEqual(Reducer.pasteChordForClass(null),
+                { ctrl: true, shift: true, position: "AB04" })
+        })
+
+        T.test("a drain keeps the chord's own AltGr key, so the release lifts it", function () {
+            // The refused-configure path: the helper returns BEFORE its drain
+            // (a compile failure or the upload rate limiter), so whatever the
+            // chord holds is genuinely still down at the device. A rebuilt
+            // pending that forgot which key carried AltGr released RALT for a
+            // key held on LVL3, and nothing later could lift it — the cap is
+            // a modifier, so the fifteen-second sweep skips it; AltGr never
+            // locks, so the err handler's lock sweep skips it; and the helper
+            // derives its mask from what it holds, so `mods 0` cannot help.
+            var pressed = Reducer.reduce(Reducer.initialState(), {
+                type: "press", position: "AB11", level: 3,
+                altgr: true, exact: true, level3Position: "LVL3",
+                configureStamp: 3
+            })
+            T.deepEqual(pressed.lines, ["down LVL3", "down AB11"])
+            var drained = Reducer.reduce(pressed.state,
+                { type: "configureDrain", stamp: 3 })
+            T.equal(drained.state.pending !== null, true)
+            T.deepEqual(Reducer.reduce(drained.state, { type: "release" }).lines,
+                        ["up AB11", "up LVL3"])
+        })
+
+        T.test("a level-three glyph chord holds LVL3, and lifts what it held", function () {
+            // Ticket 18: the AltGr wrap of an exact level-3 press moves off
+            // RALT for a glyph cap, because RALT is ISO_Level3_Shift only on
+            // some layouts. The release has to lift the key that actually
+            // went down — recomputing it from POSITIONS would send `up RALT`
+            // for a key held on LVL3 and strand the modifier.
+            var state = Reducer.initialState()
+            var pressed = Reducer.reduce(state, {
+                type: "press", position: "AB11", level: 3,
+                altgr: true, exact: true, level3Position: "LVL3"
+            })
+            T.deepEqual(pressed.lines, ["down LVL3", "down AB11"])
+            var released = Reducer.reduce(pressed.state, { type: "release" })
+            T.deepEqual(released.lines, ["up AB11", "up LVL3"])
+
+            // Level 4 wraps Shift too, and both come off in reverse.
+            var four = Reducer.reduce(state, {
+                type: "press", position: "AB11", level: 4,
+                shift: true, altgr: true, exact: true, level3Position: "LVL3"
+            })
+            // Wrap order is the reducer's ORDER, and the release is its exact
+            // reverse — which is the property that matters, not the sequence.
+            T.deepEqual(four.lines, ["down LVL3", "down LFSH", "down AB11"])
+            T.deepEqual(Reducer.reduce(four.state, { type: "release" }).lines,
+                        ["up AB11", "up LFSH", "up LVL3"])
+        })
+
+        T.test("a level five-to-eight glyph chord holds LVL5 on top", function () {
+            // Ticket 20 / decisions §33: the catalogue moved above the
+            // layout's own levels, so a glyph cap resolved there presses one
+            // more real modifier and nothing else changes. Level 5 is <LVL5>
+            // alone; 6 adds Shift, 7 adds <LVL3>, 8 adds both — and every
+            // release is the exact reverse of its own press, which is the
+            // property that keeps a modifier from being stranded.
+            var state = Reducer.initialState()
+            var five = Reducer.reduce(state, {
+                type: "press", position: "AE01", level: 5,
+                exact: true, level5: true
+            })
+            T.deepEqual(five.lines, ["down LVL5", "down AE01"])
+            T.deepEqual(Reducer.reduce(five.state, { type: "release" }).lines,
+                        ["up AE01", "up LVL5"])
+
+            var six = Reducer.reduce(state, {
+                type: "press", position: "AE01", level: 6,
+                shift: true, exact: true, level5: true
+            })
+            T.deepEqual(six.lines, ["down LVL5", "down LFSH", "down AE01"])
+            T.deepEqual(Reducer.reduce(six.state, { type: "release" }).lines,
+                        ["up AE01", "up LFSH", "up LVL5"])
+
+            var seven = Reducer.reduce(state, {
+                type: "press", position: "AE01", level: 7,
+                altgr: true, exact: true, level3Position: "LVL3", level5: true
+            })
+            T.deepEqual(seven.lines, ["down LVL5", "down LVL3", "down AE01"])
+            T.deepEqual(Reducer.reduce(seven.state, { type: "release" }).lines,
+                        ["up AE01", "up LVL3", "up LVL5"])
+
+            var eight = Reducer.reduce(state, {
+                type: "press", position: "AE01", level: 8,
+                shift: true, altgr: true, exact: true,
+                level3Position: "LVL3", level5: true
+            })
+            T.deepEqual(eight.lines,
+                        ["down LVL5", "down LVL3", "down LFSH", "down AE01"])
+            T.deepEqual(Reducer.reduce(eight.state, { type: "release" }).lines,
+                        ["up AE01", "up LFSH", "up LVL3", "up LVL5"])
+        })
+
+        T.test("a latched Shift is spent by a level-five press, never applied", function () {
+            // <LVL5> changes nothing about §2: the chord belongs to the level,
+            // so a latch armed beforehand is consumed and does not join it —
+            // otherwise a latched Shift would silently turn level 5 into 6.
+            var latched = Reducer.reduce(Reducer.initialState(),
+                { type: "click", modifier: "shift" })
+            var pressed = Reducer.reduce(latched.state, {
+                type: "press", position: "AE01", level: 5,
+                exact: true, level5: true
+            })
+            T.deepEqual(pressed.lines, ["down LVL5", "down AE01"])
+            T.equal(pressed.state.shift, "idle")
+        })
+
+        T.test("a locked Shift is lifted around a level-five press that does not want it", function () {
+            // §16: only Shift locks, and an exact press types the level it
+            // draws. A locked Shift over a level-5 cap would silently make it
+            // level 6, so the lock is lifted around the key and put back —
+            // the same treatment level 1 already gets, now with <LVL5> in the
+            // chord and the lift outside it.
+            var locked = Reducer.reduce(Reducer.initialState(),
+                { type: "doubleClick", modifier: "shift" })
+            T.equal(locked.state.shift, "locked")
+            var pressed = Reducer.reduce(locked.state, {
+                type: "press", position: "AE01", level: 5,
+                exact: true, level5: true
+            })
+            T.deepEqual(pressed.lines,
+                        ["up LFSH", "down LVL5", "down AE01"])
+            T.deepEqual(Reducer.reduce(pressed.state, { type: "release" }).lines,
+                        ["up AE01", "up LVL5", "down LFSH"])
+            T.equal(pressed.state.shift, "locked")
+        })
+
+        T.test("without the override an AltGr chord still holds RALT", function () {
+            // The panel's own AltGr cap, and every curated cap that resolves
+            // through the active layout, are unchanged: the override is opt-in
+            // per press and absent means RALT, exactly as before.
+            var pressed = Reducer.reduce(Reducer.initialState(), {
+                type: "press", position: "AE05", level: 3, altgr: true, exact: true
+            })
+            T.deepEqual(pressed.lines, ["down RALT", "down AE05"])
+            T.deepEqual(Reducer.reduce(pressed.state, { type: "release" }).lines,
+                        ["up AE05", "up RALT"])
+        })
+
+        T.test("pasteChordForClass names Shift+Insert for unknown clients", function () {
+            T.deepEqual(Reducer.pasteChordForClass("firefox"),
+                { ctrl: false, shift: true, position: "INS" })
+            T.deepEqual(Reducer.pasteChordForClass("pastecat"),
+                { ctrl: false, shift: true, position: "INS" })
         })
 
         Qt.exit(T.report("modifier reducer"))

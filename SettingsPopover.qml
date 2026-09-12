@@ -1,29 +1,19 @@
 import QtQuick
+import QtQuick.Controls
 import qs.Commons
 import "Config.js" as ConfigFile
 
-// The settings popover (spec-v1.1 §5), extracted from Panel.qml by ticket
-// 07's prefactor. Ticket 09 shipped the behaviour; the 2026-09-05 owner
-// round left-packed the rows; the 2026-09-06 amendment narrowed it: the
-// width comes from the label column plus the compact colour controls (the
-// old embedded pickers are gone), the emoji app is one chooser with its
-// alternatives revealed on demand, and the colour rows carry theme swatches,
-// a hex draft with Apply, Custom colour and reset. The reset chips, the
-// immediate-apply writes and reset-all's inline confirmation keep the
-// semantics they had; the panel stays the one persistence authority — this
-// surface only reads effective values and issues changes.
-//
-// It overlays the grid from the bar down and never touches the card's size,
-// so no settings interaction can churn the docked reservation. Scrolling
-// changes height only: every row keeps to the shared control column, the
-// emoji alternatives wrap inside it, and the width binding reads nothing
-// that scrolling moves.
+// The settings popover (spec-v1.1 §5). Lives on its own overlay window,
+// not on the key grid: leftover-centre placement is the panel's, exclusive
+// zone stays the keyboard band. Colour rows group swatches with hex and a
+// compact confirm; Custom opens the WinUI editor. The panel is the one
+// persistence authority — this surface only reads effective values and
+// issues changes. Scrolling changes height only.
 Rectangle {
     id: popoverRoot
 
-    // Hidden until the gear opens it — the dismissal mask in Panel.qml keys
-    // off this, so a popover that started visible would eat every gear
-    // click from creation onward.
+    // Hidden until the gear opens it. Leftover dismiss and this window
+    // both key off this flag.
     visible: false
 
     // The panel (root) and its live Theme facade. The panel is the one
@@ -31,12 +21,10 @@ Rectangle {
     property var panel
     property var tokens
 
-    // Geometry the panel feeds in: the gear the popover hangs from, the
-    // drag bar above, and the card that bounds it.
-    property real gearX: 0
-    property real barHeight: 0
-    property real cardWidth: 0
-    property real cardHeight: 0
+    // Overlay size the popover may occupy. Placement (leftover centre) is
+    // applied by the panel as x/y; this only clamps to the output.
+    property real hostWidth: 0
+    property real hostHeight: 0
 
     // Reset-all's confirmation state (spec-v1.1 §5), inline in the footer,
     // reset when the popover closes.
@@ -51,8 +39,10 @@ Rectangle {
         if (visible) {
             forceActiveFocus()
             resetRowDrafts()
+            popoverRoot.resetAllArmed = false
         } else {
             popoverRoot.emojiChooserOpen = false
+            popoverRoot.resetAllArmed = false
             panel.endHexEdit()
         }
     }
@@ -65,6 +55,37 @@ Rectangle {
         textColorRow.resetDraft()
         accentColorRow.resetDraft()
         borderColorRow.resetDraft()
+    }
+
+    function colourRows() {
+        return [keyBackgroundRow, panelBackgroundRow, textColorRow,
+            accentColorRow, borderColorRow]
+    }
+
+    function adoptAppliedColour(fieldName, hex) {
+        var rows = colourRows()
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].fieldName === fieldName) {
+                rows[i].adoptHex(hex)
+                return
+            }
+        }
+    }
+
+    // Current-content paste into the active hex draft (ticket 14): insert
+    // locally into the focused row field; never ask the helper to type.
+    function insertHexText(text) {
+        var rows = [keyBackgroundRow, panelBackgroundRow, textColorRow,
+            accentColorRow, borderColorRow]
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i]
+            if (panel.hexEditing && panel.hexEditField === row.fieldName) {
+                var field = row.padTarget()
+                ConfigFile.fieldSelectAll(field)
+                ConfigFile.fieldInsert(field, text)
+                return
+            }
+        }
     }
 
     // Escape closes the popover — but read the constraint before trusting
@@ -117,37 +138,25 @@ Rectangle {
     // engine evaluates the first bindings in, a row never gets undefined.
     function effectiveColorFor(fieldName) {
         var panel = popoverRoot.panel
-        if (!panel || !panel.effectiveColorForField) return "transparent"
-        var value = panel.effectiveColorForField[fieldName]
-        return value === undefined || value === null ? "transparent" : value
+        if (!panel || !panel.colorForField) return "transparent"
+        return panel.colorForField(fieldName)
     }
 
     // The widest control block any row lays down, measured from the same
-    // compact pieces the colour rows draw — the hex field, the Apply button
-    // and the Custom colour button at their real fonts. This, not the old
-    // 238-unit picker zone, is what the popover is wide for; the emoji
-    // chooser sits inside it.
+    // compact pieces the colour rows draw — swatches, hex, confirm chip
+    // and Custom. The emoji chooser sits inside it.
     Row {
         id: controlProbe
         visible: false
         spacing: tokens.space(6)
 
-        Rectangle {
-            width: tokens.space(76)
-            height: 1
+        Repeater {
+            model: 4
+            Rectangle { width: tokens.space(18); height: 1 }
         }
 
-        Rectangle {
-            width: applyProbeLabel.implicitWidth + tokens.space(10) * 2
-            height: 1
-            Text {
-                id: applyProbeLabel
-                text: "Apply"
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-                font.bold: true
-            }
-        }
+        Rectangle { width: tokens.space(76); height: 1 }
+        Rectangle { width: tokens.space(24); height: 1 }
 
         Rectangle {
             width: customProbeLabel.implicitWidth + tokens.space(10) * 2
@@ -159,6 +168,8 @@ Rectangle {
                 font.pixelSize: tokens.fontBodySmall
             }
         }
+
+        Rectangle { width: tokens.space(24); height: 1 }
     }
     readonly property real controlZoneWidth: controlProbe.implicitWidth
 
@@ -168,18 +179,18 @@ Rectangle {
     // fonts and paddings inside derive from, rather than tracked to the
     // keyboard's size preset, which scales keys, not text. The emoji
     // chooser's closed control fits inside the zone, so no PATH answer can
-    // widen the popover.
-    width: tokens.space(10) * 2 + controlColumnX
+    // widen the popover. Clamped to the card so a long label or large
+    // theme font cannot overflow the keyboard.
+    readonly property real naturalWidth: tokens.space(10) * 2 + controlColumnX
         + Math.max(controlZoneWidth, tokens.space(150) + tokens.space(30))
-    x: Math.max(tokens.space(6), Math.min(gearX, cardWidth - width - tokens.space(6)))
-    y: barHeight + tokens.space(6)
-    // Compact: never taller than the space under the bar, and only as tall
-    // as the sections it hosts. The Flickable below is the "scrolls only if
-    // content requires it" half of the contract — with the standard fields
-    // first, only the appearance section ever scrolls.
-    readonly property real maxPopoverHeight: Math.max(cardHeight - y - tokens.space(6), 0)
-    height: Math.min(Math.max(Math.min(contentColumn.implicitHeight + tokens.space(10) * 2,
-        maxPopoverHeight), tokens.space(120)), maxPopoverHeight)
+    readonly property real maxPopoverWidth: hostWidth > 0
+        ? Math.max(0, hostWidth - tokens.space(6) * 2) : naturalWidth
+    width: maxPopoverWidth > 0 ? Math.min(naturalWidth, maxPopoverWidth)
+        : naturalWidth
+    readonly property real maxPopoverHeight: hostHeight > 0
+        ? Math.max(0, hostHeight - tokens.space(6) * 2) : tokens.space(120)
+    height: Math.min(Math.max(contentColumn.implicitHeight + tokens.space(10) * 2,
+        tokens.space(120)), maxPopoverHeight)
     // The card's own panel-radius token — an override on panelRadius is
     // honoured here exactly as on the keyboard.
     radius: tokens.panelRadius
@@ -404,6 +415,18 @@ Rectangle {
         interactive: contentHeight > height
         boundsBehavior: Flickable.StopAtBounds
         clip: true
+        ScrollBar.vertical: ScrollBar {
+            policy: contentFlickable.contentHeight > contentFlickable.height
+                ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+            implicitWidth: tokens.space(6)
+            contentItem: Rectangle {
+                implicitWidth: tokens.space(4)
+                radius: width / 2
+                color: parent.pressed ? tokens.accent
+                    : Util.alpha(tokens.foreground, parent.hovered ? 0.45 : 0.28)
+            }
+            background: Item { implicitWidth: tokens.space(6) }
+        }
 
         Column {
             id: contentColumn
@@ -764,6 +787,7 @@ Rectangle {
             // the control zone's width, so even the longest candidate list
             // wraps instead of widening the popover.
             Flow {
+                id: emojiAlternatives
                 width: parent.width - popoverRoot.controlColumnX
                 x: popoverRoot.controlColumnX
                 spacing: tokens.space(6)
@@ -776,7 +800,8 @@ Rectangle {
                     Rectangle {
                         property string app: modelData
                         readonly property bool active: app === panel.emojiApp
-                        width: chooserLabel.implicitWidth + tokens.space(10) * 2
+                        width: Math.min(chooserLabel.implicitWidth + tokens.space(10) * 2,
+                            emojiAlternatives.width)
                         height: tokens.space(24)
                         radius: tokens.cornerRadius
                         color: chooserArea.pressed ? tokens.accent
@@ -789,6 +814,9 @@ Rectangle {
                         Text {
                             id: chooserLabel
                             anchors.centerIn: parent
+                            width: parent.width - tokens.space(10) * 2
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideRight
                             text: parent.app.indexOf("omarchy-") === 0
                                 ? parent.app.slice("omarchy-".length) : parent.app
                             color: chooserArea.pressed ? tokens.background : tokens.foreground
@@ -882,6 +910,15 @@ Rectangle {
                 }
             }
 
+            Text {
+                width: parent.width
+                text: "0–24 relative to M; 24 stays a circle at L and XL"
+                color: tokens.muted
+                font.family: tokens.fontFamily
+                font.pixelSize: tokens.fontBodySmall
+                wrapMode: Text.Wrap
+            }
+
             Item {
                 width: parent.width
                 height: tokens.space(28)
@@ -924,9 +961,8 @@ Rectangle {
                 }
             }
 
-            // The five colour rows: swatches, hex draft with Apply, Custom
-            // colour, reset — each feeding the same panel API the rest of
-            // the popover speaks.
+            // The five colour rows: swatches grouped with hex, compact
+            // confirm, Custom, reset — each feeding the same panel API.
             SettingsColorRow {
                 id: keyBackgroundRow
                 tokens: popoverRoot.tokens
@@ -934,7 +970,7 @@ Rectangle {
                 controlX: popoverRoot.controlColumnX
                 fieldName: "keyBackground"
                 labelText: "Key background"
-                effectiveColor: popoverRoot.effectiveColorFor("keyBackground")
+                effectiveColor: panel.effectiveKeyBackground
                 onCustomRequested: popoverRoot.customColourRequested(
                     keyBackgroundRow.fieldName, keyBackgroundRow.labelText)
             }
@@ -946,7 +982,7 @@ Rectangle {
                 controlX: popoverRoot.controlColumnX
                 fieldName: "panelBackground"
                 labelText: "Panel background"
-                effectiveColor: popoverRoot.effectiveColorFor("panelBackground")
+                effectiveColor: panel.effectivePanelBackground
                 onCustomRequested: popoverRoot.customColourRequested(
                     panelBackgroundRow.fieldName, panelBackgroundRow.labelText)
             }
@@ -958,7 +994,7 @@ Rectangle {
                 controlX: popoverRoot.controlColumnX
                 fieldName: "textColor"
                 labelText: "Text colour"
-                effectiveColor: popoverRoot.effectiveColorFor("textColor")
+                effectiveColor: panel.effectiveTextColor
                 onCustomRequested: popoverRoot.customColourRequested(
                     textColorRow.fieldName, textColorRow.labelText)
             }
@@ -970,7 +1006,7 @@ Rectangle {
                 controlX: popoverRoot.controlColumnX
                 fieldName: "accentColor"
                 labelText: "Accent colour"
-                effectiveColor: popoverRoot.effectiveColorFor("accentColor")
+                effectiveColor: panel.effectiveAccentColor
                 onCustomRequested: popoverRoot.customColourRequested(
                     accentColorRow.fieldName, accentColorRow.labelText)
             }
@@ -982,50 +1018,18 @@ Rectangle {
                 controlX: popoverRoot.controlColumnX
                 fieldName: "borderColor"
                 labelText: "Border colour"
-                effectiveColor: popoverRoot.effectiveColorFor("borderColor")
+                effectiveColor: panel.effectiveBorderColor
                 onCustomRequested: popoverRoot.customColourRequested(
                     borderColorRow.fieldName, borderColorRow.labelText)
             }
 
-            // The hex grammar in one muted line, and the local pad: while a
-            // hex field is the active entry, the OSK's own controls sit here
-            // — #, digits, A–F, caret and delete — routed into the field
-            // locally, never through the helper, never to the previously
-            // focused app.
             Text {
                 width: parent.width
-                text: "Hex fields accept #RGB / #RRGGBB (an alpha form too); Apply commits the draft"
+                text: "Hex fields accept #RGB / #RRGGBB (an alpha form too); the check commits the draft. Type with the keyboard."
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
                 wrapMode: Text.Wrap
-            }
-
-            SettingsHexPad {
-                anchors.left: parent.left
-                anchors.leftMargin: popoverRoot.controlColumnX
-                width: popoverRoot.controlZoneWidth
-                visible: panel.hexEditing && panel.customEditorField === ""
-                tokens: popoverRoot.tokens
-                // The field is whichever row's hex TextInput currently holds
-                // active focus; the pad edits it in place.
-                field: {
-                    var rows = [keyBackgroundRow, panelBackgroundRow, textColorRow,
-                        accentColorRow, borderColorRow]
-                    for (var i = 0; i < rows.length; i++) {
-                        var row = rows[i]
-                        if (panel.hexEditing && panel.hexEditField === row.fieldName)
-                            return row.padTarget()
-                    }
-                    return null
-                }
-                onVisibleChanged: {
-                    // Keep the pad itself in view when the entry opens: the
-                    // popover scrolls, it never widens.
-                    if (visible)
-                        contentFlickable.contentY = Math.max(0,
-                            contentFlickable.contentHeight - contentFlickable.height)
-                }
             }
 
             // The malformed-file notice (spec-v1.1 §5). While it stands,

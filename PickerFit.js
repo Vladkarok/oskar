@@ -45,8 +45,10 @@ var KNOWN_WINDOW_CLASSES = {
 // StartupWMClass the one-shot desktop-entry probe found (already extracted,
 // passed as a string), plus the executable name as the last fallback —
 // always lowercase, deduplicated. `desktopEntryText` may be null/empty when
-// the probe has not answered or found nothing.
-function resolveClasses(app, desktopEntryText) {
+// the probe has not answered or found nothing. The executable-name fallback
+// is omitted until the probe has settled (success or failure): a
+// fallback-class openwindow must not bind before the real class is known.
+function resolveClasses(app, desktopEntryText, probeSettled) {
     var out = []
     function push(name) {
         if (!name) return
@@ -56,7 +58,7 @@ function resolveClasses(app, desktopEntryText) {
     var known = KNOWN_WINDOW_CLASSES[String(app).toLowerCase()] || []
     for (var i = 0; i < known.length; i++) push(known[i])
     if (desktopEntryText) push(String(desktopEntryText).trim())
-    push(app)
+    if (probeSettled) push(app)
     return out
 }
 
@@ -69,6 +71,186 @@ function classMatches(clientClass, initialClass, classes) {
         if (norm(initialClass) === classes[i]) return true
     }
     return false
+}
+
+// Socket events carry the address without a 0x prefix (recorded:
+// closewindow>>55a20b2fac00); hyprctl clients -j reports 0x55a20b2fac00.
+// Compare only the hex, case-insensitively; empty is never a match.
+function normalizeAddress(value) {
+    var s = String(value || "").toLowerCase()
+    return s.indexOf("0x") === 0 ? s.slice(2) : s
+}
+
+function sameAddress(a, b) {
+    var left = normalizeAddress(a)
+    var right = normalizeAddress(b)
+    return left !== "" && left === right
+}
+
+// Hyprland 0.56.2 socket events that drive a picker session. There is no
+// client-geometry event: movewindow(v2) is move-to-workspace, and
+// resizewindow(v2) is not in the binary. A picker-initiated resize is
+// noticed on the next panel/output event or the host's dispatch-verify.
+function eventAction(name) {
+    switch (String(name || "")) {
+    case "openwindow":
+        return "open"
+    case "closewindow":
+        return "close"
+    case "changefloatingmode":
+    case "windowtitle":
+    case "windowtitlev2":
+        return "refit"
+    case "configreloaded":
+    case "monitoradded":
+    case "monitoraddedv2":
+    case "monitorremoved":
+    case "monitorremovedv2":
+        return "output"
+    case "openlayer":
+        return "layerOpen"
+    case "closelayer":
+        return "layerClose"
+    default:
+        return ""
+    }
+}
+
+function validRect(rect) {
+    return !!(rect
+        && isFinite(rect.x) && isFinite(rect.y)
+        && isFinite(rect.w) && isFinite(rect.h)
+        && rect.w > 0 && rect.h > 0)
+}
+
+// Opt-in OSK invocation for the shell emoji overlay. Ordinary standalone
+// open("{}") / toggle with no payload must not parse as this.
+function oskPayload(band, output, workArea) {
+    return { osk: true, output: output, workArea: workArea, band: band }
+}
+
+function parseOskPayload(text) {
+    if (!text) return null
+    var obj = null
+    try { obj = JSON.parse(String(text)) } catch (e) { return null }
+    if (!obj || obj.osk !== true) return null
+    if (!validRect(obj.output) || !validRect(obj.workArea) || !validRect(obj.band))
+        return null
+    return {
+        osk: true,
+        output: obj.output,
+        workArea: obj.workArea,
+        band: obj.band
+    }
+}
+
+// Overlay inner-card placement: the same approved policy as a client
+// picker. Callers apply `target` to the card; they do not move a window.
+function overlayCardPlan(payload, picker, pickerMin) {
+    if (!payload || payload.osk !== true) return null
+    return planPlacement({
+        output: payload.output,
+        workArea: payload.workArea,
+        band: payload.band,
+        picker: picker,
+        pickerMin: pickerMin
+    })
+}
+
+// Panel band in the overlay surface's output-local coordinates, for the
+// input-region hole that keeps OSK clicks reachable.
+function overlayHole(band, output) {
+    return {
+        x: band.x - output.x,
+        y: band.y - output.y,
+        w: band.w,
+        h: band.h
+    }
+}
+
+// Remember every openwindow seen while the session is armed, including a
+// class the desktop-entry probe has not yet added. Dedupes by address.
+function rememberOpenwindow(seen, address, windowClass) {
+    if (!normalizeAddress(address)) return seen || []
+    var out = (seen || []).slice()
+    for (var i = 0; i < out.length; i++) {
+        if (sameAddress(out[i].address, address)) return out
+    }
+    out.push({ address: address, className: String(windowClass || "") })
+    return out
+}
+
+// Drop a closed address so a dead first-in-seen cannot bind after the
+// class probe settles. Addresses that never matched stay until this.
+function forgetOpenwindow(seen, address) {
+    if (!seen || !seen.length) return seen || []
+    var out = []
+    for (var i = 0; i < seen.length; i++) {
+        if (!sameAddress(seen[i].address, address)) out.push(seen[i])
+    }
+    return out
+}
+
+// If the bound launch address has closed before it was pinned, bind
+// once more from the remaining live seen list. An already-different
+// opened address is left alone.
+function rebindAfterClose(opened, seen, closedAddress, acceptedClasses, probeSettled, executableName) {
+    var nextSeen = forgetOpenwindow(seen, closedAddress)
+    if (opened && opened.length && sameAddress(opened[0], closedAddress))
+        return { seen: nextSeen, opened: bindLaunch([], nextSeen, acceptedClasses, probeSettled, executableName) }
+    return { seen: nextSeen, opened: opened || [] }
+}
+
+// The launch identity is the first remembered openwindow whose class is
+// now accepted. A later same-class map is not this session's picker.
+function launchAddress(seen, acceptedClasses) {
+    if (!seen || !acceptedClasses) return ""
+    for (var i = 0; i < seen.length; i++) {
+        if (classMatches(seen[i].className, "", acceptedClasses))
+            return seen[i].address
+    }
+    return ""
+}
+
+// Bind launch identity once, and only after the class probe has settled.
+// Until then opened stays empty so a fallback-class map cannot steal the
+// pin. After bind, later openwindows and a wider class list do not
+// retarget. The executable-name fallback is consulted only when no
+// recorded/StartupWMClass match is in seen.
+function bindLaunch(opened, seen, acceptedClasses, probeSettled, executableName) {
+    if (opened && opened.length) return opened
+    if (!probeSettled) return []
+    var exec = executableName ? String(executableName).toLowerCase() : ""
+    var preferred = []
+    for (var i = 0; i < (acceptedClasses || []).length; i++) {
+        if (acceptedClasses[i] !== exec) preferred.push(acceptedClasses[i])
+    }
+    var launch = launchAddress(seen, preferred)
+    if (!launch && exec) launch = launchAddress(seen, [exec])
+    return launch ? [launch] : []
+}
+
+// Choose the session's window from an already class-filtered client list.
+// A pin (hyprctl 0x form or socket form) always wins while that address is
+// still mapped. Otherwise only opened[0] — the launch identity from
+// bindLaunch — is owned. A later same-class window is not this
+// session's picker. Class match and uniqueness are not launch ownership:
+// without a pin or a launch address, wait.
+function pickClient(clients, pinnedAddress, openedAddresses) {
+    if (!clients || !clients.length) return null
+    var pin = normalizeAddress(pinnedAddress)
+    if (pin) {
+        for (var i = 0; i < clients.length; i++) {
+            if (sameAddress(clients[i].address, pin)) return clients[i]
+        }
+    }
+    if (openedAddresses && openedAddresses.length) {
+        var launch = openedAddresses[0]
+        for (var i = 0; i < clients.length; i++) {
+            if (sameAddress(clients[i].address, launch)) return clients[i]
+        }
+    }
+    return null
 }
 
 // ---- monitors -j conversions ----
@@ -105,6 +287,21 @@ function workAreaOf(mon) {
     }
 }
 
+// Docked strip in layout units. Hyprland stacks a bottom-anchored Overlay
+// above any existing bottom exclusive zone (a bar), so the band is the top
+// of that stack — not the output's bottom edge. bottomReserved is
+// monitors -j reserved[3] (logical); when it is 0 or still just the strip,
+// this matches "output bottom minus cardHeight".
+function dockedBand(output, cardHeight, bottomReserved) {
+    var stack = Math.max(cardHeight, bottomReserved || 0)
+    return {
+        x: output.x,
+        y: output.y + output.h - stack,
+        w: output.w,
+        h: cardHeight
+    }
+}
+
 // ---- rect helpers ----
 
 function overlaps(a, b) {
@@ -133,6 +330,23 @@ function sameRect(a, b, tolerance) {
 function clampRect(value, low, high) {
     if (high < low) return low
     return Math.max(low, Math.min(high, value))
+}
+
+// One convergence cycle is one keyboard band + work area. A stubborn
+// picker that changes size after each dispatch produces a new plan.target
+// and must still burn the attempt cap; a later drag/dock/output change
+// starts a fresh cycle.
+function placementCycleKey(band, workArea) {
+    function part(r) {
+        if (!r) return ""
+        return [r.x, r.y, r.w, r.h].join(",")
+    }
+    return part(band) + ";" + part(workArea)
+}
+
+function nextAttempts(attempts, lastKey, newKey) {
+    if (!newKey || lastKey !== newKey) return 0
+    return attempts || 0
 }
 
 // ---- the approved fit policy ----

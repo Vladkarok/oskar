@@ -33,6 +33,9 @@ for suite in "$root"/tests/*.qml; do
   "$qml" "$suite" || status=1
 done
 
+echo "== qml static check"
+"$root/tools/qml-check.sh" || status=1
+
 if [[ "${1:-}" != "--js-only" ]]; then
   echo "== helper unit tests"
   cargo test --manifest-path "$root/daemon/Cargo.toml" --quiet || status=1

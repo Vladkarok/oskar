@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PROBE-X11|boot</title>
+</head>
+<body>
+<p>levels 5-8 probe, XWayland leg. Title records every keydown.</p>
+<script>
+// Same recorder as the Wayland leg; only the title marker differs so the
+// two instances are told apart in `hyprctl clients -j`.
+document.title = "PROBE-X11|ready";
+addEventListener("keydown", function (e) {
+  var k = (e.key === undefined || e.key === null) ? "null" : e.key;
+  document.title += k + "\u00b7" + (e.code || "-") + " ";
+});
+</script>
+</body>
+</html>
