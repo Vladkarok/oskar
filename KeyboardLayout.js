@@ -10,11 +10,13 @@
 // owner-measured Windows stagger; what that buys is the grid comment in
 // Keyboard.qml, and this is not the place to say it twice.
 //
-// A third shape belongs to the symbols page: { k: position, lvl: 1 | 2 } draws
-// exactly one level of one position and types that level, rather than the
-// base/shift pair a main-page cap carries. It has no built-in character at
-// all, because a fixed ASCII table is the lie this project exists to avoid —
-// an unresolved level draws blank and is reported like any other fallback.
+// A third shape belongs to the curated page: { k: position, lvl: 1..4, exact:
+// true } draws exactly one level of one position and types that level, rather
+// than the base/shift pair a main-page cap carries. It has no built-in
+// character at all, because a fixed ASCII table is the lie this project
+// exists to avoid — an unresolved level draws blank and is reported like any
+// other fallback. `exact` is also the display rule: the cap draws its own
+// level under every modifier combination (see resolvedTypedChar).
 var functionRow = [
     { label: "esc", key: "Escape", w: 1.0 },
     { t: "`", s: "~", k: "TLDE" },
@@ -38,7 +40,10 @@ function commandRow(pageLabel) {
         { label: "Fn", key: "fn" },
         { label: "Super", key: "logo" },
         { label: "Alt", key: "alt" },
-        { label: "", key: "emoji" },
+        // The emoji cap (spec-v1.1 §1): a fixed label naming the app the
+        // cap launches. Like the arrows, it is artwork, not a character
+        // any level of the keymap produces.
+        { label: "☺", key: "emoji" },
         { t: " ", label: "", w: 4.5, k: "SPCE" },
         { label: "AltGr", key: "altgr" },
         { label: "Ctrl", key: "ctrl" },
@@ -111,26 +116,41 @@ var rows = [
 ]
 
 // The symbols page (spec-v1 §4). What it holds is a rule rather than a list:
-// the shift level of every non-letter position on the main page — which is
-// exactly what the alphanumeric block cannot reach in one press — plus the
-// base level of the punctuation cluster, which is one press on the main page
-// but a page switch out and back once you are here.
+// every non-letter position on the main page — which is exactly what the
+// alphanumeric block cannot reach in one press — as DUAL-LEVEL caps, the
+// 2026-09-05 owner round that replaced the per-level rows: the old page drew
+// the shifted level of the top row and the base level of the punctuation
+// cluster as two separate rows, which read as "the same as the main window
+// with shift modifier, redundant" and gave no view of what Shift does to a
+// cap ("no view what symbols are available if shift is pressed"). A dual cap
+// is a main-page cap with NO built-in characters behind either level: both
+// come from the compiled keymap (see the dual branch of capOverlay), it draws
+// shifted-on-top / base-on-bottom with the emphasis swapping on Shift exactly
+// like the main page, and the level typed follows Shift — plain pairing
+// semantics, non-exact, so a latched or locked Shift applies to every one of
+// these caps and is consumed by it. No reducer fact changed (the `lvl`/`exact`
+// shape below remains the curated page's alone); only what the page draws and
+// where a press's Shift comes from.
 //
-// Which characters those positions carry is the keymap's business, not ours.
-// On `us` the top row reads ~!@#$%^&*()_+; on a layout whose symbols sit
-// elsewhere it reads whatever that layout puts there, and a position with
-// nothing at that level draws blank and says so in the log rather than
-// borrowing a US character.
+// The top row now also types digits unshifted, which kills the redundancy the
+// owner named: on `us` the row reads 1!2@3#… stacked, one press either way.
+// Which characters those positions carry is still the keymap's business, not
+// ours: a position with nothing at a level reports that level in the §11 miss
+// log rather than borrowing a US character, and a position with nothing at
+// either level draws dim and refuses presses (spec-v1.1 §3).
 //
 // The nav caps fill out the rows the symbol positions do not reach across.
 // They are fixed-label caps like the arrows, and they are the other thing a
 // pointer cannot otherwise get at.
 var punctuationPositions = ["AD11", "AD12", "BKSL", "AC10", "AC11", "AB08", "AB09", "AB10"]
 
-function levelCaps(positions, level) {
+var symbolTopPositions = ["TLDE", "AE01", "AE02", "AE03", "AE04", "AE05", "AE06",
+    "AE07", "AE08", "AE09", "AE10", "AE11", "AE12"]
+
+function dualCaps(positions) {
     var out = []
     for (var i = 0; i < positions.length; i++) {
-        out.push({ k: positions[i], lvl: level })
+        out.push({ k: positions[i], dual: true })
     }
     return out
 }
@@ -142,11 +162,10 @@ function levelCaps(positions, level) {
 function symbolRows(pageLabel) {
     return [
     [{ label: "esc", key: "Escape", w: 1.0 }]
-        .concat(levelCaps(["TLDE", "AE01", "AE02", "AE03", "AE04", "AE05", "AE06", "AE07",
-               "AE08", "AE09", "AE10", "AE11", "AE12"], 2))
+        .concat(dualCaps(symbolTopPositions))
         .concat([{ label: "⌫", key: "BackSpace", w: 1.5 }]),
     [{ label: "Tab", key: "Tab", w: 1.5 }]
-        .concat(levelCaps(punctuationPositions, 1))
+        .concat(dualCaps(punctuationPositions))
         .concat([
             // Del is a nav cap like its neighbours: pointer-unreachable, and
             // keysymPositions already maps Delete. It has stood on this row
@@ -161,19 +180,20 @@ function symbolRows(pageLabel) {
             { label: "Ins", key: "Insert", w: 1.5 }
         ]),
     // Shift is on this row because it is the one modifier the main page keeps
-    // outside the command row, and a locked modifier has to stay *indicated* as
-    // locked across a page switch, not merely stay held (spec-v1 §5).
-    [{ label: "Shift", key: "shift", w: 2.5 }]
-        .concat(levelCaps(punctuationPositions, 2))
-        .concat([
-            { label: "PgUp", key: "Prior" },
-            { label: "PgDn", key: "Next" },
-            // Same units-left invariant as the main page's fourth row
-            // (2.5 + 8 + 1 + 1 = 12.5), so this ↑ also sits exactly above
-            // the command row's ↓.
-            { label: "↑", key: "Up" },
-            { label: "Enter", key: "Return", w: 2.0 }
-        ]),
+    // outside the command row, and a locked modifier has to stay *indicated*
+    // as locked across a page switch, not merely stay held (spec-v1 §5).
+    // Merging the level rows left this row with one cap per side, so the
+    // middle is a declared spacer: the row still sums to the shared 15.5-unit
+    // grid (2.5 Shift + 8 spacer + 3 nav + 2 Enter), nothing blank is drawn,
+    // and the nav cluster keeps its right-edge alignment — same units-left
+    // invariant as the main page's fourth row (2.5 + 8 + 1 + 1 = 12.5), so
+    // this ↑ also sits exactly above the command row's ↓.
+    [{ label: "Shift", key: "shift", w: 2.5 },
+     { spacer: true, w: 8.0 },
+     { label: "PgUp", key: "Prior" },
+     { label: "PgDn", key: "Next" },
+     { label: "↑", key: "Up" },
+     { label: "Enter", key: "Return", w: 2.0 }],
         commandRow(pageLabel)
     ]
 }
@@ -250,8 +270,9 @@ function buildTokenIndex(symbolMap) {
 // The slot plan, sized for the full palette and never reshaped: the available
 // symbols fill the slots in curatedTokens' order, and a slot nothing resolves
 // to becomes an invisible spacer ({ w } alone) so the row still sums to the
-// grid without drawing a blank cap. A content row nothing at all resolves to
-// is left out entirely.
+// grid without drawing a blank cap. A row is left out only when nothing at
+// all resolved to it AND it carries no fixed cap; the esc/⌫ and
+// Shift/Enter rows stay whatever the availability is (see curatedPageRows).
 //
 // Row shapes, on the shared 15.5-unit half-lattice: esc + 13 + ⌫ like every
 // page's first row; a free row of 15 closed by an invisible half-unit pad;
@@ -271,7 +292,7 @@ var curatedShape = [
         slots: 15,
         // Fifteen unit slots leave half a unit short of the grid; the pad
         // keeps the row on it without widening any cap.
-        after: [{ w: 0.5 }]
+        after: [{ spacer: true, w: 0.5 }]
     },
     {
         before: [{ label: "Shift", key: "shift", w: 2.5 }],
@@ -293,7 +314,13 @@ function curatedPageRows(symbolMap) {
     var caps = []
     for (var i = 0; i < curatedTokens.length; i++) {
         var hit = index[curatedTokens[i]]
-        if (hit) caps.push({ k: hit.position, lvl: hit.level })
+        // `exact` marks the press for the reducer: a curated cap types
+        // exactly its own level — the chord comes from the level, never
+        // from a latch — but a latched Shift or AltGr is still consumed
+        // (spent) by it, as §2 spends the latches of any non-modifier
+        // key (a symbols-page cap, whose level-1 caps pair with a latched
+        // Shift by design, also APPLIES the latch it spends).
+        if (hit) caps.push({ k: hit.position, lvl: hit.level, exact: true })
     }
     var rows = []
     var next = 0
@@ -306,22 +333,35 @@ function curatedPageRows(symbolMap) {
                 next += 1
                 filled += 1
             } else {
-                row.push({ w: 1 })
+                row.push({ spacer: true, w: 1 })
             }
         }
         row = row.concat(curatedShape[r].after)
-        if (filled > 0) rows.push(row)
+        // A row is omitted only when it has neither symbols nor controls.
+        // The rows carrying the page's fixed caps — esc/⌫ above,
+        // Shift/Enter below — are drawn whatever the keymap resolved: a page
+        // that dropped its Shift/Enter row left a locked Shift held with its
+        // control hidden and no direct unlock, and no Enter to return with
+        // (review finding R2; ua, gb and fr all landed there). Everything
+        // else in an unfilled control row is a declared spacer, so nothing
+        // blank is drawn and the row still sums to the grid.
+        var fixed = curatedShape[r].before.concat(curatedShape[r].after)
+        var hasControls = false
+        for (var f = 0; f < fixed.length; f++) {
+            if (!isSpacer(fixed[f])) { hasControls = true; break }
+        }
+        if (filled > 0 || hasControls) rows.push(row)
     }
     rows.push(commandRow("ABC"))
     return { rows: rows, available: caps.length }
 }
 
-/// A spacer slot: width for the grid and nothing else — no key, no
-/// position, no character, no label — so the panel can leave it undrawn
-/// and inert.
-function isBlank(keyData) {
-    return !keyData.key && !keyData.k && !keyData.label
-        && !keyData.t && !keyData.s
+/// A spacer slot: declared, not sniffed — `spacer: true` plus the width
+/// that keeps its row on the grid, and nothing else. The panel leaves a
+/// declared spacer undrawn and inert; anything that merely happens to
+/// carry no key stays a drawing decision, not a layout one.
+function isSpacer(keyData) {
+    return keyData.spacer === true
 }
 
 
@@ -591,6 +631,41 @@ function drawsFixedLabel(keyData) {
 // mistaken for a failure.
 var UNRESOLVED = " unresolved"
 
+// Whether a two-level cap is a letter pair — the shifted level is simply the
+// capital of the base — which holds in any script and needs no per-alphabet
+// table. `/^[a-z]$/` recognised only Latin, so Cyrillic and Greek letters were
+// treated as punctuation: Caps Lock did nothing on them and they rendered as
+// stacked dual keys. Asking merely whether the base has a capital is not
+// enough either — French AZERTY carries é on the same key as 2, and é does
+// have a capital, so Caps Lock would type 2 instead of É.
+function isLetterKey(keyData) {
+    var base = keyData.t || ""
+    var shifted = keyData.s || ""
+    return base.length > 0 && shifted.length > 0 && shifted === base.toUpperCase()
+}
+
+// The character one cap resolves to, given what Caps and Shift are doing.
+// Moved here from Keyboard.qml (ticket 03) so that the rule deciding what a
+// cap SHOWS lives in the same module as the rules deciding what its press
+// TYPES, and the two can only move together, tested at the pure seam: caps
+// must match actual typed output, and this function is where they meet.
+//
+// An exact cap — the curated page's — answers only to the level it carries:
+// its press types that level whatever the modifiers are doing (a latched
+// Shift or AltGr is spent by it, never applied to it; a locked Shift is
+// lifted around the press and restored; Caps affects letters only), so the
+// display follows the same rule and never redraws as another
+// symbol just because Shift is active. Letters swap on Caps XOR Shift, exactly
+// as the panel always drew them. Every other paired cap shifts with Shift
+// alone.
+function resolvedTypedChar(keyData, capsOn, shiftOn) {
+    if (keyData.exact === true) return keyData.t || ""
+    if (isLetterKey(keyData)) {
+        return capsOn !== shiftOn && keyData.s ? keyData.s : keyData.t
+    }
+    return shiftOn && keyData.s ? keyData.s : keyData.t
+}
+
 /// What the compiled keymap has to say about one cap, expressed as the fields
 /// to lay over it — never as an edit to the cap itself. Positions the keymap
 /// does not cover are appended to `misses` and left for the caller to report;
@@ -600,32 +675,70 @@ function capOverlay(keyData, symbols, misses) {
     var textAt = function (index) {
         return tokenToText(index < levels.length ? levels[index] : "", UNRESOLVED)
     }
+    // The miss text for one level: what the keymap actually has there, or
+    // the honest name for the hole — a level past the entry's length is
+    // "no symbol at this level", a position with no entry at all is the
+    // plainer "no keymap entry". Shared by the lvl and dual branches so the
+    // §11 report cannot drift between them.
+    var missToken = function (index) {
+        if (levels.length === 0) return "<no keymap entry>"
+        var token = index < levels.length ? String(levels[index]).trim() : ""
+        return token || "<no symbol at this level>"
+    }
 
-    // A symbols-page cap draws exactly one level and carries no built-in
-    // character, so there is nothing to fall back *to*: an unresolved level
-    // leaves the cap blank and is reported, which is the §11 rule with the
-    // silent substitution removed entirely.
+    // A symbols-page single-level cap (the curated page's shape) draws
+    // exactly one level and carries no built-in character, so there is
+    // nothing to fall back *to*: an unresolved level leaves the cap blank
+    // and is reported, which is the §11 rule with the silent substitution
+    // removed entirely. Blank is also not allowed to look typeable
+    // (spec-v1.1 §3: a visible cap must never be silently blank), so the
+    // overlay marks the cap unavailable — a position the page declares and
+    // the keymap should cover, resolving to nothing, is drawn dim and
+    // refuses presses. Fixed-label caps and spacers are never marked: their
+    // labels are the panel's own, not the keymap's.
     if (keyData.lvl) {
         var index = keyData.lvl - 1
         var drawn = textAt(index)
         var overlay = { t: drawn === UNRESOLVED ? "" : drawn }
         if (drawn === UNRESOLVED) {
-            var token = index < levels.length ? String(levels[index]).trim() : ""
-            misses.push(keyData.k + (index > 0 ? "^" : "") + "="
-                + (levels.length > 0 ? (token || "<no symbol at this level>")
-                                     : "<no keymap entry>"))
+            misses.push(keyData.k + (index > 0 ? "^" : "") + "=" + missToken(index))
+            overlay.unavailable = true
         }
-        // A latched or locked Shift applies to every press, including one on a
-        // base-level cap, so a base-level cap has to be able to show what Shift
-        // would actually produce — otherwise the page would draw `[` while
-        // typing `{`, which is the one thing this keyboard is for. It still
-        // draws as a single glyph (see isDualKey): the stacked pair belongs to
-        // the main page, and the shift level has a cap of its own here.
-        if (index === 0) {
-            var paired = textAt(1)
-            if (paired !== UNRESOLVED) overlay.s = paired
-        }
+        // No paired shift glyph rides on a curated cap, whatever the
+        // neighbouring level resolves to. A curated press is exact — the
+        // chord is the level's decision: a latched Shift or AltGr is spent
+        // by it, never applied to it, and a locked Shift is lifted around
+        // the press and restored after it (ModifierReducer's exact press)
+        // — so the cap must draw that same level under every modifier
+        // combination. Attaching the level-2 symbol as the cap's shifted
+        // variant used to redraw French ² as ~ under Shift while the exact
+        // press went on typing ² (review finding R3). The stacked pair belongs
+        // to the dual caps below; the shift level has a cap of its own here.
         return overlay
+    }
+
+    // The symbols page's dual cap (2026-09-05, the owner's symbols-page v2
+    // round): both levels from the keymap, no built-in character behind
+    // either. Whichever level resolves is carried as t (base) / s (shifted)
+    // and the panel draws the stacked pair with Shift-swapped emphasis, so
+    // the page now SHOWS what Shift does to every cap. A level that does not
+    // resolve is a miss exactly as a single-level cap's would be; a cap with
+    // neither level resolving is marked unavailable — dim, press-refusing,
+    // never a silent blank (spec-v1.1 §3). What a cap does with a latched
+    // Shift is the main page's own pairing semantics (non-exact press in
+    // Keyboard.qml), decided by ModifierReducer.js; nothing here changes a
+    // reducer fact.
+    if (keyData.dual) {
+        var dual = {}
+        var dualBase = textAt(0)
+        if (dualBase !== UNRESOLVED) dual.t = dualBase
+        else misses.push(keyData.k + "=" + missToken(0))
+        var dualShifted = textAt(1)
+        if (dualShifted !== UNRESOLVED) dual.s = dualShifted
+        else misses.push(keyData.k + "^=" + missToken(1))
+        if (dual.t === undefined && dual.s === undefined)
+            dual.unavailable = true
+        return dual
     }
 
     if (levels.length === 0) {

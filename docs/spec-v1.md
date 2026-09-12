@@ -178,7 +178,9 @@ Both modes:
   in config is wrong the first time the laptop is undocked.
 - Size presets rather than free-form resize — two or three, cycled from
   a button. Free-form resizing is a lot of state for a thing operated
-  one-handed from a couch.
+  one-handed from a couch. (v1.1 §4 replaces the cycle with a direct
+  M/L/XL chooser and fixes the resize anchors: bottom-centre docked,
+  card centre floating.)
 - Hit targets sized for touch even though touch input is out of scope
   (§2). Large targets are better with a mouse too, and this is the
   cheapest thing to get right early and the most annoying to retrofit.

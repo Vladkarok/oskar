@@ -375,7 +375,7 @@ QtObject {
 
         T.test("a level-3 cap wraps AltGr around the position on its own", function () {
             var out = Reducer.reduce(idle, {
-                type: "press", position: "AE05", shift: false, altgr: true })
+                type: "press", position: "AE05", shift: false, altgr: true, exact: true })
             T.deepEqual(out.lines, ["down RALT", "down AE05"])
             T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
                         ["up AE05", "up RALT"])
@@ -384,7 +384,7 @@ QtObject {
 
         T.test("a level-4 cap wraps AltGr and Shift, AltGr going down first", function () {
             var out = Reducer.reduce(idle, {
-                type: "press", position: "AE03", shift: true, altgr: true })
+                type: "press", position: "AE03", shift: true, altgr: true, exact: true })
             T.deepEqual(out.lines, ["down RALT", "down LFSH", "down AE03"])
             T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
                         ["up AE03", "up LFSH", "up RALT"])
@@ -393,45 +393,129 @@ QtObject {
         T.test("a level-3 cap lifts a locked Shift around the press and restores it", function () {
             var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
             var out = Reducer.reduce(state, {
-                type: "press", position: "AE05", shift: false, altgr: true })
+                type: "press", position: "AE05", shift: false, altgr: true, exact: true })
             T.deepEqual(out.lines, ["up LFSH", "down RALT", "down AE05"])
             var lifted = Reducer.reduce(out.state, { type: "release" })
             T.deepEqual(lifted.lines, ["up AE05", "up RALT", "down LFSH"])
             T.equal(lifted.state.shift, "locked")
         })
 
-        T.test("a level-3 cap spends a latched Shift without wrapping it", function () {
+        T.test("a level-3 cap under a latched Shift stays level 3 and spends the latch", function () {
+            // The chord is the level's, so the armed Shift adds nothing —
+            // but a curated cap is an ordinary non-modifier key to §2, so
+            // the latch does not outlive it.
             var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
             var out = Reducer.reduce(state, {
-                type: "press", position: "AE05", shift: false, altgr: true })
+                type: "press", position: "AE05", shift: false, altgr: true, exact: true })
             T.deepEqual(out.lines, ["down RALT", "down AE05"])
+            T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
+                        ["up AE05", "up RALT"])
             T.equal(out.state.shift, "idle")
         })
 
-        T.test("a level-4 cap carries a latched Shift with AltGr", function () {
+        T.test("a level-1 cap under a latched Shift types level 1 and spends the latch", function () {
             var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
             var out = Reducer.reduce(state, {
-                type: "press", position: "AE03", shift: true, altgr: true })
+                type: "press", position: "AE04", shift: false, altgr: false, exact: true })
+            T.deepEqual(out.lines, ["down AE04"])
+            var up = Reducer.reduce(out.state, { type: "release" })
+            T.deepEqual(up.lines, ["up AE04"])
+            T.equal(up.state.shift, "idle")
+            // The point of the consumption: the armed Shift must not reach
+            // past the symbol, or the next ordinary key is shifted behind
+            // the user's back.
+            var ordinary = Reducer.reduce(up.state, { type: "press", position: "AD01", letter: true })
+            T.deepEqual(ordinary.lines, ["down AD01"])
+        })
+
+        T.test("a level-1 cap lifts a locked Shift around the press and restores it", function () {
+            // The French ² case (R3's input half): the lock is real, the cap
+            // is exact, so the lock is lifted for the press and restored
+            // after it — the symbol types level 1 whatever the lock says,
+            // and the lock survives to say so.
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "TLDE", shift: false, altgr: false, exact: true })
+            T.deepEqual(out.lines, ["up LFSH", "down TLDE"])
+            var lifted = Reducer.reduce(out.state, { type: "release" })
+            T.deepEqual(lifted.lines, ["up TLDE", "down LFSH"])
+            T.equal(lifted.state.shift, "locked")
+        })
+
+        T.test("Caps never shifts an exact cap's chord", function () {
+            // Caps is a letters-only semantic toggle (§2/§16). An exact cap
+            // answers to its level alone, so Caps on changes nothing about
+            // the chord — which is exactly why its display must not change
+            // either (the R3 display rule in KeyboardLayout.js).
+            var state = Reducer.reduce(idle, { type: "capsClick" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "TLDE", shift: false, altgr: false, exact: true })
+            T.deepEqual(out.lines, ["down TLDE"])
+            var up = Reducer.reduce(out.state, { type: "release" })
+            T.deepEqual(up.lines, ["up TLDE"])
+            T.equal(up.state.caps, true)
+            // The discriminating case: a LEVEL-2 exact press still wraps the
+            // Shift its level wants while Caps is on. Caps cancels Shift for
+            // LETTERS, but a curated cap is not a letter — the chord is the
+            // level's decision alone (gb's £ at AE03 is this shape).
+            var shifted = Reducer.reduce(state, {
+                type: "press", position: "AE03", shift: true, altgr: false, exact: true })
+            T.deepEqual(shifted.lines, ["down LFSH", "down AE03"])
+            T.deepEqual(Reducer.reduce(shifted.state, { type: "release" }).lines,
+                        ["up AE03", "up LFSH"])
+        })
+
+        T.test("a level-4 cap wraps Shift from its level and spends the latch", function () {
+            // Shift goes down because the LEVEL is 4, not because a latch
+            // armed it — and the latch is spent like §2 spends any
+            // non-modifier key's.
+            var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "AE03", shift: true, altgr: true, exact: true })
             T.deepEqual(out.lines, ["down RALT", "down LFSH", "down AE03"])
+            T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
+                        ["up AE03", "up LFSH", "up RALT"])
             T.equal(out.state.shift, "idle")
         })
 
         T.test("a level-4 cap adds nothing while Shift is locked and held", function () {
             var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
             var out = Reducer.reduce(state, {
-                type: "press", position: "AE03", shift: true, altgr: true })
+                type: "press", position: "AE03", shift: true, altgr: true, exact: true })
             T.deepEqual(out.lines, ["down RALT", "down AE03"])
             T.equal(out.state.shift, "locked")
         })
 
-        T.test("a latched AltGr is consumed by, and wraps, the level it asked for", function () {
+        T.test("a latched AltGr is spent by the level-explicit press it arms", function () {
+            // Level 3 needs AltGr at the device, so the wrap goes out even
+            // over the latch — the wrap is the level's decision, not the
+            // latch's — and the latch is consumed as §2 consumes any
+            // non-modifier press's latches.
             var state = Reducer.reduce(idle, { type: "click", modifier: "altgr" }).state
             var out = Reducer.reduce(state, {
-                type: "press", position: "AE05", shift: false, altgr: true })
+                type: "press", position: "AE05", shift: false, altgr: true, exact: true })
             T.deepEqual(out.lines, ["down RALT", "down AE05"])
+            var up = Reducer.reduce(out.state, { type: "release" })
+            T.deepEqual(up.lines, ["up AE05", "up RALT"])
+            T.equal(up.state.altgr, "idle")
+            var ordinary = Reducer.reduce(up.state, { type: "press", position: "AD03" })
+            T.deepEqual(ordinary.lines, ["down AD03"])
+        })
+
+        T.test("the chord plan is unique when Shift and AltGr are both latched on level 4", function () {
+            // The wrap is a set, not a push history: both latches are spent
+            // by this press and both of the level's modifiers wrap exactly
+            // once. The pending record must carry each modifier once — the
+            // release contract is not allowed to rest on indexOf collapsing
+            // a duplicated plan.
+            var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "altgr" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "AE03", shift: true, altgr: true, exact: true })
+            T.deepEqual(out.state.pending.wrap, ["altgr", "shift"])
+            T.deepEqual(out.lines, ["down RALT", "down LFSH", "down AE03"])
             T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
-                        ["up AE05", "up RALT"])
-            T.equal(out.state.altgr, "idle")
+                        ["up AE03", "up LFSH", "up RALT"])
         })
 
         T.test("a latched AltGr still wraps an ordinary press without a level", function () {
@@ -441,6 +525,37 @@ QtObject {
             var out = Reducer.reduce(state, { type: "press", position: "AD03" })
             T.deepEqual(out.lines, ["down RALT", "down AD03"])
             T.equal(out.state.altgr, "idle")
+        })
+
+        T.test("every curated level types exactly its level and leaves every latch idle", function () {
+            // The whole merged rule in one sweep, latched Shift and AltGr
+            // armed before each press: the chord is the level's and nothing
+            // else (levels 1 and 3 carry no Shift, level 3 no more Shift
+            // than its own flag asks), the latches come back idle after
+            // each, and the next ordinary key lands unshifted — the stale
+            // armed state must not reach past a symbol (§2).
+            var levels = [
+                { shift: false, altgr: false, lines: ["down AE04"] },
+                { shift: true,  altgr: false, lines: ["down LFSH", "down AE04"] },
+                { shift: false, altgr: true,  lines: ["down RALT", "down AE04"] },
+                { shift: true,  altgr: true,  lines: ["down RALT", "down LFSH", "down AE04"] }
+            ]
+            for (var i = 0; i < levels.length; i++) {
+                var want = levels[i]
+                var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
+                state = Reducer.reduce(state, { type: "click", modifier: "altgr" }).state
+                var out = Reducer.reduce(state, {
+                    type: "press", position: "AE04",
+                    shift: want.shift, altgr: want.altgr, exact: true })
+                T.deepEqual(out.lines, want.lines, "level " + (i + 1) + " chord")
+                var up = Reducer.reduce(out.state, { type: "release" })
+                T.equal(up.state.shift, "idle", "level " + (i + 1) + " leaves Shift idle")
+                T.equal(up.state.altgr, "idle", "level " + (i + 1) + " leaves AltGr idle")
+                var ordinary = Reducer.reduce(up.state, {
+                    type: "press", position: "AD01", letter: true })
+                T.deepEqual(ordinary.lines, ["down AD01"],
+                            "level " + (i + 1) + ": next ordinary key unshifted")
+            }
         })
 
         // ---- caps lock, which is emulated with Shift rather than the CAPS
@@ -512,6 +627,151 @@ QtObject {
             T.equal(out.state.caps, true)
             T.equal(out.state.shift, "idle")
             T.deepEqual(out.lines, ["up LFSH"])
+        })
+
+        // ---- mid-chord configure drains (round 4). A configure that changed
+        // the keymap drains the helper's held keys; the panel settles to the
+        // device world with the configureDrain event (state only, never
+        // lines) and can tell the release of a chord the drain ran past from
+        // one it did not touch, by the configure-send stamp the press
+        // recorded. ----
+
+        T.test("configureDrain resets held modifiers, keeps Caps and Fn, emits nothing", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "alt" }).state
+            state = Reducer.reduce(state, { type: "capsClick" }).state
+            state = Reducer.reduce(state, { type: "fnClick" }).state
+            var out = Reducer.reduce(state, { type: "configureDrain", stamp: 3 })
+            T.equal(out.state.shift, "idle")
+            T.equal(out.state.alt, "idle")
+            T.equal(out.state.caps, true)
+            T.equal(out.state.fn, true)
+            T.deepEqual(out.lines, [])
+        })
+
+        T.test("a chord the drain ran past loses its pending record", function () {
+            // The send counter increments when the configure is WRITTEN, so
+            // a press stamped 1 with the drain at seq 2 means the configure
+            // was queued after the press lines: the drain lifted the held
+            // key with everything else, and the mouse-up must re-send
+            // nothing.
+            var state = Reducer.reduce(idle, {
+                type: "press", position: "AD01", configureStamp: 1 }).state
+            var out = Reducer.reduce(state, { type: "configureDrain", stamp: 2 })
+            T.equal(out.state.pending, null)
+            T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines, [])
+        })
+
+        T.test("a FAILED configure keeps every pending record, both orderings", function () {
+            // The error cannot say whether the helper drained before failing
+            // (upload failure) or never got there (compile / rate limit), so
+            // the panel settles with stamp -1: every pending record survives
+            // (minus the restore plan), whatever the ordering.
+            //
+            // Never drained (compile / rate limit): the chord's hold is
+            // real, its mouse-up lifts for real. Even a drain stamp that
+            // would read "configure queued after the press" is overridden by
+            // the -1: nothing was drained.
+            var state = Reducer.reduce(idle, { type: "capsClick" }).state
+            state = Reducer.reduce(state, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, {
+                type: "press", position: "AD01", letter: true, configureStamp: 1 }).state
+            var out = Reducer.reduce(state, { type: "configureDrain", stamp: -1 })
+            T.equal(out.state.shift, "idle")
+            T.equal(out.state.pending === null, false)
+            T.deepEqual(out.state.pending.restore, [])
+            T.equal(out.state.pending.position, "AD01")
+            // The mouse-up lifts the key and never re-presses the lock.
+            var up = Reducer.reduce(out.state, { type: "release" })
+            T.deepEqual(up.lines, ["up AD01"])
+            T.equal(up.state.shift, "idle")
+            //
+            // Drained before failing (upload failure): the same settle; the
+            // pending survives too — its mouse-up becomes a forwarded no-op
+            // the compositor drops, which is the harmless worst case.
+            var down = Reducer.reduce(idle, { type: "press", position: "AC02", configureStamp: 1 }).state
+            var out2 = Reducer.reduce(down, { type: "configureDrain", stamp: -1 })
+            T.equal(out2.state.pending === null, false)
+            T.equal(out2.state.pending.position, "AC02")
+            T.deepEqual(Reducer.reduce(out2.state, { type: "release" }).lines,
+                        ["up AC02"])
+        })
+
+        T.test("release before the refusal keeps the lock for the failure settle", function () {
+            // locked Shift → held key → changed configure queued → release
+            // arrives BEFORE the refusal. The dropRestore release keeps the
+            // reducer's lock — the settle is the reply's job, not the
+            // release's — so the failure settle still sees what it must
+            // lift, and the mouse-up lifts only the key.
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, {
+                type: "press", position: "AD01", letter: true, configureStamp: 1 }).state
+            var rel = Reducer.reduce(state, { type: "release", dropRestore: true })
+            T.deepEqual(rel.lines, ["up AD01"])
+            T.equal(rel.state.shift, "locked")
+            T.equal(rel.state.pending, null)
+            // The failure settle (stamp -1: nothing was drained) ends idle,
+            // with nothing pending and nothing left to lift.
+            var out = Reducer.reduce(rel.state, { type: "configureDrain", stamp: -1 })
+            T.equal(out.state.shift, "idle")
+            T.equal(out.state.pending, null)
+            T.deepEqual(out.lines, [])
+        })
+
+        T.test("an equal stamp means the configure was sent before the press", function () {
+            // Production stamps a chord with the send count AT PRESS TIME,
+            // so stamp === seq can only mean the configure was already
+            // written when the chord went down — the helper drains it ahead
+            // of the press lines, and the press's hold is real again. The
+            // pending record survives and the mouse-up lifts the key.
+            var state = Reducer.reduce(idle, {
+                type: "press", position: "AD01", configureStamp: 1 }).state
+            var out = Reducer.reduce(state, { type: "configureDrain", stamp: 1 })
+            T.equal(out.state.shift, "idle")
+            T.equal(out.state.pending === null, false)
+            T.equal(out.state.pending.position, "AD01")
+            var up = Reducer.reduce(out.state, { type: "release" })
+            T.deepEqual(up.lines, ["up AD01"])
+        })
+
+        T.test("a chord pressed after the drained configure keeps its key, not its restore", function () {
+            // Locked Shift + Caps + a letter is the lift-around chord: its
+            // press lines went out after the draining configure, so the
+            // held key is real and the mouse-up must still lift it — but
+            // the restore plan would re-press a lock the drain removed,
+            // and the lock itself is gone from the device world.
+            var state = Reducer.reduce(idle, { type: "capsClick" }).state
+            state = Reducer.reduce(state, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, {
+                type: "press", position: "AD01", letter: true, configureStamp: 5 }).state
+            T.deepEqual(state.pending.restore, ["shift"])
+            var out = Reducer.reduce(state, { type: "configureDrain", stamp: 3 })
+            T.equal(out.state.shift, "idle")
+            T.deepEqual(out.state.pending.restore, [])
+            T.equal(out.state.pending.position, "AD01")
+            var up = Reducer.reduce(out.state, { type: "release" })
+            T.deepEqual(up.lines, ["up AD01"])
+            T.equal(up.state.shift, "idle")
+        })
+
+        T.test("a release drops only the restore when the panel says a drain is ahead", function () {
+            // Caps + locked Shift is the lift-around pairing: the release's
+            // restore is the restorative `down LFSH`.
+            var locked = Reducer.reduce(idle, { type: "capsClick" }).state
+            locked = Reducer.reduce(locked, { type: "doubleClick", modifier: "shift" }).state
+            var down = Reducer.reduce(locked, {
+                type: "press", position: "AD01", letter: true }).state
+            var out = Reducer.reduce(down, { type: "release", dropRestore: true })
+            T.deepEqual(out.lines, ["up AD01"])
+            T.equal(out.state.shift, "locked")
+            // Without the flag the restorative down still rides: everywhere
+            // outside a mid-chord drain, the lock is re-held exactly as
+            // before this round.
+            var down2 = Reducer.reduce(locked, {
+                type: "press", position: "AD01", letter: true }).state
+            var plain = Reducer.reduce(down2, { type: "release" })
+            T.deepEqual(plain.lines, ["up AD01", "down LFSH"])
+            T.equal(plain.state.shift, "locked")
         })
 
         // ---- purity and housekeeping ----

@@ -92,8 +92,12 @@ function unchanged(state) {
 ///   { type: "fnClick" }
 ///   { type: "click",        modifier }
 ///   { type: "doubleClick",  modifier }
-///   { type: "press",        position, letter, shift, altgr }
-///   { type: "release" }
+///   { type: "press",        position, letter, shift, altgr, configureStamp }
+///   { type: "release",      dropRestore }
+///   { type: "configureDrain", stamp }
+///   { type: "pageSwitch" }
+///   { type: "languageSwitch" }
+///   { type: "releaseAll" }
 ///
 /// `shift` on a press means the cap draws the position's shift level and must
 /// type that level — the symbols page (spec-v1 §4). Like Caps Lock it is
@@ -104,9 +108,6 @@ function unchanged(state) {
 /// 3 carries AltGr alone, level 4 AltGr and Shift — the same real-modifier
 /// press around the key, one boundary further into the keymap the user
 /// already has, and never a new input mechanism.
-///   { type: "pageSwitch" }
-///   { type: "languageSwitch" }
-///   { type: "releaseAll" }
 function reduce(state, event) {
     var type = event ? String(event.type) : ""
     switch (type) {
@@ -125,7 +126,12 @@ function reduce(state, event) {
     case "press":
         return press(state, event)
     case "release":
-        return release(state)
+        return release(state, event)
+    // A configure that changed the keymap drained every key the helper
+    // held. The panel settles to the device world WITHOUT emitting —
+    // see configureDrain below.
+    case "configureDrain":
+        return configureDrain(state, event)
     // A page switch changes what can be seen, not what is held: locked
     // modifiers stay down and latched ones stay armed, because neither is a
     // key press and only a key press consumes a latch. Same for a language
@@ -215,84 +221,125 @@ function doubleClick(state, modifier) {
     return out
 }
 
+/// What to do with Shift around this press: "wrap" (down before, up after),
+/// "leave-down" (a lock the level wants — no line, it is already down),
+/// "lift-around" (a lock the press does not want: up before, back down
+/// after), or "ignore" (nothing held, nothing wanted). Ordinary presses
+/// follow §5: Caps interplay on letters, a latched Shift wrapping every
+/// non-letter press, Caps Lock emulated with a real Shift press because the
+/// CAPS position is rarely Caps Lock (`grp:caps_*` and `compose:caps` own
+/// it). An exact-level press (the curated page's caps, `exact` on the event)
+/// answers only from the level it carries: Shift wraps when the level is 2
+/// or 4, a lock the level does not want is lifted around the press, and a
+/// latch never decides the chord — a latched Shift or AltGr is not applied
+/// by an exact press, but it is still consumed by one, as §2 spends the
+/// latches of any non-modifier key.
+function shiftForPress(state, event) {
+    if (event.exact === true) {
+        if (state.shift === "locked") {
+            return event.shift === true ? "leave-down" : "lift-around"
+        }
+        return event.shift === true ? "wrap" : "ignore"
+    }
+    if (state.shift === "locked") {
+        return state.caps && event.letter ? "lift-around" : "leave-down"
+    }
+    if (state.shift === "latched") {
+        return shiftWanted(state, event, true) ? "wrap" : "ignore"
+    }
+    return event.shift === true || shiftWanted(state, event, false) ? "wrap" : "ignore"
+}
+
 function press(state, event) {
     var position = String(event.position || "")
     if (!position) return unchanged(state)
 
+    // An exact-level press (the curated page's caps, `exact` on the event)
+    // types exactly the level it draws: the chord is the level's decision —
+    // Shift and AltGr wrap when and only when the level wants them, never
+    // because a latch is armed. What the level does not decide is the
+    // latch's lifetime. A curated cap is an ordinary non-modifier key to
+    // §2, so it spends latched Shift/AltGr exactly as an ordinary press
+    // would — never applied, always consumed — or the latch would sit armed
+    // past a symbol and shift the next ordinary key behind the user's back.
+    var exact = event.exact === true
+
     var next = copy(state)
-    var wrap = []
+    // The chord is built as a SET (`wants`), never a push-list: Shift's plan
+    // is decided once below and the latch loop only consumes, so no
+    // modifier can be planned twice. The old shape pushed Shift from the
+    // latch loop and again from its own plan step (and AltGr from the latch
+    // loop and again from the level flag), so an exact level-4 press with
+    // both latched could list each twice — masked by the later indexOf
+    // scans, but the plan the pending record carried was a lie.
+    var wants = {}
     var restore = []
+
+    // Shift around the key, decided in exactly one place — see
+    // shiftForPress. "wrap" joins the chord, "lift-around" lands in
+    // `restore` (lifted before the key, back down after it, its semantic
+    // lock untouched), "leave-down" and "ignore" stay out of both.
+    var shiftPlan = shiftForPress(state, event)
+    if (shiftPlan === "wrap") wants.shift = true
+    if (shiftPlan === "lift-around") restore.push("shift")
+
     for (var i = 0; i < ORDER.length; i++) {
         var modifier = ORDER[i]
         if (state[modifier] !== "latched") continue
+        // Every latch is spent by a non-modifier press, exact or not (§2).
         next[modifier] = "idle"
-        // A level-explicit AltGr press (the curated page's levels 3 and 4)
-        // needs an exact Shift answer: level 3 must not carry the latched
-        // Shift, or the position would type level 4 — not the level the cap
-        // draws. Ordinary presses keep the old default, where a latched
-        // Shift wraps every non-letter press.
-        if (modifier === "shift"
-                && !(event.altgr === true ? event.shift === true
-                     : shiftWanted(state, event, true))) continue
-        wrap.push(modifier)
-    }
-
-    // Caps Lock is emulated with Shift rather than by tapping the CAPS
-    // position, because that position is rarely Caps Lock. Any `grp:caps_*`
-    // makes it the layout toggle and any `compose:caps` makes it Compose —
-    // between them they cover most setups worth supporting, and the owner has
-    // run both. Either way, tapping it would do something other than lock. The
-    // emulation only reaches letter keys, since a shifted digit is a
-    // different symbol rather than a capital.
-    //
-    // A shift-level cap wants the same thing by a different route, and the
-    // same guard covers it: whatever is already holding Shift — the latch
-    // wrapped above, or a lock that is genuinely down at the device — is
-    // enough, and pressing it a second time would emit a `down` for a code the
-    // helper is already holding.
-    if (state.shift !== "latched" && state.shift !== "locked"
-            && (event.shift === true || shiftWanted(state, event, false))) {
-        wrap.push("shift")
+        // Whether a spent latch also joins the chord: Shift had its say
+        // above and is never decided twice; AltGr on an exact press follows
+        // the level flag — the chord is the level's, not the latch's — and
+        // Ctrl, Alt and Super are ordinary modifiers on every press and
+        // wrap as §5 says.
+        if (modifier === "shift") continue
+        if (exact && modifier === "altgr") {
+            if (event.altgr === true) wants.altgr = true
+            continue
+        }
+        wants[modifier] = true
     }
 
     // Level 3 or 4 needs AltGr held around the key the same way level 2
     // needs Shift: a real press of the position's own modifier, never a
-    // character chosen by the panel. A latched AltGr is already in the wrap
-    // above; a locked one cannot happen (§16 — only Shift locks) and is
-    // left alone here regardless.
-    if (state.altgr !== "latched" && state.altgr !== "locked"
-            && event.altgr === true) {
-        wrap.push("altgr")
+    // character chosen by the panel — latch or no latch, the wrap is what
+    // selects the level. A locked AltGr cannot happen (§16 — only Shift
+    // locks) and is left alone regardless.
+    if (event.altgr === true
+            && (exact || (state.altgr !== "latched" && state.altgr !== "locked"))) {
+        wants.altgr = true
     }
 
-    // Caps and Shift cancel for letters. A locked Shift is genuinely held at
-    // the device, so lift it around this press and restore it on release. Its
-    // semantic state remains locked throughout.
-    if (state.caps && event.letter && state.shift === "locked") {
-        restore.push("shift")
-    }
-
-    // Level 3 also needs Shift *not* down, and a locked Shift is genuinely
-    // down: lift it around the press and put it back after, exactly like the
-    // Caps+letter case above. Level 4 wants Shift down and a lock is already
-    // down, so it needs nothing.
-    if (event.altgr === true && event.shift !== true && state.shift === "locked") {
-        restore.push("shift")
+    var wrap = []
+    for (var d = 0; d < ORDER.length; d++) {
+        if (wants[ORDER[d]]) wrap.push(ORDER[d])
     }
 
     var lines = []
     for (var r = restore.length - 1; r >= 0; r--) {
         lines.push("up " + POSITIONS[restore[r]])
     }
-    for (var d = 0; d < ORDER.length; d++) {
-        if (wrap.indexOf(ORDER[d]) !== -1) lines.push("down " + POSITIONS[ORDER[d]])
+    for (var k = 0; k < wrap.length; k++) {
+        lines.push("down " + POSITIONS[wrap[k]])
     }
     // `down`, not `tap`: the key stays down for as long as the mouse button
     // does, and the compositor repeats it at the user's own repeat_delay and
     // repeat_rate (spec-v1 §6). A tap could only ever type once, and a panel
     // timer that made up the difference could not match the user's settings.
     lines.push("down " + position)
-    next.pending = { position: position, wrap: wrap, restore: restore }
+    // The configure-send count when this chord went down. A configure queued
+    // after this number reaches the helper AHEAD of the release lines (the
+    // socket is ordered), which is what lets the panel tell a chord a drain
+    // ran past from one it did not touch — see configureDrain and the
+    // release's dropRestore below.
+    next.pending = {
+        position: position,
+        wrap: wrap,
+        restore: restore,
+        configureStamp: typeof event.configureStamp === "number"
+            ? event.configureStamp : 0
+    }
     return { state: next, lines: lines }
 }
 
@@ -300,7 +347,15 @@ function press(state, event) {
 /// it, in the reverse of the order they went down. A release with nothing
 /// pending emits nothing, which is what makes it safe to call from both
 /// `released` and `canceled`.
-function release(state, restoreHeld) {
+///
+/// `event !== false` is the ordinary call shape; `releaseAll` passes `false`
+/// for the internal call because it plans its own lifts. `event.dropRestore`
+/// is the mid-chord-drain answer: `up` lines for keys the helper no longer
+/// holds are forwarded and dropped by the compositor, but a restorative
+/// `down` would genuinely re-press a modifier the device world lost — a lock
+/// resurrected behind the panel's back. The panel knows when a draining
+/// configure sits ahead of these lines in the socket queue and says so.
+function release(state, event) {
     if (!state.pending) return unchanged(state)
     var next = copy(state)
     next.pending = null
@@ -310,7 +365,7 @@ function release(state, restoreHeld) {
             lines.push("up " + POSITIONS[ORDER[u]])
         }
     }
-    if (restoreHeld !== false) {
+    if (event !== false && !(event && event.dropRestore === true)) {
         var restore = state.pending.restore || []
         for (var r = 0; r < ORDER.length; r++) {
             if (restore.indexOf(ORDER[r]) !== -1) {
@@ -319,6 +374,42 @@ function release(state, restoreHeld) {
         }
     }
     return { state: next, lines: lines }
+}
+
+/// The panel-side twin of the helper's install_config drain: state only,
+/// never lines. Everything the device held is idle again; Caps and Fn stay —
+/// they are semantic panel controls, never held at the device. One chord may
+/// outlive the drain it was stamped against: the panel's send counter
+/// increments when a configure is WRITTEN, so a chord whose stamp is equal
+/// to or greater than the draining configure's seq (`pending.configureStamp
+/// >= stamp`) was pressed at or after the send — the drain ran before the
+/// press lines — and really holds its key at the device, so its pending
+/// record survives and the later mouse-up still lifts it, minus the restore
+/// plan, whose downs would re-press a lock the device no longer holds. A
+/// strictly earlier stamp means the press lines precede the configure in
+/// the queue and were drained with everything else; a pending without a
+/// stamp (0) predates every configure seq and is dropped whole. A FAILED
+/// configure passes stamp -1: whatever the failure mode, the panel settles
+/// to idle and explicitly lifts what it had locked, so no stamp can read as
+/// "before" the failure — every pending record survives (minus restore),
+/// because the chord's own hold is real in the never-drained case and its
+/// mouse-up is a forwarded no-op in the drained one.
+function configureDrain(state, event) {
+    var stamp = typeof event.stamp === "number" ? event.stamp : 0
+    var next = initialState()
+    next.caps = state.caps
+    next.fn = state.fn
+    var pending = state.pending
+    if (pending && typeof pending.configureStamp === "number"
+            && pending.configureStamp >= stamp) {
+        next.pending = {
+            position: pending.position,
+            wrap: pending.wrap,
+            restore: [],
+            configureStamp: pending.configureStamp
+        }
+    }
+    return { state: next, lines: [] }
 }
 
 /// Whether this press should carry Shift, given what Caps is doing.

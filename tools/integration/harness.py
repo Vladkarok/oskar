@@ -67,6 +67,22 @@ class Client:
         if actual != reply:
             raise Failure(f"{command!r}: expected {reply!r}, got {actual!r}")
 
+    def write_unread(self, command):
+        """Write one protocol line without waiting for its reply.
+
+        The panel's unready window in its raw socket shape: a configure has
+        gone out and the panel treats itself as not ready until it has read
+        `configured`. A test that models a release sent from inside that
+        window needs the write to not consume the reply first — the replies
+        stay queued in order for read_reply.
+        """
+        self._stream.write(command + "\n")
+        self._stream.flush()
+
+    def read_reply(self):
+        """Read one reply the helper already owes this connection."""
+        return self._stream.readline().strip()
+
     def close(self):
         """Drop the connection, delivering the EOF the helper waits for.
 

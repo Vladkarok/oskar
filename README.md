@@ -63,17 +63,22 @@ untouched while the panel keeps the last valid runtime value.
 | `size_preset` | preset name | `medium` |
 | `sound` | `true` \| `false` | `false` |
 | `follow_theme` | `true` \| `false` | `true` |
-| `key_radius` | non-negative number | `8` |
-| `panel_radius` | non-negative number | `12` |
-| `key_background` | colour string | `#303030` |
-| `panel_background` | colour string | `#202020` |
-| `text_color` | colour string | `#f5f5f5` |
-| `accent_color` | colour string | `#7aa2f7` |
-| `border_color` | colour string | `#5a5a5a` |
+| `emoji_app` | picker command name on PATH | `omarchy-menu-emoji` |
+| `key_radius` | whole-pixel integer ≥ 0 | `8` |
+| `panel_radius` | whole-pixel integer ≥ 0 | `12` |
+| `key_background` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#303030` |
+| `panel_background` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#202020` |
+| `text_color` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#f5f5f5` |
+| `accent_color` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#7aa2f7` |
+| `border_color` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#5a5a5a` |
 
-`state.json` currently contains only floating `position` as `{x, y}` or
-`null`. An absent override follows the maintained value, so a later release
-can change its default without rewriting the user's sparse file.
+`state.json` currently contains only the floating placement as `center` —
+the card centre in output-local coordinates — or `null`. Restores rederive
+the top-left from that centre, clamped only enough to keep the complete card
+on its output (the deterministic anchor of spec-v1.1 §4), so a saved
+placement cannot jump near an edge when the preset or output changes. An
+absent override follows the maintained value, so a later release can change
+its default without rewriting the user's sparse file.
 
 `sound: true` plays the freedesktop sound theme's `bell` event on each key
 press through QtMultimedia — nothing is spawned per keystroke. It needs
@@ -84,8 +89,13 @@ Colours, fonts and corner radius all come from the shared Omarchy style tokens,
 so switching the theme redraws the keyboard where it stands — no restart of the
 shell or the plugin, and nothing on the typing path is touched. `follow_theme:
 false` stops it tracking theme changes: the keyboard keeps the theme that was in
-force when it was first opened. That is all it does in v1 — it is not a colour
-setting and turns nothing else on or off; the independent colour schema is v2.
+force when it was first opened. Each of the seven appearance fields in the table
+above can also be pinned on its own — the settings popover's Appearance section,
+or a sparse entry in `config.json`: an explicit override wins over the theme for
+that field alone, with precedence override → live (or frozen) token → shipped
+default, while every unpinned field keeps following or staying frozen as
+`follow_theme` says. Overrides are the whole of the v1.1 appearance surface, not
+an independent colour schema — that remains v2.
 
 ## Why there is a helper at all
 
@@ -189,8 +199,9 @@ service, and fails the run if compositor keymap rebuilds exceed a threshold.
 `tools/integration/suite.py` and everything that talks to the socket, the
 log or `hyprctl` lives in `tools/integration/harness.py`, so a new check is
 a new `@test` and nothing else. The script waits for the control socket to
-appear; the suite then checks that exactly three keymaps get compiled
-(default, configured, and the model swap in the drain regression — a
+appear; the suite then checks that exactly four keymaps get compiled
+(the startup default, the three-group cycling keymap, the configured
+`us,ua` keymap, and the swapped model in the claims regression — a
 byte-identical `configure` must short-circuit), that the device's group
 follows `configure`/`group` commands with an assertion before every tap
 (read back from `hyprctl devices`), that a client disconnecting mid-chord
@@ -207,11 +218,22 @@ cd daemon && cargo test
 ## Install
 
 ```sh
+./install.sh
+```
+
+That builds the helper, installs it and its user unit, and enables and
+starts the service for the graphical session (spec-v1.1 §6: an installed
+but disabled unit is indistinguishable from a broken keyboard). Run it
+again after updating the plugin. Manually, the same steps are:
+
+```sh
 cd daemon && cargo build --release
 install -Dm755 target/release/omarchy-osk-daemon ~/.local/libexec/omarchy-osk-daemon
 install -Dm644 ../systemd/omarchy-osk.service ~/.config/systemd/user/omarchy-osk.service
 systemctl --user daemon-reload
+systemctl --user enable omarchy-osk.service
+systemctl --user --quiet is-active graphical-session.target \
+  && systemctl --user restart omarchy-osk.service
 ```
 
-Leave the service disabled until the helper has survived daily use. The panel
-alone can be enabled with `omarchy plugin enable io.github.vladkarok.osk`.
+The panel alone can be enabled with `omarchy plugin enable io.github.vladkarok.osk`.
