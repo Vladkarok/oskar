@@ -1,0 +1,42 @@
+--- a/Commons/Style.qml	2026-09-05 08:04:56.110684436 +0200
++++ b/Commons/Style.qml	2026-09-05 08:12:14.299784929 +0200
+@@ -1,6 +1,7 @@
+ pragma Singleton
+ import QtQuick
+ import Quickshell
++import Quickshell.Hyprland
+ import Quickshell.Io
+
+ // Shared structural style tokens for the shell. Color is the palette
+@@ -13,8 +14,9 @@
+ // a window-to-window gap but feels too cavernous when used as the
+ // distance from a panel/notification to the screen edge, so the shell
+ // halves it. Themes and user Hyprland config own those values; the
+-// shell picks them up by re-running `hyprctl getoption` on startup and
+-// after theme IPC applies a theme.
++// shell picks them up by re-running `hyprctl getoption` on startup,
++// after theme IPC applies a theme, and whenever Hyprland announces an
++// applied config reload on its event socket.
+ //
+ // Typography, spacing, and bar size come from theme/shell.toml.
+ // `[font] base-size` is the rem root; every `Style.font.<token>` derives
+@@ -496,6 +498,19 @@
+     onTriggered: root.refresh()
+   }
+
++  // Hyprland announces every applied config on its socket2 event stream:
++  // sourced-file changes, `hyprctl reload`, and omarchy's own toggles all
++  // land here, so a rounding or gaps change reaches a running shell without
++  // a restart. The same connection the keyboard-layout bar widget uses to
++  // re-read its layout after a reload. scheduleRefresh keeps the read behind
++  // the settle beat above and coalesces an event burst into one hyprctl pair.
++  property Connections hyprlandEvents: Connections {
++    target: Hyprland
++    function onRawEvent(event) {
++      if (event && event.name === "configreloaded") root.scheduleRefresh()
++    }
++  }
++
+   // `omarchy toggle window-gaps` creates/removes this flag file. Hyprland
+   // reloads its config when sourced files change, then hyprctl reflects
+   // the new effective value.

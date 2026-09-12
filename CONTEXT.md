@@ -94,7 +94,8 @@ real Shift press.
 _Avoid_: level, shift state
 
 **Page**:
-The main page or the symbols page. Switched by a key, not by a modifier.
+The main page, the symbols page or the curated page (page 2). Switched by
+a key, not by a modifier.
 _Avoid_: screen, view, mode (which means geometry)
 
 **Latched**:

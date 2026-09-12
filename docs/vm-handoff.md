@@ -46,6 +46,18 @@ this is the operating manual.
 ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t $XDG_RUNTIME_DIR/hypr | head -1); export WAYLAND_DISPLAY=wayland-1; hyprctl devices -j | jq -c ".keyboards[] | {name, main, active_layout_index}"'
 ```
 
+- **Autologin is a deliberate lab setting.** After a logout the SDDM
+  greeter used to strand the VM (autologin fired only at sddm startup,
+  and the session password is not automatable) — so
+  `/etc/sddm.conf.d/zz-osk-lab-autologin.conf` now sets
+  `[Autologin] User=vladkarok, Session=hyprland-uwsm.desktop,
+  Relogin=true`: every sddm start AND every logout autologs straight
+  into the uwsm-wrapped Hyprland session. `hyprland-uwsm.desktop` is
+  the one to name — plain `hyprland.desktop` bypasses uwsm, which
+  leaves graphical-session.target (and the OSK service with it) down.
+  Revert by deleting that file (the pre-existing
+  `autologin.conf` boot autologin remains). Written 2026-09-05 by the
+  v1.1-fixes guest sweep.
 - QEMU monitor socket: `~/.local/share/omarchy-vm/monitor.sock` — used
   for hotplug (`device_add usb-kbd,id=kbd2` / `device_del kbd2`).
 - Screenshots: `grim` in the guest (needs `WAYLAND_DISPLAY`), then `scp`

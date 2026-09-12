@@ -128,6 +128,42 @@ def group_follows_protocol(helper, keyboard):
     client.close()
 
 
+@test("a release sent from inside the not-ready window lifts the key immediately")
+def release_crosses_the_unready_window(helper, keyboard):
+    # The socket boundary under the round-2 blocker. On the panel side the
+    # unready window is self-inflicted: a compositor event re-sends the
+    # configure and the panel refuses to treat itself as ready until
+    # `configured` is read back. A same-keymap configure keeps the helper's
+    # holds alive across that window, so a key held when it opens must be
+    # liftable during it — a release whose `up` the panel swallowed would
+    # repeat the key until this suite's own hold cap fired, and a locked
+    # Shift's lift would never go out at all. The helper sees exactly:
+    # configure (reply unread), then `up`, with no readiness wait between.
+    client = helper.connect()
+    client.expect("hello 3", "hello 3")
+    client.expect(CONFIGURE, "configured")
+    client.expect("down AD01", "ok")
+    # The claim is observable before the window: a tap may not lift it.
+    client.expect("tap AD01", "err key held")
+    # The unready window: the re-configure goes out, its reply unread, and
+    # the release is written into that window — the shape of the panel's
+    # transport sending the reducer's `up` while inputReady is false.
+    client.write_unread(CONFIGURE)
+    client.write_unread("up AD01")
+    # Replies come back in order, and both arrive: the configure answered
+    # and the release honoured, with nothing held waiting for readiness.
+    if client.read_reply() != "configured":
+        raise Failure("the same-keymap reconfigure did not answer configured")
+    if client.read_reply() != "ok":
+        raise Failure("the release sent inside the unready window was not honoured")
+    # The release was immediate, not the cap's: the claim is already gone.
+    client.expect("tap AD01", "ok")
+    # And the stuck-key log — the signature of a release that never arrived —
+    # is silent for this code.
+    helper.expect_no_log(f"releasing stuck key {AD01}")
+    client.close()
+
+
 @test("a client dying mid-chord does not take the helper with it")
 def survives_mid_chord_disconnect(helper, keyboard):
     # The keys it left pressed are its connection's problem: the helper
@@ -323,7 +359,7 @@ def cap_releases_a_stuck_key(helper, keyboard):
 
 @test("a modifier held past the cap is left alone and still modifies")
 def cap_exempts_modifiers(helper, keyboard):
-    # A locked Ctrl is deliberately held for minutes (spec-v1 §5), so the cap
+    # A locked Shift is deliberately held for minutes (spec-v1 §5), so the cap
     # must not touch a modifier code. "The lock indicator still matches
     # reality" is a panel-side statement, but the fact underneath it is
     # visible here: after twice the cap the modifier is still claimed, and a
@@ -464,6 +500,61 @@ def repeat_belongs_to_the_compositor(helper, keyboard):
     finally:
         _set_repeat(600, 25)  # Hyprland's defaults, for anything after this
         client.close()
+
+
+@test("a configure the helper refuses never drains a held key")
+def refused_configure_never_drains(helper, keyboard):
+    # The round-6 blocker's never-drained ordering, at the socket. A failed
+    # configure (a kb_file that cannot compile) is answered by install_config
+    # BEFORE it would drain anything, so the connection's holds and the mask
+    # they imply survive intact — the fact the panel's failure settle counts
+    # on when it lifts the lock it had and zeroes the mask. The
+    # drain-before-failure ordering (an upload failure) is not reachable from
+    # outside the compositor and is covered by the reducer seam instead.
+    client = helper.connect()
+    client.expect("hello 3", "hello 3")
+    # A configure whose kb_file cannot be read fails to compile, and
+    # install_config refuses BEFORE it would drain anything — the
+    # deterministic never-drained ordering.
+    client.expect("down LFSH", "ok")
+    client.expect("configure\tevdev\tpc105\tus\t\t\t/nonexistent-keymap\t0",
+                  "err cannot configure keymap")
+    client.expect("tap LFSH", "err key held")
+    # And the mask still carries the hold: a tapped letter lands capital.
+    # The hold comes off before the Return tap — a held Shift makes the
+    # terminal encode Return as the kitty CSI string, which never flushes
+    # the canonical line the assertion reads.
+    target = TypingTarget()
+    try:
+        client.expect("tap AD01", "ok")
+        client.expect("up LFSH", "ok")
+        client.expect("tap RTRN", "ok")
+        target.expect_text("Q\n")
+    finally:
+        target.close()
+        client.close()
+    # The refusal-before-release ordering, helper-side: locked Shift → held
+    # key → refused configure → release. (Release-before-refusal lives in the
+    # reducer test, where the settle is the panel's to make.) The refusal
+    # never drains, so the lock and its mask survive the release too — the
+    # facts the panel's failure settle (up + mods 0) reconciles. Fresh
+    # connection: the helper released the old one's holds at its close, which
+    # is exactly the world the ordering re-establishes.
+    client = helper.connect()
+    client.expect("hello 3", "hello 3")
+    client.expect("down LFSH", "ok")
+    client.expect("down AD01", "ok")
+    client.expect("configure\tevdev\tpc105\tus\t\t\t/nonexistent-keymap\t0",
+                  "err cannot configure keymap")
+    client.expect("up AD01", "ok")
+    # And the mask the hold implies still shifts: a tapped letter under the
+    # surviving lock answers through its claim, which is the fact the
+    # panel's failure settle (up + mods 0) reconciles. The client-visible
+    # half — the letter arriving capital — is part 1's receiver.
+    client.expect("tap LFSH", "err key held")
+    client.expect("tap AD01", "ok")
+    client.expect("up LFSH", "ok")
+    client.close()
 
 
 if __name__ == "__main__":

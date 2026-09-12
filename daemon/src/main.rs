@@ -276,11 +276,16 @@ fn modifier_masks_for_keymap(
             // A fresh state per position rather than press-then-release: a key
             // carrying LockMods (Caps Lock) does not undo itself on release, and
             // would leave its bit set for every position probed after it. The
-            // base layout rides the update_mask call, so the press resolves in
-            // the group being probed.
+            // group rides in the locked-layout slot only: the three layout
+            // arguments of update_mask are depressed+latched+locked and xkb
+            // adds them, so repeating the group in all three asked for it
+            // three times — right in a two-group keymap only because 3g wraps
+            // back to g, and collapsed to group 0 at three. One ask, in the
+            // locked slot, is exact for any layout count; it is also the slot
+            // the compositor fills from the virtual-keyboard protocol.
             let mut state = xkb::State::new(&compiled);
             let group = group as u32;
-            state.update_mask(0, 0, 0, group, group, group);
+            state.update_mask(0, 0, 0, 0, 0, group);
             state.update_key(xkb::Keycode::from(code + 8), xkb::KeyDirection::Down);
             per_group.push(state.serialize_mods(xkb::STATE_MODS_EFFECTIVE));
         }
@@ -356,13 +361,13 @@ impl Shared {
     fn modifier_mask(&self) -> u32 {
         self.held
             .keys()
-            .filter_map(|code| {
-                self.modifier_masks
-                    .get(code)
-                    .and_then(|per_group| per_group.get(self.group as usize))
-                    // A group beyond the keymap's own count wraps in xkb; the
-                    // first group's bit is the honest answer for it.
-                    .or_else(|| self.modifier_masks.get(code).and_then(|p| p.first()))
+            .filter_map(|code| match self.modifier_masks.get(code) {
+                // A group beyond the keymap's own count wraps in xkb; the
+                // first group's bit is the honest answer for it.
+                Some(per_group) => {
+                    per_group.get(self.group as usize).or_else(|| per_group.first()).copied()
+                }
+                None => None,
             })
             .fold(0, |mask, bit| mask | bit)
     }
@@ -1341,12 +1346,72 @@ mod tests {
         )
         .expect("the helper's own keymap text should compile");
         let mut state = xkb::State::new(&keymap);
-        state.update_mask(0, 0, 0, 1, 1, 1);
-        state.update_mask(*ralt.get(1).expect("ua group mask"), 0, 0, 1, 1, 1);
+        // The compositor receives the helper's group in the locked-layout
+        // slot of its update_mask (that is what the protocol's group field
+        // is), so the stand-in fills that slot alone.
+        state.update_mask(0, 0, 0, 0, 0, 1);
+        state.update_mask(*ralt.get(1).expect("ua group mask"), 0, 0, 0, 0, 1);
         assert_eq!(
             state.key_get_utf8(xkb::Keycode::from(codes["AE05"] + 8)),
             "°",
             "the AltGr mask must select the ua group's third level"
+        );
+    }
+
+    #[test]
+    fn the_probe_sets_the_group_once_on_a_three_layout_keymap() {
+        // `update_mask`'s last three arguments are the depressed, latched and
+        // locked LAYOUT indices, and xkb adds them into the effective group.
+        // Asking for the probed group in all three therefore asked for it
+        // three times: a two-layout keymap absorbed the triple in its wrap
+        // (3g mod 2 == g for every g the probe visits) and came out right by
+        // luck, while a three-layout keymap collapses 3g mod 3 to 0 and every
+        // group probed as the first. One ask, in the locked slot — the same
+        // slot the compositor receives the helper's group in over the
+        // virtual-keyboard protocol.
+        use xkbcommon::xkb;
+
+        let text = compile_keymap(&XkbConfig {
+            layouts: "us,ua,de".into(),
+            ..XkbConfig::default()
+        })
+        .expect("us,ua,de should compile");
+        let codes = parse_keycodes(&text);
+        let masks = modifier_masks_for_keymap(&text, &codes);
+        let ralt = masks.get(&codes["RALT"]).expect("RALT is a modifier");
+
+        assert_eq!(ralt.first(), Some(&0b1000), "us group: Alt_R is Mod1");
+        assert_eq!(
+            ralt.get(1),
+            Some(&0b1000_0000),
+            "ua group: AltGr must reach Mod5"
+        );
+        assert_eq!(
+            ralt.get(2),
+            Some(&0b1000_0000),
+            "de group: AltGr must reach Mod5 too, not the us group's answer"
+        );
+
+        // Stand in for the compositor once more, now at the third group and
+        // told the helper's own answer for it: the level-3 chord must type
+        // the de group's own AltGr character, not group us's plain `5` or
+        // group ua's `°` — under the tripled ask every probe resolved at
+        // group 0 and this came out `5`.
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_string(
+            &context,
+            text,
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .expect("the helper's own keymap text should compile");
+        let mut state = xkb::State::new(&keymap);
+        let de_mask = *ralt.get(2).expect("de group mask");
+        state.update_mask(de_mask, 0, 0, 0, 0, 2);
+        assert_eq!(
+            state.key_get_utf8(xkb::Keycode::from(codes["AE05"] + 8)),
+            "½",
+            "the AltGr mask must select the de group's third level"
         );
     }
 

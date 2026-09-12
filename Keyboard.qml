@@ -23,6 +23,12 @@ Item {
     // clicks, Caps Lock — and never for the panel's own UI actions. The panel
     // plays the key click sound on it (spec-v1 §10).
     signal keyPressed()
+    // The ☺ cap launched the configured picker (spec-v1.1 §1, 2026-09-05
+    // amendment). The panel answers with its runtime courtesy positioning —
+    // a standalone picker window is moved clear of the panel's band; an
+    // overlay-style picker never becomes a client window and finds nothing
+    // to move.
+    signal emojiPickerLaunched(string app)
 
     // The size preset's multiplier on top of the theme's own scaling
     // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
@@ -43,7 +49,9 @@ Item {
     // ---- Design tokens, copied 1:1 from the reference HTML/CSS ----
     readonly property real gapPx: Math.max(1, Math.round(root.theme.spacingMd * uiScale))
     readonly property real keyHeight: root.theme.space(42) * uiScale
-    readonly property real keyRadius: root.theme.cornerRadius
+    // Key radius is the facade's resolved token: an explicit user override,
+    // else the shared corner rounding (Theme.qml owns the precedence).
+    readonly property real keyRadius: root.theme.keyRadius
     readonly property real containerMaxWidth: availableWidth > 0
         ? Math.min(root.theme.space(820) * uiScale, availableWidth)
         : root.theme.space(820) * uiScale
@@ -104,9 +112,13 @@ Item {
     // top row's area meets it rather than stealing from it.
     readonly property real edgeOutset: gapPx
 
-    readonly property color keyBg: Util.alpha(root.theme.foreground, root.theme.normalFillAlpha)
-    readonly property color keyHoverBg: Util.alpha(root.theme.foreground, root.theme.hoverFillAlpha)
-    readonly property color keyActiveBg: Util.alpha(root.theme.foreground, root.theme.pressedFillAlpha)
+    // The three key fills are the facade's resolved tokens: an explicit key
+    // background override pins the resting fill, and hover/press keep the
+    // theme's move-toward-the-foreground language either way (Theme.qml owns
+    // that derivation and the precedence).
+    readonly property color keyBg: root.theme.keyFill
+    readonly property color keyHoverBg: root.theme.keyHoverFill
+    readonly property color keyActiveBg: root.theme.keyActiveFill
     readonly property color keyBorderColor: Util.alpha(root.theme.foreground, root.theme.pressedFillAlpha)
     readonly property color accentColor: Util.alpha(root.theme.accent, root.theme.pressedFillAlpha)
     // The three modifier states, told apart by fill weight rather than by two
@@ -116,9 +128,12 @@ Item {
     readonly property color latchedFill: root.theme.selectedAccentFill
     readonly property color lockedFill: root.theme.accent
     readonly property color lockedText: root.theme.background
-    readonly property color textMain: root.theme.foreground
+    // Glyph colour: the facade's resolved text token (override, else the
+    // theme's foreground). The theme's muted stays the secondary text colour —
+    // "dim" is a relation to the theme's palette, not to a pinned colour.
+    readonly property color textMain: root.theme.textColor
     readonly property color textDim: root.theme.muted
-    readonly property color textHighlightColor: root.theme.foreground
+    readonly property color textHighlightColor: root.theme.textColor
     readonly property string keyboardFont: root.theme.fontFamily
     readonly property int keyBorderWidth: root.theme.normalBorderWidth
     // Doubled rather than taken straight from focusBorderWidth, which falls
@@ -134,6 +149,11 @@ Item {
     property var modifierState: Modifiers.initialState()
     property string currentLayout: "us"
     property var languageCycle: ["us"]
+    // The active GROUP index, taken from the compositor's own
+    // active_layout_index (spec-v1 §9's "compositor decides"). Selects the
+    // variant and kb_file group the keycap compile answers with; a repeated
+    // layout code (`us,us` with distinct variants) makes code-position
+    // guessing wrong, so nothing here derives the group from the code.
     property int layoutCycleIndex: 0
     property var layoutNameMap: ({})
     // The keyboard the switch is applied to. Switching "all" moves every device
@@ -169,6 +189,143 @@ Item {
     // letting the built-in table pass for the keymap.
     property bool keycapsReady: false
     property bool keycapsFailed: false
+    // The full configure payload the loaded keycaps were built under —
+    // rules, model, layouts, variants, options, kb_file, group — not just
+    // the active layout code. Keycaps and curated availability are answers
+    // of the whole RMLVO identity: an options or variant or kb_file edit
+    // that keeps the same code still reconfigures typing, and comparing
+    // codes alone left the caps stale until an unrelated reload. A
+    // byte-identical reconfigure (the helper short-circuits those) matches
+    // here too and stays free.
+    property string lastKeycapConfigure: ""
+    // Configure transaction bookkeeping for the device-held-modifier
+    // handshake. The helper drains every key it holds for us when — and only
+    // when — a configure CHANGES the keymap (its same-keymap short-circuit
+    // keeps holds alive across a group-only or byte-identical reconfigure),
+    // and the panel must mirror that: keep the lock across a same-keymap
+    // configure, drop it without re-sending releases across a changed one.
+    //
+    // The socket is ordered, so a reply always settles the OLDEST
+    // outstanding configure — configures pipeline (an event storm around a
+    // reload refreshes layouts faster than replies come back), so pairing
+    // a reply with the newest sent payload attributed the wrong identity
+    // whenever two were in flight. This object owns the whole ledger so the
+    // enqueue/settle/rebase/readiness rules have exactly one home:
+    //
+    // `queue` — {payload, identity, changed, seq}, one per configure
+    //   written, oldest first. A `configured` reply pops the oldest and
+    //   applies THAT entry's consequences; a configure's own failure
+    //   (`err cannot configure keymap` — the only err a well-formed
+    //   configure can earn) drops its own entry and rebases the survivors
+    //   against the keymap the helper still has installed.
+    // `acked` — the keymap identity the helper last acknowledged. The drain
+    //   question is relative to what the helper has INSTALLED: the last
+    //   acked identity when the queue is empty, otherwise the newest
+    //   queued entry's identity.
+    // `sends` — a monotonic send counter, incremented when the configure is
+    //   WRITTEN. Chords are stamped with it at press (the pending record
+    //   carries it), so an equal stamp means the configure was sent before
+    //   the press — the helper drains it ahead of the press lines — and a
+    //   press stamped later happened after the send. This is also the
+    //   readiness answer: typing stays gated until the queue is fully
+    //   settled, because an outstanding configure may still be compiling
+    //   the keymap a press would land in.
+    readonly property QtObject configureBook: QtObject {
+        property var queue: []
+        property string acked: ""
+        property int sends: 0
+
+        /// The keymap identity the helper will have installed when the next
+        /// line reaches the front — the newest outstanding entry, or the
+        /// last acked one when the queue is empty.
+        function installed() {
+            return queue.length > 0 ? queue[queue.length - 1].identity : acked
+        }
+
+        /// The configure line's keymap identity: every field the helper's
+        /// same-keymap short-circuit compares — rules, model, layouts,
+        /// variants, options, kb_file — without the trailing group, which
+        /// can move on its own without draining anything. The panel's copy
+        /// of the helper's "will this configure drain the held keys" test.
+        function identityOf(payload) {
+            var parts = String(payload || "").split("\t")
+            return parts.slice(0, 7).join("\t")
+        }
+
+        /// Records one configure about to be written. Callers write the
+        /// payload themselves right after, so the seq stamp and the socket
+        /// order agree.
+        function enqueue(payload) {
+            var identity = identityOf(payload)
+            sends += 1
+            var entry = {
+                payload: payload,
+                identity: identity,
+                changed: identity !== installed(),
+                seq: sends
+            }
+            queue.push(entry)
+            return entry
+        }
+
+        /// Pops the oldest outstanding transaction for the reply that just
+        /// arrived, and records its identity as installed.
+        function settle() {
+            var entry = queue.shift()
+            if (entry) acked = entry.identity
+            return entry
+        }
+
+        /// A configure the helper refused lifted nothing: its own entry
+        /// drops, and the helper still has the last acked keymap installed,
+        /// so every surviving entry's drain test re-runs against that
+        /// instead of against the refused payload.
+        function rebaseAfterFailure() {
+            var entry = queue.shift()
+            if (!entry) return
+            var installedNow = acked
+            for (var i = 0; i < queue.length; i++) {
+                queue[i].changed = queue[i].identity !== installedNow
+                installedNow = queue[i].identity
+            }
+        }
+
+        /// Whether any configure the helper will drain sits ahead of
+        /// whatever lines are written next. The queue is FIFO: every entry
+        /// in it was written before this moment, so the helper processes
+        /// each one before anything written from here on.
+        function hasDrainAhead() {
+            for (var i = 0; i < queue.length; i++) {
+                if (queue[i].changed) return true
+            }
+            return false
+        }
+
+        /// True when no configure is outstanding — the only state in which
+        /// the keymap on the device is fully known and typing may be
+        /// enabled.
+        function settled() {
+            return queue.length === 0
+        }
+
+        /// A new connection acknowledges nothing and has sent nothing.
+        function reset() {
+            queue = []
+            acked = ""
+            sends = 0
+        }
+    }
+    // The emoji cap's spawn answer (spec-v1.1 §1), raised when the configured
+    // picker cannot be found on PATH at click time. Same swap the keymap
+    // failure uses — the panel's one hint line names this failure in the
+    // accent colour and hands the hint back on recovery (a successful probe,
+    // or the auto-clear below). Transient by design: it answers the click
+    // just made, then gets out of the way; typing and panel readiness never
+    // consult it.
+    property bool emojiFailed: false
+    // The app the ☺ cap execs — the panel's resolved override-over-default
+    // (spec-v1.1 §1). Bare PATH name; the probe and the hint both name it.
+    property string emojiAppName: "omarchy-menu-emoji"
     // Incremented every time a keycap load starts, and captured by the
     // process for the run it is about to begin. A compile that is stopped
     // to make room for a newer load still dies by SIGTERM and still
@@ -212,13 +369,20 @@ Item {
         }
     }
 
+    // Page 2 exists only when eight or more of its symbols resolve in the
+    // active keymap (spec-v1.1 §3). The gate, the cycle and the page key's
+    // label all read this one predicate, so they cannot disagree.
+    function curatedPageExists() {
+        return curatedPage.available >= Layout.curatedMinimum
+    }
+
     // The page key's label names where the next press goes (spec-v1 §4): on
     // the main page that is always the symbols page; past it, the curated
     // page when it exists and the main page when it does not.
     function pageLabel() {
         if (page === "main") return "&123"
         if (page === "curated") return "ABC"
-        return curatedPage.available >= Layout.curatedMinimum ? "€±§" : "ABC"
+        return curatedPageExists() ? "€±§" : "ABC"
     }
 
     function pageRows() {
@@ -234,7 +398,7 @@ Item {
         // A keymap change while page 2 is on screen can drop it below the
         // eight-symbol threshold; the page then no longer exists, and the
         // grid falls back to the main page rather than drawing a stub.
-        if (page === "curated" && curatedPage.available < Layout.curatedMinimum)
+        if (page === "curated" && !curatedPageExists())
             page = "main"
         layoutRows = Layout.applyLanguage(pageRows(), currentLayout, symbolMap)
     }
@@ -249,8 +413,7 @@ Item {
     /// hop is missing the symbols page's key reads "ABC" again.
     function togglePage() {
         page = page === "main" ? "symbols"
-            : page === "symbols" && curatedPage.available >= Layout.curatedMinimum
-                ? "curated" : "main"
+            : page === "symbols" && curatedPageExists() ? "curated" : "main"
         updateLayoutRows()
         applyModifierEvent({ type: "pageSwitch" })
     }
@@ -293,6 +456,28 @@ Item {
         return records
     }
 
+
+    /// Queues and writes one configure transaction. The book assigns the
+    /// transaction's seq BEFORE the write, so a chord stamped sends ===
+    /// entry.seq was pressed at or after the send — the ordering the drain
+    /// decision below rests on.
+    function sendConfigure(configure) {
+        configureBook.enqueue(configure)
+        sendCommandUnchecked(configure)
+    }
+
+    /// Applies a `configured` reply to the oldest outstanding configure
+    /// transaction. A changed-keymap entry settles the device world as
+    /// authoritative (configureDrain — the reducer's device-held modifiers
+    /// reset without emitting); a same-keymap entry leaves holds and
+    /// reducer state exactly as they are.
+    function settleConfigureReply() {
+        var entry = configureBook.settle()
+        if (!entry) return
+        if (!entry.changed) return
+        modifierState = Modifiers.reduce(modifierState,
+            { type: "configureDrain", stamp: entry.seq }).state
+    }
 
     function parseHyprLayoutOutput(text) {
         var active = ""
@@ -351,23 +536,35 @@ Item {
         var selected = active
         if (!selected && detected.length > 0) selected = detected[0]
         if (selected) {
-            layoutCycleIndex = Math.max(0, detected.indexOf(selected))
+            // The group index is the compositor's own `active_layout_index`,
+            // not the position of the active layout code in the list. The
+            // two differ exactly when a code repeats — `us,us` with distinct
+            // variants is the ordinary case — and `indexOf` there always
+            // found the first twin, so the keycap compile below kept
+            // answering group 0's variant while typing used the active
+            // group. The index is authoritative; the code is a label.
+            layoutCycleIndex = configGroup
             inputReady = false
             inputStatus = "configuring"
-            sendCommandUnchecked("configure\t" + xkbRules + "\t" + xkbModel
+            var configure = "configure\t" + xkbRules + "\t" + xkbModel
                 + "\t" + xkbLayouts + "\t" + xkbVariants + "\t" + xkbOptions
-                + "\t" + xkbFile + "\t" + configGroup)
-            // Load when the layout changed, or whenever the keymap's own
-            // answer is not in hand yet. The equality test alone was the
-            // cold-start defect: `currentLayout` starts at "us", so a session
-            // opening on `us` — the default guest config — never asked the
-            // keycap pipeline at all, and the symbols page drew one blank cap
-            // per position. The second half of the condition is also the
-            // retry: a failed or empty pipeline leaves `keycapsReady` false,
-            // so the next layout event (a helper recovery, a config reload,
-            // the keyboards inventory) tries again on its own. No polling.
-            if (selected !== currentLayout || !keycapsReady)
-                loadLanguageLayout(selected)
+                + "\t" + xkbFile + "\t" + configGroup
+            sendConfigure(configure)
+            // Load when the keymap's own answer is not in hand, or whenever
+            // the configure identity moved — not merely when the layout code
+            // did. The code-equality test alone was the cold-start defect:
+            // `currentLayout` starts at "us", so a session opening on `us` —
+            // the default guest config — never asked the keycap pipeline at
+            // all, and the symbols page drew one blank cap per position. It
+            // was also the stale-caps defect: a rules/model/variant/options/
+            // kb_file edit that kept the code reconfigured typing but left
+            // caps and curated availability answering the old keymap. The
+            // second half of the condition is also the retry: a failed or
+            // empty pipeline leaves `keycapsReady` false, so the next layout
+            // event (a helper recovery, a config reload, the keyboards
+            // inventory) tries again on its own. No polling.
+            if (selected !== currentLayout || configure !== lastKeycapConfigure || !keycapsReady)
+                loadLanguageLayout(selected, configure)
         }
     }
 
@@ -445,7 +642,7 @@ Item {
         layoutDetectProcess.running = true
     }
 
-    function loadLanguageLayout(layoutCode) {
+    function loadLanguageLayout(layoutCode, configure) {
         console.log("[osk] loadLanguageLayout:", layoutCode, "variant-index:", layoutCycleIndex)
         // A load is now in flight: only its own successful result may say the
         // caps are ready. Cleared here rather than left at its old value so a
@@ -453,6 +650,11 @@ Item {
         // belongs to the previous layout.
         keycapsReady = false
         currentLayout = layoutCode
+        // The load compiles under this configure identity, so this is the
+        // payload future configures must differ from to earn a reload of
+        // their own. Recorded at issue, not on success: a failed load leaves
+        // `keycapsReady` false, and that is what earns the retry.
+        lastKeycapConfigure = configure || ""
         updateLayoutRows()
         // Compile the layout with xkbcli rather than reading
         // /usr/share/X11/xkb/symbols/<code> directly: most layouts define their
@@ -669,18 +871,61 @@ Item {
     /// write. The only path modifier state changes on, so the panel cannot
     /// drift from what the seam's tests cover.
     ///
-    /// Protocol-bearing events are refused while the helper is not ready,
-    /// rather than advancing state over writes that go nowhere: a lock whose
-    /// `down` was dropped would leave the cap showing a modifier the compositor
+    /// The readiness gate lives at the EVENT level, never at the line level.
+    /// Press-type events are refused while the helper is not ready, rather
+    /// than advancing state over writes that go nowhere: a lock whose `down`
+    /// was dropped would leave the cap showing a modifier the compositor
     /// never received. Caps and Fn are exceptions because they are local
     /// semantic controls and emit no protocol line; reconnecting must not
-    /// delay them.
+    /// delay them. Release and releaseAll events stay live for the same
+    /// reason a cap's release is never gated: a key down at the device must
+    /// be lifted no matter what state the panel thinks it is in, or the
+    /// compositor repeats it forever.
+    ///
+    /// Every line the reducer emits for an ALLOWED event is then written
+    /// whenever the socket exists — including the restorative `down` that
+    /// puts a locked Shift back after a release lifted it around the chord.
+    /// That line is press-shaped text and still rides an allowed event;
+    /// classifying lines by prefix would drop it and desynchronise the lock.
+    /// The invariant: the reducer decides what changes, and the transport
+    /// never second-guesses a line it is handed — with the one exception the
+    /// reducer is TOLD about here: a release in front of an outstanding
+    /// changed configure cannot trust its restore plan. The helper processes
+    /// that configure (and its drain) before these lines, so a restorative
+    /// `down` would re-press a modifier after the device world lost it —
+    /// locked Shift held at the device while the panel, settling the drain
+    /// reply a moment later, draws idle. The chord's `up` lines still go out
+    /// (a release is never dropped, and an `up` for a drained key is
+    /// forwarded and dropped by the compositor); only the re-press is
+    /// withheld. The reducer state itself does NOT settle here: the reply
+    /// owns the settle, because the outstanding configure can still turn
+    /// out to be refused — a release that erases the lock speculatively
+    /// would leave the refusal nothing to lift while the helper, having
+    /// never drained, re-asserts the modifier. When the socket is gone
+    /// there is nothing to write and nothing is owed — the helper's
+    /// disconnect release has already lifted every claim the connection
+    /// held.
     function applyModifierEvent(event) {
-        if (!inputReady && (!event || (event.type !== "capsClick" && event.type !== "fnClick"))) return
-        var outcome = Modifiers.reduce(modifierState, event)
+        var alwaysLive = event && (event.type === "capsClick"
+            || event.type === "fnClick"
+            || event.type === "release"
+            || event.type === "releaseAll")
+        if (!inputReady && !alwaysLive) return
+        var dropRestore = event.type === "release" && configureBook.hasDrainAhead()
+        // No speculative settle here, deliberately: a release that runs
+        // before the outstanding configure's reply must leave the reducer
+        // state as the release made it, because the reply decides what the
+        // device world became. A `configured` settles the drain (the
+        // changed configure really lifted the holds); a refusal lands in
+        // the err branch, which reads the still-live locked modifiers and
+        // lifts them for real. Settling speculatively here would erase the
+        // lock before the refusal could name it, and the helper's held set
+        // would re-assert the modifier after `mods 0`.
+        var outcome = Modifiers.reduce(modifierState, dropRestore
+            ? { type: "release", dropRestore: true } : event)
         modifierState = outcome.state
         for (var i = 0; i < outcome.lines.length; i++) {
-            sendCommand(outcome.lines[i])
+            sendCommandUnchecked(outcome.lines[i])
         }
     }
 
@@ -695,45 +940,49 @@ Item {
         return Modifiers.isActive(modifierState, "shift")
     }
 
-    function isUpper() {
-        return modifierState.caps !== shiftActive()
-    }
-
     function isSymbolShiftActive() {
         return shiftActive()
     }
 
     // A letter key is one whose shifted symbol is simply the capital of its
-    // base, which holds in any script and needs no per-alphabet table.
-    // `/^[a-z]$/` recognised only Latin, so Cyrillic and Greek letters were
-    // treated as punctuation: Caps Lock did nothing on them and they rendered
-    // as stacked dual keys. Asking merely whether the base has a capital is not
-    // enough either — French AZERTY carries é on the same key as 2, and é does
-    // have a capital, so Caps Lock would type 2 instead of É.
+    // base. The rule lives in KeyboardLayout.js beside the keycap pipeline it
+    // serves (and is tested at the pure seam with it); the wrapper keeps this
+    // file's call sites — the reducer's `letter` fact and the dual-cap test —
+    // reading exactly as they always have.
     function isLetterKey(keyData) {
-        var base = keyData.t || ""
-        var shifted = keyData.s || ""
-        return base.length > 0 && shifted.length > 0 && shifted === base.toUpperCase()
+        return Layout.isLetterKey(keyData)
     }
 
+    // What this cap says it types, under the reducer's current Caps and Shift.
+    // The rule is Layout.resolvedTypedChar's: an exact cap (the curated page's)
+    // answers only to the level it carries — never redrawing as another symbol
+    // because Shift is active, which is the agreement between what a cap shows
+    // and what its exact press types (review finding R3) — letters swap on
+    // Caps XOR Shift, and other paired caps shift with Shift alone.
     function resolvedTypedChar(keyData) {
-        if (isLetterKey(keyData)) {
-            return isUpper() && keyData.s ? keyData.s : keyData.t
-        }
-        return shiftActive() && keyData.s ? keyData.s : keyData.t
+        return Layout.resolvedTypedChar(keyData, modifierState.caps,
+            Modifiers.isActive(modifierState, "shift"))
     }
 
     // Punctuation/number keys show both symbols stacked (like the
-    // reference's `.key.dual`); plain letter keys just swap case.
-    // A symbols-page cap is never dual: it stands for one level, and the level
-    // above it has its own cap on the row below.
+    // reference's `.key.dual`); plain letter keys just swap case. The
+    // symbols page's dual caps (2026-09-05, symbols v2) carry the explicit
+    // `dual` flag and are dual here even when their shifted level resolved
+    // to nothing — a valid base-only cap still renders the stacked pair
+    // with an empty shifted slot, never a centered impostor. Main-page caps
+    // without the flag stay dual the old way (both levels resolved, not a
+    // letter), and a `lvl` cap (the curated page's) never is: it stands for
+    // one level, and the levels above it have their own press semantics
+    // (`exact`), not a stacked pair.
     function isDualKey(keyData) {
-        return !keyData.lvl && !!keyData.s && !isLetterKey(keyData)
+        return !keyData.lvl
+            && (keyData.dual === true
+                || (!!keyData.s && !isLetterKey(keyData)))
     }
 
-    // Input goes to the helper daemon over a unix socket; the panel never
+    // Input goes to the helper over a unix socket; the panel never
     // takes keyboard focus (`keyboardFocus: None` in Panel.qml), so the
-    // window being typed into keeps it and the daemon's keystrokes land
+    // window being typed into keeps it and the helper's keystrokes land
     // there. Nothing here spawns a process: the plugin runs inside the
     // long-lived shell, and the Omarchy guide asks plugins not to launch
     // shell processes. The first version spawned `wtype` per keystroke, and
@@ -743,6 +992,22 @@ Item {
     // tens of milliseconds.
     property bool inputReady: false
     property string inputStatus: "connecting"
+    // Panel-status facts over the socket client's own states (spec-v1.1 §6),
+    // read by the panel's hint line. `serviceConnected` mirrors the live
+    // socket: false before the first dial, while the loader rebuilds it, and
+    // after a drop — the "not running" state, whatever the reason.
+    // `serviceIncompatible` is a hello answered in another protocol version
+    // (or the helper's err naming the version it needs): a fact about the
+    // installed helper, so it stays until a good handshake replaces it —
+    // clearing it on disconnect would flicker the state on every rebuild
+    // tick and would claim an outdated install fixed because the service
+    // stopped.
+    readonly property bool serviceConnected: daemonSocket ? daemonSocket.connected : false
+    property bool serviceIncompatible: false
+    // Set when the socket reaches `connected`, consumed by the hello reply:
+    // only a genuinely new connection may reset device-held modifier state,
+    // never the repair timer's re-hello of a live one. See the hello handler.
+    property bool socketReconnected: false
     // The helper socket, created by the loader below. Root-scope alias because
     // the component's own id does not reach the functions out here.
     property QtObject daemonSocket: daemonLoader.item
@@ -754,7 +1019,7 @@ Item {
     // in place, and setConnected(true) only dials when that object is gone,
     // with nothing but a successful connection ever clearing it — so the
     // whole socket is rebuilt whenever the helper's socket file exists and
-    // the helper has not answered hello yet. A daemon that dies later needs
+    // the helper has not answered hello yet. A helper that dies later needs
     // none of this: the disconnected path clears the object and the pending
     // targetConnected redials on its own. One rebuild per two seconds while
     // the helper is down; a completed handshake stops the timer.
@@ -775,11 +1040,14 @@ Item {
             onConnectionStateChanged: {
                 if (connected) {
                     // Readiness is not the same as "the socket answered": the
-                    // daemon accepts commands before the compositor keymap has
+                    // helper accepts commands before the compositor keymap has
                     // been forwarded to its virtual keyboard, and would drop
                     // every key. hello therefore goes out on a short delay
                     // after the flip — inline writes were observed landing on
-                    // a closed device during the VM dogfooding.
+                    // a closed device during the VM dogfooding. The flip is
+                    // also what the hello reply's reset keys off: only a
+                    // genuinely new connection released the old one's holds.
+                    root.socketReconnected = true
                     helloTimer.restart()
                 } else {
                     root.inputReady = false
@@ -791,21 +1059,40 @@ Item {
                 onRead: function (line) {
                     var reply = String(line).trim()
                     if (reply === "hello 3") {
+                        root.serviceIncompatible = false
                         root.inputReady = false
                         root.inputStatus = "configuring"
-                        // The helper released everything this panel's old
-                        // connection held when that socket closed, so a
-                        // locked modifier did not survive the reconnect
-                        // however the indicator looked. Reset to match, and
-                        // do it without emitting the releases — sending `up`
-                        // for a code nobody holds is a lie in the other
-                        // direction.
+                        // On a genuinely NEW connection the helper released
+                        // everything the old one held when that socket
+                        // closed, so a locked modifier did not survive the
+                        // reconnect however the indicator looked. Reset to
+                        // match, and do it without emitting the releases —
+                        // sending `up` for a code nobody holds is a lie in
+                        // the other direction.
                         // Caps is a semantic panel control, not a held key on
                         // this connection, so a helper restart does not turn
                         // it off. Only the real device-held modifiers reset.
-                        root.modifierState = Modifiers.reduce(
-                            root.modifierState, { type: "releaseAll" }).state
-                        daemon.write("mods 0\n")
+                        //
+                        // The gate matters: the repair timer re-hellos an
+                        // open-but-unready socket (a configure refused, a
+                        // helper still starting) WITHOUT the connection ever
+                        // dropping. That helper still holds whatever the
+                        // panel asked it to hold, so neither the state reset
+                        // nor the `mods 0` may fire here — resetting the
+                        // reducer over a live hold would leave the device
+                        // Shift down under an idle panel.
+                        if (root.socketReconnected) {
+                            root.socketReconnected = false
+                            root.modifierState = Modifiers.reduce(
+                                root.modifierState, { type: "releaseAll" }).state
+                            // Configure bookkeeping starts over with the
+                            // connection: the next configure's identity must
+                            // be compared against what THIS helper instance
+                            // has acknowledged, and no reply can still arrive
+                            // for a transaction a predecessor was holding.
+                            configureBook.reset()
+                            daemon.write("mods 0\n")
+                        }
                         daemon.write("keyboards\n")
                         daemon.flush()
                         // A restarted helper is back at group 0 and has no idea
@@ -827,10 +1114,55 @@ Item {
                         }
                         root.refreshLayoutsFromHypr()
                     } else if (reply === "configured") {
-                        root.inputReady = true
-                        root.inputStatus = "ready"
+                        // Mirror the helper's own configure behaviour, for
+                        // THE ENTRY THIS REPLY SETTLES — the oldest
+                        // outstanding transaction, not the newest sent
+                        // (FIFO; see the queue above). A configure that
+                        // changed the keymap drained every key it held for
+                        // us on its way in (install_config lifts each held
+                        // code and zeroes the modifiers); one that kept the
+                        // keymap — a group move, a byte-identical refresh —
+                        // deliberately kept them. The panel follows both,
+                        // the way the hello path already resets over a
+                        // connection the helper released: on a keymap
+                        // change, drop the device-held modifier state
+                        // WITHOUT emitting — an `up` for a code the device
+                        // no longer holds would be a lie in the other
+                        // direction — while Caps and Fn stay, being
+                        // semantic panel controls and never held at the
+                        // device. On a same-keymap configure the lock
+                        // stays held at the device and drawn locked, and
+                        // typing agrees (the gate in applyModifierEvent
+                        // writes whatever the reducer emits, restorative
+                        // downs included — except across a drain, where
+                        // the reducer itself withholds the restore).
+                        root.settleConfigureReply()
+                        // Readiness waits for the WHOLE queue: an older
+                        // reply does not make typing safe while a pipelined
+                        // configure is still compiling the keymap a press
+                        // would land in — a chord allowed through now would
+                        // straddle that drain and lose its release. The caps
+                        // enable only when the last outstanding configure
+                        // has been acknowledged.
+                        if (configureBook.settled()) {
+                            root.inputReady = true
+                            root.inputStatus = "ready"
+                        } else {
+                            root.inputReady = false
+                            root.inputStatus = "configuring"
+                        }
                     } else if (reply.indexOf("err") === 0) {
-                        if (reply === "err not ready") {
+                        if (reply.indexOf("err protocol") === 0) {
+                            // The helper answered hello with the version it
+                            // speaks, and it is not ours: the installed
+                            // binary predates (or postdates) this panel.
+                            // That is the incompatible state — the panel
+                            // never installs anything on its own (spec-v1.1
+                            // §6); the offer is the copied install command.
+                            root.serviceIncompatible = true
+                            root.inputReady = false
+                            root.inputStatus = reply
+                        } else if (reply === "err not ready") {
                             // A helper fresh out of systemd start answers err
                             // until its default keymap is installed; it cannot
                             // become ready without a configure, and nothing
@@ -838,19 +1170,99 @@ Item {
                             // instead of waiting out the repair timer.
                             root.refreshLayoutsFromHypr()
                         } else if (reply === "err key held" || reply === "err not holding") {
-                            // Ownership refusals mean the daemon's hold state
+                            // Ownership refusals mean the helper's hold state
                             // is ahead of ours; the device is fine and typing
                             // stays enabled. The panel's chords never produce
                             // them, so one appearing is a client bug worth
                             // surfacing in the status without bricking the
                             // keyboard.
                             root.inputStatus = reply
+                        } else if (reply === "err cannot configure keymap") {
+                            // A FAILED configure is authoritative about the
+                            // device world in a way the error text cannot
+                            // qualify: a compile or rate-limit refusal
+                            // happens BEFORE install_config drains anything
+                            // (the helper still holds whatever the panel
+                            // had down), while an upload failure happens
+                            // AFTER the drain (the helper holds nothing) —
+                            // and both answer with this same err. The panel
+                            // therefore settles to the drained world
+                            // UNCONDITIONALLY, exactly as a changed-keymap
+                            // success does, and then makes the device
+                            // agree: an explicit `up` for every modifier
+                            // the panel had locked — a real lift when the
+                            // helper never drained, a forwarded no-op when
+                            // it already did — plus `mods 0`, so the
+                            // compositor's mask cannot keep the stale
+                            // modifier alive (the helper re-asserts its
+                            // mask from its held set on the next key event,
+                            // so `mods 0` alone would not survive). Panel
+                            // and device agree either way, and a later
+                            // close emits nothing because nothing is held.
+                            // A pending chord survives untouched: its own
+                            // key hold is real in the never-drained case,
+                            // and in the drained case its mouse-up is a
+                            // forwarded no-op. This also covers the
+                            // release-before-refusal ordering: a release
+                            // that ran while this configure was outstanding
+                            // left the lock standing here on purpose (the
+                            // reply owns the settle), so the capture above
+                            // still sees the modifiers it must lift.
+                            configureBook.rebaseAfterFailure()
+                            var lockedPositions = []
+                            for (var m = 0; m < Modifiers.ORDER.length; m++) {
+                                if (modifierState[Modifiers.ORDER[m]] === "locked")
+                                    lockedPositions.push(
+                                        Modifiers.positionFor(Modifiers.ORDER[m]))
+                            }
+                            modifierState = Modifiers.reduce(modifierState,
+                                // stamp -1: a failed configure drained
+                                // nothing a pending chord depends on for
+                                // certain, so every pending record survives
+                                // (minus its restore plan, which would
+                                // re-press a lock the panel just dropped).
+                                { type: "configureDrain", stamp: -1 }).state
+                            for (var u = 0; u < lockedPositions.length; u++)
+                                sendCommandUnchecked("up " + lockedPositions[u])
+                            sendCommandUnchecked("mods 0")
+                            root.inputReady = false
+                            root.inputStatus = reply
                         } else {
                             root.inputReady = false
                             root.inputStatus = reply
                         }
+                    } else if (reply.indexOf("hello ") === 0) {
+                        // A hello naming another version than the one this
+                        // panel asked for is the same incompatibility in a
+                        // different shape. Defensive: the current helper
+                        // errs instead of greeting across versions.
+                        root.serviceIncompatible = true
+                        root.inputReady = false
+                        root.inputStatus = reply
                     }
                 }
+            }
+
+            // A quickshell 0.3.1 peer close can log "Socket error for …"
+            // without ever flipping `connected` (observed live: the property
+            // still read true minutes after QLocalSocket::PeerClosedError),
+            // which leaves inputReady stuck at true — a ready-looking
+            // keyboard that cannot type, the exact silent failure §6
+            // forbids. An error arriving on a socket that still reads
+            // connected is therefore treated as the drop the state change
+            // failed to report: enter the disconnected state and rebuild
+            // the socket object, the same reset socketPathCheck uses, so
+            // the gated repair timer owns the redial and the next good
+            // handshake clears the notice. A failed dial reports with
+            // connected false and no-ops here, so this cannot loop.
+            onError: {
+                if (!connected) return
+                root.inputReady = false
+                root.inputStatus = "reconnecting"
+                Qt.callLater(function () {
+                    daemonLoader.active = false
+                    daemonLoader.active = true
+                })
             }
         }
     }
@@ -885,6 +1297,42 @@ Item {
         }
     }
 
+    // The emoji cap's launch path (spec-v1.1 §1, 2026-09-05 amendment: the
+    // picker is configured, not hardcoded). The configured app by bare PATH
+    // name, never an absolute path, and no shortcut synthesis —
+    // single-instance behaviour is the picker's own. execDetached reports
+    // nothing, so the only failure that matters (the app absent from PATH)
+    // is answered first by the same short-process check the socket probe
+    // uses; the launch itself stays a true detach, because an emoji picker
+    // must not live or die with the panel that opened it. On a successful
+    // probe the panel is told, so its runtime courtesy positioning can watch
+    // for the picker's window.
+    Process {
+        id: emojiProbe
+        command: ["sh", "-c", "command -v \"$1\" >/dev/null", "osk-emoji-probe",
+            root.emojiAppName]
+        onExited: function(exitCode, exitStatus) {
+            emojiFailTimer.stop()
+            if (exitCode === 0) {
+                root.emojiFailed = false
+                Quickshell.execDetached([root.emojiAppName])
+                root.emojiPickerLaunched(root.emojiAppName)
+                return
+            }
+            root.emojiFailed = true
+            emojiFailTimer.restart()
+        }
+    }
+
+    Timer {
+        id: emojiFailTimer
+        // A few seconds of "<app> not found on PATH", then the hint line
+        // returns to its mode text without another event being needed.
+        interval: 4000
+        repeat: false
+        onTriggered: root.emojiFailed = false
+    }
+
     Timer {
         id: reconnectTimer
         interval: 2000
@@ -905,11 +1353,12 @@ Item {
         }
     }
 
-    function sendCommand(text) {
-        if (!inputReady) return false
-        return sendCommandUnchecked(text)
-    }
-
+    /// The one writer for reducer output and panel-originated protocol lines
+    /// (configure, keyboards). The readiness gate is `applyModifierEvent`'s
+    /// event-level decision, not a property of the text: whatever reaches
+    /// here is written while the socket exists, and only the missing socket
+    /// (nothing owed — the helper released on disconnect) or the absent
+    /// loader object makes the write a no-op.
     function sendCommandUnchecked(text) {
         if (!daemonSocket) return false
         daemonSocket.write(text + "\n")
@@ -934,9 +1383,23 @@ Item {
             // never a character the panel picked for itself — Shift for
             // level 2, AltGr (with Shift) for the curated page's levels 3
             // and 4 (spec-v1.1 §3). The reducer decides how those presses
-            // wrap around the key and what a lock does to them.
+            // wrap around the key and what a lock does to them. Curated
+            // caps are `exact`: a latched Shift or AltGr is never APPLIED
+            // by one — the chord is the level's, not the latch's — but it
+            // is always CONSUMED by one, as §2 spends any non-modifier
+            // key's latches. The symbols page's dual caps carry no `lvl`,
+            // so none of this applies to them: they are ordinary paired
+            // caps, and a latched or locked Shift applies to their press
+            // exactly as it does on the main page — which is what makes
+            // the level the cap's emphasis shows the typed one.
             shift: keyData.lvl === 2 || keyData.lvl === 4,
-            altgr: keyData.lvl === 3 || keyData.lvl === 4
+            altgr: keyData.lvl === 3 || keyData.lvl === 4,
+            exact: keyData.exact === true,
+            // Where this chord sits in the configure-send sequence. A
+            // configure queued after it drains at the helper ahead of the
+            // chord's release, and the stamp is how the reply and the
+            // release each tell that apart — see the queue above.
+            configureStamp: configureBook.sends
         })
     }
 
@@ -950,7 +1413,13 @@ Item {
     function pressSpecial(keyData, doubleClick) {
         switch (keyData.key) {
         case "close": closeRequested(); return
-        case "emoji": Quickshell.execDetached(["omarchy-menu-emoji"]); return
+        // The ☺ cap (spec-v1.1 §1) probes PATH for the configured picker,
+        // then launches it detached — see emojiProbe. A second click while
+        // the probe is already running needs no queue: the pending probe's
+        // exit resolves for both.
+        case "emoji":
+            if (!emojiProbe.running) emojiProbe.running = true
+            return
         // Not a keystroke, so no click sound, for the same reason close is
         // silent: nothing was typed.
         case "page": togglePage(); return
@@ -977,7 +1446,10 @@ Item {
         var position = Layout.positionForKeysym(keyData.key)
         if (!position) return
         root.keyPressed()
-        applyModifierEvent({ type: "press", position: position })
+        applyModifierEvent({
+            type: "press", position: position,
+            configureStamp: configureBook.sends
+        })
     }
 
     /// Caps has exactly "off" and "on"; the real modifiers have "idle",
@@ -1021,13 +1493,14 @@ Item {
 
                         Rectangle {
                             id: keyRect
-                            // A spacer slot ({ w } alone — the curated page's
-                            // unfilled slots and its free row's pad) draws
-                            // nothing: the page never shows a blank cap. An
-                            // invisible item takes no mouse events either, so
-                            // a dead slot stays dead while its neighbours'
-                            // hit areas keep meeting at its midpoints.
-                            visible: !Layout.isBlank(keyData)
+                            // A declared spacer slot (`spacer: true` — the
+                            // curated page's unfilled slots and its free
+                            // row's pad) draws nothing: the page never shows
+                            // a blank cap. An invisible item takes no mouse
+                            // events either, so a dead slot stays dead while
+                            // its neighbours' hit areas keep meeting at its
+                            // midpoints.
+                            visible: !keyData.spacer
                             anchors.fill: parent
                             radius: root.keyRadius
 
@@ -1048,8 +1521,42 @@ Item {
                             // the remaining commands act on click.
                             property bool types: !keyData.key
                                 || !!Layout.positionForKeysym(keyData.key)
+                            // Whether the cap produces input at all: typing,
+                            // or a modifier latch (its click sends real down/
+                            // up lines). Caps and Fn are semantic panel
+                            // controls, page, emoji and Close are commands
+                            // — none of them reach the protocol, so all stay
+                            // live while the helper is not ready (spec-v1.1
+                            // §6).
+                            //
+                            // `inputGated` is the one named arm for that gate,
+                            // used identically at press and release: a gated
+                            // cap draws and answers disabled, in the language
+                            // switch's idle shades, and its press path never
+                            // starts — so it emits no keyPressed and no click
+                            // sound plays for a key that goes nowhere. The
+                            // deep defence stays in applyModifierEvent, which
+                            // still refuses protocol-bearing events.
+                            //
+                            // `unavailable` is the other arm of the same
+                            // treatment (spec-v1.1 §3): a level cap whose
+                            // position resolved to nothing in the active
+                            // keymap — a valid partial keymap's hole — must
+                            // never sit there blank and clickable. It draws
+                            // dim like a gated cap, refuses the press, and
+                            // emits nothing; the §11 miss report is the
+                            // record of why. Fixed-label caps and spacers
+                            // are never marked unavailable: their labels are
+                            // the panel's own.
+                            property bool producesInput: types
+                                || Modifiers.isModifier(keyData.key)
+                            property bool unavailable: keyData.unavailable === true
+                            property bool inputGated: !root.inputReady
+                                && producesInput
+                            property bool disabled: unavailable || inputGated
 
-                            color: (locked || toggleOn) ? root.lockedFill
+                            color: disabled ? root.keyBg
+                                : (locked || toggleOn) ? root.lockedFill
                                 : latched ? root.latchedFill
                                 : mouseArea.pressed ? root.keyActiveBg
                                 : mouseArea.containsMouse ? root.keyHoverBg
@@ -1064,7 +1571,8 @@ Item {
                                 text: keyData.label
                                     ? keyData.label
                                     : root.resolvedTypedChar(keyData)
-                                color: (keyRect.locked || keyRect.toggleOn)
+                                color: keyRect.disabled ? root.textDim
+                                    : (keyRect.locked || keyRect.toggleOn)
                                     ? root.lockedText : root.textMain
                                 font.family: root.keyboardFont
                                 font.pixelSize: root.keyFontSize
@@ -1076,11 +1584,17 @@ Item {
                             // Shift is held, mirroring `.key.dual.shift-active`.
                             Text {
                                 visible: keyRect.isDual
-                                text: keyData.s
+                                // The `|| ""` guards the symbols-page dual
+                                // caps, whose levels come from the keymap:
+                                // a level that did not resolve is a §11 miss
+                                // and an empty slot, never the string
+                                // "undefined" drawn on a cap.
+                                text: keyData.s || ""
                                 anchors.top: parent.top
                                 anchors.topMargin: root.gapPx
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                color: root.isSymbolShiftActive() ? root.textHighlightColor : root.textDim
+                                color: keyRect.disabled ? root.textDim
+                                    : root.isSymbolShiftActive() ? root.textHighlightColor : root.textDim
                                 font.bold: root.isSymbolShiftActive()
                                 font.family: root.keyboardFont
                                 font.pixelSize: root.keySmallFontSize
@@ -1088,11 +1602,12 @@ Item {
 
                             Text {
                                 visible: keyRect.isDual
-                                text: keyData.t
+                                text: keyData.t || ""
                                 anchors.bottom: parent.bottom
                                 anchors.bottomMargin: root.gapPx
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                color: root.isSymbolShiftActive() ? root.textDim : root.textMain
+                                color: keyRect.disabled ? root.textDim
+                                    : root.isSymbolShiftActive() ? root.textDim : root.textMain
                                 font.family: root.keyboardFont
                                 font.pixelSize: root.keyFontSize
                             }
@@ -1172,6 +1687,13 @@ Item {
                                 // The bound is what is claimed here, and it is
                                 // the residual the by-hand retest looks for.
                                 onPressed: {
+                                    // Not-ready gating (spec-v1.1 §6) and the
+                                    // unavailable mark (§3) are properties of
+                                    // the cap, so the whole press path —
+                                    // including the click sound and the
+                                    // pressed fill — never starts for a cap
+                                    // that could not type.
+                                    if (keyRect.disabled) return
                                     if (!keyData.key) {
                                         root.pressChar(keyData)
                                         return
@@ -1194,6 +1716,10 @@ Item {
                                 // the panel closing has to lift the key too,
                                 // or it repeats into the focused window until
                                 // the helper's cap notices.
+                                // The release of a held key is never gated: a
+                                // cap pressed before a state change must lift
+                                // even if the panel went not-ready mid-press,
+                                // or the compositor repeats it forever.
                                 onReleased: if (keyRect.types) root.releaseKey()
                                 onCanceled: if (keyRect.types) root.releaseKey()
 
@@ -1227,6 +1753,9 @@ Item {
 
                                 onDoubleClicked: {
                                     if (!keyData.key || !Modifiers.isModifier(keyData.key)) return
+                                    // A locked upgrade is protocol-bearing
+                                    // like any latch — refused while gated.
+                                    if (keyRect.inputGated) return
                                     root.pressSpecial(keyData, true)
                                 }
                             }
