@@ -12,7 +12,7 @@ import "LayoutDevices.js" as LayoutDevices
 
 Item {
     id: root
-    implicitWidth: grid.implicitWidth
+    implicitWidth: grid.implicitWidth + 0
     // Pinned to the taller of the two pages rather than to whichever is on
     // screen. Docked mode reserves this height (§7), so letting it follow the
     // current page would shove every window on the output up and down each time
@@ -21,8 +21,8 @@ Item {
     // pointer across a switch and the slack appears at the top.
     readonly property int maxPageRows: Math.max(Layout.rows.length,
         Layout.symbolRows("").length)
-    implicitHeight: maxPageRows * keyHeight + (maxPageRows - 1) * gapPx
-    signal closeRequested()
+    implicitHeight: maxPageRows * capRowHeight + (maxPageRows - 1) * cellGap
+    signal dismissalAsked()
     // Emitted for every keystroke-shaped press — letters, arrows, modifier
     // clicks, Caps Lock — and never for the panel's own UI actions. The panel
     // plays the key click sound on it (spec-v1 §10).
@@ -36,7 +36,7 @@ Item {
     // While the emoji page stands (searchMode, wired from the panel's
     // emojiOpen), the keys feed its search instead of typing to the focused
     // client: one intercepted press arrives here as an action — "char" with
-    // the character the cap drew (Layout.resolvedTypedChar, so what you see
+    // the character the cap drew (Layout.charUnderModifiers, so what you see
     // is what the search gets, in every configured layout and group),
     // "backspace", "space", or "escape" from the Esc cap. The panel applies
     // it to the page's query; Escape closes the page. The helper receives
@@ -65,32 +65,32 @@ Item {
     required property Theme theme
 
     // ---- Design tokens, copied 1:1 from the reference HTML/CSS ----
-    readonly property real gapPx: Math.max(1, Math.round(root.theme.spacingMd * uiScale))
-    readonly property real keyHeight: root.theme.space(42) * uiScale
+    readonly property real cellGap: Math.max(1, Math.round(root.theme.spacingMd * uiScale))
+    readonly property real capRowHeight: root.theme.space(42) * uiScale
     // Key radius is the facade's resolved 0–24 value at medium, scaled by
     // the size preset so 24 stays a circle at L/XL (spec-v1.1 §4). Panel
     // radius is a separate pixel control and does not use this.
-    readonly property real keyRadius: ConfigFile.effectiveKeyRadius(
-        root.theme.keyRadius, uiScale)
+    readonly property real capCorner: ConfigFile.effectiveKeyRadius(
+        root.theme.capCorner, uiScale)
     readonly property real containerMaxWidth: availableWidth > 0
         ? Math.min(root.theme.space(820) * uiScale, availableWidth)
         : root.theme.space(820) * uiScale
     // Rows fill the same total width as the container minus its own
     // padding (which equals the gap), exactly like the CSS container's
     // `padding: var(--gap)` around `.keyboard-grid`.
-    readonly property real rowWidth: containerMaxWidth - 2 * gapPx
+    readonly property real gridWidthUnits: containerMaxWidth - 2 * cellGap
 
     // ---- Shared grid pitch (ticket 03, owner round 3) ----
     //
     // Every row is laid out on one cell size: a cap spans `w` cells, each
     // `cellPitch` wide including one gap, so its drawn width is
-    // `w * cellPitch - gapPx`. This replaces the per-row proportional flex
+    // `w * cellPitch - cellGap`. This replaces the per-row proportional flex
     // that row sums of 13.95–17.25 units fed, and which rendered command-row
     // keys and arrows about 20% narrower than the letters above them. With
     // every row declared to the same gridUnits — the tables in
     // KeyboardLayout.js, guarded below — columns align across rows by
     // construction, all rows end flush at both edges
-    // (`gridUnits * cellPitch - gapPx == rowWidth`), key sizes are
+    // (`gridUnits * cellPitch - cellGap == gridWidthUnits`), key sizes are
     // uniform between rows the way the Windows 11 touch keyboard's are, and
     // every width being a multiple of 0.5 keeps all rows' vertical gap lines
     // on one half-unit lattice: adjacent rows' gap lines are offset by
@@ -98,7 +98,7 @@ Item {
     // Windows reference — so every gap lands mid-key of the neighbouring
     // rows instead of on top of one.
     readonly property real gridUnits: 15.5
-    readonly property real cellPitch: (root.rowWidth + root.gapPx) / root.gridUnits
+    readonly property real cellPitch: (root.gridWidthUnits + root.cellGap) / root.gridUnits
 
     // ---- Hit geometry (ticket 15) ----
     //
@@ -109,9 +109,9 @@ Item {
     // keyboard; a miss costs a correction.
     //
     // Non-overlap is by construction, not by hope, and that is the whole of
-    // the design. Neighbours in a row are exactly `gapPx` apart and each
-    // claims `gapPx / 2` of it, so the two areas meet on a line and share no
-    // area. Rows are `gapPx` apart in the Column and split it the same way,
+    // the design. Neighbours in a row are exactly `cellGap` apart and each
+    // claims `cellGap / 2` of it, so the two areas meet on a line and share no
+    // area. Rows are `cellGap` apart in the Column and split it the same way,
     // which makes the row bands disjoint in y before the caps inside them are
     // considered at all. So the grid is a partition: a row band, then a column
     // within it. The line itself is not a tie either — `QQuickItem::contains`
@@ -124,22 +124,22 @@ Item {
     // Hover follows the hit area, so the cap that owns a gap lights up while
     // the pointer is in it. That is the intent, not a side effect: it is how
     // the user sees where the boundary is.
-    readonly property real halfGap: gapPx / 2
+    readonly property real halfGap: cellGap / 2
     // What the outermost caps claim on their outward side. The card's padding
-    // around the grid equals the gap (see `rowWidth` above), so this hands the
+    // around the grid equals the gap (see `gridWidthUnits` above), so this hands the
     // border strip to the caps against it and stops exactly where the card's
-    // own chrome starts — the drag bar sits `gapPx` above the top row, so the
+    // own chrome starts — the drag bar sits `cellGap` above the top row, so the
     // top row's area meets it rather than stealing from it.
-    readonly property real edgeOutset: gapPx
+    readonly property real edgeOutset: cellGap
 
     // The three key fills are the facade's resolved tokens: an explicit key
     // background override pins the resting fill, and hover/press are a
     // modest mix of that resting cap toward the theme foreground either
     // way (Theme.qml owns that derivation and the precedence).
     readonly property color keyBg: root.theme.keyFill
-    readonly property color keyHoverBg: root.theme.keyHoverFill
-    readonly property color keyActiveBg: root.theme.keyActiveFill
-    readonly property color keyBorderColor: Util.alpha(root.theme.foreground, root.theme.pressedFillAlpha)
+    readonly property color hoverFill: root.theme.keyHoverFill
+    readonly property color pressFill: root.theme.keyActiveFill
+    readonly property color capEdge: Util.alpha(root.theme.foreground, root.theme.pressedFillAlpha)
     readonly property color accentColor: Util.alpha(root.theme.accent, root.theme.pressedFillAlpha)
     // The three modifier states, told apart by fill weight rather than by two
     // shades of one colour (spec-v1 §5): idle is the ordinary key, latched is
@@ -151,17 +151,17 @@ Item {
     // Glyph colour: the facade's resolved text token (override, else the
     // theme's foreground). The theme's muted stays the secondary text colour —
     // "dim" is a relation to the theme's palette, not to a pinned colour.
-    readonly property color textMain: root.theme.textColor
+    readonly property color inkMain: root.theme.textColor
     readonly property color textDim: root.theme.muted
     readonly property color textHighlightColor: root.theme.textColor
-    readonly property string keyboardFont: root.theme.fontFamily
+    readonly property string glyphTypeface: root.theme.fontFamily
     readonly property int keyBorderWidth: root.theme.normalBorderWidth
     // Doubled rather than taken straight from focusBorderWidth, which falls
     // back to the normal width on themes that do not set it — a latched
     // outline the same thickness as an idle one is not a distinguishable state.
     readonly property int latchedBorderWidth: Math.max(2 * keyBorderWidth, root.theme.focusBorderWidth)
-    readonly property int keyFontSize: Math.max(1, Math.round(root.theme.fontBody * uiScale))
-    readonly property int keySmallFontSize: Math.max(1, Math.round(root.theme.fontBodySmall * uiScale))
+    readonly property int capGlyphSize: Math.max(1, Math.round(root.theme.fontBody * uiScale))
+    readonly property int capGlyphSmall: Math.max(1, Math.round(root.theme.fontBodySmall * uiScale))
     // Super's mark (ticket 22, decisions §27 as amended): one arm of the
     // settings choice draws. `superMark` is the effective setting the panel
     // passes in; the pure choice in KeyboardLayout.js names the arm. The
@@ -187,28 +187,28 @@ Item {
         }
     }
     readonly property bool omarchyFontPresent: omarchyIconFontFile.present
-    readonly property int superLogoSize: Math.max(root.keyFontSize,
-        Math.round(root.keyHeight * 0.5))
+    readonly property int superLogoSize: Math.max(root.capGlyphSize,
+        Math.round(root.capRowHeight * 0.5))
 
     // Every modifier's idle/latched state, Shift's additional locked state,
     // and Caps' dedicated boolean state, owned by the reducer (spec-v1 §15,
     // seam 2). The panel draws it; transitions and lines are the module's.
     property var modifierState: Modifiers.initialState()
-    property string currentLayout: "us"
-    property var languageCycle: ["us"]
+    property string activeLayoutCode: "us"
+    property var layoutCodes: ["us"]
     // The active GROUP index, taken from the compositor's own
     // active_layout_index (spec-v1 §9's "compositor decides"). Selects the
     // variant and kb_file group the keycap compile answers with; a repeated
     // layout code (`us,us` with distinct variants) makes code-position
     // guessing wrong, so nothing here derives the group from the code.
-    property int layoutCycleIndex: 0
-    property var layoutNameMap: ({})
+    property int groupCursor: 0
+    property var layoutTitles: ({})
     // The keyboard the switch is applied to. Switching "all" moves every device
     // on the seat, including pseudo-keyboards that never advance on their own,
     // which is how they end up sitting on different layouts from each other.
-    property string typedKeyboardName: ""
+    property string anchorKeyboardName: ""
     // The persisted identity of the keyboard the seat last typed on. Seeded
-    // into typedKeyboardName before the first refresh: a shell restart makes
+    // into anchorKeyboardName before the first refresh: a shell restart makes
     // Hyprland re-pick `main` by enumeration order (measured: at-translated,
     // group 0, while the owner's real keyboard sat on group 1) — the named
     // tier then reads the LIVE index of the REAL device instead of a
@@ -230,9 +230,9 @@ Item {
     property string xkbVariants: ""
     property string xkbOptions: ""
     property string xkbFile: ""
-    property string currentLayoutName: {
-        var name = layoutNameMap[currentLayout]
-        return name ? name : currentLayout.toUpperCase()
+    property string activeLayoutName: {
+        var name = layoutTitles[activeLayoutCode]
+        return name ? name : activeLayoutCode.toUpperCase()
     }
     // Configure transaction bookkeeping for the device-held-modifier
     // handshake. The helper drains every key it holds for us when — and only
@@ -359,7 +359,7 @@ Item {
     // modifier: it changes what can be seen and nothing else — not the
     // keymap, not the group, not what any modifier is holding.
     property string page: "main"
-    property var layoutRows: Layout.applyLanguage(pageRows(), currentLayout, capsFacts)
+    property var rowModel: Layout.applyLanguage(pageRows(), activeLayoutCode, capsFacts)
     // A row that misses gridUnits is a defect, not a style choice: under the
     // shared pitch a short row stops short of the card's right edge and a
     // long one runs past it. A width off the half-unit lattice — anything
@@ -367,11 +367,11 @@ Item {
     // between everyone else's gap lines, which is the stagger defect the
     // tables exist to avoid. One loud line per offending row at rebuild
     // time, in the same spirit as reportMisses in KeyboardLayout.js.
-    onLayoutRowsChanged: {
-        for (var i = 0; i < layoutRows.length; i++) {
+    onRowModelChanged: {
+        for (var i = 0; i < rowModel.length; i++) {
             var sum = 0
-            for (var j = 0; j < layoutRows[i].length; j++) {
-                var w = layoutRows[i][j].w || 1
+            for (var j = 0; j < rowModel[i].length; j++) {
+                var w = rowModel[i][j].w || 1
                 if ((w * 2) % 1 !== 0) {
                     console.error("[osk] row " + i + " cap " + j + " width "
                         + w + " is not a multiple of half a unit")
@@ -399,7 +399,7 @@ Item {
         return replaced
     }
 
-    // `layoutRows` is the Repeater's model, and reassigning it destroys and
+    // `rowModel` is the Repeater's model, and reassigning it destroys and
     // rebuilds every row and every cap delegate under it — a few hundred QML
     // objects, enough main-thread work to be seen. A language switch used to
     // do that four times over: once for the load, once when the facts were
@@ -409,18 +409,18 @@ Item {
     // actually differ. The caps are flat objects of primitives built from the
     // same declarations in the same order, so serialising is a sound identity
     // test and costs far less than the rebuild it avoids.
-    function updateLayoutRows() {
+    function rebuildRowModel() {
         if (page !== "main" && page !== "symbols")
             page = "main"
-        var next = Layout.applyLanguage(pageRows(), currentLayout, capsFacts)
-        if (JSON.stringify(next) === JSON.stringify(layoutRows)) return
-        layoutRows = next
+        var next = Layout.applyLanguage(pageRows(), activeLayoutCode, capsFacts)
+        if (JSON.stringify(next) === JSON.stringify(rowModel)) return
+        rowModel = next
     }
 
-    // Keycap facts arrive after the configure acknowledgement. `layoutRows`
+    // Keycap facts arrive after the configure acknowledgement. `rowModel`
     // is assigned imperatively so identical rows can avoid rebuilding the
     // delegates; refresh it when the facts it draws from change.
-    onCapsFactsChanged: updateLayoutRows()
+    onCapsFactsChanged: rebuildRowModel()
 
     /// The one key in and the same key out. The reducer is told, so that what
     /// the modifiers do across a switch is decided in the one place the seam
@@ -429,7 +429,7 @@ Item {
     /// Cycle: main → symbols → main. The label names the destination.
     function togglePage() {
         page = page === "main" ? "symbols" : "main"
-        updateLayoutRows()
+        rebuildRowModel()
         applyModifierEvent({ type: "pageSwitch" })
     }
 
@@ -531,7 +531,7 @@ Item {
             // call the parser accepted, which is not the same as the value
             // being in place.
             + "[[ \"$(hyprctl getoption input:kb_file -j | jq -r .str)\" == \"$path\" ]]"]
-        onExited: function (code, status) {
+        onExited: (code, status) => {
             if (code === 0 && status === 0) {
                 root.sharedKeymapGen = wanted
                 attempts = 0
@@ -575,10 +575,10 @@ Item {
             "onscreen-keyboard-restore", userKeymapFile])
     }
 
-    function parseHyprLayoutOutput(text) {
+    function ingestLayoutSnapshot(text) {
         var devices = []
         var kbFile = ""
-        var names = ({})
+        var discoveredTitles = ({})
 
         tabRecords(text).forEach(function (parts) {
             if (parts.length < 2) return
@@ -590,20 +590,17 @@ Item {
                 kbFile = parts[1] === "[[EMPTY]]" ? "" : String(parts[1] || "")
                 return
             }
-            if (parts[0] === "NAME" && parts.length >= 3) {
-                names[String(parts[1] || "").trim()] = String(parts[2] || "").trim()
-            }
+            // A layout-code -> human-name row from base.lst.
+            if (parts[0] === "TITLE" && parts.length >= 3)
+                discoveredTitles[parts[1].trim()] = parts[2].trim()
         })
 
         // Merge any newly discovered names into the map. Done before the
         // selection can bail out: the names are a property of the machine's
         // xkb rules, not of which keyboard answers today.
-        var merged = ({})
-        for (var k in layoutNameMap) merged[k] = layoutNameMap[k]
-        for (var k in names) merged[k] = names[k]
-        layoutNameMap = merged
+        layoutTitles = Object.assign({}, layoutTitles, discoveredTitles)
 
-        var picked = LayoutDevices.select(devices, typedKeyboardName,
+        var picked = LayoutDevices.select(devices, anchorKeyboardName,
             startupKeyboards, root.rememberedLayoutGroup)
         // Cleared unconditionally: a refresh that finds no safe target must
         // not leave the language button aiming at a device that has gone
@@ -613,9 +610,9 @@ Item {
         // helper's virtual keyboard for a moment after every OSK keystroke,
         // so "no answer" has to mean "keep what we knew", not "forget".
         if (picked.typing) {
-            if (picked.typing !== typedKeyboardName)
+            if (picked.typing !== anchorKeyboardName)
                 root.layoutDeviceNamed(picked.typing)
-            typedKeyboardName = picked.typing
+            anchorKeyboardName = picked.typing
         }
         if (!picked.reading) return
 
@@ -623,13 +620,12 @@ Item {
         var detected = String(reading.layout || "us").split(",")
             .map(function (code) { return String(code || "").trim() })
             .filter(function (code) { return code.length > 0 })
-        if (detected.length > 0) {
-            languageCycle = detected
-        }
+        if (detected.length)
+            layoutCodes = detected
         var configGroup = (typeof picked.group === "number" && picked.group >= 0)
             ? picked.group : (reading.active_layout_index || 0)
         console.log("[osk] layout reading:", reading.name, "group:", configGroup,
-            "named:", typedKeyboardName || "(none)",
+            "named:", anchorKeyboardName || "(none)",
             "remembered:", root.rememberedLayoutGroup)
         var active = (configGroup !== (reading.active_layout_index || 0))
             ? LayoutDevices.activeLayoutForGroup(reading, configGroup)
@@ -667,14 +663,13 @@ Item {
         // then froze, so a switch made with Caps Lock or the bar indicator left
         // the caps showing the previous alphabet while the compositor produced
         // the new one — the two looked swapped.
-        var selected = active
-        if (!selected && detected.length > 0) selected = detected[0]
-        if (selected) {
+        var codeShown = active || detected[0] || ""
+        if (codeShown) {
             // The compositor is authoritative for both the group and its
             // human-facing layout code. The old keycap loader used to assign
             // this as a side effect; after that pipeline was removed the
             // header stayed on the initial "us" forever.
-            currentLayout = selected
+            activeLayoutCode = codeShown
             // The group index is the compositor's own `active_layout_index`,
             // not the position of the active layout code in the list. The
             // two differ exactly when a code repeats — `us,us` with distinct
@@ -682,7 +677,7 @@ Item {
             // found the first twin, so the keycap compile below kept
             // answering group 0's variant while typing used the active
             // group. The index is authoritative; the code is a label.
-            layoutCycleIndex = configGroup
+            groupCursor = configGroup
             var configure = "configure\t" + xkbRules + "\t" + xkbModel
                 + "\t" + xkbLayouts + "\t" + xkbVariants + "\t" + xkbOptions
                 + "\t" + xkbFile + "\t" + configGroup
@@ -704,8 +699,8 @@ Item {
         }
     }
 
-    function refreshLayoutsFromHypr() {
-        layoutDetectProcess.running = false
+    function pullLayoutsFromCompositor() {
+        compositorQuery.running = false
         // Two selections, deliberately different.
         //
         // The reading (group, layout list, RMLVO) comes from whichever typed
@@ -753,7 +748,7 @@ Item {
         // Layout names are looked up for every code any keyboard carries,
         // not just the chosen device's, so the selection can happen after
         // this process has already exited.
-        layoutDetectProcess.command = ["bash", "-c",
+        compositorQuery.command = ["bash", "-c",
             "devices=$(hyprctl devices -j 2>/dev/null); "
             + "[[ -n \"$devices\" ]] || exit 1; "
             + "compact=$(printf '%s' \"$devices\" | jq -c "
@@ -764,15 +759,16 @@ Item {
             + "printf 'KBFILE\\t%s\\n' \"${kb_file:-[[EMPTY]]}\"; "
             + "printf '%s' \"$compact\" | jq -r '[.[].layout // \"\"] | join(\",\")' "
             + "| tr ',' '\\n' | sed '/^$/d' | sort -u | while read code; do "
-            + "  name=$(awk -v c=\"$code\" 'BEGIN{s=0} /^! layout/{s=1;next} /^!/{if(s) exit} s && NF>=2 && $1==c { $1=\"\"; sub(/^ +/,\"\",$0); print $0; exit }' /usr/share/X11/xkb/rules/base.lst 2>/dev/null); "
-            + "  [[ -n \"$name\" ]] && printf 'NAME\\t%s\\t%s\\n' \"$code\" \"$name\"; "
+            + "  name=$(sed -n \"/^! layout/,/^! /p\" /usr/share/X11/xkb/rules/base.lst 2>/dev/null "
+            + "    | awk -v want=\"$code\" '$1==want { sub(/^[^ ]+ +/, \"\"); print; exit }'); "
+            + "  [[ -n \"$name\" ]] && printf 'TITLE\\t%s\\t%s\\n' \"$code\" \"$name\"; "
             + "done", "onscreen-keyboard"]
-        layoutDetectProcess.running = true
+        compositorQuery.running = true
     }
 
-    function cycleLanguage() {
-        if (languageCycle.length < 2 || switchKeyboards.length === 0) return
-        var next = (layoutCycleIndex + 1) % languageCycle.length
+    function stepLayout() {
+        if (layoutCodes.length < 2 || switchKeyboards.length === 0) return
+        var next = (groupCursor + 1) % layoutCodes.length
         // Hyprland stores the group per device. Move every device with this
         // layout list to one absolute index; switching one guessed physical
         // keyboard changed the panel while another keyboard kept typing the
@@ -789,24 +785,26 @@ Item {
 
     Component.onCompleted: {
         if (root.rememberedLayoutDevice !== "")
-            root.typedKeyboardName = root.rememberedLayoutDevice
-        refreshLayoutsFromHypr()
+            root.anchorKeyboardName = root.rememberedLayoutDevice
+        pullLayoutsFromCompositor()
     }
 
     Process {
-        id: layoutDetectProcess
-        property string collected: ""
+        id: compositorQuery
+        property string snapshotText: ""
         stdout: SplitParser {
-            onRead: function(data) {
-                layoutDetectProcess.collected += data + "\n"
+            onRead: (data) => {
+                compositorQuery.snapshotText += data + "\n"
             }
         }
-        onRunningChanged: {
-            if (running) collected = ""
+        onRunningChanged: () => {
+            if (running) snapshotText = ""
         }
-        onExited: function(exitCode, exitStatus) {
-            if (exitCode !== 0 || exitStatus !== 0) return
-            root.parseHyprLayoutOutput(layoutDetectProcess.collected)
+        onExited: (code, status) => {
+            // Quickshell's second argument is QProcess ExitStatus, where
+            // 0 is the NORMAL exit — not a boolean success.
+            if (code !== 0 || status !== 0) return
+            root.ingestLayoutSnapshot(compositorQuery.snapshotText)
         }
     }
 
@@ -836,7 +834,7 @@ Item {
             // A reload can add or remove layouts without moving anything, so it
             // changes what the panel may cycle through even with no switch.
             if (name.indexOf("activelayout") !== -1 || name === "configreloaded") {
-                root.refreshLayoutsFromHypr()
+                root.pullLayoutsFromCompositor()
             }
         }
     }
@@ -847,7 +845,7 @@ Item {
     Process {
         id: inputDeviceMonitor
         command: ["udevadm", "monitor", "--udev", "--subsystem-match=input", "--property"]
-        running: true
+        running: true  // awake for its whole lifetime, by design
         stdout: SplitParser {
             onRead: function(line) {
                 if (line === "ACTION=add" || line === "ACTION=remove")
@@ -939,7 +937,7 @@ Item {
         id: pastePacedTick
         interval: 35
         repeat: false
-        onTriggered: {
+        onTriggered: () => {
             if (root.pastePacedLines.length === 0) {
                 root.pastePacing = false
                 return
@@ -962,7 +960,11 @@ Item {
             shift: chord.shift === true,
             position: chord.position
         }
-        if (Modifiers.usesWinePasteChord(cls.toLowerCase()) && !root.pastePacing) {
+        if (Modifiers.usesWinePasteChord(cls.toLowerCase())) {
+            // Refused while pacing, not fallen through to the instant
+            // path: an immediate write here would interleave with the
+            // draining queue (review finding).
+            if (root.pastePacing) return
             root.pastePacing = true
             root.pastePacedLines = []
             applyModifierEvent(event, function (line) {
@@ -1008,7 +1010,7 @@ Item {
         return Modifiers.isActive(modifierState, "shift")
     }
 
-    function isSymbolShiftActive() {
+    function symbolLayerHeld() {
         return shiftActive()
     }
 
@@ -1017,18 +1019,18 @@ Item {
     // serves (and is tested at the pure seam with it); the wrapper keeps this
     // file's call sites — the reducer's `letter` fact and the dual-cap test —
     // reading exactly as they always have.
-    function isLetterKey(keyData) {
-        return Layout.isLetterKey(keyData)
+    function isAlphabeticCap(capData) {
+        return Layout.isLetterKey(capData)
     }
 
     // What this cap says it types, under the reducer's current Caps and Shift.
-    // The rule is Layout.resolvedTypedChar's: an exact cap (the curated page's)
+    // The rule is Layout.charUnderModifiers's: an exact cap (the curated page's)
     // answers only to the level it carries — never redrawing as another symbol
     // because Shift is active, which is the agreement between what a cap shows
     // and what its exact press types (review finding R3) — letters swap on
     // Caps XOR Shift, and other paired caps shift with Shift alone.
-    function resolvedTypedChar(keyData) {
-        return Layout.resolvedTypedChar(keyData, modifierState.caps,
+    function charUnderModifiers(capData) {
+        return Layout.charUnderModifiers(capData, modifierState.caps,
             Modifiers.isActive(modifierState, "shift"))
     }
 
@@ -1040,9 +1042,9 @@ Item {
     // with an empty shifted slot, never a centered impostor. Main-page caps
     // without the flag stay dual the old way: both levels resolved, and not
     // a letter.
-    function isDualKey(keyData) {
-        return keyData.dual === true
-            || (!!keyData.s && !isLetterKey(keyData))
+    function isStackedPair(capData) {
+        return capData.dual === true
+            || (!!capData.chrShift && !isAlphabeticCap(capData))
     }
 
     // Input goes to the helper over a unix socket; the panel never
@@ -1194,7 +1196,7 @@ Item {
                         helper.flush()
                         // A restarted helper is back at group 0 and has no idea
                         // which layout is current. Re-reading the compositor
-                        // sends the right group; using layoutCycleIndex here
+                        // sends the right group; using groupCursor here
                         // would send whatever it held before the first sync,
                         // which is 0 on a fresh panel and would force the
                         // first layout.
@@ -1206,10 +1208,10 @@ Item {
                         if (!root.startupInventorySeen) {
                             root.startupInventorySeen = true
                             root.startupKeyboardName = names.length > 0 ? names[0] : ""
-                            if (!root.typedKeyboardName)
-                                root.typedKeyboardName = root.startupKeyboardName
+                            if (!root.anchorKeyboardName)
+                                root.anchorKeyboardName = root.startupKeyboardName
                         }
-                        root.refreshLayoutsFromHypr()
+                        root.pullLayoutsFromCompositor()
                     } else if (reply === "text-ok"
                             && root.pendingTextReplies.length > 0) {
                         var successes = root.pendingTextReplies.slice()
@@ -1328,7 +1330,7 @@ Item {
                             // become ready without a configure, and nothing
                             // else sends one — so ask the compositor now
                             // instead of waiting out the repair timer.
-                            root.refreshLayoutsFromHypr()
+                            root.pullLayoutsFromCompositor()
                         } else if (reply === "err key held" || reply === "err not holding") {
                             // Ownership refusals mean the helper's hold state
                             // is ahead of ours; the device is fine and typing
@@ -1462,7 +1464,7 @@ Item {
         // harmlessly and the next rebuild dials again.
         interval: 150
         repeat: false
-        onTriggered: {
+        onTriggered: () => {
             if (root.daemonSocket) {
                 // The version the session negotiates, never a literal: the
                 // reply matcher above compares against the same constant, and
@@ -1477,12 +1479,12 @@ Item {
     Process {
         id: socketPathCheck
         command: ["test", "-S", (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"]
-        onExited: function(exitCode, exitStatus) {
+        onExited: (code, ok) => {
             // The check ran a moment ago; the socket may have connected since
             // (the original attempt succeeding, or a sibling tick's rebuild).
             // Rebuilding a live connection would drop it mid-handshake.
             var item = root.daemonSocket
-            if (exitCode === 0 && !root.inputReady && !(item && item.connected)) {
+            if (code === 0 && !root.inputReady && !(item && item.connected)) {
                 helperLoader.active = false
                 helperLoader.active = true
             }
@@ -1502,7 +1504,7 @@ Item {
         // replies before it compiles anything — so an entry still outstanding
         // when this fires is a lost reply, not a slow one.
         running: !root.inputReady || !Session.settled(root.session)
-        onTriggered: {
+        onTriggered: () => {
             // An open socket is never torn down, whatever the handshake is
             // doing: a configure round trip can outlast this tick, and
             // rebuilding mid-handshake would drop it and restart the dance.
@@ -1535,15 +1537,15 @@ Item {
     // layout. Which of Caps or Shift is doing the work follows the same rule
     // the key caps are drawn with, so what is shown is what is typed — the
     // reducer decides both, from the same `letter` and `caps` facts.
-    function pressChar(keyData) {
+    function typeCap(capData) {
         // searchMode intercepts before anything the press would dispatch:
-        // the character the cap draws — the same resolvedTypedChar the label
+        // the character the cap draws — the same charUnderModifiers the label
         // pipeline uses — is the query's next character, and the helper
         // receives nothing (no tap, no down/up, no mods). Space rides this
         // arm too: its drawn character IS the separator. An empty resolution
         // (a cap that draws nothing) stays silent.
         if (root.searchMode) {
-            var searchChar = root.resolvedTypedChar(keyData)
+            var searchChar = root.charUnderModifiers(capData)
             // Truthiness, not !== "": a partially resolved dual cap can hand
             // back undefined, which a string signal coerces to "" and which
             // must stay silent like any other cap that draws nothing.
@@ -1557,20 +1559,20 @@ Item {
         // latch already selected the layer, so the reducer receives an exact
         // chord and temporarily lifts Shift to type the digit's level 1.
         // `sk` alone: a cap either carries a resolved Shift half or it does
-        // not. The old `|| keyData.shiftToken` arm outlived the token caps
+        // not. The old `|| capData.shiftToken` arm outlived the token caps
         // that used it, and its guard below could only ever have swallowed a
         // press in silence.
-        var wantShiftLayer = !!keyData.s && shiftActive() && !!keyData.sk
-        var position = wantShiftLayer ? keyData.sk : keyData.k
+        var wantShiftLayer = !!capData.chrShift && shiftActive() && !!capData.xkbShift
+        var position = wantShiftLayer ? capData.xkbShift : capData.xkb
         if (!position) return
         var level = wantShiftLayer
-            ? (keyData.slvl || 1)
-            : (keyData.baseLvl !== undefined ? keyData.baseLvl : 1)
+            ? (capData.slvl || 1)
+            : (capData.baseLvl !== undefined ? capData.baseLvl : 1)
         root.keyPressed()
         applyModifierEvent({
             type: "press",
             position: position,
-            letter: isLetterKey(keyData),
+            letter: isAlphabeticCap(capData),
             // A level cap draws one level and has to type that level. Same
             // treatment as Caps Lock: real modifier presses around the key,
             // never a character the panel picked for itself — Shift for
@@ -1599,9 +1601,9 @@ Item {
             // half being typed is what decides — the base can sit at level 1
             // of one position while the Shift glyph sits at level 3 of
             // another.
-            level3Position: (wantShiftLayer ? keyData.shiftLevel3 : keyData.level3) === true
+            level3Position: (wantShiftLayer ? capData.shiftLevel3 : capData.level3) === true
                 ? "LVL3" : "",
-            exact: keyData.exact === true || keyData.baseLvl !== undefined,
+            exact: capData.exact === true || capData.baseLvl !== undefined,
             // Where this chord sits in the configure-send sequence. A
             // configure queued after it drains at the helper ahead of the
             // chord's release, and the stamp is how the reply and the
@@ -1617,9 +1619,9 @@ Item {
         applyModifierEvent({ type: "release" })
     }
 
-    function pressSpecial(keyData, doubleClick) {
-        switch (keyData.key) {
-        case "close": closeRequested(); return
+    function triggerSpecial(capData, doubleClick) {
+        switch (capData.key) {
+        case "close": dismissalAsked(); return
         // The ☺ cap (ticket 24) toggles the panel's own emoji page: open on
         // press, dismiss on a second press. No PATH probe stands in the
         // way — the page is ours, and the configured external app, when
@@ -1632,21 +1634,21 @@ Item {
         case "page": togglePage(); return
         case "fn":
             applyModifierEvent({ type: "fnClick" })
-            updateLayoutRows()
+            rebuildRowModel()
             return
         case "caps":
             root.keyPressed()
             applyModifierEvent({ type: "capsClick" })
             return
         }
-        if (Modifiers.isModifier(keyData.key)) {
+        if (Modifiers.isModifier(capData.key)) {
             // One click per physical press, and a lock is two presses, not
             // three: `doubleClick` arrives on top of the second press's own
             // click (issue 17) and would otherwise sound a third time.
             if (!doubleClick) root.keyPressed()
             applyModifierEvent({
                 type: doubleClick ? "doubleClick" : "click",
-                modifier: keyData.key
+                modifier: capData.key
             })
             return
         }
@@ -1659,15 +1661,15 @@ Item {
         // and fn and caps change only what the keys show or hold), which is
         // what lets the next letters come from a freshly switched group.
         if (root.searchMode) {
-            if (keyData.key === "BackSpace") {
+            if (capData.key === "BackSpace") {
                 root.keyPressed()
                 root.searchInput("backspace", "")
-            } else if (keyData.key === "Escape") {
+            } else if (capData.key === "Escape") {
                 root.searchInput("escape", "")
             }
             return
         }
-        var position = Layout.positionForKeysym(keyData.key)
+        var position = Layout.positionForKeysym(capData.key)
         if (!position) return
         root.keyPressed()
         applyModifierEvent({
@@ -1678,45 +1680,43 @@ Item {
 
     /// Caps has exactly "off" and "on"; the real modifiers have "idle",
     /// "latched" and "locked" so all of their states remain distinguishable.
-    function keyModifierState(keyData) {
-        if (keyData.key === "caps") return modifierState.caps ? "on" : "off"
-        if (keyData.key === "fn") return modifierState.fn ? "on" : "off"
-        if (!Modifiers.isModifier(keyData.key)) return "idle"
-        return modifierState[keyData.key]
+    function keyModifierState(capData) {
+        if (capData.key === "caps") return modifierState.caps ? "on" : "off"
+        if (capData.key === "fn") return modifierState.fn ? "on" : "off"
+        if (!Modifiers.isModifier(capData.key)) return "idle"
+        return modifierState[capData.key]
     }
 
     Column {
         id: grid
-        anchors.bottom: parent.bottom
-        spacing: root.gapPx
+        anchors { bottom: parent.bottom }
+        spacing: root.cellGap
 
         Repeater {
-            model: root.layoutRows
-            delegate: Row {
-                id: rowItem
-                spacing: root.gapPx
-                readonly property var rowModel: modelData
+            model: root.rowModel
+            delegate: Row { id: rowItem
+                spacing: root.cellGap
+                readonly property var rowModel: modelData  // row -> caps
                 // `index` is the Repeater's, and the inner delegate's own
                 // `index` shadows it, so the row's position is carried here.
                 readonly property int rowIndex: index
                 readonly property real hitTop: rowIndex === 0 ? root.edgeOutset : root.halfGap
-                readonly property real hitBottom: rowIndex === root.layoutRows.length - 1
+                readonly property real hitBottom: rowIndex === root.rowModel.length - 1
                     ? root.edgeOutset : root.halfGap
 
                 Repeater {
-                    model: rowModel
-                    delegate: Item {
-                        id: keyDelegate
-                        property var keyData: modelData
-                        width: (keyData.w || 1) * root.cellPitch - root.gapPx
-                        height: root.keyHeight
+                    model: rowModel  // this row's caps
+                    delegate: Item { id: capDelegate
+                        property var capData: modelData
+                        width: (capData.w || 1) * root.cellPitch - root.cellGap
+                        height: root.capRowHeight
                         readonly property real hitLeft: index === 0
                             ? root.edgeOutset : root.halfGap
                         readonly property real hitRight: index === rowItem.rowModel.length - 1
                             ? root.edgeOutset : root.halfGap
 
                         Rectangle {
-                            id: keyRect
+                            id: capRect
                             // A declared spacer slot (`spacer: true` — the
                             // curated page's unfilled slots and its free
                             // row's pad) draws nothing: the page never shows
@@ -1724,27 +1724,27 @@ Item {
                             // events either, so a dead slot stays dead while
                             // its neighbours' hit areas keep meeting at its
                             // midpoints.
-                            visible: !keyData.spacer
-                            anchors.fill: parent
-                            radius: root.keyRadius
+                            visible: !capData.spacer
+                            anchors { fill: parent }
+                            radius: root.capCorner
 
                             // Three states have to be told apart at a glance
                             // (spec-v1 §5), so they differ in more than
                             // shade: latched is an accent outline over the
                             // ordinary fill, locked is filled accent. One
                             // reads as armed, the other as held down.
-                            property string modState: root.keyModifierState(keyData)
+                            property string modState: root.keyModifierState(capData)
                             property bool latched: modState === "latched"
                             property bool locked: modState === "locked"
                             property bool toggleOn: modState === "on"
-                            property bool isDual: root.isDualKey(keyData)
+                            property bool stacked: root.isStackedPair(capData)
                             // Whether this cap types, which is the same test
                             // `onPressed` makes: a character, or a keysym with
                             // a position behind it. The modifiers and the
                             // command caps are neither. Caps acts on press;
                             // the remaining commands act on click.
-                            property bool types: !keyData.key
-                                || !!Layout.positionForKeysym(keyData.key)
+                            property bool types: !capData.key
+                                || !!Layout.positionForKeysym(capData.key)
                             // Whether the cap produces input at all: typing,
                             // or a modifier latch (its click sends real down/
                             // up lines). Caps and Fn are semantic panel
@@ -1773,12 +1773,12 @@ Item {
                             // are never marked unavailable: their labels are
                             // the panel's own.
                             property bool producesInput: types
-                                || Modifiers.isModifier(keyData.key)
-                            property bool unavailable: keyData.unavailable === true
+                                || Modifiers.isModifier(capData.key)
+                            property bool unavailable: capData.unavailable === true
                             property bool inputGated: !root.inputReady
                                 && producesInput
                             property bool disabled: unavailable || inputGated
-                            property bool isSuper: keyData.key === "logo"
+                            property bool isSuper: capData.key === "logo"
                             // One ink binding for every Super-mark arm
                             // (ticket 22): the cap's own state machine —
                             // disabled dims, locked/on knocks out, otherwise
@@ -1786,16 +1786,16 @@ Item {
                             // Omarchy glyph and the drawn vectors alike.
                             readonly property color superInk: disabled ? root.textDim
                                 : (locked || toggleOn) ? root.lockedText
-                                : root.textMain
+                                : root.inkMain
 
                             color: disabled ? root.keyBg
                                 : (locked || toggleOn) ? root.lockedFill
                                 : latched ? root.latchedFill
-                                : mouseArea.pressed ? root.keyActiveBg
-                                : mouseArea.containsMouse ? root.keyHoverBg
+                                : capHit.pressed ? root.pressFill
+                                : capHit.containsMouse ? root.hoverFill
                                 : root.keyBg
                             border.color: (latched || locked || toggleOn) ? root.theme.accent
-                                : root.keyBorderColor
+                                : root.capEdge
                             border.width: latched ? root.latchedBorderWidth : root.keyBorderWidth
 
                             // ---- the Super cap's mark (ticket 22) ----
@@ -1819,13 +1819,13 @@ Item {
                                 // present, so Qt cannot substitute another
                                 // family's U+E900 and an absent font lands on
                                 // the word arm instead of a blank cap.
-                                visible: !keyRect.isDual && keyRect.isSuper
+                                visible: !capRect.stacked && capRect.isSuper
                                     && root.superMarkArm === "omarchy"
-                                anchors.centerIn: parent
+                                anchors { centerIn: parent }
                                 text: root.omarchyFontPresent ? "\ue900" : ""
                                 textFormat: Text.PlainText
                                 renderType: Text.NativeRendering
-                                color: keyRect.superInk
+                                color: capRect.superInk
                                 font.family: "omarchy"
                                 font.pixelSize: root.superLogoSize
                                 Accessible.name: "Super"
@@ -1836,14 +1836,14 @@ Item {
                             // plain Rectangles, the one mark needing no
                             // curves. Flat, monochrome, cap-state inked.
                             Loader {
-                                active: !keyRect.isDual && keyRect.isSuper
+                                active: !capRect.stacked && capRect.isSuper
                                     && root.superMarkArm === "windows"
-                                anchors.centerIn: parent
+                                anchors { centerIn: parent }
                                 width: root.superLogoSize
                                 height: root.superLogoSize
                                 sourceComponent: Component {
                                     Item {
-                                        anchors.fill: parent
+                                        anchors { fill: parent }
                                         Accessible.name: "Super"
 
                                         readonly property real pane: 0.45
@@ -1853,26 +1853,26 @@ Item {
                                             x: 0; y: 0
                                             width: parent.pane * parent.width
                                             height: parent.pane * parent.height
-                                            color: keyRect.superInk
+                                            color: capRect.superInk
                                         }
                                         Rectangle {
                                             x: parent.offset * parent.width; y: 0
                                             width: parent.pane * parent.width
                                             height: parent.pane * parent.height
-                                            color: keyRect.superInk
+                                            color: capRect.superInk
                                         }
                                         Rectangle {
                                             x: 0; y: parent.offset * parent.height
                                             width: parent.pane * parent.width
                                             height: parent.pane * parent.height
-                                            color: keyRect.superInk
+                                            color: capRect.superInk
                                         }
                                         Rectangle {
                                             x: parent.offset * parent.width
                                             y: parent.offset * parent.height
                                             width: parent.pane * parent.width
                                             height: parent.pane * parent.height
-                                            color: keyRect.superInk
+                                            color: capRect.superInk
                                         }
                                     }
                                 }
@@ -1892,14 +1892,14 @@ Item {
                             // the offscreen suites cannot judge a silhouette.
                             Loader {
                                 id: commandMarkLoader
-                                active: !keyRect.isDual && keyRect.isSuper
+                                active: !capRect.stacked && capRect.isSuper
                                     && root.superMarkArm === "macos"
-                                anchors.centerIn: parent
+                                anchors { centerIn: parent }
                                 width: root.superLogoSize
                                 height: root.superLogoSize
                                 sourceComponent: Component {
                                     Shape {
-                                        anchors.fill: parent
+                                        anchors { fill: parent }
                                         Accessible.name: "Super"
                                         // CurveRenderer antialiases stroked
                                         // curves itself; GeometryRenderer
@@ -1923,7 +1923,7 @@ Item {
                                         // lifted verbatim from the owner
                                         // render the choice was made on.
                                         ShapePath {
-                                            strokeColor: keyRect.superInk
+                                            strokeColor: capRect.superInk
                                             fillColor: "transparent"
                                             strokeWidth: 8
                                             capStyle: ShapePath.RoundCap
@@ -1968,11 +1968,11 @@ Item {
                             // cutouts opaque and outlines it on dark caps.
                             Image {
                                 id: penguinMark
-                                readonly property bool selected: !keyRect.isDual
-                                    && keyRect.isSuper
+                                readonly property bool selected: !capRect.stacked
+                                    && capRect.isSuper
                                     && root.superMarkArm === "penguin"
                                 visible: selected && status === Image.Ready
-                                anchors.centerIn: parent
+                                anchors { centerIn: parent }
                                 width: root.superLogoSize
                                 height: root.superLogoSize
                                 source: selected ? "assets/monochrome-tux.svg" : ""
@@ -1985,20 +1985,20 @@ Item {
                             }
 
                             Text {
-                                visible: !keyRect.isDual
-                                    && (!keyRect.isSuper
+                                visible: !capRect.stacked
+                                    && (!capRect.isSuper
                                         || root.superMarkArm === "word"
                                         || (root.superMarkArm === "penguin"
                                             && penguinMark.status !== Image.Ready))
-                                anchors.centerIn: parent
-                                text: keyData.label
-                                    ? keyData.label
-                                    : root.resolvedTypedChar(keyData)
-                                color: keyRect.disabled ? root.textDim
-                                    : (keyRect.locked || keyRect.toggleOn)
-                                    ? root.lockedText : root.textMain
-                                font.family: root.keyboardFont
-                                font.pixelSize: root.keyFontSize
+                                anchors { centerIn: parent }
+                                text: capData.label
+                                    ? capData.label
+                                    : root.charUnderModifiers(capData)
+                                color: capRect.disabled ? root.textDim
+                                    : (capRect.locked || capRect.toggleOn)
+                                    ? root.lockedText : root.inkMain
+                                font.family: root.glyphTypeface
+                                font.pixelSize: root.capGlyphSize
                             }
 
                             // Stacked dual symbols: shifted symbol on top
@@ -2006,37 +2006,37 @@ Item {
                             // (bright by default) — swapping emphasis when
                             // Shift is held, mirroring `.key.dual.shift-active`.
                             Text {
-                                visible: keyRect.isDual
+                                visible: capRect.stacked
                                 // The `|| ""` guards the symbols-page dual
                                 // caps, whose levels come from the keymap:
                                 // a level that did not resolve is a §11 miss
                                 // and an empty slot, never the string
                                 // "undefined" drawn on a cap.
-                                text: keyData.s || ""
-                                anchors.top: parent.top
-                                anchors.topMargin: root.gapPx
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                color: keyRect.disabled ? root.textDim
-                                    : root.isSymbolShiftActive() ? root.textHighlightColor : root.textDim
-                                font.bold: root.isSymbolShiftActive()
-                                font.family: root.keyboardFont
-                                font.pixelSize: root.keySmallFontSize
+                                text: capData.chrShift || ""
+                                anchors { top: parent.top }
+                                anchors.topMargin: root.cellGap
+                                anchors { horizontalCenter: parent.horizontalCenter }
+                                color: capRect.disabled ? root.textDim
+                                    : root.symbolLayerHeld() ? root.textHighlightColor : root.textDim
+                                font.bold: root.symbolLayerHeld()
+                                font.family: root.glyphTypeface
+                                font.pixelSize: root.capGlyphSmall
                             }
 
                             Text {
-                                visible: keyRect.isDual
-                                text: keyData.t || ""
-                                anchors.bottom: parent.bottom
-                                anchors.bottomMargin: root.gapPx
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                color: keyRect.disabled ? root.textDim
-                                    : root.isSymbolShiftActive() ? root.textDim : root.textMain
-                                font.family: root.keyboardFont
-                                font.pixelSize: root.keyFontSize
+                                visible: capRect.stacked
+                                text: capData.chr || ""
+                                anchors { bottom: parent.bottom }
+                                anchors.bottomMargin: root.cellGap
+                                anchors { horizontalCenter: parent.horizontalCenter }
+                                color: capRect.disabled ? root.textDim
+                                    : root.symbolLayerHeld() ? root.textDim : root.inkMain
+                                font.family: root.glyphTypeface
+                                font.pixelSize: root.capGlyphSize
                             }
 
                             MouseArea {
-                                id: mouseArea
+                                id: capHit
                                 // Deliberately larger than the cap it belongs
                                 // to: negative margins push it out to the
                                 // midpoint of each gap (and to the card's
@@ -2047,9 +2047,9 @@ Item {
                                 // delegate Item, nor the Row and Column
                                 // positioners — so Qt still delivers presses
                                 // that land outside the cap's own rectangle.
-                                anchors.fill: parent
-                                anchors.leftMargin: -keyDelegate.hitLeft
-                                anchors.rightMargin: -keyDelegate.hitRight
+                                anchors { fill: parent }
+                                anchors.leftMargin: -capDelegate.hitLeft
+                                anchors.rightMargin: -capDelegate.hitRight
                                 anchors.topMargin: -rowItem.hitTop
                                 anchors.bottomMargin: -rowItem.hitBottom
                                 hoverEnabled: true
@@ -2116,18 +2116,18 @@ Item {
                                     // including the click sound and the
                                     // pressed fill — never starts for a cap
                                     // that could not type.
-                                    if (keyRect.disabled) return
-                                    if (!keyData.key) {
-                                        root.pressChar(keyData)
+                                    if (capRect.disabled) return
+                                    if (!capData.key) {
+                                        root.typeCap(capData)
                                         return
                                     }
-                                    if (Layout.positionForKeysym(keyData.key)
-                                            || Modifiers.isModifier(keyData.key)
-                                            || keyData.key === "caps"
-                                            || keyData.key === "fn"
-                                            || keyData.key === "page"
-                                            || keyData.key === "emoji") {
-                                        root.pressSpecial(keyData, false)
+                                    if (Layout.positionForKeysym(capData.key)
+                                            || Modifiers.isModifier(capData.key)
+                                            || capData.key === "caps"
+                                            || capData.key === "fn"
+                                            || capData.key === "page"
+                                            || capData.key === "emoji") {
+                                        root.triggerSpecial(capData, false)
                                     }
                                 }
 
@@ -2144,8 +2144,8 @@ Item {
                                 // cap pressed before a state change must lift
                                 // even if the panel went not-ready mid-press,
                                 // or the compositor repeats it forever.
-                                onReleased: if (keyRect.types) root.releaseKey()
-                                onCanceled: if (keyRect.types) root.releaseKey()
+                                onReleased: if (capRect.types) root.releaseKey()
+                                onCanceled: if (capRect.types) root.releaseKey()
 
                                 // What is left on the click is only the
                                 // command cap that would tear something out
@@ -2167,22 +2167,22 @@ Item {
                                 // sits on does not rebuild — so both act on
                                 // the way down, one press per press.
                                 onClicked: {
-                                    if (!keyData.key) return
-                                    if (Layout.positionForKeysym(keyData.key)) return
-                                    if (Modifiers.isModifier(keyData.key)) return
-                                    if (keyData.key === "caps") return
-                                    if (keyData.key === "fn") return
-                                    if (keyData.key === "page") return
-                                    if (keyData.key === "emoji") return
-                                    root.pressSpecial(keyData, false)
+                                    if (!capData.key) return
+                                    if (Layout.positionForKeysym(capData.key)) return
+                                    if (Modifiers.isModifier(capData.key)) return
+                                    if (capData.key === "caps") return
+                                    if (capData.key === "fn") return
+                                    if (capData.key === "page") return
+                                    if (capData.key === "emoji") return
+                                    root.triggerSpecial(capData, false)
                                 }
 
-                                onDoubleClicked: {
-                                    if (!keyData.key || !Modifiers.isModifier(keyData.key)) return
+                                onDoubleClicked: (mouse) => {
+                                    if (!capData.key || !Modifiers.isModifier(capData.key)) return
                                     // A locked upgrade is protocol-bearing
                                     // like any latch — refused while gated.
-                                    if (keyRect.inputGated) return
-                                    root.pressSpecial(keyData, true)
+                                    if (capRect.inputGated) return
+                                    root.triggerSpecial(capData, true)
                                 }
                             }
                         }

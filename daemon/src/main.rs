@@ -2885,7 +2885,8 @@ fn run(mut queue: EventQueue<State>, mut state: State) -> Result<(), Box<dyn std
 }
 
 fn run_main() -> Result<(), Box<dyn std::error::Error>> {
-    let connection = Connection::connect_to_env()?;
+    let connection = Connection::connect_to_env()
+        .map_err(|e| StartupFailure(e.to_string()))?;
     let mut queue = connection.new_event_queue();
     let qh = queue.handle();
     connection.display().get_registry(&qh, ());
@@ -2915,7 +2916,7 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             "virtual keyboard did not become ready"
         };
-        return Err(reason.into());
+        return Err(StartupFailure(reason.to_string()).into());
     }
 
     // `keyboard.keymap` is asynchronous. Do not expose the control socket until
@@ -2925,17 +2926,21 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
     connection.flush()?;
     queue.roundtrip(&mut state)?;
 
-    let path = socket_path()?;
+    let path = socket_path().map_err(|e| StartupFailure(e.to_string()))?;
     // Refuse to be the second instance. Connecting is the test rather than a
     // lock file, because it tells a live owner apart from a socket left behind
     // by a crash; unlinking blindly would let a newcomer steal the path from a
     // running daemon and leave both serving.
     if UnixStream::connect(&path).is_ok() {
-        return Err(format!("another daemon already owns {}", path.display()).into());
+        return Err(StartupFailure(format!(
+            "another daemon already owns {}",
+            path.display()
+        ))
+        .into());
     }
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path)
-        .map_err(|error| format!("cannot bind {}: {error}", path.display()))?;
+        .map_err(|error| StartupFailure(format!("cannot bind {}: {error}", path.display())))?;
     eprintln!("listening on {}", path.display());
 
     // The shutdown wait. It does the release with ordinary Wayland writes on
@@ -3002,17 +3007,33 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
     run(queue, state)
 }
 
+/// A failure before the service is up and serving: retrying cannot
+/// change it while the session stands, so the unit's
+/// RestartPreventExitStatus=78 (EX_CONFIG) makes systemd fail closed
+/// instead of spinning StartLimit.
+#[derive(Debug)]
+struct StartupFailure(String);
+impl std::fmt::Display for StartupFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for StartupFailure {}
+
 fn main() {
     if let Err(error) = run_main() {
-        // The startup errors this binary can return are session facts —
-        // no Wayland display, no zwp_virtual_keyboard_manager_v1, no seat,
-        // a second live instance, an unbindable socket — and retrying
-        // cannot change any of them while the session stands. The unit's
-        // RestartPreventExitStatus=78 (EX_CONFIG) exists exactly so
-        // systemd fails closed instead of spinning StartLimit on them;
-        // runtime failures stay exit 1 and keep Restart=always.
-        eprintln!("omarchy-osk-daemon: {error}");
-        std::process::exit(78);
+        let startup = error
+            .downcast_ref::<StartupFailure>()
+            .is_some();
+        if startup {
+            eprintln!("omarchy-osk-daemon: {error}");
+            std::process::exit(78);
+        }
+        // A RUNTIME failure (a dispatch error with the session standing):
+        // exit 1 keeps Restart=always — a stopped-here 78 would leave the
+        // keyboard dead until a manual restart (review finding).
+        eprintln!("omarchy-osk-daemon: runtime failure: {error}");
+        std::process::exit(1);
     }
 }
 

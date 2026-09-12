@@ -25,7 +25,7 @@ QtObject {
                 emojiDelivery: "direct",
                 // The Super cap says what the key is (ticket 22).
                 superMark: "word",
-                keyRadius: 8,
+                capCorner: 8,
                 panelRadius: 12,
                 keyBackground: "#303030",
                 panelBackground: "#202020",
@@ -102,6 +102,33 @@ QtObject {
             T.equal(Config.reloadState(parsed.value,
                 JSON.stringify({ emoji_usage: records })).error,
                 "Invalid value for emoji_usage")
+        })
+
+        T.test("layout state fields reject malformed values", function () {
+            // The remembered layout identity (ticket 19's restart fallback):
+            // the group is a whole XKB index 0-3, the device any string; a
+            // malformed edit preserves the previous state with the §5
+            // semantics, exactly like every other state field.
+            var previous = { center: null, emojiUsage: [],
+                emojiSkinTone: "", layoutGroup: 2,
+                layoutDevice: "ite-keyboard" }
+            var badGroup = Config.reloadState(previous,
+                '{"layout_group": 4}')
+            T.equal(badGroup.value, previous)
+            T.equal(badGroup.error, "Invalid value for layout_group")
+            var fracGroup = Config.reloadState(previous,
+                '{"layout_group": 1.5}')
+            T.equal(fracGroup.error, "Invalid value for layout_group")
+            var badDevice = Config.reloadState(previous,
+                '{"layout_device": 7}')
+            T.equal(badDevice.value, previous)
+            T.equal(badDevice.error, "Invalid value for layout_device")
+            // Valid values round-trip.
+            var okState = Config.reloadState(previous,
+                '{"layout_group": 3, "layout_device": "at-translated-set-2-keyboard"}')
+            T.equal(okState.error, "")
+            T.equal(okState.value.layoutGroup, 3)
+            T.equal(okState.value.layoutDevice, "at-translated-set-2-keyboard")
         })
 
         T.test("emoji delivery mode is direct or clipboard, direct by default", function () {
@@ -201,7 +228,7 @@ QtObject {
         T.test("sparse overrides merge over theme tokens and shipped fallbacks", function () {
             var parsed = Config.reloadOverrides({}, '{"sound":true,"accent_color":"#ff0000"}')
             var effective = Config.merge(Config.maintainerDefaults(), parsed.value, {
-                keyRadius: 4,
+                capCorner: 4,
                 panelRadius: 6,
                 keyBackground: "#111111",
                 panelBackground: "#222222",
@@ -211,7 +238,7 @@ QtObject {
             })
             T.equal(parsed.error, "")
             T.equal(effective.sound, true)
-            T.equal(effective.keyRadius, 4)
+            T.equal(effective.capCorner, 4)
             T.equal(effective.accentColor, "#ff0000")
         })
 
@@ -311,7 +338,7 @@ QtObject {
             // Zero is square keys, and the panel radius bound the popover
             // steppers to is a legal value.
             var squares = Config.reloadOverrides({}, '{"key_radius":0,"panel_radius":32}')
-            T.deepEqual(squares.value, { keyRadius: 0, panelRadius: 32 })
+            T.deepEqual(squares.value, { capCorner: 0, panelRadius: 32 })
 
             // Validation trims, so storage trims: a padded hex passes as the
             // same colour and must not come back padded from the panel's
@@ -328,10 +355,10 @@ QtObject {
             // An alias is the same field, so the same rule applies — an
             // invalid alias is a malformed edit with the §5 preservation
             // semantics, never a silently accepted guess.
-            var previous = { keyRadius: 8, sound: true }
+            var previous = { capCorner: 8, sound: true }
             var cases = [
-                ['{"keyRadius":-20}', "Invalid value for keyRadius"],
-                ['{"keyRadius":9.5,"key_radius":8.5}', "Invalid value for keyRadius"],
+                ['{"capCorner":-20}', "Invalid value for capCorner"],
+                ['{"capCorner":9.5,"key_radius":8.5}', "Invalid value for capCorner"],
                 ['{"sizePreset":null}', "Invalid value for sizePreset"],
                 ['{"size_preset":null}', "Invalid value for size_preset"],
                 ['{"sizePreset":"huge"}', "Invalid value for sizePreset"],
@@ -351,9 +378,9 @@ QtObject {
             // Valid aliases become the override under the runtime name, with
             // the same trimming the canonical spellings get.
             T.deepEqual(Config.reloadOverrides({},
-                '{"keyRadius":12,"accentColor":" #00ff00 ","sound":true,'
+                '{"capCorner":12,"accentColor":" #00ff00 ","sound":true,'
                 + '"emojiApp":" emote ","sizePreset":"x-large"}').value, {
-                keyRadius: 12,
+                capCorner: 12,
                 accentColor: "#00ff00",
                 sound: true,
                 emojiApp: "emote",
@@ -368,22 +395,22 @@ QtObject {
             // edit is malformed as a whole; the runtime keeps its last valid
             // map and the file keeps its exact text (the FileView never
             // writes while an error stands).
-            var previous = { keyRadius: 8 }
-            var orderA = Config.reloadOverrides(previous, '{"key_radius":8,"keyRadius":-20}')
+            var previous = { capCorner: 8 }
+            var orderA = Config.reloadOverrides(previous, '{"key_radius":8,"capCorner":-20}')
             T.equal(orderA.value, previous)
-            T.equal(orderA.error, "Invalid value for keyRadius")
-            var orderB = Config.reloadOverrides(previous, '{"keyRadius":-20,"key_radius":8}')
+            T.equal(orderA.error, "Invalid value for capCorner")
+            var orderB = Config.reloadOverrides(previous, '{"capCorner":-20,"key_radius":8}')
             T.equal(orderB.value, previous)
-            T.equal(orderB.error, "Invalid value for keyRadius")
+            T.equal(orderB.error, "Invalid value for capCorner")
 
             // Duplicate semantic names that both validate are deterministic
             // too: the canonical spelling wins, not the JSON order.
-            var canonicalA = Config.reloadOverrides({}, '{"key_radius":8,"keyRadius":12}')
+            var canonicalA = Config.reloadOverrides({}, '{"key_radius":8,"capCorner":12}')
             T.equal(canonicalA.error, "")
-            T.deepEqual(canonicalA.value, { keyRadius: 8 })
-            var canonicalB = Config.reloadOverrides({}, '{"keyRadius":12,"key_radius":8}')
+            T.deepEqual(canonicalA.value, { capCorner: 8 })
+            var canonicalB = Config.reloadOverrides({}, '{"capCorner":12,"key_radius":8}')
             T.equal(canonicalB.error, "")
-            T.deepEqual(canonicalB.value, { keyRadius: 8 })
+            T.deepEqual(canonicalB.value, { capCorner: 8 })
             // And the panel's own save therefore normalizes the file to the
             // one canonical value rather than whichever spelling came last.
             T.equal(Config.serializeOverrides(canonicalA.value),
@@ -490,15 +517,15 @@ QtObject {
         T.test("a base-only dual cap keeps the stacked shape and stays enabled", function () {
             // symbols v2 renders dual caps stacked; a shifted level that
             // resolves to nothing leaves the pair one-sided — the flag, not
-            // a resolved `s`, is what the panel's isDualKey reads, so the
+            // a resolved `s`, is what the panel's isStackedPair reads, so the
             // cap stays stacked and enabled with its miss reported.
             //
             // Levels arrive as the helper's resolved facts, which is the only
             // shape there is since ticket 05 retired the keysym-token path.
             var misses = []
-            var cap = Layout.capOverlay({ k: "AD11", dual: true },
+            var cap = Layout.capOverlay({ xkb: "AD11", dual: true },
                 [{ text: "[" }, { none: "" }], misses)
-            T.equal(cap.t, "[")
+            T.equal(cap.chr, "[")
             T.equal(cap.hasOwnProperty("s"), false)
             T.equal(cap.hasOwnProperty("unavailable"), false)
             T.equal(misses.length, 1)
@@ -509,25 +536,25 @@ QtObject {
             // with both levels taken from the compiled keymap — the stacked
             // shifted/base pair the main page draws, with the level typed
             // following Shift. No built-in character behind either level.
-            var pair = Layout.capOverlay({ k: "AD11", dual: true },
+            var pair = Layout.capOverlay({ xkb: "AD11", dual: true },
                 [{ text: "[" }, { text: "{" }], [])
-            T.equal(pair.t, "[")
-            T.equal(pair.s, "{")
+            T.equal(pair.chr, "[")
+            T.equal(pair.chrShift, "{")
             T.equal(pair.hasOwnProperty("unavailable"), false)
 
             // Digits: the top row types them without leaving the page, one
             // press either way.
-            var digit = Layout.capOverlay({ k: "AE01", dual: true },
+            var digit = Layout.capOverlay({ xkb: "AE01", dual: true },
                 [{ text: "1" }, { text: "!" }], [])
-            T.equal(digit.t, "1")
-            T.equal(digit.s, "!")
+            T.equal(digit.chr, "1")
+            T.equal(digit.chrShift, "!")
 
             // A level the keymap does not carry is a per-cap miss, and the
             // level that resolves still draws.
             var misses = []
-            var hole = Layout.capOverlay({ k: "AB08", dual: true },
+            var hole = Layout.capOverlay({ xkb: "AB08", dual: true },
                 [{ text: "," }, { none: "" }], misses)
-            T.equal(hole.t, ",")
+            T.equal(hole.chr, ",")
             T.equal(hole.hasOwnProperty("s"), false)
             T.deepEqual(misses, ["AB08^=<no symbol at this level>"])
 
@@ -535,7 +562,7 @@ QtObject {
             // press-refusing, never a silent blank — with both holes
             // reported.
             var both = []
-            var dead = Layout.capOverlay({ k: "AB09", dual: true }, [], both)
+            var dead = Layout.capOverlay({ xkb: "AB09", dual: true }, [], both)
             T.equal(dead.hasOwnProperty("t"), false)
             T.equal(dead.hasOwnProperty("s"), false)
             T.equal(dead.unavailable, true)

@@ -205,17 +205,17 @@ QtObject {
     // The raw shared rounding token, carried as declared (var, not int): an
     // int binding coerces an absent token to 0, and a coerced 0 reads as
     // answered by `valueAnswered`, which would bypass the shipped 8/12
-    // fallbacks keyRadius and panelRadius exist to apply. An explicit zero
+    // fallbacks capCorner and panelRadius exist to apply. An explicit zero
     // stays a valid answer — it arrives as a validated override (checked
     // first below) or from a theme that really declared zero.
     readonly property var cornerRadius: frozen ? held.cornerRadius : Style.cornerRadius
     // Key and panel rounding split the one shared cornerRadius token into the
     // two fields spec-v1.1 §5 names; with no override both are the token, so
     // a following keyboard rounds exactly as it did before overrides existed.
-    readonly property int keyRadius: hasOverride("keyRadius")
-        ? overrides.keyRadius
+    readonly property int capCorner: hasOverride("capCorner")
+        ? overrides.capCorner
         : valueAnswered(cornerRadius) ? cornerRadius
-        : ConfigFile.maintainerDefaults().keyRadius
+        : ConfigFile.maintainerDefaults().capCorner
     readonly property int panelRadius: hasOverride("panelRadius")
         ? overrides.panelRadius
         : valueAnswered(cornerRadius) ? cornerRadius

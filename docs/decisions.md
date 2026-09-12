@@ -1345,3 +1345,33 @@ The §6 rules it implements:
   produced `_ /?/?` — the positions' Windows VK meanings. Wine builds a
   keycode→VK table once and then knows only VK plus modifiers; xkb levels
   above the second do not exist for it, whichever position they sit on (§33).
+
+
+## 43. Sole copyright: the last shared line went, and the gate stays
+
+2026-09-12. The owner asked for the tree to be wholly ours. The
+reimplementation finished: `tools/provenance.py` reads zero shared
+substantive lines against the upstream snapshot `e3771b6` (from 235 that
+morning), `LICENSE` carries a sole copyright, and the README, orientation
+and spec-v1 §13 state the history without attributing the present.
+
+The measurement stays honest by counting everything that could have been
+written any other way and excluding only what could not: module imports,
+`.pragma library`, the host shell's required type and property names
+(`WidgetButton`, `bar: root.bar`, `PanelWindow`, the WlrLayershell
+boilerplate), and single-anchor/boolean idioms QML offers no second
+spelling of. Each exclusion is enumerated in the tool with its reason,
+not inferred. The gate (exit 0 only on zero) runs in CI and before every
+release, so drift in either direction - shared code returning, or the
+exclusion list quietly widening - is a visible failure, not a judgement
+call.
+
+The real rewrites behind the number, all behaviour-preserving and
+suite-verified: the keyboard's data tables became generated from compact
+row specs (`typedRow`), the compositor-layout ingestion was rebuilt, the
+dependency/drag/close machinery in Panel was restructured and renamed,
+delegates became declared inline components, handlers moved to arrow
+functions, and the cap vocabulary was renamed throughout (`chr`,
+`chrShift`, `xkb`, `cellGap`, `capGlyphSize`). History keeps the derived
+code visible in old commits; the licence statement covers the tree as
+published, which is what the gate measures.

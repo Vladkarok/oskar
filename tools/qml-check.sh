@@ -64,7 +64,15 @@ FATAL='no matching signal found for handler'
 status=0
 found=""
 while IFS= read -r file; do
-  output=$("$qmllint" "${imports[@]}" "$root/$file" 2>&1 || true)
+  # A syntax error makes qmllint exit nonzero and print NOTHING (verified:
+  # rc=255, empty output) - the 8993aad class shipped an unparseable
+  # Panel.qml through this check because only the FATAL text was gated.
+  # The exit code is the gate for that class; the text gate stays for the
+  # handler-contract class.
+  if ! output=$("$qmllint" "${imports[@]}" "$root/$file" 2>&1); then
+    found+="syntax/parse failure: $file"$'\n'
+    status=1
+  fi
   hits=$(printf '%s\n' "$output" | grep -E "$FATAL" || true)
   if [[ -n "$hits" ]]; then
     found+="$hits"$'\n'

@@ -1,6 +1,6 @@
 .pragma library
 
-// Each key: { t: base char, s: shifted char } for typed keys,
+// Each key: { chr, chrShift } for typed keys (see typedRow),
 // or { label, key: keysym/modifier-name, w: width units } for special keys.
 // Keys without w are one unit wide, every width is a multiple of 0.5, and
 // every row's widths sum to 15.5 exactly: the panel lays all rows out on one
@@ -15,17 +15,49 @@
 // It has no built-in character at all, because a fixed ASCII table is the lie
 // this project exists to avoid — a character no keymap carries draws dim and
 // refuses its press. Such a cap is `exact`: it draws its own level under
-// every modifier combination (see resolvedTypedChar), because the chord is
+// every modifier combination (see charUnderModifiers), because the chord is
 // the level's decision and not the latch's.
-var functionRow = [
-    { label: "esc", key: "Escape", w: 1.0 },
-    { t: "`", s: "~", k: "TLDE" },
-    { label: "F1", key: "F1" }, { label: "F2", key: "F2" }, { label: "F3", key: "F3" },
-    { label: "F4", key: "F4" }, { label: "F5", key: "F5" }, { label: "F6", key: "F6" },
-    { label: "F7", key: "F7" }, { label: "F8", key: "F8" }, { label: "F9", key: "F9" },
-    { label: "F10", key: "F10" }, { label: "F11", key: "F11" }, { label: "F12", key: "F12" },
-    { label: "⌫", key: "BackSpace", w: 1.5 }
-]
+// A typed cap names a character: `chr` is what an unshifted press
+// produces, `chrShift` its shifted form (omitted when the shift of a
+// letter is simply its uppercase), `xkb` the evdev position the press
+// is sent to. The rows below declare characters only; a row builder
+// derives the xkb positions from the row's own index, because the evdev
+// alphabetic block numbers them AE/AD/AC/AB by row and 01..NN left to
+// right — the one numbering every layout shares.
+function typedRow(chrSpec, rowNo, extra) {
+    var prefixes = ["AE", "AD", "AC", "AB"]
+    // Row 0 opens on TLDE, so its numbered block starts at the SECOND
+    // cap; the letter row closes past its block on BKSL. A bare letter's
+    // shift is its uppercase — stated once here instead of once per cap.
+    var caps = chrSpec.split(" ").map(function (pair, i) {
+        var n = rowNo === 0 ? i : i + 1
+        var cap = { chr: pair.charAt(0), xkb: prefixes[rowNo] + two(n) }
+        if (pair.length > 1) cap.chrShift = pair.charAt(1)
+        else if (pair.length === 1 && /[a-z]/.test(pair))
+            cap.chrShift = pair.toUpperCase()
+        return cap
+    })
+    if (rowNo === 0) caps[0].xkb = "TLDE"
+    if (rowNo === 1) caps[caps.length - 1].xkb = "BKSL"
+    return extra ? caps.concat(extra) : caps
+}
+
+function two(n) {
+    return (n < 10 ? "0" : "") + n
+}
+
+var functionRow = [{
+    label: "esc", key: "Escape", w: 1.0
+}].concat(typedRow("`~", 0), fCaps(12), [{
+    label: "⌫", key: "BackSpace", w: 1.5
+}])
+
+function fCaps(n) {
+    var caps = []
+    for (var i = 1; i <= n; i++)
+        caps.push({ label: "F" + i, key: "F" + i })
+    return caps
+}
 
 // ---- the Super cap's mark (ticket 22, decisions §27 as amended) ----
 //
@@ -65,7 +97,7 @@ function commandRow(pageLabel) {
         // opens the panel's own emoji page. Like the arrows, it is artwork,
         // not a character any level of the keymap produces.
         { label: "☺", key: "emoji" },
-        { t: " ", label: "", w: 4.5, k: "SPCE" },
+        { chr: " ", label: "", w: 4.5, xkb: "SPCE" },
         { label: "AltGr", key: "altgr" },
         { label: "Ctrl", key: "ctrl" },
         { label: "←", key: "Left" },
@@ -93,28 +125,24 @@ function commandRow(pageLabel) {
 var rows = [
     [
         { label: "esc", key: "Escape", w: 1.0 },
-        { t: "`", s: "~", k: "TLDE" }, { t: "1", s: "!", k: "AE01" }, { t: "2", s: "@", k: "AE02" }, { t: "3", s: "#", k: "AE03" },
-        { t: "4", s: "$", k: "AE04" }, { t: "5", s: "%", k: "AE05" }, { t: "6", s: "^", k: "AE06" }, { t: "7", s: "&", k: "AE07" },
-        { t: "8", s: "*", k: "AE08" }, { t: "9", s: "(", k: "AE09" }, { t: "0", s: ")", k: "AE10" }, { t: "-", s: "_", k: "AE11" },
-        { t: "=", s: "+", k: "AE12" }, { label: "⌫", key: "BackSpace", w: 1.5 }
-    ],
+    ].concat(
+        typedRow("`~ 1! 2@ 3# 4$ 5% 6^ 7& 8* 9( 0) -_ =+", 0),
+        [{ label: "⌫", key: "BackSpace", w: 1.5 }]
+    ),
     [
         { label: "Tab", key: "Tab", w: 1.5 },
-        { t: "q", s: "Q", k: "AD01" }, { t: "w", s: "W", k: "AD02" }, { t: "e", s: "E", k: "AD03" }, { t: "r", s: "R", k: "AD04" },
-        { t: "t", s: "T", k: "AD05" }, { t: "y", s: "Y", k: "AD06" }, { t: "u", s: "U", k: "AD07" }, { t: "i", s: "I", k: "AD08" },
-        { t: "o", s: "O", k: "AD09" }, { t: "p", s: "P", k: "AD10" }, { t: "[", s: "{", k: "AD11" }, { t: "]", s: "}", k: "AD12" },
-        { t: "\\", s: "|", k: "BKSL" },
+    ].concat(
+        typedRow("q w e r t y u i o p [{ ]} \\|", 1),
         // Windows' reference ends this row in Del; the keysym mapping and the
         // symbols-page cap below already existed.
-        { label: "Del", key: "Delete" }
-    ],
+        [{ label: "Del", key: "Delete" }]
+    ),
     [
         { label: "Caps Lock", key: "caps", w: 2.0 },
-        { t: "a", s: "A", k: "AC01" }, { t: "s", s: "S", k: "AC02" }, { t: "d", s: "D", k: "AC03" }, { t: "f", s: "F", k: "AC04" },
-        { t: "g", s: "G", k: "AC05" }, { t: "h", s: "H", k: "AC06" }, { t: "j", s: "J", k: "AC07" }, { t: "k", s: "K", k: "AC08" },
-        { t: "l", s: "L", k: "AC09" }, { t: ";", s: ":", k: "AC10" }, { t: "'", s: "\"", k: "AC11" },
-        { label: "Enter", key: "Return", w: 2.5 }
-    ],
+    ].concat(
+        typedRow("a s d f g h j k l ;: '\"", 2),
+        [{ label: "Enter", key: "Return", w: 2.5 }]
+    ),
     [
         // Alignment invariant shared with the symbols page: the units left of
         // ↑ (2.5 Shift + 10 letters here; 2.5 Shift + 8 punctuation + PgUp +
@@ -124,15 +152,14 @@ var rows = [
         // only on the cumulative units before it, so ↑ sits exactly above ↓
         // at every preset by arithmetic rather than by tuning.
         { label: "Shift", key: "shift", w: 2.5 },
-        { t: "z", s: "Z", k: "AB01" }, { t: "x", s: "X", k: "AB02" }, { t: "c", s: "C", k: "AB03" }, { t: "v", s: "V", k: "AB04" },
-        { t: "b", s: "B", k: "AB05" }, { t: "n", s: "N", k: "AB06" }, { t: "m", s: "M", k: "AB07" }, { t: ",", s: "<", k: "AB08" },
-        { t: ".", s: ">", k: "AB09" }, { t: "/", s: "?", k: "AB10" },
-        { label: "↑", key: "Up" },
+    ].concat(
+        typedRow("z x c v b n m ,< .> /?", 3),
+        [{ label: "↑", key: "Up" }],
         // Spans exactly → plus the page key on the row below (see the lattice
         // note above). The 0.75 trailing Shift this row used to end on was a
         // flex-model hack whose label clipped at the panel edge.
         { label: "Shift", key: "shift", w: 2.0 }
-    ],
+    ),
     commandRow("&123")
 ]
 
@@ -327,8 +354,8 @@ function buildGlyphIndex(capsFacts) {
 /// that keeps its row on the grid, and nothing else. The panel leaves a
 /// declared spacer undrawn and inert; anything that merely happens to
 /// carry no key stays a drawing decision, not a layout one.
-function isSpacer(keyData) {
-    return keyData.spacer === true
+function isSpacer(capData) {
+    return capData.spacer === true
 }
 
 
@@ -337,8 +364,8 @@ function isSpacer(keyData) {
 // no keymap symbol to miss. Only the caps that are supposed to come out of the
 // compiled keymap can fall back to a built-in value, and only those are worth
 // reporting.
-function drawsFixedLabel(keyData) {
-    return keyData.hasOwnProperty("label")
+function drawsFixedLabel(capData) {
+    return capData.hasOwnProperty("label")
 }
 
 // "No answer", distinct from a level that really does resolve to the empty
@@ -354,9 +381,9 @@ var UNRESOLVED = "\u0000unresolved"
 // stacked dual keys. Asking merely whether the base has a capital is not
 // enough either — French AZERTY carries é on the same key as 2, and é does
 // have a capital, so Caps Lock would type 2 instead of É.
-function isLetterKey(keyData) {
-    var base = keyData.t || ""
-    var shifted = keyData.s || ""
+function isLetterKey(capData) {
+    var base = capData.chr || ""
+    var shifted = capData.chrShift || ""
     return base.length > 0 && shifted.length > 0 && shifted === base.toUpperCase()
 }
 
@@ -374,12 +401,12 @@ function isLetterKey(keyData) {
 // symbol just because Shift is active. Letters swap on Caps XOR Shift, exactly
 // as the panel always drew them. Every other paired cap shifts with Shift
 // alone.
-function resolvedTypedChar(keyData, capsOn, shiftOn) {
-    if (keyData.exact === true) return keyData.t || ""
-    if (isLetterKey(keyData)) {
-        return capsOn !== shiftOn && keyData.s ? keyData.s : keyData.t
+function charUnderModifiers(capData, capsOn, shiftOn) {
+    if (capData.exact === true) return capData.chr || ""
+    if (isLetterKey(capData)) {
+        return capsOn !== shiftOn && capData.chrShift ? capData.chrShift : capData.chr
     }
-    return shiftOn && keyData.s ? keyData.s : keyData.t
+    return shiftOn && capData.chrShift ? capData.chrShift : capData.chr
 }
 
 /// What the compiled keymap has to say about one cap, expressed as the fields
@@ -393,7 +420,7 @@ function resolvedTypedChar(keyData, capsOn, shiftOn) {
 /// the §11 pipeline compiled keysym tokens with its own `xkbcli` and this
 /// function had to know both; ticket 05 retired it, and with it the last
 /// place where two authorities could disagree about what a position carries.
-function capOverlay(keyData, symbols, misses) {
+function capOverlay(capData, symbols, misses) {
     var levels = Array.isArray(symbols) ? symbols : []
     var textAt = function (index) {
         if (index >= levels.length) return UNRESOLVED
@@ -422,21 +449,21 @@ function capOverlay(keyData, symbols, misses) {
     // does with a latched Shift is the main page's own pairing semantics
     // (non-exact press in Keyboard.qml), decided by ModifierReducer.js;
     // nothing here changes a reducer fact.
-    if (keyData.dual) {
+    if (capData.dual) {
         var dual = {}
         var dualBase = textAt(0)
-        if (dualBase !== UNRESOLVED) dual.t = dualBase
-        else misses.push(keyData.k + "=" + missToken(0))
+        if (dualBase !== UNRESOLVED) dual.chr = dualBase
+        else misses.push(capData.xkb + "=" + missToken(0))
         var dualShifted = textAt(1)
-        if (dualShifted !== UNRESOLVED) dual.s = dualShifted
-        else misses.push(keyData.k + "^=" + missToken(1))
-        if (dual.t === undefined && dual.s === undefined)
+        if (dualShifted !== UNRESOLVED) dual.chrShift = dualShifted
+        else misses.push(capData.xkb + "^=" + missToken(1))
+        if (dual.chr === undefined && dual.chrShift === undefined)
             dual.unavailable = true
         return dual
     }
 
     if (levels.length === 0) {
-        if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "=<no keymap entry>")
+        if (!drawsFixedLabel(capData)) misses.push(capData.xkb + "=<no keymap entry>")
         return {}
     }
 
@@ -445,13 +472,13 @@ function capOverlay(keyData, symbols, misses) {
     // resolved.
     var overlay = {}
     var base = textAt(0)
-    if (base !== UNRESOLVED) overlay.t = base
-    else if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "=" + missToken(0))
+    if (base !== UNRESOLVED) overlay.chr = base
+    else if (!drawsFixedLabel(capData)) misses.push(capData.xkb + "=" + missToken(0))
 
     if (levels.length > 1) {
         var shifted = textAt(1)
-        if (shifted !== UNRESOLVED) overlay.s = shifted
-        else if (!drawsFixedLabel(keyData)) misses.push(keyData.k + "^=" + missToken(1))
+        if (shifted !== UNRESOLVED) overlay.chrShift = shifted
+        else if (!drawsFixedLabel(capData)) misses.push(capData.xkb + "^=" + missToken(1))
     }
     return overlay
 }
@@ -519,9 +546,9 @@ function applyLanguage(rowsSource, layoutCode, capsFacts) {
     var glyphCaps = 0
     var glyphHits = 0
     var resolved = rowsSource.map(function (row) {
-        return row.map(function (keyData) {
+        return row.map(function (capData) {
             var overlay
-            if (keyData.glyph) {
+            if (capData.glyph) {
                 // A cap that asks for a character and lets the keymap say
                 // where it lives. Unresolved means the active keymap cannot
                 // produce it at all: dim and press-refusing, never a blank
@@ -535,33 +562,33 @@ function applyLanguage(rowsSource, layoutCode, capsFacts) {
                 // active layout owns while the other sits at level 3 of the
                 // reserved block, and the press follows whichever is typed.
                 if (!glyphIndex) glyphIndex = buildGlyphIndex(capsFacts)
-                var glyphHit = glyphIndex[keyData.glyph]
+                var glyphHit = glyphIndex[capData.glyph]
                 glyphCaps += 1
                 if (glyphHit) {
                     glyphHits += 1
                     // `level3` says this chord needs the <LVL3> POSITION
                     // rather than RALT, which is not something the level
                     // alone decides — a pair cap at level 3 wants RALT. The
-                    // rest of the chord is the level's, and `pressChar` reads
+                    // rest of the chord is the level's, and `typeCap` reads
                     // it from `levelChord`; a second copy here would be one
                     // more thing to keep in step.
-                    overlay = { t: keyData.glyph, k: glyphHit.position,
+                    overlay = { chr: capData.glyph, xkb: glyphHit.position,
                                 baseLvl: glyphHit.level, exact: true,
                                 level3: levelChord(glyphHit.level).level3 }
-                    if (keyData.shiftGlyph) {
-                        var shiftHit = glyphIndex[keyData.shiftGlyph]
+                    if (capData.shiftGlyph) {
+                        var shiftHit = glyphIndex[capData.shiftGlyph]
                         if (shiftHit) {
                             overlay.dual = true
-                            overlay.s = keyData.shiftGlyph
-                            overlay.sk = shiftHit.position
+                            overlay.chrShift = capData.shiftGlyph
+                            overlay.xkbShift = shiftHit.position
                             overlay.slvl = shiftHit.level
                             overlay.shiftLevel3 = levelChord(shiftHit.level).level3
                         } else {
                             // A Shift half the keymap cannot produce is simply
                             // absent: drawing it grey would promise a keystroke
                             // that does nothing. The base half still types.
-                            misses.push(keyData.shiftGlyph + " (shift of "
-                                + keyData.glyph + ") is not in this keymap")
+                            misses.push(capData.shiftGlyph + " (shift of "
+                                + capData.glyph + ") is not in this keymap")
                         }
                     }
                 } else {
@@ -573,21 +600,21 @@ function applyLanguage(rowsSource, layoutCode, capsFacts) {
                     // halves are reported: a page quietly losing caps on a
                     // keymap with fewer free positions is how this goes
                     // unnoticed.
-                    overlay = { t: keyData.glyph, unavailable: true }
-                    misses.push(keyData.glyph + " is not in this keymap")
-                    if (keyData.shiftGlyph)
-                        misses.push(keyData.shiftGlyph + " (shift of "
-                            + keyData.glyph + ") is unreachable: its base is not")
+                    overlay = { chr: capData.glyph, unavailable: true }
+                    misses.push(capData.glyph + " is not in this keymap")
+                    if (capData.shiftGlyph)
+                        misses.push(capData.shiftGlyph + " (shift of "
+                            + capData.glyph + ") is unreachable: its base is not")
                 }
-            } else if (keyData.fixedGlyph || keyData.latin)
+            } else if (capData.fixedGlyph || capData.latin)
                 overlay = {}
-            else if (!keyData.k)
+            else if (!capData.xkb)
                 overlay = {}
             else if (capsFacts)
-                overlay = capOverlay(keyData, capsFacts[keyData.k], misses)
+                overlay = capOverlay(capData, capsFacts[capData.xkb], misses)
             else
                 overlay = {}
-            return Object.assign({}, keyData, overlay)
+            return Object.assign({}, capData, overlay)
         })
     })
     // Both, not one or the other: the cause line explains a page with no

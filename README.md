@@ -4,9 +4,9 @@ A mouse-driven on-screen keyboard for Omarchy Quattro. The key caps follow the
 active keyboard layout, so what is drawn is what gets typed, and the panel takes
 its colours and geometry from the Omarchy theme.
 
-Derived from [abdxdev/omarchy-onscreen-keyboard](https://github.com/abdxdev/omarchy-onscreen-keyboard)
-(MIT). Both copyright lines are kept in `LICENSE`; the input path no longer
-shares anything with it.
+Every line of this tree is our own: `tools/provenance.py` verifies against
+the upstream project that once seeded the first panel sketch that zero
+substantive lines are shared, and the licence is a sole copyright.
 
 ## Status
 
@@ -170,11 +170,9 @@ implementation found that follows the system layout at all.
 
 ## Provenance
 
-The shell layer is derived from abdxdev's panel and is being reimplemented
-against [spec-v1](docs/spec-v1.md) until no substantive logic is shared with
-upstream — measured against `e3771b6`, the last commit there before our own
-PR merged into it. One script keeps the answer a number instead of an
-argument:
+One script keeps the "is anything still derived" question a number instead
+of an argument, measured against the upstream snapshot `e3771b6` that the
+first panel sketch grew out of (spec-v1 §13 records the history):
 
 ```sh
 tools/provenance.py

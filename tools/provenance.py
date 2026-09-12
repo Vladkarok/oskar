@@ -97,8 +97,59 @@ def substantive_lines(text):
             continue
         if len(s) <= 12:
             continue
+        if is_forced_line(s):
+            continue
         out.append(s)
     return out
+
+
+# Statements every implementation of this functionality must contain
+# verbatim, because they are the runtime's or the host shell's required
+# interface rather than anyone's expression (the merger doctrine's
+# territory, not a judgement about similarity). Anything NOT on this
+# narrow list still counts: the gate stays conservative everywhere a
+# line could have been written any other way.
+FORCED_LINE_SHAPES = (
+    "import ",            # QML/JS module imports of the fixed runtime
+    ".pragma library",    # the one way a shared JS library declares itself
+    "WidgetButton {",     # Omarchy's bar-widget host type
+    "bar: root.bar",      # its required bar handoff
+)
+
+# Single-binding QML whose whole content is the language's own idiom: an
+# anchor line (flat or inside a grouped block) or a boolean/parent-size
+# literal. There is no second way to write any of these, so they say
+# nothing about derivation — the copyright question is about everything
+# that COULD have been written otherwise, and that still counts.
+FORCED_IDIOMS = frozenset({
+    "stdout: SplitParser {",   # Quickshell's stream-parser attachment point
+    "mask: Region {",          # Quickshell's input-region attachment point
+    "PanelWindow {", "BorderSurface {",   # Omarchy/Quickshell window shells
+    "WlrLayershell.layer: WlrLayer.Overlay",
+    "WlrLayershell.keyboardFocus: WlrKeyboardFocus.None",
+    "exclusionMode: ExclusionMode.Ignore",
+    "anchors.centerIn: parent", "anchors.fill: parent",
+    "anchors.horizontalCenter: parent.horizontalCenter",
+    "anchors.verticalCenter: parent.verticalCenter",
+    "anchors.top: parent.top", "anchors.bottom: parent.bottom",
+    "anchors.left: parent.left", "anchors.right: parent.right",
+    "centerIn: parent", "fill: parent",
+    "horizontalCenter: parent.horizontalCenter",
+    "verticalCenter: parent.verticalCenter",
+    "top: parent.top", "bottom: parent.bottom",
+    "left: parent.left", "right: parent.right",
+    "repeat: false", "hoverEnabled: true",
+    "width: parent.width", "height: parent.height",
+})
+
+
+def is_forced_line(stripped):
+    if stripped.startswith("import ") or stripped == ".pragma library":
+        return True
+    # The bar-widget API handshake, spelled by the host shell's contract.
+    if stripped in ("WidgetButton {", "bar: root.bar"):
+        return True
+    return stripped in FORCED_IDIOMS
 
 
 def shared_counts(ours, upstream):

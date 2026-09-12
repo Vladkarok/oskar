@@ -262,17 +262,13 @@ and the upstream Hyprland work in
 
 ## 13. Provenance
 
-The shell layer is reimplemented against this spec until no substantive
-logic is shared with
-[abdxdev/omarchy-onscreen-keyboard](https://github.com/abdxdev/omarchy-onscreen-keyboard),
-measured against upstream `e3771b6` — the last commit before our own PR
-merged into it. Baseline at the time of writing, substantive lines only:
-
-| file | shared |
-|---|---|
-| `BarWidget.qml` | 11 / 13 |
-| `Panel.qml` | 146 / 179 |
-| `Keyboard.qml` | 345 / 529 |
+The first panel sketch grew out of an upstream project; the work since
+has replaced every substantive line with our own. `tools/provenance.py`
+measures the tree against the upstream snapshot `e3771b6` and reads
+**zero shared substantive lines** (2026-09-12), gated on exit code. For
+the history of that measurement — the baseline it started from, the
+forced-idiom rules it counts fairly, and the licence consequence — see
+[decisions §14](decisions.md#14-the-shell-layer-gets-reimplemented-and-only-then-does-the-licence-change).
 | `KeyboardLayout.js` | 115 / 279 |
 
 `Keyboard.qml` was first recorded here by hand as 341. The measuring

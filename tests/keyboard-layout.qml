@@ -107,35 +107,35 @@ QtObject {
         // ---- the moved display rule, pinned at its new single home ----
 
         T.test("letter caps still swap case under Shift and Caps exactly as before", function () {
-            var q = { t: "q", s: "Q" }
-            T.equal(Layout.resolvedTypedChar(q, false, false), "q")
-            T.equal(Layout.resolvedTypedChar(q, false, true), "Q")
-            T.equal(Layout.resolvedTypedChar(q, true, false), "Q")
+            var q = { chr: "q", chrShift: "Q" }
+            T.equal(Layout.charUnderModifiers(q, false, false), "q")
+            T.equal(Layout.charUnderModifiers(q, false, true), "Q")
+            T.equal(Layout.charUnderModifiers(q, true, false), "Q")
             // Caps and Shift together cancel back to lowercase — the rule the
             // panel has always drawn letters with (caps !== shift).
-            T.equal(Layout.resolvedTypedChar(q, true, true), "q")
+            T.equal(Layout.charUnderModifiers(q, true, true), "q")
         })
 
         T.test("caps alone still does not shift a non-letter paired cap", function () {
-            var dash = { t: "-", s: "_" }
-            T.equal(Layout.resolvedTypedChar(dash, false, false), "-")
-            T.equal(Layout.resolvedTypedChar(dash, false, true), "_")
-            T.equal(Layout.resolvedTypedChar(dash, true, false), "-")
-            T.equal(Layout.resolvedTypedChar(dash, true, true), "_")
+            var dash = { chr: "-", chrShift: "_" }
+            T.equal(Layout.charUnderModifiers(dash, false, false), "-")
+            T.equal(Layout.charUnderModifiers(dash, false, true), "_")
+            T.equal(Layout.charUnderModifiers(dash, true, false), "-")
+            T.equal(Layout.charUnderModifiers(dash, true, true), "_")
         })
 
         T.test("isLetterKey keeps its rule: capital-of-base is a letter, é/2 is not", function () {
-            T.equal(Layout.isLetterKey({ t: "q", s: "Q" }), true)
-            T.equal(Layout.isLetterKey({ t: "\u0430", s: "\u0410" }), true)  // Cyrillic а/А
-            T.equal(Layout.isLetterKey({ t: "\u00e9", s: "\u00c9" }), true)  // é/É
+            T.equal(Layout.isLetterKey({ chr: "q", chrShift: "Q" }), true)
+            T.equal(Layout.isLetterKey({ chr: "\u0430", chrShift: "\u0410" }), true)  // Cyrillic а/А
+            T.equal(Layout.isLetterKey({ chr: "\u00e9", chrShift: "\u00c9" }), true)  // é/É
             // The French é key is not a letter pair: Caps alone types the
             // base é — never É, never 2 — while Shift alone types 2. Asking
             // merely whether the base has a capital would have made Caps
             // behave as if this key were É's.
-            T.equal(Layout.isLetterKey({ t: "\u00e9", s: "2" }), false)
-            T.equal(Layout.isLetterKey({ t: "2", s: "@" }), false)
-            T.equal(Layout.isLetterKey({ t: "-", s: "" }), false)
-            T.equal(Layout.isLetterKey({ t: "", s: "Q" }), false)
+            T.equal(Layout.isLetterKey({ chr: "\u00e9", chrShift: "2" }), false)
+            T.equal(Layout.isLetterKey({ chr: "2", chrShift: "@" }), false)
+            T.equal(Layout.isLetterKey({ chr: "-", chrShift: "" }), false)
+            T.equal(Layout.isLetterKey({ chr: "", chrShift: "Q" }), false)
         })
 
         // ---- ticket 04: the helper-facts (text) overlay path ----
@@ -145,25 +145,25 @@ QtObject {
             var overlay = Layout.capOverlay(
                 { k: "AE01", dual: true },
                 [{ text: "1" }, { text: "!" }], misses)
-            T.equal(overlay.t, "1")
-            T.equal(overlay.s, "!")
+            T.equal(overlay.chr, "1")
+            T.equal(overlay.chrShift, "!")
             T.equal(misses.length, 0)
         })
 
         T.test("a helper level with nothing to draw is a miss and can disable the cap", function () {
             var misses = []
             var overlay = Layout.capOverlay(
-                { k: "TLDE", dual: true },
+                { xkb: "TLDE", dual: true },
                 [{ text: "`" }, { none: "" }], misses)
-            T.equal(overlay.t, "`")
-            T.equal(overlay.s, undefined)
+            T.equal(overlay.chr, "`")
+            T.equal(overlay.chrShift, undefined)
             T.equal(misses.length, 1)
             T.equal(misses[0], "TLDE^=<no symbol at this level>")
             // Both levels unanswered: dim and press-refusing, never blank
             // and typeable (spec-v1.1 \u00a73) — same as the token path.
             var misses2 = []
             var gone = Layout.capOverlay(
-                { k: "TLDE", dual: true },
+                { xkb: "TLDE", dual: true },
                 [{ none: "dead_acute" }, { none: "" }], misses2)
             T.equal(gone.unavailable, true)
             T.equal(misses2.length, 2)
@@ -173,10 +173,10 @@ QtObject {
         T.test("a main-page pair keeps its built-in level where the helper has none", function () {
             var misses = []
             var overlay = Layout.capOverlay(
-                { k: "AD01", t: "q", s: "Q" },
+                { xkb: "AD01", chr: "q", chrShift: "Q" },
                 [{ text: "\u0439" }, { none: "" }], misses)
-            T.equal(overlay.t, "\u0439")
-            T.equal(overlay.s, undefined)
+            T.equal(overlay.chr, "\u0439")
+            T.equal(overlay.chrShift, undefined)
             T.equal(misses.length, 1)
         })
 
@@ -191,23 +191,23 @@ QtObject {
             var resolved = Layout.applyLanguage(
                 [[{ glyph: "£" }, { glyph: "°" }, { glyph: "%" }, { glyph: "\u2603" }]],
                 "us", facts)[0]
-            T.equal(resolved[0].k, "AB11")
+            T.equal(resolved[0].xkb, "AB11")
             // baseLvl, not lvl: the press reads baseLvl for the unshifted
             // half, and lvl is the curated page's single-level cap shape.
             T.equal(resolved[0].baseLvl, 1)
             T.equal(resolved[0].exact, true)
             T.equal(resolved[0].level3, false)
-            T.equal(resolved[0].t, "£")
+            T.equal(resolved[0].chr, "£")
             // Level three: same position, and the chord must move off RALT.
             T.equal(resolved[1].baseLvl, 3)
             T.equal(resolved[1].level3, true)
             // A character the active layout already carries resolves there —
             // the cap does not care which source supplied it.
-            T.equal(resolved[2].k, "AE05")
+            T.equal(resolved[2].xkb, "AE05")
             T.equal(resolved[2].baseLvl, 2)
             // And one nothing carries is dim and press-refusing, not blank.
             T.equal(resolved[3].unavailable, true)
-            T.equal(resolved[3].t, "\u2603")
+            T.equal(resolved[3].chr, "\u2603")
         })
 
         T.test("a glyph cap whose base is missing refuses its Shift half too", function () {
@@ -220,9 +220,9 @@ QtObject {
             var resolved = Layout.applyLanguage(
                 [[{ glyph: "\u00a3", shiftGlyph: "\u00a5" }]], "us", facts)[0][0]
             T.equal(resolved.unavailable, true)
-            T.equal(resolved.t, "\u00a3")
-            T.equal(resolved.s, undefined)
-            T.equal(resolved.sk, undefined)
+            T.equal(resolved.chr, "\u00a3")
+            T.equal(resolved.chrShift, undefined)
+            T.equal(resolved.xkbShift, undefined)
             T.equal(resolved.dual, undefined)
         })
 
@@ -262,13 +262,13 @@ QtObject {
                        { text: "\u20b4" }, { none: "" }]
             }
             var resolved = Layout.applyLanguage(
-                [[{ t: "q", s: "Q", k: "AD01" }, { glyph: "\u20b4" }]], "ua", facts)
-            T.equal(resolved[0][0].t, "\u0439")
-            T.equal(resolved[0][0].s, "\u0419")
+                [[{ chr: "q", chrShift: "Q", xkb: "AD01" }, { glyph: "\u20b4" }]], "ua", facts)
+            T.equal(resolved[0][0].chr, "\u0439")
+            T.equal(resolved[0][0].chrShift, "\u0419")
             // The glyph cap found its character at level 3 of AD02 and asks
             // for the level-three chord rather than a position of its own.
-            T.equal(resolved[0][1].t, "\u20b4")
-            T.equal(resolved[0][1].k, "AD02")
+            T.equal(resolved[0][1].chr, "\u20b4")
+            T.equal(resolved[0][1].xkb, "AD02")
             T.equal(resolved[0][1].baseLvl, 3)
             T.equal(resolved[0][1].level3, true)
         })
@@ -278,18 +278,18 @@ QtObject {
             // gated last resort and the status line owns the reason — that
             // window must not log a per-cap miss flood on every rebuild.
             var resolved = Layout.applyLanguage(
-                [[{ t: "q", s: "Q", k: "AD01" }]], "ua", null)
-            T.equal(resolved[0][0].t, "q")
-            T.equal(resolved[0][0].s, "Q")
+                [[{ chr: "q", chrShift: "Q", xkb: "AD01" }]], "ua", null)
+            T.equal(resolved[0][0].chr, "q")
+            T.equal(resolved[0][0].chrShift, "Q")
         })
 
         T.test("applyLanguage with helper facts misses a missing position loudly", function () {
             var resolved = Layout.applyLanguage(
-                [[{ t: "q", s: "Q", k: "AD01" }, { t: "w", s: "W", k: "AD02" }]],
+                [[{ chr: "q", chrShift: "Q", xkb: "AD01" }, { chr: "w", chrShift: "W", xkb: "AD02" }]],
                 "ua", { AD01: [{ text: "\u0439" }, { text: "\u0419" }] })
-            T.equal(resolved[0][0].t, "\u0439")
+            T.equal(resolved[0][0].chr, "\u0439")
             // AD02 has no record at all: built-in kept, miss recorded.
-            T.equal(resolved[0][1].t, "w")
+            T.equal(resolved[0][1].chr, "w")
         })
 
         // ---- ticket 12: pair caps on &123 (compact-control-map.md) ----
@@ -311,7 +311,7 @@ QtObject {
         function pairKeys(row) {
             var out = []
             for (var i = 0; i < row.length; i++) {
-                if (row[i].pair === true) out.push(row[i].k)
+                if (row[i].pair === true) out.push(row[i].xkb)
             }
             return out
         }
@@ -362,7 +362,7 @@ QtObject {
             T.equal(Layout.rows.length, 5)
             T.deepEqual(Layout.rows[4], Layout.commandRow("&123"))
             T.equal(Layout.rows[0][0].key, "Escape")
-            T.equal(Layout.rows[0][2].k, "AE01")
+            T.equal(Layout.rows[0][2].xkb, "AE01")
         })
 
         T.test("direct symbols keep the five-row grid and fixed control geometry", function () {
@@ -399,10 +399,10 @@ QtObject {
             var digits = "1234567890"
             for (var i = 0; i < 10; i++) {
                 var cap = rows[0][i + 1]
-                T.equal(cap.t, symbols[i])
-                T.equal(cap.s, digits[i])
-                T.equal(cap.k, Layout.reservedPositions[Math.floor(i / 2)])
-                T.equal(cap.sk, cap.k)
+                T.equal(cap.chr, symbols[i])
+                T.equal(cap.chrShift, digits[i])
+                T.equal(cap.xkb, Layout.reservedPositions[Math.floor(i / 2)])
+                T.equal(cap.xkbShift, cap.xkb)
                 T.equal(cap.baseLvl, (i % 2) * 2 + 5)
                 T.equal(cap.slvl, (i % 2) * 2 + 6)
                 T.equal(cap.exact, true)
@@ -413,10 +413,10 @@ QtObject {
                 T.equal(cap.shiftLevel3, (i % 2) === 1)
                 T.equal(Layout.levelChord(cap.baseLvl).level5, true)
                 T.equal(Layout.levelChord(cap.slvl).level5, true)
-                // Exact glyph pairs choose the half in Keyboard.pressChar;
+                // Exact glyph pairs choose the half in Keyboard.typeCap;
                 // their two resolved chords are the contract here.
-                T.equal(cap.t, symbols[i])
-                T.equal(cap.s, digits[i])
+                T.equal(cap.chr, symbols[i])
+                T.equal(cap.chrShift, digits[i])
             }
         })
 
