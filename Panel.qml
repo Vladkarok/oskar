@@ -16,24 +16,31 @@ Item {
 
     // ---- configuration ----
     //
-    // One JSON file at $XDG_CONFIG_HOME/omarchy-osk/config.json is both the
-    // documented user config and the persisted state; there is no second
-    // state file. The file is read at startup and written when state changes;
-    // anything missing or malformed in it falls back to the documented
-    // defaults (spec-v1 §10) rather than failing to start.
+    // v1.1 gives configuration three non-overlapping roles: complete shipped
+    // defaults in Config.js, sparse choices in config.json, and geometry in
+    // state.json. Both writable files are watched below; no polling is used.
     readonly property string configDir: (Quickshell.env("XDG_CONFIG_HOME")
         || ((Quickshell.env("HOME") || "") + "/.config")) + "/omarchy-osk"
+    readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME")
+        || ((Quickshell.env("HOME") || "") + "/.local/state")) + "/omarchy-osk"
     readonly property string configPath: configDir + "/config.json"
+    readonly property string statePath: stateDir + "/state.json"
+    readonly property var maintainedDefaults: ConfigFile.maintainerDefaults()
+    property var userOverrides: ({})
+    property var geometryState: ConfigFile.stateDefaults()
+    property string configurationError: ""
+    property string stateError: ""
 
     // Geometry (spec-v1 §7). Docked — the default, because it needs no
     // positioning decision from someone who just installed the plugin —
     // reserves a full-width strip along the bottom edge so windows move up
     // instead of being covered; floating overlays and is dragged around.
-    // `position` and `size_preset` are floating-mode state, persisted here
-    // but only given their UI by the floating ticket.
-    property string mode: ConfigFile.defaults().mode
+    // `position` is geometry state; `size_preset` is a user preference. They
+    // intentionally persist to different files even though both affect the
+    // floating card.
+    property string mode: maintainedDefaults.mode
     property var floatingPosition: null
-    property string sizePreset: "medium"
+    property string sizePreset: maintainedDefaults.sizePreset
 
     // Size presets (spec-v1 §7): a short cycle from a button, not a resize
     // handle. `medium` is the geometry the keyboard shipped with and the
@@ -51,20 +58,17 @@ Item {
         root.sizePreset = root.sizePresetOrder[(index + 1) % root.sizePresetOrder.length]
         // A bigger card can now hang off the edge it was dragged near.
         root.applyFloatingPosition()
-        root.saveConfig()
+        root.setOverride("sizePreset", root.sizePreset)
     }
 
     // Key click sound: the freedesktop sound theme's event sound, off by
     // default — the stated use case is watching a film, and the mouse already
     // makes a click.
-    property bool sound: false
+    property bool sound: maintainedDefaults.sound
     // v1 escape hatch for the independent colour schema (spec-v1 §8); it
     // follows the theme and does nothing else yet, but is persisted so the
     // key exists from the start.
-    property bool followTheme: true
-    // Keys the config file carries that v1 does not know about, preserved so
-    // the next write does not eat them.
-    property var configExtra: ({})
+    property bool followTheme: maintainedDefaults.followTheme
     // Absolute path of the PCM copy the click effect plays; empty until
     // resolved or when the theme has no such event.
     property string soundFile: ""
@@ -131,7 +135,7 @@ Item {
         // The docked pin releases here, so the card falls back to whatever x/y
         // it last had; put it where floating actually left it.
         root.applyFloatingPosition()
-        root.saveConfig()
+        root.setOverride("mode", newMode)
     }
 
     // ---- which output, and where on it (spec-v1 §7) ----
@@ -191,7 +195,8 @@ Item {
         var previous = root.floatingPosition
         if (previous && previous.x === card.x && previous.y === card.y) return
         root.floatingPosition = { x: card.x, y: card.y }
-        root.saveConfig()
+        root.geometryState = { position: root.floatingPosition }
+        root.saveState()
     }
 
     // A drag can end with the pointer over a different output: the card itself
@@ -212,29 +217,58 @@ Item {
         })
     }
 
-    // Read once at startup. Per-key fallbacks live in Config.js; a file this
-    // cannot learn from leaves the panel on the documented defaults.
-    function loadConfig() {
-        var parsed = ConfigFile.parse(configFile.text())
-        root.mode = parsed.mode
-        root.floatingPosition = parsed.position
-        // Config.js accepts any non-empty string for the preset; the panel is
-        // where the actual preset names live, so an unknown one becomes the
-        // default here rather than leaving the button with nothing to draw.
-        root.sizePreset = root.sizePresetOrder.indexOf(parsed.sizePreset) === -1
-            ? "medium" : parsed.sizePreset
-        root.sound = parsed.sound
-        root.followTheme = parsed.followTheme
-        root.configExtra = parsed.extra
-        if (root.sound) root.resolveSoundFile()
+    function applyEffectiveSettings() {
+        // Ticket 10 connects the appearance fields to Theme; until then this
+        // ticket preserves the current single Theme facade and uses the same
+        // merge authority for the settings already owned by the panel.
+        var effective = ConfigFile.merge(root.maintainedDefaults, root.userOverrides, null)
+        root.mode = effective.mode
+        root.sizePreset = effective.sizePreset
+        var soundChanged = root.sound !== effective.sound
+        root.sound = effective.sound
+        root.followTheme = effective.followTheme
+        if (soundChanged && root.sound) root.resolveSoundFile()
+        // External mode and preset edits take the same placement path as GUI
+        // changes, including clamping a newly enlarged floating card.
+        root.applyFloatingPosition()
     }
 
-    // Writes the whole current state through Config.js. The directory is
-    // made first because on a first run it does not exist yet; mkdir -p is
-    // idempotent and the save itself is rare (state changes), so the extra
-    // process is cheaper than maintaining directory-creation logic in QML.
-    function saveConfig() {
+    function loadOverrides(text) {
+        var result = ConfigFile.reloadOverrides(root.userOverrides, text)
+        root.configurationError = result.error
+        if (result.error) return
+        root.userOverrides = result.value
+        root.applyEffectiveSettings()
+    }
+
+    function loadState(text) {
+        var result = ConfigFile.reloadState(root.geometryState, text)
+        root.stateError = result.error
+        if (result.error) return
+        root.geometryState = result.value
+        root.floatingPosition = result.value.position
+        root.applyFloatingPosition()
+    }
+
+    function setOverride(name, value) {
+        var next = {}
+        for (var key in root.userOverrides) next[key] = root.userOverrides[key]
+        next[name] = value
+        root.userOverrides = next
+        root.applyEffectiveSettings()
+        root.saveOverrides()
+    }
+
+    // Never replace malformed external text. Once the user fixes it, the
+    // watched FileView reloads it and writes become available again.
+    function saveOverrides() {
+        if (root.configurationError) return
         configDirMaker.running = true
+    }
+
+    function saveState() {
+        if (root.stateError) return
+        stateDirMaker.running = true
     }
 
     function resolveSoundFile() {
@@ -268,9 +302,8 @@ Item {
             return
         }
         root.restoreCursorHiding()
-        // A locked modifier is genuinely held down at the device, so closing
-        // the panel has to let go of it. Otherwise the keyboard disappears and
-        // the session carries on as though Ctrl were taped down.
+        // Locked Shift is genuinely held down at the device, so closing the
+        // panel has to let go of it before the keyboard disappears.
         keyboard.releaseModifiers()
     }
 
@@ -325,42 +358,61 @@ Item {
     }
 
     Component.onCompleted: {
-        root.loadConfig()
+        root.loadOverrides(configFile.text())
+        root.loadState(stateFile.text())
         root.checkDependencies()
     }
 
-    // The one config file. The first read is blocking so the panel's geometry
-    // follows the file before anything is shown; writes are blocking too, so
-    // two state changes in quick succession cannot write out of order, and
-    // atomic so a power loss mid-write leaves either the old file or the new
-    // one, never a torn one. A missing file is the normal first run, so its
-    // load error is not printed.
+    // Blocking, atomic writes leave either the old file or the complete new
+    // one. FileView's change notification gives external editors an immediate
+    // reload path without a timer. Missing files are a normal first run.
     FileView {
         id: configFile
         path: root.configPath
         blockLoading: true
         blockWrites: true
         atomicWrites: true
-        watchChanges: false
+        watchChanges: true
         printErrors: false
+        onFileChanged: reload()
+        onLoaded: root.loadOverrides(text())
+    }
+
+    FileView {
+        id: stateFile
+        path: root.statePath
+        blockLoading: true
+        blockWrites: true
+        atomicWrites: true
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: root.loadState(text())
     }
 
     Process {
         id: configDirMaker
         command: ["mkdir", "-p", root.configDir]
         onExited: function(exitCode, exitStatus) {
+            if (root.configurationError) return
             if (exitCode !== 0 || exitStatus !== 0) {
                 console.warn("[osk] could not create", root.configDir, "- configuration not saved")
                 return
             }
-            configFile.setText(ConfigFile.serialize({
-                mode: root.mode,
-                position: root.floatingPosition,
-                sizePreset: root.sizePreset,
-                sound: root.sound,
-                followTheme: root.followTheme,
-                extra: root.configExtra
-            }))
+            configFile.setText(ConfigFile.serializeOverrides(root.userOverrides))
+        }
+    }
+
+    Process {
+        id: stateDirMaker
+        command: ["mkdir", "-p", root.stateDir]
+        onExited: function(exitCode, exitStatus) {
+            if (root.stateError) return
+            if (exitCode !== 0 || exitStatus !== 0) {
+                console.warn("[osk] could not create", root.stateDir, "- state not saved")
+                return
+            }
+            stateFile.setText(ConfigFile.serializeState(root.geometryState))
         }
     }
 
@@ -553,15 +605,26 @@ Item {
                     onCanceled: root.finishDrag()
                 }
 
+                // The panel's one status line. While the keycap pipeline has
+                // no keymap answer (spec-v1.1 §3) it names the failure in the
+                // accent colour instead of the mode hint, and hands the hint
+                // back on recovery. A swap, not an addition: the line cannot
+                // change the card's height, so a keymap-wide failure never
+                // churns the docked reservation that tickets 08 and 20 own.
+                // The keycapsFailed visibility logic lives in this one
+                // binding — text and colour both derive from it.
                 Text {
+                    id: hintText
                     anchors {
                         horizontalCenter: parent.horizontalCenter
                         verticalCenter: languageSwitch.verticalCenter
                     }
-                    text: root.mode === "docked"
-                        ? "\u2328 Docked \u00b7 Double press Shift/Ctrl/Alt/Super to lock"
-                        : "\u2328 Drag to move \u00b7 Double press Shift/Ctrl/Alt/Super to lock"
-                    color: tokens.muted
+                    text: keyboard.keycapsFailed
+                        ? "Keymap unavailable — drawn caps may not match what typing produces"
+                        : root.mode === "docked"
+                            ? "\u2328 Docked \u00b7 Double-click Shift to lock"
+                            : "\u2328 Drag to move \u00b7 Double-click Shift to lock"
+                    color: keyboard.keycapsFailed ? tokens.accent : tokens.muted
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBodySmall
                     z: 1

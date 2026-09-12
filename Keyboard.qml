@@ -15,7 +15,8 @@ Item {
     // &123 is pressed. The grid is anchored to the bottom, so the command row —
     // modifiers, space, arrows, and the page key itself — stays under the
     // pointer across a switch and the slack appears at the top.
-    readonly property int maxPageRows: Math.max(Layout.rows.length, Layout.symbolRows.length)
+    readonly property int maxPageRows: Math.max(Layout.rows.length, Layout.symbolRows("").length,
+        Layout.curatedMaxRows)
     implicitHeight: maxPageRows * keyHeight + (maxPageRows - 1) * gapPx
     signal closeRequested()
     // Emitted for every keystroke-shaped press — letters, arrows, modifier
@@ -50,6 +51,26 @@ Item {
     // padding (which equals the gap), exactly like the CSS container's
     // `padding: var(--gap)` around `.keyboard-grid`.
     readonly property real rowWidth: containerMaxWidth - 2 * gapPx
+
+    // ---- Shared grid pitch (ticket 03, owner round 3) ----
+    //
+    // Every row is laid out on one cell size: a cap spans `w` cells, each
+    // `cellPitch` wide including one gap, so its drawn width is
+    // `w * cellPitch - gapPx`. This replaces the per-row proportional flex
+    // that row sums of 13.95–17.25 units fed, and which rendered command-row
+    // keys and arrows about 20% narrower than the letters above them. With
+    // every row declared to the same gridUnits — the tables in
+    // KeyboardLayout.js, guarded below — columns align across rows by
+    // construction, all rows end flush at both edges
+    // (`gridUnits * cellPitch - gapPx == rowWidth`), key sizes are
+    // uniform between rows the way the Windows 11 touch keyboard's are, and
+    // every width being a multiple of 0.5 keeps all rows' vertical gap lines
+    // on one half-unit lattice: adjacent rows' gap lines are offset by
+    // exactly half a unit — the classic stagger of the owner's measured
+    // Windows reference — so every gap lands mid-key of the neighbouring
+    // rows instead of on top of one.
+    readonly property real gridUnits: 15.5
+    readonly property real cellPitch: (root.rowWidth + root.gapPx) / root.gridUnits
 
     // ---- Hit geometry (ticket 15) ----
     //
@@ -107,9 +128,9 @@ Item {
     readonly property int keyFontSize: Math.max(1, Math.round(root.theme.fontBody * uiScale))
     readonly property int keySmallFontSize: Math.max(1, Math.round(root.theme.fontBodySmall * uiScale))
 
-    // Every modifier's idle/latched/locked state and Caps' dedicated boolean
-    // state, owned by the reducer (spec-v1 §15, seam 2). The panel holds the
-    // value and draws it; the transitions and protocol lines are the module's.
+    // Every modifier's idle/latched state, Shift's additional locked state,
+    // and Caps' dedicated boolean state, owned by the reducer (spec-v1 §15,
+    // seam 2). The panel draws it; transitions and lines are the module's.
     property var modifierState: Modifiers.initialState()
     property string currentLayout: "us"
     property var languageCycle: ["us"]
@@ -136,26 +157,100 @@ Item {
         return name ? name : currentLayout.toUpperCase()
     }
     property var symbolMap: ({})
-    // Which page is drawn (spec-v1 §4). A page is not a mode and not a
-    // modifier: it changes what can be seen and nothing else — not the keymap,
-    // not the group, not what any modifier is holding.
+    // Whether symbolMap is the compiled keymap's answer for the layout now
+    // active, and whether the last attempt to make it so failed outright
+    // (spec-v1.1 §3). `keycapsReady` starts false deliberately: the equality
+    // shortcut below used to skip the first load whenever the detected layout
+    // equalled the `us` default here, which left the map empty at cold start
+    // and every symbols-page level cap blank until a layout change happened
+    // to run. `keycapsFailed` is the keymap-wide state, not a per-cap miss —
+    // a pipeline that failed, or exited cleanly having resolved nothing, is
+    // decisions.md §11's silent failure, and the panel shows it instead of
+    // letting the built-in table pass for the keymap.
+    property bool keycapsReady: false
+    property bool keycapsFailed: false
+    // Incremented every time a keycap load starts, and captured by the
+    // process for the run it is about to begin. A compile that is stopped
+    // to make room for a newer load still dies by SIGTERM and still
+    // delivers onExited; the captured generation is how that exit is told
+    // apart from the live run's.
+    property int keycapGeneration: 0
+    // Which page is drawn (spec-v1 §4): main, symbols, or the curated page 2
+    // (spec-v1.1 §3). A page is not a mode and not a modifier: it changes
+    // what can be seen and nothing else — not the keymap, not the group, not
+    // what any modifier is holding.
     property string page: "main"
-    property var layoutRows: Layout.applyLanguage(Layout.rows, currentLayout, symbolMap)
+    // Page 2's rows and its availability count, derived from symbolMap in the
+    // same rebuild that feeds the keycaps — never per click (spec-v1.1 §3).
+    // Availability is the active keymap's answer about itself, so it changes
+    // when the keymap does: on a configured-layout change, a group switch, or
+    // a keycap pipeline failure, each of which reloads symbolMap.
+    property var curatedPage: Layout.curatedPageRows(symbolMap)
+    property var layoutRows: Layout.applyLanguage(pageRows(), currentLayout, symbolMap)
+    // A row that misses gridUnits is a defect, not a style choice: under the
+    // shared pitch a short row stops short of the card's right edge and a
+    // long one runs past it. A width off the half-unit lattice — anything
+    // that is not a multiple of 0.5 — sums fine but puts that cap's edges
+    // between everyone else's gap lines, which is the stagger defect the
+    // tables exist to avoid. One loud line per offending row at rebuild
+    // time, in the same spirit as reportMisses in KeyboardLayout.js.
+    onLayoutRowsChanged: {
+        for (var i = 0; i < layoutRows.length; i++) {
+            var sum = 0
+            for (var j = 0; j < layoutRows[i].length; j++) {
+                var w = layoutRows[i][j].w || 1
+                if ((w * 2) % 1 !== 0) {
+                    console.error("[osk] row " + i + " cap " + j + " width "
+                        + w + " is not a multiple of half a unit")
+                }
+                sum += w
+            }
+            if (Math.abs(sum - gridUnits) > 0.01) {
+                console.error("[osk] row " + i + " widths sum to " + sum
+                    + ", expected " + gridUnits)
+            }
+        }
+    }
+
+    // The page key's label names where the next press goes (spec-v1 §4): on
+    // the main page that is always the symbols page; past it, the curated
+    // page when it exists and the main page when it does not.
+    function pageLabel() {
+        if (page === "main") return "&123"
+        if (page === "curated") return "ABC"
+        return curatedPage.available >= Layout.curatedMinimum ? "€±§" : "ABC"
+    }
 
     function pageRows() {
-        return page === "symbols" ? Layout.symbolRows : Layout.rows
+        var rows = page === "curated" ? curatedPage.rows
+            : page === "symbols" ? Layout.symbolRows(pageLabel()) : Layout.rows
+        if (!modifierState.fn) return rows
+        var replaced = rows.slice()
+        replaced[0] = Layout.functionRow
+        return replaced
     }
 
     function updateLayoutRows() {
+        // A keymap change while page 2 is on screen can drop it below the
+        // eight-symbol threshold; the page then no longer exists, and the
+        // grid falls back to the main page rather than drawing a stub.
+        if (page === "curated" && curatedPage.available < Layout.curatedMinimum)
+            page = "main"
         layoutRows = Layout.applyLanguage(pageRows(), currentLayout, symbolMap)
     }
 
     /// The one key in and the same key out. The reducer is told, so that what
     /// the modifiers do across a switch is decided in the one place the seam
     /// covers rather than here; it holds everything where it was, which is why
-    /// a locked modifier is still locked and still drawn locked on the far side.
+    /// locked Shift is still locked and still drawn locked on the far side.
+    /// The cycle is main → symbols → curated → main, and the curated hop
+    /// exists only when page 2 does (eight or more symbols available,
+    /// spec-v1.1 §3) — the label always names the destination, so when the
+    /// hop is missing the symbols page's key reads "ABC" again.
     function togglePage() {
-        page = page === "symbols" ? "main" : "symbols"
+        page = page === "main" ? "symbols"
+            : page === "symbols" && curatedPage.available >= Layout.curatedMinimum
+                ? "curated" : "main"
         updateLayoutRows()
         applyModifierEvent({ type: "pageSwitch" })
     }
@@ -174,14 +269,28 @@ Item {
             .map(function (line) { return line.split("\t") })
     }
 
+    /// Resolves the pipeline's tab records over symbolMap and returns how
+    /// many records resolved. Nothing is installed for a record-less run:
+    /// the caller owns the §11 decision, and pre-installing an empty map
+    /// here would be the silent-empty class this gate exists to close.
     function parseLayoutSymbolOutput(text) {
         var map = ({})
+        var records = 0
         tabRecords(text).forEach(function (parts) {
             if (parts.length < 2) return
-            map[parts[0]] = [parts[1], parts.length > 2 ? parts[2] : ""]
+            // Every level the pipeline carried: two for as long as the
+            // symbols page cared, four now that the curated page resolves
+            // the keymap's AltGr levels too (spec-v1.1 §3). Missing levels
+            // stay empty strings, which the overlay and the curated index
+            // both read as "nothing here".
+            map[parts[0]] = parts.slice(1)
+            records += 1
         })
-        symbolMap = map
-        updateLayoutRows()
+        if (records > 0) {
+            symbolMap = map
+            updateLayoutRows()
+        }
+        return records
     }
 
 
@@ -248,7 +357,17 @@ Item {
             sendCommandUnchecked("configure\t" + xkbRules + "\t" + xkbModel
                 + "\t" + xkbLayouts + "\t" + xkbVariants + "\t" + xkbOptions
                 + "\t" + xkbFile + "\t" + configGroup)
-            if (selected !== currentLayout) loadLanguageLayout(selected)
+            // Load when the layout changed, or whenever the keymap's own
+            // answer is not in hand yet. The equality test alone was the
+            // cold-start defect: `currentLayout` starts at "us", so a session
+            // opening on `us` — the default guest config — never asked the
+            // keycap pipeline at all, and the symbols page drew one blank cap
+            // per position. The second half of the condition is also the
+            // retry: a failed or empty pipeline leaves `keycapsReady` false,
+            // so the next layout event (a helper recovery, a config reload,
+            // the keyboards inventory) tries again on its own. No polling.
+            if (selected !== currentLayout || !keycapsReady)
+                loadLanguageLayout(selected)
         }
     }
 
@@ -328,6 +447,11 @@ Item {
 
     function loadLanguageLayout(layoutCode) {
         console.log("[osk] loadLanguageLayout:", layoutCode, "variant-index:", layoutCycleIndex)
+        // A load is now in flight: only its own successful result may say the
+        // caps are ready. Cleared here rather than left at its old value so a
+        // failure mid-switch cannot strand the panel reporting a map that
+        // belongs to the previous layout.
+        keycapsReady = false
         currentLayout = layoutCode
         updateLayoutRows()
         // Compile the layout with xkbcli rather than reading
@@ -341,6 +465,12 @@ Item {
         // the command it started with, so a second switch while the first
         // compile is in flight would apply the old layout's symbols to the new
         // one and never correct itself. Stop it first.
+        // A load that is still running gets stopped for this one, and its
+        // death by SIGTERM still delivers onExited. The counter increment is
+        // what marks every run before this one superseded; the process
+        // records the generation only when a run actually starts, which is
+        // what lets the exit handler attribute each exit to its run.
+        root.keycapGeneration += 1
         layoutLoadProcess.running = false
         var variantList = String(xkbVariants || "").split(",")
         var activeVariant = variantList[layoutCycleIndex] || ""
@@ -373,7 +503,9 @@ Item {
             + "       split(s[1], arr, /,/)\n"
             + "       gsub(/[[:space:]]+/, \"\", arr[1])\n"
             + "       gsub(/[[:space:]]+/, \"\", arr[2])\n"
-            + "       print name \"\\t\" arr[1] \"\\t\" arr[2]\n"
+            + "       gsub(/[[:space:]]+/, \"\", arr[3])\n"
+            + "       gsub(/[[:space:]]+/, \"\", arr[4])\n"
+            + "       print name \"\\t\" arr[1] \"\\t\" arr[2] \"\\t\" arr[3] \"\\t\" arr[4]\n"
             + "     }\n"
             + "     inkey=0\n"
             + "   }\n"
@@ -425,6 +557,16 @@ Item {
     Process {
         id: layoutLoadProcess
         property string collected: ""
+        // The generation of the run actually executing, recorded at start —
+        // not at request. Quickshell defers a start requested while the
+        // previous run is still dying until that run's exit has been
+        // delivered, so a superseded run's exit arrives after the request
+        // counter has already moved on but before any newer process exists.
+        // Attributing each exit to the generation that was started is the
+        // only comparison that survives that window; request-time slots and
+        // isRunning() both read as current and wave the stale exit through.
+        property int startedGeneration: 0
+        onStarted: startedGeneration = root.keycapGeneration
         stdout: SplitParser {
             onRead: function(data) {
                 layoutLoadProcess.collected += data + "\n"
@@ -435,12 +577,43 @@ Item {
             if (running) collected = ""
         }
         onExited: function(exitCode, exitStatus) {
+            var cleanExit = exitCode === 0 && exitStatus === 0
             console.log("[osk] keycaps process exited:", exitCode, exitStatus, "collected bytes:", collected.length)
-            if (exitCode === 0 && exitStatus === 0) {
-                root.parseLayoutSymbolOutput(layoutLoadProcess.collected)
+            // A superseded compile dies by SIGTERM when the next load stops
+            // it, and that exit is delivered after the request counter has
+            // moved on but before the replacement process has started. An
+            // exit whose run began under an older generation therefore says
+            // nothing about the load now pending: it must not drop the map
+            // or raise the failure state — the live run's own exit decides
+            // that.
+            if (layoutLoadProcess.startedGeneration !== root.keycapGeneration) {
+                console.log("[osk] keycaps exit superseded; the live load decides")
                 return
             }
+            if (cleanExit) {
+                // Records, not bytes: a clean exit whose stdout holds only a
+                // stray non-record line resolves nothing, and counting its
+                // bytes would install an empty map as ready — the §11
+                // silent-empty class this gate exists to close.
+                var records = root.parseLayoutSymbolOutput(layoutLoadProcess.collected)
+                if (records > 0) {
+                    root.keycapsReady = true
+                    root.keycapsFailed = false
+                    return
+                }
+                console.error("[osk] keycap pipeline resolved 0 records for "
+                    + root.currentLayout)
+            } else {
+                console.error("[osk] keycap pipeline failed for "
+                    + root.currentLayout + " (exit " + exitCode + "/" + exitStatus + ")")
+            }
+            // Both failure shapes are the §11 mode, not an empty layout: a
+            // compiled keymap always names its key positions, so a failed or
+            // record-less run means the pipeline answered the wrong question.
+            // Drop the map and raise the panel's keymap-wide state.
             root.symbolMap = ({})
+            root.keycapsReady = false
+            root.keycapsFailed = true
             root.updateLayoutRows()
         }
     }
@@ -499,10 +672,11 @@ Item {
     /// Protocol-bearing events are refused while the helper is not ready,
     /// rather than advancing state over writes that go nowhere: a lock whose
     /// `down` was dropped would leave the cap showing a modifier the compositor
-    /// never received. Caps is the exception because it is a local semantic
-    /// toggle and emits no protocol line; reconnecting must not delay it.
+    /// never received. Caps and Fn are exceptions because they are local
+    /// semantic controls and emit no protocol line; reconnecting must not
+    /// delay them.
     function applyModifierEvent(event) {
-        if (!inputReady && (!event || event.type !== "capsClick")) return
+        if (!inputReady && (!event || (event.type !== "capsClick" && event.type !== "fnClick"))) return
         var outcome = Modifiers.reduce(modifierState, event)
         modifierState = outcome.state
         for (var i = 0; i < outcome.lines.length; i++) {
@@ -510,10 +684,9 @@ Item {
         }
     }
 
-    /// Lifts whatever is locked and returns every modifier to idle. The panel
-    /// closing is not the compositor forgetting: a locked Ctrl is really held
-    /// at the device, and leaving it that way turns closing the keyboard into
-    /// a session that behaves as if Ctrl were taped down.
+    /// Lifts locked Shift and returns every modifier to idle. The panel closing
+    /// is not the compositor forgetting: locked Shift is really held at the
+    /// device and must come up before the socket goes away.
     function releaseModifiers() {
         applyModifierEvent({ type: "releaseAll" })
     }
@@ -756,10 +929,14 @@ Item {
             type: "press",
             position: keyData.k,
             letter: isLetterKey(keyData),
-            // A symbols-page cap draws one level and has to type that level.
-            // Same treatment as Caps Lock: a real Shift press around the key,
-            // never a character the panel picked for itself.
-            shift: keyData.lvl === 2
+            // A level cap draws one level and has to type that level. Same
+            // treatment as Caps Lock: real modifier presses around the key,
+            // never a character the panel picked for itself — Shift for
+            // level 2, AltGr (with Shift) for the curated page's levels 3
+            // and 4 (spec-v1.1 §3). The reducer decides how those presses
+            // wrap around the key and what a lock does to them.
+            shift: keyData.lvl === 2 || keyData.lvl === 4,
+            altgr: keyData.lvl === 3 || keyData.lvl === 4
         })
     }
 
@@ -777,6 +954,10 @@ Item {
         // Not a keystroke, so no click sound, for the same reason close is
         // silent: nothing was typed.
         case "page": togglePage(); return
+        case "fn":
+            applyModifierEvent({ type: "fnClick" })
+            updateLayoutRows()
+            return
         case "caps":
             root.keyPressed()
             applyModifierEvent({ type: "capsClick" })
@@ -803,6 +984,7 @@ Item {
     /// "latched" and "locked" so all of their states remain distinguishable.
     function keyModifierState(keyData) {
         if (keyData.key === "caps") return modifierState.caps ? "on" : "off"
+        if (keyData.key === "fn") return modifierState.fn ? "on" : "off"
         if (!Modifiers.isModifier(keyData.key)) return "idle"
         return modifierState[keyData.key]
     }
@@ -824,17 +1006,13 @@ Item {
                 readonly property real hitTop: rowIndex === 0 ? root.edgeOutset : root.halfGap
                 readonly property real hitBottom: rowIndex === root.layoutRows.length - 1
                     ? root.edgeOutset : root.halfGap
-                readonly property real flexSum: rowModel.reduce(function (acc, item) {
-                    return acc + (item.w || 1)
-                }, 0)
-                readonly property real innerWidth: root.rowWidth - (rowModel.length - 1) * root.gapPx
 
                 Repeater {
                     model: rowModel
                     delegate: Item {
                         id: keyDelegate
                         property var keyData: modelData
-                        width: rowItem.innerWidth * (keyData.w || 1) / rowItem.flexSum
+                        width: (keyData.w || 1) * root.cellPitch - root.gapPx
                         height: root.keyHeight
                         readonly property real hitLeft: index === 0
                             ? root.edgeOutset : root.halfGap
@@ -843,6 +1021,13 @@ Item {
 
                         Rectangle {
                             id: keyRect
+                            // A spacer slot ({ w } alone — the curated page's
+                            // unfilled slots and its free row's pad) draws
+                            // nothing: the page never shows a blank cap. An
+                            // invisible item takes no mouse events either, so
+                            // a dead slot stays dead while its neighbours'
+                            // hit areas keep meeting at its midpoints.
+                            visible: !Layout.isBlank(keyData)
                             anchors.fill: parent
                             radius: root.keyRadius
 
@@ -993,7 +1178,9 @@ Item {
                                     }
                                     if (Layout.positionForKeysym(keyData.key)
                                             || Modifiers.isModifier(keyData.key)
-                                            || keyData.key === "caps") {
+                                            || keyData.key === "caps"
+                                            || keyData.key === "fn"
+                                            || keyData.key === "page") {
                                         root.pressSpecial(keyData, false)
                                     }
                                 }
@@ -1010,20 +1197,31 @@ Item {
                                 onReleased: if (keyRect.types) root.releaseKey()
                                 onCanceled: if (keyRect.types) root.releaseKey()
 
-                                // What is left on the click is only the command
-                                // caps — close, emoji, lang — where
-                                // acting on the way down would tear the panel
-                                // out from under the button that is still
-                                // held. They are deliberately not swept into
+                                // What is left on the click is only the
+                                // command caps that would tear something out
+                                // from under the button still held — close,
+                                // emoji. They are deliberately not swept into
                                 // the press path with the modifiers. They also
                                 // pay Qt's second-press suppression (issue 13)
                                 // for it, which is survivable here because
                                 // nobody double-clicks Close to close twice.
+                                //
+                                // The page control is no longer one of them
+                                // (spec-v1.1 §3): waiting for `clicked` lost
+                                // every second press of a rapid pair to the
+                                // same suppression, and unlike close it tears
+                                // nothing out from under the pointer — the
+                                // grid rebuilds in place under the button,
+                                // the command row keeps its place, and the
+                                // next press lands on the same spot. So it
+                                // acts on the way down, one press per press.
                                 onClicked: {
                                     if (!keyData.key) return
                                     if (Layout.positionForKeysym(keyData.key)) return
                                     if (Modifiers.isModifier(keyData.key)) return
                                     if (keyData.key === "caps") return
+                                    if (keyData.key === "fn") return
+                                    if (keyData.key === "page") return
                                     root.pressSpecial(keyData, false)
                                 }
 

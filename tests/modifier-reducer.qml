@@ -18,10 +18,10 @@ QtObject {
             T.deepEqual(out.lines, [])
         })
 
-        T.test("idle + double click -> locked, the modifier goes down", function () {
+        T.test("double-clicking Ctrl ends idle with no held protocol state", function () {
             var out = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" })
-            T.equal(out.state.ctrl, "locked")
-            T.deepEqual(out.lines, ["down LCTL"])
+            T.equal(out.state.ctrl, "idle")
+            T.deepEqual(out.lines, [])
         })
 
         T.test("idle + press -> unchanged, the position goes down", function () {
@@ -41,11 +41,11 @@ QtObject {
             T.deepEqual(out.lines, [])
         })
 
-        T.test("latched + double click -> locked, the modifier goes down", function () {
-            var latched = Reducer.reduce(idle, { type: "click", modifier: "ctrl" }).state
-            var out = Reducer.reduce(latched, { type: "doubleClick", modifier: "ctrl" })
-            T.equal(out.state.ctrl, "locked")
-            T.deepEqual(out.lines, ["down LCTL"])
+        T.test("latched Shift + double click -> locked, Shift goes down", function () {
+            var latched = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
+            var out = Reducer.reduce(latched, { type: "doubleClick", modifier: "shift" })
+            T.equal(out.state.shift, "locked")
+            T.deepEqual(out.lines, ["down LFSH"])
         })
 
         T.test("latched + press -> idle, the modifier wraps the press", function () {
@@ -60,30 +60,30 @@ QtObject {
                         ["up AD03", "up LCTL"])
         })
 
-        T.test("locked + click -> idle, the modifier comes back up", function () {
-            var locked = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
-            var out = Reducer.reduce(locked, { type: "click", modifier: "ctrl" })
-            T.equal(out.state.ctrl, "idle")
-            T.deepEqual(out.lines, ["up LCTL"])
+        T.test("locked Shift + click -> idle, Shift comes back up", function () {
+            var locked = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(locked, { type: "click", modifier: "shift" })
+            T.equal(out.state.shift, "idle")
+            T.deepEqual(out.lines, ["up LFSH"])
         })
 
-        T.test("locked + double click -> idle, the modifier comes back up", function () {
-            var locked = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
-            var out = Reducer.reduce(locked, { type: "doubleClick", modifier: "ctrl" })
-            T.equal(out.state.ctrl, "idle")
-            T.deepEqual(out.lines, ["up LCTL"])
+        T.test("locked Shift + double click -> idle, Shift comes back up", function () {
+            var locked = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(locked, { type: "doubleClick", modifier: "shift" })
+            T.equal(out.state.shift, "idle")
+            T.deepEqual(out.lines, ["up LFSH"])
         })
 
-        T.test("locked + press -> still locked, and the press emits no extra hold", function () {
-            var locked = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
+        T.test("locked Shift + press stays locked and emits no extra hold", function () {
+            var locked = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
             var out = Reducer.reduce(locked, { type: "press", position: "AD03" })
-            T.equal(out.state.ctrl, "locked")
+            T.equal(out.state.shift, "locked")
             T.deepEqual(out.lines, ["down AD03"])
             // A locked modifier is held at the device, so the release lifts
             // the key alone and leaves the lock exactly where it was.
             var lifted = Reducer.reduce(out.state, { type: "release" })
             T.deepEqual(lifted.lines, ["up AD03"])
-            T.equal(lifted.state.ctrl, "locked")
+            T.equal(lifted.state.shift, "locked")
         })
 
         // ---- the double-click gesture, as the real MouseArea delivers it
@@ -104,20 +104,33 @@ QtObject {
         // gesture back to where it started rather than reading the state it
         // happens to find, and emits only the difference against the device.
 
-        T.test("click, click, doubleClick from idle ends locked and held once", function () {
-            var state = Reducer.reduce(idle, { type: "click", modifier: "ctrl" })
-            T.equal(state.state.ctrl, "latched")
+        T.test("Shift click, click, doubleClick ends locked and held once", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "shift" })
+            T.equal(state.state.shift, "latched")
             T.deepEqual(state.lines, [])
-            var second = Reducer.reduce(state.state, { type: "click", modifier: "ctrl" })
+            var second = Reducer.reduce(state.state, { type: "click", modifier: "shift" })
             // The second press of the double click is seen first as a click on
             // a latched modifier, which §5 says returns it to idle without
             // passing through locked. It must not emit anything either, or the
             // lock's `down` would be preceded by a stray `up`.
-            T.equal(second.state.ctrl, "idle")
+            T.equal(second.state.shift, "idle")
             T.deepEqual(second.lines, [])
-            var out = Reducer.reduce(second.state, { type: "doubleClick", modifier: "ctrl" })
-            T.equal(out.state.ctrl, "locked")
-            T.deepEqual(out.lines, ["down LCTL"])
+            var out = Reducer.reduce(second.state, { type: "doubleClick", modifier: "shift" })
+            T.equal(out.state.shift, "locked")
+            T.deepEqual(out.lines, ["down LFSH"])
+        })
+
+        T.test("every non-Shift double-click sequence ends idle", function () {
+            var modifiers = ["ctrl", "alt", "logo", "altgr"]
+            for (var i = 0; i < modifiers.length; i++) {
+                var modifier = modifiers[i]
+                var first = Reducer.reduce(idle, { type: "click", modifier: modifier })
+                var second = Reducer.reduce(first.state, { type: "click", modifier: modifier })
+                var out = Reducer.reduce(second.state,
+                    { type: "doubleClick", modifier: modifier })
+                T.equal(out.state[modifier], "idle")
+                T.deepEqual(first.lines.concat(second.lines, out.lines), [])
+            }
         })
 
         T.test("click, click, doubleClick from latched ends locked", function () {
@@ -130,34 +143,34 @@ QtObject {
             T.deepEqual(out.lines, ["down LFSH"])
         })
 
-        T.test("click, click, doubleClick from locked ends idle, lifted exactly once", function () {
-            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "alt" }).state
-            T.equal(state.alt, "locked")
-            var first = Reducer.reduce(state, { type: "click", modifier: "alt" })
+        T.test("Shift click, click, doubleClick from locked lifts exactly once", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            T.equal(state.shift, "locked")
+            var first = Reducer.reduce(state, { type: "click", modifier: "shift" })
             // The first press of the gesture already lifted it.
-            T.deepEqual(first.lines, ["up LALT"])
-            var second = Reducer.reduce(first.state, { type: "click", modifier: "alt" })
+            T.deepEqual(first.lines, ["up LFSH"])
+            var second = Reducer.reduce(first.state, { type: "click", modifier: "shift" })
             T.deepEqual(second.lines, [])
-            var out = Reducer.reduce(second.state, { type: "doubleClick", modifier: "alt" })
-            T.equal(out.state.alt, "idle")
+            var out = Reducer.reduce(second.state, { type: "doubleClick", modifier: "shift" })
+            T.equal(out.state.shift, "idle")
             // And the rollback must not lift it a second time: the helper is
-            // no longer holding LALT, so a second `up` would be a line about a
+            // no longer holding LFSH, so a second `up` would be a line about a
             // key nothing is down on.
             T.deepEqual(out.lines, [])
         })
 
-        T.test("a single click that unlocks does not poison the next double click", function () {
+        T.test("a Shift click that unlocks does not poison the next double click", function () {
             // The sequence that a one-click-deep memory gets wrong: unlock,
             // then double click. The gesture starts from idle, so it must
             // lock — not read the `locked` that preceded the unlocking click.
-            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
-            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
-            T.equal(state.ctrl, "idle")
-            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
-            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
-            var out = Reducer.reduce(state, { type: "doubleClick", modifier: "ctrl" })
-            T.equal(out.state.ctrl, "locked")
-            T.deepEqual(out.lines, ["down LCTL"])
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "shift" }).state
+            T.equal(state.shift, "idle")
+            state = Reducer.reduce(state, { type: "click", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "shift" }).state
+            var out = Reducer.reduce(state, { type: "doubleClick", modifier: "shift" })
+            T.equal(out.state.shift, "locked")
+            T.deepEqual(out.lines, ["down LFSH"])
         })
 
         T.test("a double click on one modifier ignores the clicks on another", function () {
@@ -172,14 +185,14 @@ QtObject {
             T.equal(out.state.alt, "idle")
         })
 
-        T.test("the gesture memory does not survive into the next gesture", function () {
+        T.test("Shift gesture memory does not survive into the next gesture", function () {
             // lock, then unlock by a plain single click much later: the
             // doubleClick that made the lock must have cleared its own
             // bookkeeping, or the click would roll back instead of lifting.
-            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "logo" }).state
-            var out = Reducer.reduce(state, { type: "click", modifier: "logo" })
-            T.equal(out.state.logo, "idle")
-            T.deepEqual(out.lines, ["up LWIN"])
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(state, { type: "click", modifier: "shift" })
+            T.equal(out.state.shift, "idle")
+            T.deepEqual(out.lines, ["up LFSH"])
         })
 
         T.test("no click is ever charged a delay: every click answers in one call", function () {
@@ -217,8 +230,8 @@ QtObject {
             T.equal(out.state.alt, "idle")
         })
 
-        T.test("a locked modifier survives ten presses while a latched one does not", function () {
-            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
+        T.test("locked Shift survives ten presses while latched Alt does not", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
             state = Reducer.reduce(state, { type: "click", modifier: "alt" }).state
             var first = Reducer.reduce(state, { type: "press", position: "AB01" })
             T.deepEqual(first.lines, ["down LALT", "down AB01"])
@@ -232,37 +245,67 @@ QtObject {
                 T.deepEqual(up.lines, ["up AB01"])
                 state = up.state
             }
-            T.equal(state.ctrl, "locked")
+            T.equal(state.shift, "locked")
             T.equal(state.alt, "idle")
         })
 
-        T.test("locked and latched stack on the same press", function () {
-            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
-            state = Reducer.reduce(state, { type: "click", modifier: "shift" }).state
+        T.test("locked Shift and latched Ctrl stack on the same press", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
             var out = Reducer.reduce(state, { type: "press", position: "AD03" })
-            T.deepEqual(out.lines, ["down LFSH", "down AD03"])
+            T.deepEqual(out.lines, ["down LCTL", "down AD03"])
             T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
-                        ["up AD03", "up LFSH"])
+                        ["up AD03", "up LCTL"])
         })
 
         // ---- pages and languages (spec-v1 §5, issues 05 and 10) ----
 
         T.test("a page switch leaves every modifier and emits nothing", function () {
-            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
-            state = Reducer.reduce(state, { type: "click", modifier: "shift" }).state
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
             var out = Reducer.reduce(state, { type: "pageSwitch" })
-            T.equal(out.state.ctrl, "locked")
-            T.equal(out.state.shift, "latched")
+            T.equal(out.state.shift, "locked")
+            T.equal(out.state.ctrl, "latched")
             T.deepEqual(out.lines, [])
         })
 
         T.test("a language switch leaves every modifier and emits nothing", function () {
-            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "logo" }).state
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
             state = Reducer.reduce(state, { type: "click", modifier: "alt" }).state
             var out = Reducer.reduce(state, { type: "languageSwitch" })
-            T.equal(out.state.logo, "locked")
+            T.equal(out.state.shift, "locked")
             T.equal(out.state.alt, "latched")
             T.deepEqual(out.lines, [])
+        })
+
+        T.test("Fn is an immediate two-state panel control that emits nothing", function () {
+            var on = Reducer.reduce(idle, { type: "fnClick" })
+            T.equal(on.state.fn, true)
+            T.deepEqual(on.lines, [])
+            var off = Reducer.reduce(on.state, { type: "fnClick" })
+            T.equal(off.state.fn, false)
+            T.deepEqual(off.lines, [])
+        })
+
+        T.test("Fn switching preserves every modifier and Caps state", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
+            state = Reducer.reduce(state, { type: "capsClick" }).state
+            var out = Reducer.reduce(state, { type: "fnClick" })
+            T.equal(out.state.shift, "locked")
+            T.equal(out.state.ctrl, "latched")
+            T.equal(out.state.caps, true)
+            T.equal(out.state.fn, true)
+            T.deepEqual(out.lines, [])
+        })
+
+        T.test("closing releases held keys but keeps session Fn mode", function () {
+            var state = Reducer.reduce(idle, { type: "fnClick" }).state
+            state = Reducer.reduce(state, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(state, { type: "releaseAll" })
+            T.equal(out.state.fn, true)
+            T.equal(out.state.shift, "idle")
+            T.deepEqual(out.lines, ["up LFSH"])
         })
 
         // ---- the symbols page, whose caps stand for a shift level and have to
@@ -317,11 +360,87 @@ QtObject {
             T.equal(out.state.alt, "idle")
         })
 
-        T.test("a locked modifier still emits its hold after a page switch releases nothing", function () {
-            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
+        T.test("locked Shift still emits its lift after a page switch", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
             state = Reducer.reduce(state, { type: "pageSwitch" }).state
-            var out = Reducer.reduce(state, { type: "click", modifier: "ctrl" })
-            T.deepEqual(out.lines, ["up LCTL"])
+            var out = Reducer.reduce(state, { type: "click", modifier: "shift" })
+            T.deepEqual(out.lines, ["up LFSH"])
+        })
+
+        // ---- the curated page's AltGr levels (spec-v1.1 §3). Levels 3 and 4
+        // are real levels of the complete active keymap, reached the same way
+        // level 2 is: a real modifier press around the key, never a character
+        // the panel picked. AltGr cannot lock (§16), so it is either idle or
+        // latched here. ----
+
+        T.test("a level-3 cap wraps AltGr around the position on its own", function () {
+            var out = Reducer.reduce(idle, {
+                type: "press", position: "AE05", shift: false, altgr: true })
+            T.deepEqual(out.lines, ["down RALT", "down AE05"])
+            T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
+                        ["up AE05", "up RALT"])
+            T.equal(out.state.altgr, "idle")
+        })
+
+        T.test("a level-4 cap wraps AltGr and Shift, AltGr going down first", function () {
+            var out = Reducer.reduce(idle, {
+                type: "press", position: "AE03", shift: true, altgr: true })
+            T.deepEqual(out.lines, ["down RALT", "down LFSH", "down AE03"])
+            T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
+                        ["up AE03", "up LFSH", "up RALT"])
+        })
+
+        T.test("a level-3 cap lifts a locked Shift around the press and restores it", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "AE05", shift: false, altgr: true })
+            T.deepEqual(out.lines, ["up LFSH", "down RALT", "down AE05"])
+            var lifted = Reducer.reduce(out.state, { type: "release" })
+            T.deepEqual(lifted.lines, ["up AE05", "up RALT", "down LFSH"])
+            T.equal(lifted.state.shift, "locked")
+        })
+
+        T.test("a level-3 cap spends a latched Shift without wrapping it", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "AE05", shift: false, altgr: true })
+            T.deepEqual(out.lines, ["down RALT", "down AE05"])
+            T.equal(out.state.shift, "idle")
+        })
+
+        T.test("a level-4 cap carries a latched Shift with AltGr", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "AE03", shift: true, altgr: true })
+            T.deepEqual(out.lines, ["down RALT", "down LFSH", "down AE03"])
+            T.equal(out.state.shift, "idle")
+        })
+
+        T.test("a level-4 cap adds nothing while Shift is locked and held", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "AE03", shift: true, altgr: true })
+            T.deepEqual(out.lines, ["down RALT", "down AE03"])
+            T.equal(out.state.shift, "locked")
+        })
+
+        T.test("a latched AltGr is consumed by, and wraps, the level it asked for", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "altgr" }).state
+            var out = Reducer.reduce(state, {
+                type: "press", position: "AE05", shift: false, altgr: true })
+            T.deepEqual(out.lines, ["down RALT", "down AE05"])
+            T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines,
+                        ["up AE05", "up RALT"])
+            T.equal(out.state.altgr, "idle")
+        })
+
+        T.test("a latched AltGr still wraps an ordinary press without a level", function () {
+            // Pre-existing v1 behaviour: a manual AltGr latch wraps whatever
+            // non-modifier press follows, whatever page it came from.
+            var state = Reducer.reduce(idle, { type: "click", modifier: "altgr" }).state
+            var out = Reducer.reduce(state, { type: "press", position: "AD03" })
+            T.deepEqual(out.lines, ["down RALT", "down AD03"])
+            T.equal(out.state.altgr, "idle")
         })
 
         // ---- caps lock, which is emulated with Shift rather than the CAPS
@@ -388,11 +507,11 @@ QtObject {
 
         T.test("releasing held modifiers does not turn persistent Caps off", function () {
             var state = Reducer.reduce(idle, { type: "capsClick" }).state
-            state = Reducer.reduce(state, { type: "doubleClick", modifier: "ctrl" }).state
+            state = Reducer.reduce(state, { type: "doubleClick", modifier: "shift" }).state
             var out = Reducer.reduce(state, { type: "releaseAll" })
             T.equal(out.state.caps, true)
-            T.equal(out.state.ctrl, "idle")
-            T.deepEqual(out.lines, ["up LCTL"])
+            T.equal(out.state.shift, "idle")
+            T.deepEqual(out.lines, ["up LFSH"])
         })
 
         // ---- purity and housekeeping ----
@@ -421,12 +540,11 @@ QtObject {
             T.deepEqual(out.lines, [])
         })
 
-        T.test("releaseAll lifts every locked modifier and returns to idle", function () {
-            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
-            state = Reducer.reduce(state, { type: "doubleClick", modifier: "shift" }).state
+        T.test("releaseAll lifts locked Shift and returns every modifier to idle", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
             state = Reducer.reduce(state, { type: "click", modifier: "alt" }).state
             var out = Reducer.reduce(state, { type: "releaseAll" })
-            T.deepEqual(out.lines, ["up LFSH", "up LCTL"])
+            T.deepEqual(out.lines, ["up LFSH"])
             T.equal(JSON.stringify(out.state), JSON.stringify(Reducer.initialState()))
         })
 
@@ -466,11 +584,11 @@ QtObject {
             // Closing the panel mid-hold. Without the key going first it
             // would keep repeating into whatever had focus until the
             // helper's fifteen-second cap noticed.
-            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state
-            state = Reducer.reduce(state, { type: "click", modifier: "shift" }).state
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
             state = Reducer.reduce(state, { type: "press", position: "AD03" }).state
             var out = Reducer.reduce(state, { type: "releaseAll" })
-            T.deepEqual(out.lines, ["up AD03", "up LFSH", "up LCTL"])
+            T.deepEqual(out.lines, ["up AD03", "up LCTL", "up LFSH"])
             T.equal(JSON.stringify(out.state), JSON.stringify(Reducer.initialState()))
         })
 
@@ -478,7 +596,7 @@ QtObject {
             var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
             T.equal(Reducer.isActive(state, "shift"), true)
             T.equal(Reducer.isActive(state, "ctrl"), false)
-            T.equal(Reducer.isActive(Reducer.reduce(idle, { type: "doubleClick", modifier: "ctrl" }).state, "ctrl"), true)
+            T.equal(Reducer.isActive(Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state, "shift"), true)
         })
 
         Qt.exit(T.report("modifier reducer"))

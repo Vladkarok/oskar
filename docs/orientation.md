@@ -1,8 +1,9 @@
 # Orientation — read this first
 
 Written 2026-09-02 for a fresh session. The code says *what* exists; this
-says what we are building, [spec-v1.md](spec-v1.md) says what v1 must do,
-and [decisions.md](decisions.md) says *why* it looks the way it does.
+says what we are building, [spec-v1.md](spec-v1.md) records the v1 baseline,
+[spec-v1.1.md](spec-v1.1.md) is the authoritative current delta, and
+[decisions.md](decisions.md) says *why* it looks the way it does.
 [vm-handoff.md](vm-handoff.md) is the test lab.
 
 ## The idea
@@ -15,9 +16,9 @@ non-Latin layouts, including XWayland/Proton/Electron windows.
 The part nobody on Linux does today is the layout coupling. On Windows
 the on-screen keyboard and the physical keyboard share one input
 language: change it once and it is changed everywhere. Here the system
-layout is the single source of truth in both directions — switch with
-Caps Lock and the caps follow; switch from the panel and the physical
-keyboard follows.
+layout is the single source of truth in both directions — switch with the
+configured physical shortcut and the caps follow; switch from the panel and
+the physical keyboard follows.
 
 Owner's setup: `us,ua` with `compose:caps,grp:alt_shift_toggle`. It must
 generalise to any number of layouts — two toggle, three or more should
@@ -63,9 +64,9 @@ the protocol lives in `parse()`/`apply_locked()` in `daemon/src/main.rs`.
   screenshot, layout mirroring both directions with zero keymap churn,
   USB hotplug survival, cold-boot self-recovery, both socket-recovery
   directions. The VM is healthy and installed with the current build.
-- Host machine: plugin installed and hot-reloading, **service still
-  `disabled`** — deliberate, it does not go in autostart until it has
-  survived daily use.
+- Host machine: plugin installed and hot-reloading. The development service
+  may still be disabled; v1.1 requires installer and development provisioning
+  to enable it for graphical-session autostart.
 
 Not done: daily use on a real session, sleep/wake on real hardware (the
 VM cannot suspend, see decisions), the 3+ language popup, long-press
@@ -97,7 +98,7 @@ upstream Hyprland/Omarchy work.
 
 ## Suggested next steps
 
-1. Daily use in the VM, then a supervised stretch on the real session.
-2. Sleep/wake on real hardware (layout state after resume).
-3. Features: 3+ language popup, long-press accents, context row.
-4. Upstream queue in [vm-handoff.md](vm-handoff.md#upstream-queue).
+1. Implement the local v1.1 board derived from [spec-v1.1.md](spec-v1.1.md).
+2. Land the shared Omarchy Style refresh needed for live rounding updates.
+3. Daily use, then sleep/wake on real hardware.
+4. Features: 3+ language popup, long-press accents, context row.

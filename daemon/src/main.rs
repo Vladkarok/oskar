@@ -41,7 +41,7 @@
 //! and nothing here or in the panel repeats anything. What the helper does add
 //! is a cap — a non-modifier code held past fifteen seconds is lifted and
 //! logged, because the only way that happens is a panel that is alive but
-//! wedged. Modifier codes are exempt; a locked Ctrl is deliberately held.
+//! wedged. Modifier codes are exempt; locked Shift is deliberately held.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
@@ -244,10 +244,18 @@ fn parse_keycodes(keymap: &str) -> std::collections::HashMap<String, u32> {
 /// construction — and it picks up the positions that become modifiers through
 /// a compat interpret rather than a modifier map, which the old reading
 /// admitted it could not see.
+///
+/// The probe runs once per GROUP, not once per keymap: a position's modifier
+/// meaning is a fact about the group it resolves in, and multi-group keymaps
+/// disagree. Under `us,ua` without an `lv3:` option, RALT is Alt_R (Mod1) in
+/// the us group and ISO_Level3_Shift (Mod5) in the ua group — a group-0 probe
+/// made every AltGr chord report Alt at group ua, and the level-3 keysyms
+/// came out as their level-1 selves. `Shared::modifier_mask` picks the entry
+/// for the group the device is typing in.
 fn modifier_masks_for_keymap(
     keymap: &str,
     codes: &std::collections::HashMap<String, u32>,
-) -> std::collections::HashMap<u32, u32> {
+) -> std::collections::HashMap<u32, Vec<u32>> {
     use xkbcommon::xkb;
 
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
@@ -259,17 +267,25 @@ fn modifier_masks_for_keymap(
     ) else {
         return std::collections::HashMap::new();
     };
+    let groups = compiled.num_layouts() as usize;
 
     let mut masks = std::collections::HashMap::new();
     for code in codes.values() {
-        // A fresh state per position rather than press-then-release: a key
-        // carrying LockMods (Caps Lock) does not undo itself on release, and
-        // would leave its bit set for every position probed after it.
-        let mut state = xkb::State::new(&compiled);
-        state.update_key(xkb::Keycode::from(code + 8), xkb::KeyDirection::Down);
-        let mask = state.serialize_mods(xkb::STATE_MODS_EFFECTIVE);
-        if mask != 0 {
-            masks.insert(*code, mask);
+        let mut per_group = Vec::with_capacity(groups);
+        for group in 0..groups {
+            // A fresh state per position rather than press-then-release: a key
+            // carrying LockMods (Caps Lock) does not undo itself on release, and
+            // would leave its bit set for every position probed after it. The
+            // base layout rides the update_mask call, so the press resolves in
+            // the group being probed.
+            let mut state = xkb::State::new(&compiled);
+            let group = group as u32;
+            state.update_mask(0, 0, 0, group, group, group);
+            state.update_key(xkb::Keycode::from(code + 8), xkb::KeyDirection::Down);
+            per_group.push(state.serialize_mods(xkb::STATE_MODS_EFFECTIVE));
+        }
+        if per_group.iter().any(|&mask| mask != 0) {
+            masks.insert(*code, per_group);
         }
     }
     masks
@@ -310,8 +326,11 @@ struct Shared {
     ready: bool,
     /// xkb key name -> evdev code, taken from the keymap in use.
     codes: std::collections::HashMap<String, u32>,
-    /// evdev code -> modifier bit, for the codes the keymap calls modifiers.
-    modifier_masks: std::collections::HashMap<u32, u32>,
+    /// evdev code -> modifier bit per group, for the codes the keymap calls
+    /// modifiers. A position may carry different bits in different groups —
+    /// RALT is Alt_R in us and ISO_Level3_Shift in ua — so the active group
+    /// picks the entry (see `modifier_mask`).
+    modifier_masks: std::collections::HashMap<u32, Vec<u32>>,
     /// Which compiled layout is active.
     group: u32,
     config: Option<XkbConfig>,
@@ -330,12 +349,21 @@ impl Shared {
     }
 
     /// The modifier mask the device should be reporting: every bit carried by
-    /// a code some connection currently holds. Derived from `held` rather than
-    /// accumulated, so it cannot drift out of step with what is pressed.
+    /// a code some connection currently holds, read at the group the device is
+    /// typing in — the same position can mean different modifiers per group.
+    /// Derived from `held` rather than accumulated, so it cannot drift out of
+    /// step with what is pressed.
     fn modifier_mask(&self) -> u32 {
         self.held
             .keys()
-            .filter_map(|code| self.modifier_masks.get(code))
+            .filter_map(|code| {
+                self.modifier_masks
+                    .get(code)
+                    .and_then(|per_group| per_group.get(self.group as usize))
+                    // A group beyond the keymap's own count wraps in xkb; the
+                    // first group's bit is the honest answer for it.
+                    .or_else(|| self.modifier_masks.get(code).and_then(|p| p.first()))
+            })
             .fold(0, |mask, bit| mask | bit)
     }
 
@@ -829,7 +857,7 @@ fn hold_deadline(shared: &SharedRef, conn_id: u64) -> Option<Instant> {
 }
 
 /// Lifts every non-modifier code held past the cap and says so in the log.
-/// Modifier codes are exempt: a locked Ctrl (spec-v1 §5) is deliberately held
+/// Modifier codes are exempt: locked Shift (spec-v1.1 §2) is deliberately held
 /// for minutes, and releasing it would make the lock indicator lie.
 ///
 /// The release is unconditional rather than per-claim — the device holds the
@@ -1221,17 +1249,18 @@ mod tests {
         let text = compile_keymap(&XkbConfig::default()).expect("us should compile");
         let codes = parse_keycodes(&text);
         let masks = modifier_masks_for_keymap(&text, &codes);
+        let first = |code: &u32| masks.get(code).and_then(|per_group| per_group.first());
         // xkb fixes the order of the real modifiers, so Shift is bit 0,
         // Control bit 2 and Mod4 — which is where `us` puts Super — bit 6.
-        assert_eq!(masks.get(&codes["LFSH"]), Some(&0b1));
-        assert_eq!(masks.get(&codes["RTSH"]), Some(&0b1));
-        assert_eq!(masks.get(&codes["LCTL"]), Some(&0b100));
-        assert_eq!(masks.get(&codes["LWIN"]), Some(&0b100_0000));
+        assert_eq!(first(&codes["LFSH"]), Some(&0b1));
+        assert_eq!(first(&codes["RTSH"]), Some(&0b1));
+        assert_eq!(first(&codes["LCTL"]), Some(&0b100));
+        assert_eq!(first(&codes["LWIN"]), Some(&0b100_0000));
         // An ordinary letter carries no modifier bit at all, which is what
         // keeps the mask from being re-asserted on every keystroke.
         assert_eq!(masks.get(&codes["AD01"]), None);
         // Plain `us` puts RALT on Mod1, alongside LALT.
-        assert_eq!(masks.get(&codes["RALT"]), Some(&0b1000));
+        assert_eq!(first(&codes["RALT"]), Some(&0b1000));
     }
 
     #[test]
@@ -1248,10 +1277,11 @@ mod tests {
         .expect("us with altwin:swap_lalt_lwin should compile");
         let codes = parse_keycodes(&text);
         let masks = modifier_masks_for_keymap(&text, &codes);
-        assert_eq!(masks.get(&codes["LALT"]), Some(&0b100_0000));
-        assert_eq!(masks.get(&codes["LWIN"]), Some(&0b1000));
+        let first = |code: &u32| masks.get(code).and_then(|per_group| per_group.first());
+        assert_eq!(first(&codes["LALT"]), Some(&0b100_0000));
+        assert_eq!(first(&codes["LWIN"]), Some(&0b1000));
         // And the modifiers the option does not touch are unmoved.
-        assert_eq!(masks.get(&codes["LFSH"]), Some(&0b1));
+        assert_eq!(first(&codes["LFSH"]), Some(&0b1));
     }
 
     #[test]
@@ -1266,7 +1296,58 @@ mod tests {
         .expect("us with lv3:ralt_switch should compile");
         let codes = parse_keycodes(&text);
         let masks = modifier_masks_for_keymap(&text, &codes);
-        assert_eq!(masks.get(&codes["RALT"]), Some(&0b1000_0000));
+        assert_eq!(
+            masks
+                .get(&codes["RALT"])
+                .and_then(|per_group| per_group.first()),
+            Some(&0b1000_0000)
+        );
+    }
+
+    #[test]
+    fn an_altgr_position_carries_the_bit_of_the_group_it_resolves_in() {
+        // The curated page's AltGr levels exposed this: under the owner's
+        // `us,ua` without an `lv3:` option, RALT is Alt_R (Mod1) in the us
+        // group and ISO_Level3_Shift (Mod5) in the ua group. A group-0 probe
+        // served Mod1 to both, and every level-3 chord came out as the
+        // position's level-1 self — Alt_R+5 typed `5`, not `°`.
+        use xkbcommon::xkb;
+
+        let text = compile_keymap(&XkbConfig {
+            layouts: "us,ua".into(),
+            options: "shift:both_capslock_cancel,grp:caps_toggle".into(),
+            ..XkbConfig::default()
+        })
+        .expect("the owner's RMLVO should compile");
+        let codes = parse_keycodes(&text);
+        let masks = modifier_masks_for_keymap(&text, &codes);
+        let ralt = masks.get(&codes["RALT"]).expect("RALT is a modifier");
+
+        assert_eq!(ralt.first(), Some(&0b1000), "us group: Alt_R is Mod1");
+        assert_eq!(
+            ralt.get(1),
+            Some(&0b1000_0000),
+            "ua group: AltGr must reach Mod5"
+        );
+
+        // Stand in for the compositor once more, now at group 1: told the
+        // helper's Mod5 mask, the level-3 chord must produce degree, not `5`.
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_string(
+            &context,
+            text,
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .expect("the helper's own keymap text should compile");
+        let mut state = xkb::State::new(&keymap);
+        state.update_mask(0, 0, 0, 1, 1, 1);
+        state.update_mask(*ralt.get(1).expect("ua group mask"), 0, 0, 1, 1, 1);
+        assert_eq!(
+            state.key_get_utf8(xkb::Keycode::from(codes["AE05"] + 8)),
+            "°",
+            "the AltGr mask must select the ua group's third level"
+        );
     }
 
     /// Asserts on the characters a client would read, not on a bit pattern:
@@ -1296,6 +1377,7 @@ mod tests {
         let masks = modifier_masks_for_keymap(&text, &codes);
         let mask = masks
             .get(&codes["LFSH"])
+            .and_then(|per_group| per_group.first())
             .copied()
             .expect("Shift must carry a modifier bit");
 
