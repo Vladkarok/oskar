@@ -1,2 +1,4 @@
 daemon/target/
 core.*
+.scratch/
+__pycache__/

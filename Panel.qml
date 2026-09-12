@@ -62,8 +62,15 @@ Item {
     // can raise the panel by setting `opened` directly and those hooks would
     // never run.
     onOpenedChanged: {
-        if (root.opened) root.suspendCursorHiding()
-        else root.restoreCursorHiding()
+        if (root.opened) {
+            root.suspendCursorHiding()
+            return
+        }
+        root.restoreCursorHiding()
+        // A locked modifier is genuinely held down at the device, so closing
+        // the panel has to let go of it. Otherwise the keyboard disappears and
+        // the session carries on as though Ctrl were taped down.
+        keyboard.releaseModifiers()
     }
 
     // Reads the current value before overriding it, so the user's own choice is

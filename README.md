@@ -32,6 +32,10 @@ earns a place in autostart.
 | `daemon/` | Rust helper holding one virtual keyboard |
 | `tools/nested-session.sh` | runs a command against a throwaway nested Hyprland |
 | `tools/smoke-daemon.sh` | end-to-end check of the helper |
+| `tools/integration/` | the assertions that check runs, and their plumbing |
+| `docs/orientation.md` | what this is, current state, how the work runs |
+| `docs/decisions.md` | why the design looks like this, and the dead ends |
+| `docs/vm-handoff.md` | the dogfooding VM: operating manual and queue |
 
 ## Why there is a helper at all
 
@@ -109,14 +113,19 @@ tools/nested-session.sh tools/smoke-daemon.sh
 The harness starts a disposable nested Hyprland, gives the subject a private
 `XDG_RUNTIME_DIR` so its control socket cannot collide with an installed
 service, and fails the run if compositor keymap rebuilds exceed a threshold.
-The smoke checks the readiness gate, that exactly three keymaps get compiled
+
+`tools/smoke-daemon.sh` owns the helper process; the assertions live in
+`tools/integration/suite.py` and everything that talks to the socket, the
+log or `hyprctl` lives in `tools/integration/harness.py`, so a new check is
+a new `@test` and nothing else. The script waits for the control socket to
+appear; the suite then checks that exactly three keymaps get compiled
 (default, configured, and the model swap in the drain regression — a
 byte-identical `configure` must short-circuit), that the device's group
 follows `configure`/`group` commands with an assertion before every tap
 (read back from `hyprctl devices`), that a client disconnecting mid-chord
-leaves the helper serving, and the multi-client ownership rules (foreign
-releases refused, shared holds surviving one holder's release, taps refusing
-to lift a hold, a re-claim after a keymap swap re-pressing). What it cannot
+leaves the helper serving, and the multi-client claim rules (foreign
+releases refused, a shared press surviving one claim's release, taps
+refusing to lift a claim, a re-claim after a keymap swap re-pressing). What it cannot
 see is the character an app receives — that is what the VM dogfooding phase
 is for.
 
