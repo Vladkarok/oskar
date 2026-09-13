@@ -190,16 +190,21 @@ function nextQuery(query, action, text) {
 // function keys) has nothing to append. Key codes are matched before text
 // so Escape's or Backspace's own control payload cannot be mistaken for
 // a character. The literals are Qt.Key_Escape (0x01000000) and
-// Qt.Key_Backspace (0x01000003). A Control- or Meta-chord
-// (0x04000000 / 0x08000000) is not typing: while armed the layer holds
-// the keyboard and the chord cannot reach the app anyway, but it must
-// not leave a stray character in the query. Shift is typing — "A" is
-// what was typed. Whether an event reaches here at all —
-// the armed gate, the scope's focus — is the page's QML, not this rule.
+// Qt.Key_Backspace (0x01000003). A chord is not typing: Ctrl (0x04000000),
+// Alt (0x08000000) and Meta/Super (0x10000000) all produce nothing — while
+// armed the layer holds the keyboard and the chord cannot reach the app
+// anyway, but it must not leave a stray character in the query (the
+// ticket-42 review caught the first cut gating 0x08000000 as Meta and
+// letting Super chords through). AltGr is untouched: on the Wayland stack
+// it arrives as GroupSwitchModifier (0x40000000), so é/§ still type.
+// Shift is typing — "A" is what was typed. Whether an event reaches here
+// at all — the armed gate, the scope's focus — is the page's QML, not
+// this rule.
 function searchKeyAction(event) {
     var key = event ? (event.key || 0) : 0
     var modifiers = event ? (event.modifiers || 0) : 0
-    if ((modifiers & 0x04000000) || (modifiers & 0x08000000)) return ""
+    if ((modifiers & 0x04000000) || (modifiers & 0x08000000)
+            || (modifiers & 0x10000000)) return ""
     if (key === 0x01000000) return "escape"
     if (key === 0x01000003) return "backspace"
     var text = event && typeof event.text === "string" ? event.text : ""

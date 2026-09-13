@@ -615,12 +615,16 @@ QtObject {
                 { key: 0x01000007, text: "\u007F" }), "")
         })
 
-        T.test("a Ctrl- or Meta-chord is not typing", function () {
-            // Qt.ControlModifier 0x04000000, Qt.MetaModifier 0x08000000:
-            // while armed the layer holds the keyboard, so a chord cannot
-            // reach the app anyway — but it must not leave a stray
-            // character in the query either. Shift stays a typing
-            // modifier: "A" is what was typed.
+        T.test("a Ctrl-, Alt- or Meta-chord is not typing", function () {
+            // qnamespace.h: ControlModifier 0x04000000, AltModifier
+            // 0x08000000, MetaModifier 0x10000000 (the ticket-42 review
+            // caught the first cut gating 0x08000000 as Meta — Super
+            // chords typed stray characters). While armed the layer holds
+            // the keyboard, so a chord cannot reach the app anyway — but
+            // it must not leave a stray character in the query either.
+            // Shift stays a typing modifier: "A" is what was typed. And
+            // AltGr is typing on the Wayland stack: it arrives as
+            // GroupSwitchModifier 0x40000000, so é/§ pass.
             T.equal(Page.searchKeyAction(
                 { key: 0x43, text: "c", modifiers: 0x04000000 }), "")
             T.equal(Page.searchKeyAction(
@@ -628,7 +632,13 @@ QtObject {
             T.equal(Page.searchKeyAction(
                 { key: 0x01000003, text: "\b", modifiers: 0x04000000 }), "")
             T.equal(Page.searchKeyAction(
+                { key: 0x43, text: "c", modifiers: 0x08000000 }), "")
+            T.equal(Page.searchKeyAction(
+                { key: 0x43, text: "c", modifiers: 0x10000000 }), "")
+            T.equal(Page.searchKeyAction(
                 { key: 0x41, text: "A", modifiers: 0x02000000 }), "char")
+            T.equal(Page.searchKeyAction(
+                { key: 0xdf, text: "ß", modifiers: 0x40000000 }), "char")
             // An event-shaped object without modifiers is a plain press.
             T.equal(Page.searchKeyAction({ key: 0x41, text: "a" }), "char")
         })
