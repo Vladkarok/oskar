@@ -243,6 +243,29 @@ function usageAfterSuccess(records, emoji) {
     return out
 }
 
+// Ticket 34: the usage category renders a snapshot of the records, taken
+// when the view is entered and only then — positional stability while
+// clicking beats live re-ranking. The store stays live (its per-delivery
+// update is untouched, decisions §44); a pick's evidence appears at the
+// next entry. The copy is deep: no record may alias the store's, or a
+// later success would leak into a view that promised not to move.
+function usageViewOnOpen(records) {
+    var out = []
+    for (var i = 0; i < records.length; i++)
+        out.push({ emoji: records[i].emoji, count: records[i].count,
+            lastUsed: records[i].lastUsed })
+    return out
+}
+
+// A group change re-snapshots only on re-entry into the usage category;
+// every other switch keeps the standing snapshot (nothing reorders while
+// another category shows). The page calls this from its one group-change
+// hook and stays dumb about the rule.
+function usageViewOnGroupChange(newGroup, records, snapshot) {
+    return String(newGroup) === "__usage__"
+        ? usageViewOnOpen(records) : snapshot
+}
+
 function usageSections(records, columns) {
     var frequent = records.slice().sort(function (a, b) {
         return b.count - a.count || b.lastUsed - a.lastUsed

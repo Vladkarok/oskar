@@ -52,8 +52,14 @@ Rectangle {
     property bool searchArmed: true
     // Panel-local tab state, never persisted; defaults to the first group.
     property string activeGroup: "__usage__"
+    // Ticket 34: the usage category renders this snapshot of the records,
+    // not the live store — refreshed on open and on re-entry into the
+    // usage group only, so repeated picks never move a tile under the
+    // pointer. A plain copy with no binding on usageRecords; the store
+    // itself stays live (decisions §44).
+    property var usageSnapshotRecords: []
     readonly property var usageRecordSections: EmojiGrid.usageSections(
-        usageRecords, gridColumnCount)
+        usageSnapshotRecords, gridColumnCount)
     readonly property var usageSections: ({
         frequent: EmojiGrid.recordsToEntries(usageRecordSections.frequent,
             Catalog.entries()),
@@ -100,7 +106,19 @@ Rectangle {
             emojiRoot.searchArmed = true
             emojiRoot.activeGroup = emojiRoot.usageRecords.length > 0
                 ? "__usage__" : Catalog.groups()[0]
+            emojiRoot.usageSnapshotRecords = EmojiGrid.usageViewOnOpen(
+                emojiRoot.usageRecords)
         }
+    }
+
+    // Ticket 34's second refresh point: re-entry into the usage category
+    // re-snapshots the store's accumulated picks; leaving it keeps the
+    // standing view. Only entry changes the snapshot — picks while the
+    // usage category shows re-order nothing.
+    onActiveGroupChanged: {
+        emojiRoot.usageSnapshotRecords = EmojiGrid.usageViewOnGroupChange(
+            emojiRoot.activeGroup, emojiRoot.usageRecords,
+            emojiRoot.usageSnapshotRecords)
     }
 
     // Escape dismisses the page — but the overlay surface takes no keyboard
