@@ -111,23 +111,38 @@ small synthetic keymap that XWayland ignores — keystrokes vanished into Proton
 games and Electron apps. A single long-lived helper with a complete keymap
 brought that to 0.4ms average and does reach XWayland.
 
-## Why not an existing keyboard
+## How this compares
 
-Surveyed August 2026. None does layout mirroring on Hyprland; this is the only
-implementation found that follows the system layout at all.
+Surveyed September 2026. No other on-screen keyboard follows the system
+layout; most ship their own layout lists that only their own key switches.
 
-- **wvkbd** types through the same protocol but ships static keycap sets switched
-  only by its own key, and its auto-show occupies the single input-method slot.
-- **squeekboard** is unmaintained (Phosh replaced it); **maliit** speaks
-  input-method-v1, which Hyprland does not implement, and is dormant.
-- **IME/text-input routes** (fcitx5, maliit, GNOME apps) never reach XWayland,
-  which is a hard requirement here, and would fight Caps-Lock layout toggles
-  with a second layout state.
-- **GNOME Shell's OSK** is the proof the design is right — a compositor-owned
-  virtual device over one system-wide input source — but it is welded to
-  mutter/ibus. **Sway** already has the compositor-side fix (same-keymap
-  devices share layout state, switches skip virtual keyboards); that is the
-  model for the eventual Hyprland upstream work.
+| | This keyboard | GNOME OSK | plasma-keyboard (6.6) | squeekboard / Stevia | wvkbd | onboard |
+|---|---|---|---|---|---|---|
+| Mouse-driven desktop use | yes — the design centre | touch activation only | touch-first (mouse use still a known gap) | touch-first | touch-first | yes (its niche) |
+| Caps follow the system layout | both directions — switch with the physical shortcut and the caps follow; switch from the panel and the physical keyboard follows | partial, one-way, ibus-coupled | Qt Virtual Keyboard's own layout lists | its own layout files | static keycap sets | own definitions |
+| What is drawn is what is typed | yes, including non-Latin and per-group variants, proven byte-exact | within GNOME's input stack | within Qt's stack | within Phosh | — | X11 only |
+| XWayland / wine-Proton | proven (paced paste chord) | — | — | — | types, no layout coupling | X11 only |
+| Chromium/Electron emoji | proven (Unicode-entry route; clipboard mode for the rest) | — | — | — | — | — |
+| Host | Omarchy (Hyprland + Quickshell), Wayland | GNOME (mutter/ibus) | Plasma 6.6+, input-method-v1 | Phosh | wlroots mobile shells | X11 |
+| State (2026) | active | active | new (Feb 2026) | squeekboard replaced by Stevia in postmarketOS | active | abandoned |
+
+Notes from the survey:
+
+- **wvkbd** types through the same virtual-keyboard protocol but ships
+  static keycap sets switched only by its own key, and its auto-show
+  occupies the single input-method slot.
+- **plasma-keyboard** wraps Qt Virtual Keyboard and rides
+  input-method-v1 — a protocol Hyprland does not implement — and
+  **maliit**, the previous Plasma option, spoke the same one.
+- **IME/text-input routes** (fcitx5, maliit, GNOME apps) never reach
+  XWayland, which is a hard requirement here, and would fight Caps-Lock
+  layout toggles with a second layout state.
+- **GNOME Shell's OSK** is the proof the design is right — a
+  compositor-owned virtual device over one system-wide input source —
+  but it is welded to mutter/ibus. **Sway** already has the
+  compositor-side fix (same-keymap devices share layout state, switches
+  skip virtual keyboards); that is the model for the eventual Hyprland
+  upstream work.
 
 ## Compatibility
 
