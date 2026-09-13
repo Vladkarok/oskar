@@ -6,6 +6,7 @@ import Quickshell.Hyprland
 import qs.Commons
 import "KeyboardLayout.js" as Layout
 import "ModifierReducer.js" as Modifiers
+import "HoldColumn.js" as HoldColumn
 import "KeyboardSession.js" as Session
 import "Config.js" as ConfigFile
 import "LayoutDevices.js" as LayoutDevices
@@ -46,7 +47,49 @@ Item {
     // page closing by any route — cap, Escape, leftover click, gear, the
     // panel itself — ends the interception with it.
     property bool searchMode: false
+    onSearchModeChanged: {
+        // The search arm of typeCap is immediate by contract (ticket 37):
+        // a hold that began before the page opened must not grow a menu
+        // over it, and its release can only lift what its press sent —
+        // which for a deferred hold is nothing.
+        if (searchMode) {
+            clearCapHold()
+            closeHoldMenu()
+        }
+    }
     property var pendingTextReplies: []
+
+    // ---- the hold column (ticket 37) ----
+    //
+    // A character cap whose keymap position carries extra levels (3-4)
+    // defers its typing from mouse-press to mouse-release. The press
+    // starts a hold timer and sends NOTHING — no stray character, and no
+    // compositor repeat can start, because repeat belongs to a key that
+    // went down (spec-v1 §6) and a deferred cap never sends a press line
+    // before the threshold. A release before the threshold sends the
+    // usual press+release pair (one character, today's chord rules,
+    // current latches); the threshold firing opens the column menu, and
+    // the release after it is spent — nothing was ever down. Caps
+    // without a column never enter this state at all. The pure decisions
+    // (which levels a position offers, which caps defer) live in
+    // HoldColumn.js with their tests; this is the state and the chrome.
+    //
+    // `holdCap`/`holdDelegate` stand while the hold is pending (timer
+    // running); the menu carries its own baked copies, because the grid
+    // the delegate lives in can rebuild under a standing menu and the
+    // menu's pick must still name the position that was held.
+    property var holdCap: null
+    property Item holdDelegate: null
+    property bool holdMenuOpen: false
+    property var holdMenuCap: null
+    property Item holdMenuDelegate: null
+    property var holdMenuEntries: []
+    // The held cap's geometry in root coordinates, mapped once at open:
+    // the menu positions itself from these, not from a delegate that a
+    // row rebuild may have destroyed.
+    property real holdMenuCapX: 0
+    property real holdMenuCapTop: 0
+    property real holdMenuCapBottom: 0
 
     // The size preset's multiplier on top of the theme's own scaling
     // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
@@ -420,7 +463,15 @@ Item {
     // Keycap facts arrive after the configure acknowledgement. `rowModel`
     // is assigned imperatively so identical rows can avoid rebuilding the
     // delegates; refresh it when the facts it draws from change.
-    onCapsFactsChanged: rebuildRowModel()
+    onCapsFactsChanged: {
+        rebuildRowModel()
+        // A standing hold menu offers the OLD facts' levels (the entries
+        // were baked at open). Fold it rather than let a pick type a
+        // column the acknowledged keymap no longer carries. A hold still
+        // pending needs nothing: the threshold re-derives its column, and
+        // a release before then types the cap the user pressed.
+        closeHoldMenu()
+    }
 
     /// The one key in and the same key out. The reducer is told, so that what
     /// the modifiers do across a switch is decided in the one place the seam
@@ -1181,6 +1232,12 @@ Item {
     /// re-press) would re-hold what the close is lifting.
     function releaseModifiers() {
         if (root.pastePacing) root.abortPacedPaste()
+        // The panel is closing (this runs from its close branch): a
+        // pending hold can never reach its release and a standing menu
+        // has no panel left to stand on — both fold here, before the
+        // releaseAll, so the close leaves nothing of ticket 37 behind.
+        clearCapHold()
+        closeHoldMenu()
         applyModifierEvent({ type: "releaseAll" })
     }
 
@@ -1713,6 +1770,134 @@ Item {
         daemonSocket.write(text + "\n")
         daemonSocket.flush()
         return true
+    }
+
+    // ---- the hold column's event path (ticket 37) ----
+    //
+    // The column one cap would offer right now: the position's extra
+    // levels, read from the live caps facts. Both the defer decision and
+    // the menu content flow through here so they cannot disagree about
+    // what the keymap carries.
+    function capHoldColumn(capData) {
+        if (!capData || !capData.xkb || !capsFacts) return []
+        return HoldColumn.columnEntries(capsFacts[capData.xkb])
+    }
+
+    function capDefersHold(capData) {
+        return HoldColumn.shouldDefer(capData, capHoldColumn(capData),
+            searchMode, inputReady)
+    }
+
+    function beginCapHold(capData, delegate) {
+        holdCap = capData
+        holdDelegate = delegate
+        capHoldTimer.restart()
+    }
+
+    function clearCapHold() {
+        holdCap = null
+        holdDelegate = null
+        capHoldTimer.stop()
+    }
+
+    /// The release half of a deferred cap. True when this delegate's hold
+    /// consumed the release: before the threshold, the usual press+
+    /// release pair goes out NOW — one character, today's chord rules and
+    /// current latches, exactly the pair a non-deferred cap sends across
+    /// press and release, only both at the release (the click sound moves
+    /// with it, inside typeCap: no sound for a key that goes nowhere).
+    /// After the threshold opened the menu the release is the hold's own
+    /// and sends nothing; the menu stands for its own pick. Readiness can
+    /// drop between press and release — then nothing is typed, like a
+    /// canceled hold, rather than sounding a dead key.
+    function endCapHold(delegate) {
+        if (holdCap) {
+            if (holdDelegate !== delegate) return false
+            var cap = holdCap
+            clearCapHold()
+            if (!inputReady) return true
+            typeCap(cap)
+            releaseKey()
+            return true
+        }
+        return holdMenuOpen && holdMenuDelegate === delegate
+    }
+
+    /// A deferred hold that lost its grab: nothing was ever down, so
+    /// nothing is typed — strictly better than the stray character a
+    /// press-typing cap leaves — and a menu that had opened folds with
+    /// the hold that opened it.
+    function cancelCapHold(delegate) {
+        if (holdDelegate !== delegate && holdMenuDelegate !== delegate)
+            return false
+        clearCapHold()
+        closeHoldMenu()
+        return true
+    }
+
+    /// The threshold fired: open the menu over the held cap, or leave the
+    /// hold pending when the position turns out to have nothing to offer
+    /// (facts changed under the hold) — a release then still types, which
+    /// is as close to "behaves exactly as today" as a deferred press can
+    /// come, and no character was typed by the hold itself either way.
+    function openHoldMenu() {
+        if (!holdCap || !holdDelegate) {
+            clearCapHold()
+            return
+        }
+        var entries = capHoldColumn(holdCap)
+        if (entries.length === 0) return
+        var point = holdDelegate.mapToItem(root, 0, 0)
+        holdMenuCap = holdCap
+        holdMenuDelegate = holdDelegate
+        holdMenuEntries = entries
+        holdMenuCapX = point.x + holdDelegate.width / 2
+        holdMenuCapTop = point.y
+        holdMenuCapBottom = point.y + holdDelegate.height
+        holdMenuOpen = true
+        clearCapHold()
+    }
+
+    function closeHoldMenu() {
+        holdMenuOpen = false
+        holdMenuCap = null
+        holdMenuDelegate = null
+        holdMenuEntries = []
+    }
+
+    /// One menu entry, typed through the same exact-level chord the &123
+    /// glyph caps send (typeCap's exact arm): the position plus
+    /// levelChord's modifiers around it, one press and one release as a
+    /// single click. `exact` spends latched Shift/AltGr per §2 without
+    /// letting them choose the level, the configure stamp is taken at the
+    /// pick, and the release lifts everything the press wrapped — the
+    /// reducer owns the whole shape, nothing here re-derives it.
+    function pickHoldEntry(entry) {
+        var cap = holdMenuCap
+        closeHoldMenu()
+        if (!cap || !entry) return
+        // The deep defence is applyModifierEvent's own gate; this guard
+        // keeps the click sound from a pick that could not type, the same
+        // rule the caps' press path keeps.
+        if (!inputReady || searchMode) return
+        root.keyPressed()
+        applyModifierEvent({
+            type: "press",
+            position: cap.xkb,
+            letter: isAlphabeticCap(cap),
+            shift: Layout.levelChord(entry.level).shift,
+            altgr: Layout.levelChord(entry.level).level3,
+            // Levels 3-4 only, so never asked for; carried for parity
+            // with the glyph caps' event shape.
+            level5: Layout.levelChord(entry.level).level5,
+            // <LVL3>, not RALT — the glyph caps' own rule (typeCap): RALT
+            // is ISO_Level3_Shift only on some layouts; <LVL3> is it in
+            // every group of every compiled keymap.
+            level3Position: Layout.levelChord(entry.level).level3 ? "LVL3" : "",
+            exact: true,
+            configureStamp: session.sends
+        })
+        applyModifierEvent({ type: "release" })
     }
 
     // Shift is applied as a real Shift press rather than by picking the shifted
@@ -2300,6 +2485,19 @@ Item {
                                     // that could not type.
                                     if (capRect.disabled) return
                                     if (!capData.key) {
+                                        // Ticket 37: a character cap whose
+                                        // position carries extra levels types
+                                        // on RELEASE — the press arms a hold
+                                        // and sends nothing, so the threshold
+                                        // can open the column menu with no
+                                        // stray character and no repeat. The
+                                        // defer decision is HoldColumn's, on
+                                        // the live facts.
+                                        if (root.capDefersHold(capData)) {
+                                            root.beginCapHold(capData,
+                                                capDelegate)
+                                            return
+                                        }
                                         root.typeCap(capData)
                                         return
                                     }
@@ -2326,8 +2524,24 @@ Item {
                                 // cap pressed before a state change must lift
                                 // even if the panel went not-ready mid-press,
                                 // or the compositor repeats it forever.
-                                onReleased: if (capRect.types) root.releaseKey()
-                                onCanceled: if (capRect.types) root.releaseKey()
+                                // The release of a deferred hold comes first
+                                // (ticket 37): before the threshold it sends
+                                // the press+release pair; after the threshold
+                                // it is the hold's own and types nothing,
+                                // leaving the menu standing for its pick.
+                                onReleased: {
+                                    if (root.endCapHold(capDelegate)) return
+                                    if (capRect.types) root.releaseKey()
+                                }
+                                // A deferred hold that loses its grab types
+                                // NOTHING — no press line was ever sent, so
+                                // there is no stray character and nothing to
+                                // lift, strictly better than today. A hold
+                                // that had opened its menu folds it here too.
+                                onCanceled: {
+                                    if (root.cancelCapHold(capDelegate)) return
+                                    if (capRect.types) root.releaseKey()
+                                }
 
                                 // What is left on the click is only the
                                 // command cap that would tear something out
@@ -2367,6 +2581,110 @@ Item {
                                     root.triggerSpecial(capData, true)
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Timer {
+        id: capHoldTimer
+        // The one timer ticket 37 adds, and it repeats nothing: it fires
+        // once per hold to open the column menu. Key repeat stays the
+        // compositor's own (spec-v1 §6) — and a deferred cap, having sent
+        // no press line at threshold, has no repeat to manage at all.
+        interval: HoldColumn.HOLD_THRESHOLD_MS
+        repeat: false
+        onTriggered: root.openHoldMenu()
+    }
+
+    // ---- the hold column's menu (ticket 37) ----
+    //
+    // Card-local, like ticket 35's chooser (commit 86a57b7's lesson): the
+    // panel window's input mask is the card rect, so the menu lives
+    // INSIDE the keyboard's own bounds — above it in z, over the held
+    // cap's column. The catch area underneath eats every press that is
+    // not on the menu itself: one click anywhere else dismisses without
+    // typing, and no cap underneath can start a press of its own while
+    // the menu stands.
+    MouseArea {
+        anchors { fill: parent }
+        enabled: root.holdMenuOpen
+        z: 4
+        onClicked: root.closeHoldMenu()
+    }
+
+    Rectangle {
+        id: holdMenu
+
+        visible: root.holdMenuOpen
+        z: 5
+
+        // Above the held cap when the column fits there, below it when it
+        // does not (a row-0 hold has no room above), and never outside
+        // the keyboard's rect — that is what keeps the menu inside the
+        // card, i.e. inside the input mask, docked or floating. Anchors
+        // are baked at open (openHoldMenu); like the language chooser,
+        // the menu does not follow a card dragged under it.
+        readonly property real aboveY: root.holdMenuCapTop - height - root.cellGap
+        readonly property real belowY: root.holdMenuCapBottom + root.cellGap
+        x: Math.max(root.cellGap,
+            Math.min(root.holdMenuCapX - width / 2,
+                parent.width - width - root.cellGap))
+        y: Math.max(root.cellGap,
+            Math.min(aboveY >= root.cellGap ? aboveY : belowY,
+                parent.height - height - root.cellGap))
+        width: menuList.childrenRect.width + root.cellGap * 2
+        height: menuList.childrenRect.height + root.cellGap * 2
+        radius: root.capCorner
+        color: root.theme.popupsBackground
+        border.color: root.capEdge
+        // The cap edge's own width, unqualified like the tokens the cap
+        // delegates read — and not the upstream sketch's border line.
+        border.width: keyBorderWidth
+
+        Column {
+            id: menuList
+            anchors {
+                top: parent.top
+                topMargin: root.cellGap
+                horizontalCenter: parent.horizontalCenter
+            }
+            spacing: root.cellGap / 2
+
+            Repeater {
+                model: root.holdMenuEntries
+
+                Rectangle {
+                    property var entry: modelData
+                    // The same disabled treatment the caps keep: an entry
+                    // that could not type draws dim and refuses its click,
+                    // and no click sound plays for it.
+                    readonly property bool gated: !root.inputReady
+                    width: root.capRowHeight
+                    height: Math.round(root.capRowHeight * 0.8)
+                    radius: root.capCorner
+                    color: entryHit.containsMouse && !gated
+                        ? root.hoverFill : "transparent"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: entry.text
+                        color: gated ? root.textDim : root.inkMain
+                        font.family: root.glyphTypeface
+                        font.pixelSize: root.capGlyphSize
+                    }
+
+                    MouseArea {
+                        id: entryHit
+                        anchors { fill: parent }
+                        hoverEnabled: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: entry.text
+                        onClicked: {
+                            if (gated) return
+                            root.pickHoldEntry(entry)
                         }
                     }
                 }
