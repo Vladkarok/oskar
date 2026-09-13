@@ -3,12 +3,13 @@
 ## Models and context
 
 The orchestrator and every subagent run on the SESSION's model — the
-harness exposes no per-subagent model or effort knob (the retired
-`collaboration.spawn_agent` / Astra-Sol split once did; it does not
-exist in the current ZCode tooling, and repository text cannot change
-the app's selected root model). Raising the weight of a pass is the
-OWNER's move: switch the session model in the client when a design
-pass or review needs more than the current model delivers.
+harness exposes no per-subagent model or effort knob. Per-subagent
+model selection is not exotic: Claude Code and Codex already ship it;
+ZCode does not yet (the retired `collaboration.spawn_agent` /
+Astra-Sol split was a different, older mechanism). Repository text
+cannot change the app's selected root model. Raising the weight of a
+pass is the OWNER's move: switch the session model in the client when
+a design pass or review needs more than the current model delivers.
 
 Compensate for a light model with discipline, not hope: self-contained
 briefs (repo, task, accepted behaviour, files owned, constraints,
