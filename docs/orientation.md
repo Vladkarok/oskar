@@ -1,9 +1,10 @@
 # Orientation — read this first
 
-Written 2026-09-02 for a fresh session. The code says *what* exists; this
-says what we are building, [spec-v1.md](spec-v1.md) records the v1 baseline,
-[spec-v1.1.md](spec-v1.1.md) is the authoritative current delta, and
-[decisions.md](decisions.md) says *why* it looks the way it does.
+Reconciled 2026-09-13 with the audit-driven branch. The code says *what*
+exists; this says what we are building, [spec-v1.1.md](spec-v1.1.md) is
+the authoritative current delta, [decisions.md](decisions.md) says *why*
+it looks the way it does, [audit-2026-09-13.md](audit-2026-09-13.md) is
+the execution brief that shaped the current round, and
 [vm-handoff.md](vm-handoff.md) is the test lab.
 
 ## The idea
@@ -39,7 +40,8 @@ while the panel and the bar both correctly report the second. See
 | `KeyboardLayout.js` | rows, keysym tables, xkb position mapping |
 | `daemon/src/main.rs` | Rust helper owning one `zwp_virtual_keyboard_v1` |
 | `systemd/omarchy-osk.service` | user unit, tied to `graphical-session.target` |
-| `tools/` | nested-session polygon, daemon smoke, VM launcher + provision |
+| `bin/omarchy-osk` | the lifecycle command: setup / upgrade / status / teardown (§45) |
+| `tools/` | nested-session polygon, daemon smoke, package + recovery choreography |
 
 Panel talks to the helper over `$XDG_RUNTIME_DIR/omarchy-osk/control.sock`,
 line protocol, version 5:
@@ -61,24 +63,26 @@ a same-keymap reconfigure keeps it, a changed keymap bumps it. Everything
 else about the protocol lives in `parse()`/`apply_locked()` in
 `daemon/src/main.rs`.
 
-## State as of 2026-09-02
+## State as of 2026-09-13
 
-- `master` at `42017b2`, clean, pushed to the private
-  [Vladkarok/omarchy-osk](https://github.com/Vladkarok/omarchy-osk).
-- Phases 0–1 (design, hardening) done through seven Codex review rounds
-  plus parallel subagent audits; last verdict "ship".
-- Phase 2 dogfooding in the Omarchy VM: typing precision verified by
-  screenshot, layout mirroring both directions with zero keymap churn,
-  USB hotplug survival, cold-boot self-recovery, both socket-recovery
-  directions. The VM is healthy and installed with the current build.
-- Host machine: plugin installed and hot-reloading. The development service
-  may still be disabled; v1.1 requires installer and development provisioning
-  to enable it for graphical-session autostart.
+- Branch `spec/v1.1-fixes` (never pushed; the repo has no public remote —
+  publishing is owner-gated): the squashed history plus the audit round's
+  fixes. `backup/pre-squash` holds the original 247-commit history.
+- The external audit's runtime tickets are closed and independently
+  reviewed `ship`: 28 (serialized clipboard emoji delivery), 32 (the
+  `omarchy-osk` package lifecycle, full VM choreography), 06 (the custom
+  kb_file survives shell crashes and helper restarts), 31 (the remembered
+  group bounded by the map). 33 (this reconciliation) closes the round.
+- Host suites: ten QML/JS files + Rust unit tests, all green; provenance
+  gate zero against the upstream sketch.
+- The VM lab runs the PACKAGED product (`omarchy-osk` installed +
+  `setup` active); the nested integration suite and the phase-driven
+  package/recovery choreographies live in `tools/`.
 
-Not done: daily use on a real session, sleep/wake on real hardware (the
-VM cannot suspend, see decisions), the 3+ language popup, long-press
-accented characters, the context row (`.com` and friends), and the
-upstream Hyprland/Omarchy work.
+Not done: the owner's mouse/eyes acceptance for the round's behavior
+changes; the 3+ language popup, long-press accents, the context row
+(`.com` and friends) — all post-release backlog (audit §"Post-release
+backlog"); real-hardware sleep/wake; the upstream notes queue.
 
 ## How we work (standing directives from the owner)
 
@@ -100,17 +104,13 @@ upstream Hyprland/Omarchy work.
 
 ## Suggested next steps
 
-For the consolidated 2026-09-11 release roadmap, current evidence and outstanding
-decisions, read [release-readiness-plan.md](release-readiness-plan.md).
+Continuing a session starts at [session-handoff.md](session-handoff.md):
+what is done, what is next, and the traps this project has already paid
+for. The work queue is [audit-2026-09-13.md](audit-2026-09-13.md) — its
+remaining tickets first, its post-release backlog after the first
+release. The local board lives in `.scratch/next-iteration/` (tickets by
+number and meaning; one at a time).
 
-Continuing a session starts at [session-handoff.md](session-handoff.md): what
-is done, what is next, and the traps this project has already paid for. For
-the 2026-09-06 review that produced the current board, read
-[next-iteration-plan.md](next-iteration-plan.md) — it indexes the draft
-`.scratch/next-iteration/` board and is not an implementation instruction.
-The board itself is worked with `/board`, one ticket at a time.
-
-1. Implement the local v1.1 board derived from [spec-v1.1.md](spec-v1.1.md).
-2. Land the shared Omarchy Style refresh needed for live rounding updates.
-3. Daily use, then sleep/wake on real hardware.
-4. Features: 3+ language popup, long-press accents, context row.
+[release-readiness-plan.md](release-readiness-plan.md) and the older
+plans are historical records of their weeks, superseded by the audit;
+read them for evidence, not for instructions.

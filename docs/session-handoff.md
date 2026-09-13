@@ -1,105 +1,70 @@
-# Handoff — updated 2026-09-13 (evening)
+# Handoff — updated 2026-09-13 (night)
 
 **START HERE — this section supersedes everything below it.**
 
-Audit execution so far: **28 (f5bd4d6), 32 (42e4655), 06 (a7acbb3) — all
-fixed, reviewed `ship`, committed**; **31 implemented + nested leg green
-(uncommitted at this writing)**. Branch `spec/v1.1-fixes`; the VM lab
-runs the PACKAGED product (package installed, `omarchy-osk setup`
-active) — not a dev symlink.
+The external audit's execution round is COMPLETE: all five tickets
+implemented and committed on `spec/v1.1-fixes` (never pushed — the repo
+has no public remote). Review verdicts: 28, 32, 06, 31 — `ship`; 33 —
+`do not ship` on its first tree, with every finding (the unreconciled
+handoff, the weakened test negative, the ticket's wording) applied
+verbatim in the closing commit — its prescriptions, not new logic:
 
-## Ticket 32 (P1) — the AUR lifecycle, landed 2026-09-13 evening
+- **28 (f5bd4d6)** — clipboard emoji delivery is one serialized
+  transaction (queue, real completion, compensations). VM wine leg
+  proved two rapid picks byte/order-correct.
+- **32 (42e4655)** — the `omarchy-osk` package lifecycle:
+  /usr/bin/omarchy-osk setup/upgrade/status/teardown, honest dependency
+  contract, stable tag-pinned PKGBUILD (publish-gated), full VM
+  choreography green, decisions §45.
+- **06 (a7acbb3)** — the custom kb_file survives shell SIGKILL and
+  helper restarts (helper-owned sidecar, RuntimeDirectoryPreserve,
+  observed-flag seed, exact path identity), 18/18 VM choreography,
+  decisions §46.
+- **31 (93bb161)** — the remembered layout group is bounded by the map
+  that carries it (panel seam + daemon refusals), decisions §47.
+- **33 (this commit)** — lost tests restored (floatingAnchor,
+  usesWinePasteChord with the original discriminating negative), Stage E
+  preserved with the rerun caveat, external-picker text swept from code
+  and spec, docs reconciled (orientation, release-plan banner,
+  compatibility matrix in README), board statuses truthful.
 
-`bin/omarchy-osk` (staged to `/usr/bin`; `install.sh` symlinks it into
-`~/.local/bin` for source checkouts): setup [--migrate-source] /
-upgrade / status / teardown. PKGBUILD is now the stable tag-pinned
-`omarchy-osk` (publish-gated: push + tag + real checksum + .SRCINFO;
-depends incl. omarchy, qt6-declarative, wl-clipboard, libxkbcommon;
-optdepends qt6-multimedia + ffmpeg). Panel's Copy chip copies
-`omarchy-osk setup` (probed, with the install.sh fallback for a
-never-installed checkout). Package-notes and README rewritten around
-the one command. Decisions §45.
+Host: ten JS suites (config 39, modifier-reducer 96, clipboard-paste
+22, keyboard-session 24, layout-devices 18, …) + 45 Rust tests, clippy
+-D warnings, qml-check, provenance 0 — all green. The VM lab runs the
+PACKAGED product (package installed, `omarchy-osk setup` active; the
+synced source tree at ~/omarchy-osk feeds the choreographies).
 
-VM choreography (`tools/package-test.sh <phase>`, no developer
-checkout): ALL PASS — build 6 (makepkg+check, .SRCINFO, symlink-free,
-namcap, ldd), chroot-build 1 (clean chroot, `--nodeps` + hand-installed
-toolchain — omarchy's AUR closure is unreachable from mirrors,
-documented), install 3, status 2, setup 6 (idempotent), protocol 3,
-upgrade 4, teardown 6 (×2), reinstall 2, legacy 9 (source install →
-package → setup refuses → `--migrate-source` converges, unit kept
-renamed), coldboot 4. Evidence in `.scratch/next-iteration/evidence/32/`.
+## What is left, and whose it is
 
-Lab notes: the nested Electron leg that broke after the 09-13
-power-cycle ("EGL setup failed") RECOVERED by itself after the next
-cold boot (exit 0, 88 rebuilds ≤ 142) — transient, not a regression;
-the ticket-28 overlay-input-death note stands as a rare-state hazard
-(did not recur).
-
-## Ticket 06 (P2) — the custom kb_file survives a shell SIGKILL (2026-09-13)
-
-The helper owns the recovery record: every configure's kb_file runs
-through a pure three-way decision (user path → remember verbatim; empty →
-clear; published path → leave) persisted atomically as
-`$XDG_RUNTIME_DIR/omarchy-osk/user-keymap-source`; the unit now sets
-`RuntimeDirectoryPreserve=yes` (ProtectSystem=strict leaves only that dir
-writable; preserve survives helper restarts — `omarchy-osk upgrade` —
-and dies with the session). The fresh panel seeds from the file at the
-decision point, but only until it has OBSERVED the compositor's own
-setting once (a clear can't be resurrected by the recovery read). The
-compositor's kb_file is compared by exact identity from the same
-normalizing builder the panel sets with (`Session.isPublishedKeymap`),
-never substring. Protocol unchanged. Decisions §46. First review round:
-do-not-ship on the MAJOR (systemd wiped the record at every helper stop)
-— fixed with Preserve + the observed flag + path symmetry; VM
-choreography hardened accordingly (dvorak/colemak discriminating fixtures,
-helper restart BETWEEN the SIGKILL and the respawn, an upgrade-with-
-custom-map step): **18/18** (evidence 06).
-
-## Ticket 31 (P2) — the remembered group is bounded by the map (2026-09-13)
-
-`LayoutDevices.layoutCount` bounds the remembered group at the selection
-seam (stale index → consensus fallback); the daemon refuses out-of-range
-groups with `err bad group` — a configure bounded by the map IT installs
-(declared layouts; the installed map would refuse a legitimate grow),
-`group` bounded by the installed map. Persisted 0–3 domain untouched.
-Decisions §47. Red-first (JS 3 + Rust 2); nested leg green, suite exit 0
-(92 ≤ 142); 45/45 Rust, all ten JS suites.
-
-## NEXT WORK — docs/audit-2026-09-13.md is the execution brief
-
-1. **33 (P2)** — restore the lost tests (DONE: floatingAnchor +
-   usesWinePasteChord back, green), sweep stale picker text (mostly
-   done; Keyboard.qml:~1792 waits for the 31 commit), reconcile the
-   docs, add the compatibility matrix.
-
-The audit's post-release backlog (#1-#8) stays post-release. Omarchy
-first, direct emoji delivery the default, one coherent package.
-
-## Standing owner decisions
-
-- **Publish gate**: push + tag + AUR when the owner says so (the new
-  PKGBUILD documents the three publish steps). The repo has no public
-  remote yet.
-- `backup/pre-squash` branch retention.
-- Upstream notes to file (not blocking): Electron-version issue for the
-  docked-content verdict (ticket 30); Hyprland same-window-click event
-  absence.
+- **Owner gates**: mouse/eyes acceptance for the round's behavior
+  changes (clipboard-mode rapid picks; kb_file recovery is
+  background-honest; the matrix's claims), and the publish decision
+  (push public, tag, .SRCINFO — the PKGBUILD documents the three steps).
+  Owner-pending board items: 07/12/16/17/18/23/24/26/27/29 are
+  ready-for-human.
+- **Next agent work** (post-release backlog, audit's own list):
+  three/four-layout chooser, long-press accents, localization,
+  accessibility/touch, full-QML load gate, delivery policy seam,
+  protocol hardening, catalogue loading — in that priority.
+- Upstream notes queue (not blocking): the Electron-version issue
+  (ticket 30 evidence), Hyprland same-window-click event absence
+  (ticket 29's gesture workaround).
 
 ## Verification shortlist for a cold start
 
 ```sh
-./tools/run-tests.sh          # 10 suites (clipboard-paste 22/0 ...)
+./tools/run-tests.sh          # ten suites
 ./tools/provenance.py         # exit 0
 ./tools/qml-check.sh
 cargo clippy --manifest-path daemon/Cargo.toml --all-targets -- -D warnings
-bash -n bin/omarchy-osk tools/package-test.sh
 ```
-VM lab: `ssh omarchy-vm` — the PACKAGED product is installed there
-(`/usr/bin/omarchy-osk status`); `~/omarchy-osk` remains the synced
-source tree for `tools/package-test.sh` phases and nested suites
-(`tools/nested-session.sh tools/smoke-daemon.sh`). Known trap: over
-ssh export `OMARCHY_PATH=/usr/share/omarchy` before `omarchy restart
-shell`/plugin IPC.
+VM: `ssh omarchy-vm` — packaged product installed; `omarchy-osk status`;
+phases via `tools/package-test.sh <phase>`; recovery choreography
+`tools/keymap-recovery-test.sh run|cleanup`; nested suite
+`tools/nested-session.sh tools/smoke-daemon.sh` (92 ≤ 142 rebuilds).
+Known lab hazard: overlay-layer clicks can die while the emoji page is
+open in THIS guest (rare-state; a shell restart clears it) — drives
+that need clicks go through the seams instead.
 
 ---
 

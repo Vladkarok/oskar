@@ -1504,9 +1504,14 @@ Item {
                             // journal line without bricking the keyboard.
                             console.warn("[osk] ownership refusal:", reply)
                         } else if (reply === "err bad group") {
-                            // Only a caps request can earn this: the helper
-                            // refused to answer facts for a group its keymap
-                            // does not carry. For the group being DRAWN that
+                            // A caps request earns this when the helper
+                            // refuses facts for a group its keymap does not
+                            // carry; since ticket 31 a refused configure or
+                            // `group` command answers the same way. The
+                            // panel cannot earn the latter two (its groups
+                            // come from the compositor's own indices or the
+                            // bounded remembered seam), so the handling
+                            // below stays caps-shaped on purpose. For the group being DRAWN that
                             // is keymap-wide disagreement about the world, and
                             // the hint says so instead of letting the built-in
                             // table pass for it. For one of the other groups
@@ -1789,8 +1794,7 @@ Item {
         case "close": dismissalAsked(); return
         // The ☺ cap (ticket 24) toggles the panel's own emoji page: open on
         // press, dismiss on a second press. No PATH probe stands in the
-        // way — the page is ours, and the configured external app, when
-        // wanted, is the page chip's own launch.
+        // way — the page is ours and the only picker there is.
         case "emoji":
             root.emojiCapActivated()
             return

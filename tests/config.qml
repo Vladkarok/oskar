@@ -478,9 +478,25 @@ QtObject {
         // keymap carries it. The tests below drive that pure layer with
         // synthetic keymaps.
         //
-        // floatingAnchor has no seam case here on purpose: its round-trip
-        // identity is geometry, and geometry is host/guest evidence owned by
-        // ticket 08 (spec-v1.1 §8, §15), not configuration parsing.
+        T.test("the floating anchor round-trips and clamps to the output", function () {
+            // spec-v1.1 §4's deterministic anchor: a saved centre restores
+            // the top-left from the centre and clamps only enough to keep
+            // the whole card on its output. Restored from the pre-squash
+            // history after the audit found it the one untested spec-v1.1
+            // seam — the clamp arithmetic is configuration, not host
+            // evidence, and belongs here.
+            var anchor = Config.floatingAnchor({ x: 640, y: 400 },
+                500, 200, 1280, 800)
+            T.equal(anchor.x, 640 - 250)
+            T.equal(anchor.y, 400 - 100)
+            // A centre near the corner clamps without flipping past it.
+            var clamped = Config.floatingAnchor({ x: 5, y: 5 }, 500, 200, 1280, 800)
+            T.equal(clamped.x, 0)
+            T.equal(clamped.y, 0)
+            var far = Config.floatingAnchor({ x: 1275, y: 795 }, 500, 200, 1280, 800)
+            T.equal(far.x, 1280 - 500)
+            T.equal(far.y, 800 - 200)
+        })
 
         T.test("a base-only dual cap keeps the stacked shape and stays enabled", function () {
             // symbols v2 renders dual caps stacked; a shifted level that

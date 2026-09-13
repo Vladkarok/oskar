@@ -132,6 +132,26 @@ implementation found that follows the system layout at all.
   devices share layout state, switches skip virtual keyboards); that is the
   model for the eventual Hyprland upstream work.
 
+## Compatibility
+
+- **Desktop**: Omarchy (tested against Omarchy 4.0.x with its own
+  `omarchy`/`omarchy-dev` packages; the shell's plugin surface is a
+  moving target — current as of Quickshell 0.3.1 and Hyprland 0.56.2,
+  both pinned by nothing more than Omarchy's own versions). Wayland
+  only; there is no Xorg, GNOME or KDE host, and GTK/KDE portability is
+  explicitly post-release.
+- **Typed-into consumers, verified**: native Wayland clients (foot),
+  XWayland windows (wine/Proton get the paced plain Ctrl+V paste), and
+  Chromium-family editors (Electron receives supplementary-plane emoji
+  byte-exact through the Unicode-entry route). Other toolkits are
+  untested.
+- **Language coupling**: any number of configured XKB layouts; typing
+  and the caps follow the compositor's layout state in both directions.
+  The UI and the emoji search are English-only for now.
+- **Not tested**: real-hardware sleep/wake (the lab VM cannot suspend).
+  The on-screen keyboard is mouse/touchpad-driven; touch gestures
+  (long-press, multi-touch) are not implemented.
+
 ## Known problems
 
 1. ~~**The helper's keymap becomes the seat's.**~~ **Closed by design.** Hyprland

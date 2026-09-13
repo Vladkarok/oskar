@@ -15,11 +15,9 @@ import "EmojiPage.js" as EmojiGrid
 // The keyboard's own caps feed the query while the page stands — searchMode
 // routes them here before anything reaches the daemon — and the query
 // drives the catalogue's ranked search across every group; an empty query
-// shows the active group. Choosing an entry asks the panel to deliver it
-// through the helper (no clipboard). The configured external app stays
-// reachable as an explicit fallback through the header chip: the panel
-// execs it and does nothing else — the external picker needs no
-// cooperation from us any more (decisions §24).
+// shows the active group. Choosing an entry asks the panel to deliver it;
+// this page is the only picker (the external-app machinery is history,
+// decisions §24).
 Rectangle {
     id: emojiRoot
 
@@ -177,11 +175,9 @@ Rectangle {
 
         // ---- header: the search the keys type ----
         //
-        // A field, a clear affordance, and the external app's chip. The
-        // field shows what was typed — case included; the ranked search
-        // lowercases its own side (§37). The chip is deliberately the
-        // smaller, quieter control: the page's own search is the primary
-        // route, the external app the explicit fallback.
+        // A field and its clear affordance. The field shows what was
+        // typed — case included; the ranked search lowercases its own
+        // side (§37).
         Item {
             id: headerRow
             width: parent.width

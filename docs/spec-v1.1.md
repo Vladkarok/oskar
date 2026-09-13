@@ -71,9 +71,6 @@ the reasons; this file records required behaviour.
   the page chip and the `emoji_app` override — the panel's own page is
   the only picker, and the owner confirmed nothing external is wanted.
   The removal supersedes the chip/row/override text that followed here.)
-  A configured app
-  missing from PATH, launched from the chip, raises the existing transient
-  hint, naming the configured app.
 
   The page stays open after a successful pick by default; a setting may close
   it after each pick. Its independent M/L/XL viewport sizes default to M and
@@ -188,8 +185,8 @@ popover deliberately leaves the popover open — a settings surface persists
 through use — while the size change itself still preserves §4's
 no-movement guarantee.
 
-Approved fields are: docked/floating mode, M/L/XL size, the emoji picker
-app, sound on/off, follow Omarchy theme, key radius, panel radius, key
+Approved fields are: docked/floating mode, M/L/XL size, sound on/off,
+follow Omarchy theme, key radius, panel radius, key
 background, panel background, text colour, accent/active colour and border
 colour — and, since the 2026-09-09 amendment (ticket 22), the Super cap's
 mark `super_mark`: the word `Super` by default, or a chosen mark of Omarchy,

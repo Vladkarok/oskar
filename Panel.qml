@@ -898,11 +898,6 @@ Item {
         root.followTheme = effective.followTheme
         root.emojiCloseAfterPick = effective.emojiCloseAfterPick
         root.emojiPageSize = effective.emojiPageSize
-        // The emoji picker is a plain preference like the mode: override,
-        // else the maintained default (Omarchy's own). The emoji page's
-        // chip reads it at launch time and the popover row mirrors it;
-        // changing it ends nothing — the external app is just an app
-        // (ticket 24 step 5).
         // A follow-theme flip while the panel is on screen is immediate:
         // stopping freezes the tokens at the look they then have, and
         // re-enabling releases that snapshot so a later stop freezes the
@@ -2306,9 +2301,6 @@ Item {
             y: settingsLayer.emojiPlace.y
             z: 1
             visible: root.emojiOpen
-            // The explicit fallback (ticket 24 step 5): the configured
-            // external app, launched bare from the chip — the panel runs
-            // the process and nothing more.
             deliveryMode: root.emojiDelivery
             onDeliveryModeRequested: function (mode) { root.setEmojiDelivery(mode) }
             // One click is one send to the focused client. The page closes
