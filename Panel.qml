@@ -1076,6 +1076,7 @@ Item {
         settingsPopover.visible = false
         settingsPopover.resetAllArmed = false
         root.emojiOpen = false
+        languageMenu.close()
         // The relayout nudge is needed in both directions: the zone leaving
         // is as lazy as the zone arriving (ticket 30).
         root.nudgeHyprlandRelayout()
@@ -1795,6 +1796,7 @@ Item {
                             // leftover-centre surfaces (toggleEmojiPage's
                             // rule); the gear restores the card.
                             root.emojiOpen = false
+                            languageMenu.close()
                             if (settingsPopover.visible || root.customEditorField !== "") {
                                 root.closeCustomEditor()
                                 settingsPopover.visible = false
@@ -1815,7 +1817,7 @@ Item {
                     // (ticket 35): one layout hides it — an inert chip is
                     // noise and a false affordance; two toggle directly, the
                     // shape this bar always had; three or more open the
-                    // chooser above. Grey keeps its old meaning: hidden is
+                    // chooser. Grey keeps its old meaning: hidden is
                     // "nothing to switch", not "nobody safe to move".
                     property string shape: LanguageControl.controlState(
                         keyboard.layoutCodes.length,
@@ -1823,11 +1825,17 @@ Item {
                     visible: shape !== "hidden"
                     anchors {
                         left: settingsGear.right
-                        leftMargin: keyboard.cellGap
+                        leftMargin: shape === "hidden" ? 0 : keyboard.cellGap
                         bottom: parent.bottom
                         bottomMargin: keyboard.cellGap
                     }
-                    width: langName.implicitWidth + keyboard.cellGap * 3
+                    // Collapsed to nothing when hidden, not just invisible:
+                    // the hint text anchors to this rectangle's RIGHT edge,
+                    // and anchors ignore `visible` — a kept width would
+                    // leave a phantom gap and elide the hint that much
+                    // sooner on a one-layout seat.
+                    width: shape === "hidden"
+                        ? 0 : langName.implicitWidth + keyboard.cellGap * 3
                     height: tokens.space(30)
                     radius: tokens.cornerRadius
                     // Reads as disabled while the panel has no safe device to
@@ -1859,8 +1867,18 @@ Item {
                         id: langHit
                         anchors { fill: parent }
                         onClicked: {
-                            if (langCtl.shape === "menu") languageMenu.open()
-                            else keyboard.stepLayout()
+                            if (langCtl.shape !== "menu") {
+                                keyboard.stepLayout()
+                                return
+                            }
+                            // The settings overlay owns the card's attention
+                            // while it stands (the same fact its dismiss
+                            // layer keys on): the chooser waits rather than
+                            // dropping a menu under another overlay.
+                            if (settingsPopover.visible
+                                || root.customEditorField !== ""
+                                || root.emojiOpen) return
+                            languageMenu.open()
                         }
                     }
                 }
@@ -2134,8 +2152,7 @@ Item {
             // The >=3-layout chooser (ticket 35), card-local like the paste
             // chip so its z outranks keys and bar. The catch area underneath
             // eats the everywhere-outside click — the same contract the
-            // settings popover keeps with its own layer — so a menu that
-            // outlived the panel closing cannot reopen standing.
+            // settings popover keeps with its own layer.
             MouseArea {
                 anchors { fill: parent }
                 enabled: languageMenu.opened
@@ -2164,10 +2181,13 @@ Item {
                 z: 40
                 x: Math.max(keyboard.cellGap,
                     Math.min(anchorX, parent.width - width - keyboard.cellGap))
-                // Bottom edge at the language chip's top: the chip sits
-                // cellGap above the bar's bottom edge and is space(30) tall.
-                y: dragBar.height - keyboard.cellGap - tokens.space(30)
-                    - height - keyboard.cellGap
+                // Drops INTO the card over the grid, under the bar — the
+                // settings popover's own pattern. Anything placed above the
+                // chip is outside the card, and the panel window's input
+                // mask is the card rect: docked, a menu up there renders
+                // off-surface and vanishes; floating, it renders but sits
+                // outside the mask, so its rows cannot even be clicked.
+                y: dragBar.height + keyboard.cellGap
                 width: menuList.childrenRect.width + keyboard.cellGap * 4
                 height: menuList.childrenRect.height + keyboard.cellGap * 2
                 radius: tokens.cornerRadius
@@ -2184,15 +2204,20 @@ Item {
                     Repeater {
                         model: languageMenu.entries
                         Rectangle {
-                            // modelData through locals, the emoji-page
-                            // delegate style.
                             property var entry: modelData
+                            // Live, not the flag baked at open(): the group
+                            // can move while the menu stands — a physical
+                            // switch, a shell widget — and both the armed
+                            // row and the click guard must follow the seat,
+                            // not the moment the menu opened.
+                            property bool current: entry.group
+                                === keyboard.groupCursor
                             width: menuRowLabel.implicitWidth + keyboard.cellGap * 2
                             height: tokens.space(30)
                             radius: tokens.cornerRadius
-                            // The active group reads as armed: accent fill,
+                            // The current group reads as armed: accent fill,
                             // knocked-out text — the locked-modifier idiom.
-                            color: entry.active ? tokens.accent
+                            color: current ? tokens.accent
                                 : menuRowHit.containsMouse
                                     ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
                                     : "transparent"
@@ -2201,10 +2226,12 @@ Item {
                                 anchors { fill: parent }
                                 hoverEnabled: true
                                 Accessible.role: Accessible.Button
-                                Accessible.name: "Switch to " + entry.title
+                                Accessible.name: current
+                                    ? entry.title + " (current)"
+                                    : "Switch to " + entry.title
                                 onClicked: {
                                     languageMenu.close()
-                                    if (!entry.active)
+                                    if (!current)
                                         keyboard.switchToGroup(entry.group)
                                 }
                             }
@@ -2216,11 +2243,11 @@ Item {
                                     leftMargin: keyboard.cellGap
                                 }
                                 text: entry.title
-                                color: entry.active ? tokens.background
+                                color: current ? tokens.background
                                     : tokens.foreground
                                 font.family: tokens.fontFamily
                                 font.pixelSize: tokens.fontBodySmall
-                                font.bold: entry.active
+                                font.bold: current
                             }
                         }
                     }
