@@ -86,3 +86,23 @@ function shouldDefer(capData, entries, searchMode, inputReady) {
     if (!capData.xkb) return false
     return Array.isArray(entries) && entries.length > 0
 }
+
+/// Whether a cap CARRIES a hold column — the corner-dot marker's fact
+/// (the owner's 2026-09-14 call: mark what is worth holding, very
+/// lightly; never draw the variants themselves). The structural twin
+/// of shouldDefer MINUS the moment gates (search arming, readiness,
+/// the unavailable mark): the dot is static information about the
+/// keymap, so it stands on caps that would not defer RIGHT NOW (a
+/// gated keyboard, the emoji page's search) exactly as loudly as on
+/// ones that would — while a cap the menu would never open for (a
+/// command cap, a fixed label, an exact &123 glyph, a position with
+/// no column) never grows one. Reading the same `entries` the menu
+/// reads, the dot cannot disagree with the menu.
+function marksVariant(capData, entries) {
+    if (!capData) return false
+    if (capData.key) return false
+    if (Object.prototype.hasOwnProperty.call(capData, "label")) return false
+    if (capData.exact === true || capData.baseLvl !== undefined) return false
+    if (!capData.xkb) return false
+    return Array.isArray(entries) && entries.length > 0
+}

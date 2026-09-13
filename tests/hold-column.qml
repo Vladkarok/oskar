@@ -222,6 +222,32 @@ QtObject {
             T.equal(HoldColumn.HOLD_THRESHOLD_MS <= 350, true)
         })
 
+        T.test("the corner-dot marker marks exactly the caps the menu would open for", function () {
+            // The owner's 2026-09-14 call: a very light dot on caps worth
+            // holding — never the variants themselves. The marker's fact is
+            // shouldDefer's structural twin: same exclusions, MINUS the
+            // moment gates (search, readiness, availability), so the dot is
+            // static keymap information and cannot disagree with the menu.
+            var column = [{ level: 3, text: "\u00a7" }]
+            var facts = [3].concat(["x", "x", "x", "x", "x", "x", "x"].map(function (c) { return { none: "" } }))
+            T.equal(HoldColumn.marksVariant({ xkb: "AE03", chr: "3" }, column), true)
+            T.equal(HoldColumn.marksVariant(
+                { xkb: "AD01", chr: "\u0439", chrShift: "\u0419" }, column), true)
+            // The moment gates do NOT gate the marker (unlike shouldDefer).
+            T.equal(HoldColumn.marksVariant({ xkb: "AE03" }, column), true)
+            // Everything the menu would refuse forever, the dot refuses too.
+            T.equal(HoldColumn.marksVariant({ xkb: "AE03" }, []), false)
+            T.equal(HoldColumn.marksVariant({ key: "BackSpace" }, column), false)
+            T.equal(HoldColumn.marksVariant({ label: "" }, column), false)
+            T.equal(HoldColumn.marksVariant({ exact: true, xkb: "AE03" }, column), false)
+            T.equal(HoldColumn.marksVariant({ baseLvl: 2, xkb: "AE03" }, column), false)
+            T.equal(HoldColumn.marksVariant({}, column), false)
+            T.equal(HoldColumn.marksVariant(null, column), false)
+            // Empty facts = no column at all.
+            T.equal(HoldColumn.marksVariant({ xkb: "AD01" },
+                HoldColumn.columnEntries(facts)), false)
+        })
+
         Qt.exit(T.report("hold column"))
     }
 }
