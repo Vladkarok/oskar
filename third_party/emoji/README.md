@@ -9,12 +9,20 @@ Nothing here is read at runtime. Regenerate the catalogue with
 | `emoji-test.txt` | the set, order, groups, variant structure, and the primary names | https://www.unicode.org/Public/emoji/16.0/emoji-test.txt (Emoji 16.0, 2024-08-14) | `24f0c534e86cf142e2496953e8f0e46a3e702392911eddcd29c6cced85139697` |
 | `cldr46-annotations-en.xml` | search keywords, base emoji | CLDR 46.0 `common/annotations/en.xml`, from https://www.unicode.org/Public/cldr/46/cldr-common-46.0.zip | `b33e2e88ed2fb8c438c1efa9747b9d845e8d7d74ef0c32342a805c0f46fdd7ec` |
 | `cldr46-annotations-derived-en.xml` | fallback names for sequences the comments do not name | CLDR 46.0 `common/annotationsDerived/en.xml`, same zip | `461d1578079c5ebc947e506df6b5a55c93f006160e8dff3f05dcf917ce081604` |
-| `LICENSE` | Unicode License V3, covers all three data files | https://www.unicode.org/license.txt | `e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96` |
+| `cldr46-annotations-ru.xml` | Russian search keywords (ticket 36) | CLDR 46.0 `common/annotations/ru.xml`, same zip | `72a09fb4292687f3538420ebe723da1590f0ef0910e5ced5e0375339ae6c6dcd` |
+| `cldr46-annotations-uk.xml` | Ukrainian search keywords (ticket 36) | CLDR 46.0 `common/annotations/uk.xml`, same zip | `77fbefc84fc99ba28f40103eb7bf755491881b039301c6967ef633c1f1b6990a` |
+| `cldr46-annotations-derived-ru.xml` | Russian derived annotations, vendored for family completeness; not read by the generator | CLDR 46.0 `common/annotationsDerived/ru.xml`, same zip | `7532ab16dca25f11d92ed9aed4467d3d1a5f07fb043c09eb6c5a1ea824244226` |
+| `cldr46-annotations-derived-uk.xml` | Ukrainian derived annotations, vendored for family completeness; not read by the generator | CLDR 46.0 `common/annotationsDerived/uk.xml`, same zip | `25aa443e3ed2f55da4ef49414ef19623203480a154f1fb2c3685d8b19c19afc5` |
+| `LICENSE` | Unicode License V3, covers all data files | https://www.unicode.org/license.txt | `e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96` |
 
-The three data files are © Unicode, Inc., distributed under the Unicode
+The data files are © Unicode, Inc., distributed under the Unicode
 License V3 (see `LICENSE`). The versions are pinned together: Emoji 16.0 is
-the release CLDR 46 carries names for. Upgrading is deliberate — replace all
-three, update this table, regenerate, re-run `tests/emoji-catalog.qml`.
+the release CLDR 46 carries names for. The ru and uk keyword files keyword
+exactly the same 1948 sequences as the en one (CLDR keeps locale parity
+there), which is what lets the generator mirror its English keyword policy —
+annotations only, derived keywords unused — for every language. Upgrading is
+deliberate — replace the files, update this table, regenerate, re-run
+`tests/emoji-catalog.qml`.
 
 ## Known defects in the upstream data, recorded 2026-09-09
 
