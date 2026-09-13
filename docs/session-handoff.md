@@ -44,11 +44,13 @@ Landed since the block below, all reviewed `ship` unless said:
   could not load; qml-check.sh now gates the packaged file set.
 - SKIN_TONES pin (9b9fd07) — the last unpinned EmojiPage family.
 
-Queue after the switch (owner decides order): 38 (restart-settle
-group bounce — hit the owner live 18:53; ticket written with journal
-evidence), the 42 VM leg, 41 (hold-menu accent layer via the §33
-reserved block — design-first; a good pass for a heavier model),
-publish decision (owner).
+Queue after the switch (owner decides order): **38 SHIPPED**
+(73fe3e6/c422a43 + e7c5c83: SettleGuard.js pure seam, 14 tests, both
+VM legs green — the incident's bounce repro prevented; ticket 42's
+owed focus leg discharged by the same agent: armed QMP typing builds
+the query incl. Cyrillic, Escape hands keys back); next is 41
+(hold-menu accent layer via the §33 reserved block — design-first; a
+good pass for a heavier model), then the publish decision (owner).
 
 ---
 
