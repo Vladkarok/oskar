@@ -2,25 +2,30 @@
 
 ## Models and context
 
-Astra (`gpt-6-astra`) coordinates design, scope, integration, and final
-judgement. Delegate bounded implementation and independent reviews to Sol
-(`gpt-5.6-sol`) at medium effort by default. Use high only for a concrete
-problem that medium could not resolve. Small edits stay local when delegation
-adds cost. Keep one worker and one bounded final review; batch related small
-changes into that review instead of reviewing each document separately.
+The orchestrator and every subagent run on the SESSION's model — the
+harness exposes no per-subagent model or effort knob (the retired
+`collaboration.spawn_agent` / Astra-Sol split once did; it does not
+exist in the current ZCode tooling, and repository text cannot change
+the app's selected root model). Raising the weight of a pass is the
+OWNER's move: switch the session model in the client when a design
+pass or review needs more than the current model delivers.
 
-With `collaboration.spawn_agent`, explicitly set the Sol model and effort,
-use `fork_turns: "none"`, and provide a self-contained brief: repo, task,
-accepted behaviour, files owned, relevant context paths, constraints,
-verification, and expected result. Pass paths instead of the full chat.
-This is a tool-call policy, not a claim that repository text changes the
-app's selected root model or account quota.
+Compensate for a light model with discipline, not hope: self-contained
+briefs (repo, task, accepted behaviour, files owned, constraints,
+verification, expected result — paths, not chat history), red-first
+evidence with captured output, the orchestrator re-verifying every
+claim (rerun the battery, read the risky diffs), and an independent
+adversarial reviewer that re-derives instead of trusting. Small edits
+stay local when delegation adds cost. Keep one worker and one bounded
+final review; batch related small changes into that review instead of
+reviewing each document separately.
 
-One implementation worker at a time when files overlap. Use a fresh Sol
-reviewer after implementation. Keep orchestrator reads targeted: inspect
-contracts and risky diffs as needed; don't repeat a worker's entire search.
-Require concise reports: changed behaviour/files, actual test results,
-remaining limitations, and commit IDs only if commits were made.
+One implementation worker at a time when files overlap. Use a fresh
+reviewer after implementation. Keep orchestrator reads targeted:
+inspect contracts and risky diffs as needed; don't repeat a worker's
+entire search. Require concise reports: changed behaviour/files,
+actual test results, remaining limitations, and commit IDs only if
+commits were made.
 
 ## Acceptance and review
 
@@ -29,7 +34,7 @@ scope with the affected ticket; preserve historical evidence as history.
 Keep readiness for human testing separate from owner acceptance.
 
 Before calling a product change done, obtain an independent adversarial
-Sol review with `Verdict: ship` or `Verdict: do not ship`. Give the reviewer
+review with `Verdict: ship` or `Verdict: do not ship`. Give the reviewer
 the problem, accepted behaviour, constraints, diff scope and test evidence.
 Fix actionable findings and re-review affected paths until ship; report a
 real blocker rather than looping identical reviews. A ship verdict does not
