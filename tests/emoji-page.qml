@@ -473,6 +473,32 @@ QtObject {
             T.equal(Page.searchPlaceholder(""), "Search")
             T.equal(Page.searchPlaceholder(undefined), "Search")
         })
+        T.test("skin-tone entries carry exactly the three fields the tone picker reads", function () {
+            // The last unpinned EmojiPage family (ticket 40 review): the
+            // picker delegate reads value (active check + the chosen
+            // signal), label (its text) and hand (the swatch glyph) off
+            // every SKIN_TONES entry — a rename in the table blanks the
+            // swatches silently, so the shape is pinned here.
+            var tones = Page.SKIN_TONES
+            T.equal(tones.length, 6)
+            for (var i = 0; i < tones.length; i++) {
+                T.deepEqual(Object.keys(tones[i]).sort(),
+                    ["hand", "label", "value"])
+                if (typeof tones[i].value !== "string"
+                        || typeof tones[i].hand !== "string"
+                        || tones[i].hand.length === 0
+                        || typeof tones[i].label !== "string"
+                        || tones[i].label.length === 0) {
+                    T.fail("tone " + i + " lost value/hand/label")
+                    return
+                }
+            }
+            var seen = {}
+            for (var v = 0; v < tones.length; v++) {
+                T.equal(seen[tones[v].value] || false, false)
+                seen[tones[v].value] = true
+            }
+        })
         T.test("tab entries carry exactly the two fields the tab delegate reads", function () {
             var tabs = Page.tabs(Catalog.groups())
             T.equal(tabs.length, groups.length)
