@@ -2449,6 +2449,34 @@ Item {
                                 font.pixelSize: root.capGlyphSize
                             }
 
+                            // The hold-variant marker (the owner's
+                            // 2026-09-14 call): a very light dot in the
+                            // bottom-right corner of exactly the caps a
+                            // hold would open a column menu for — telling
+                            // what is worth holding without drawing the
+                            // variants themselves (which would be
+                            // clutter). It reads marksVariant on the same
+                            // column facts the menu reads, so the dot and
+                            // the menu cannot disagree; it is static
+                            // keymap information, unmoved by gating or
+                            // search, and it dims with a disabled cap
+                            // rather than shouting over one.
+                            Rectangle {
+                                visible: HoldColumn.marksVariant(capData,
+                                    root.capHoldColumn(capData))
+                                width: Math.max(2, Math.round(root.cellGap * 0.4))
+                                height: width
+                                radius: width / 2
+                                anchors {
+                                    right: parent.right
+                                    rightMargin: root.cellGap * 0.6
+                                    bottom: parent.bottom
+                                    bottomMargin: root.cellGap * 0.6
+                                }
+                                color: root.textDim
+                                opacity: capRect.disabled ? 0.25 : 0.55
+                            }
+
                             MouseArea {
                                 id: capHit
                                 // Deliberately larger than the cap it belongs
