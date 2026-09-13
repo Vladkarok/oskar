@@ -289,7 +289,13 @@ cmd_status() {
   local reply
   reply="$(protocol_probe)"
   local proto="ok (protocol $PROTOCOL_VERSION)"
-  [[ "$reply" == "hello $PROTOCOL_VERSION" ]] || proto="MISMATCH (reply: ${reply:-none})"
+  if [[ "$reply" == "hello $PROTOCOL_VERSION" ]]; then
+    :
+  elif [[ "$reply" == "no socket" || -z "$reply" ]]; then
+    proto="not answering (helper down?)"
+  else
+    proto="MISMATCH (reply: $reply)"
+  fi
 
   say "mode:            $MODE"
   say "payload:         $PAYLOAD ($payload_state)"
