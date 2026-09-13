@@ -28,13 +28,29 @@ ticket: 8+ layouts would overflow (cap-and-scroll if ever needed).
 Decisions §49. Owner's eyes on his three-layout seat pending, with the
 standing round.
 
-**36 (emoji search ru/uk) — IN FLIGHT**: a background implement agent
-is vendoring CLDR 46 ru/uk keywords into the catalogue and widening the
-tiered search (English results byte-identical). Its contract:
-`.scratch/next-iteration/issues/36-emoji-search-ru-uk.md`. When it
-lands: orchestrator verification + one independent adversarial review
-before `ship`; predictions/autocorrect were considered and DECLINED
-(decisions §50).
+**36 (emoji search ru/uk) — implemented + reviewed `ship`** (commit
+b52fecc): CLDR 46 ru/uk keyword vocabularies vendored (Unicode-3.0,
+sha256-pinned) into the generated catalogue; the tiered search matches
+them at identical tiers behind a per-term beyond-ASCII gate, so
+pure-ASCII queries are structurally byte-identical (independently
+reproduced on a 4,191-query battery, 0 diffs). Catalogue 573 KB →
+1.0 MB (1.75x, under the 2.5x guard; the 1.4 MB derived-keyword
+alternative measured and declined, on record). Battery 325 JS cases +
+helper 45 + provenance 0, twice over (orchestrator + reviewer).
+Accepted limitation on record: the uk apostrophe split (U+02BC vs
+U+2019, 130 keywords) is not folded — recall-only, AND-safe. Decisions
+§50's sibling call: predictions declined, search vocabulary taken.
+
+**37 (hold-a-cap column menu) — IN FLIGHT**: a background implement
+agent is building the long-press keymap-column chooser (type-on-release
+for deferred caps, no stray characters, levels 2-4 only, card-local
+menu per the §49 lesson, mandatory VM leg proving the chord bytes).
+Its contract: `.scratch/next-iteration/issues/37-hold-column-menu.md`.
+When it lands: orchestrator verification + one independent adversarial
+review (owner demanded review explicitly) before `ship`. One crash
+recovery note: both background agents died with a ZCode crash and were
+relaunched with identical briefs — 36's work was already committed
+(lost nothing), 37 restarted from zero.
 
 Owner gates otherwise unchanged from below: mouse/eyes acceptance of
 the round (now including 34's click-through and 35's three-layout
