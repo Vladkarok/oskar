@@ -1,6 +1,50 @@
-# Handoff — updated 2026-09-13 (night)
+# Handoff — updated 2026-09-13 (late night)
 
 **START HERE — this section supersedes everything below it.**
+
+Since the RC close below, in order: **34** (usage-view snapshot —
+implemented by a bounded subagent, verified twice, `ship`; owner's
+click-through pending), README rewritten (derivation story removed by
+the owner's decision, §43 amended; "How this compares" table against
+GNOME OSK / plasma-keyboard / squeekboard-Stevia / wvkbd / onboard
+added), the branch PUSHED to the private origin (`spec/v1.1-fixes`,
+force-with-lease, synchronized). Off-product: a `plasma-osk` VM in
+virt-manager (qemu:///session, user session) runs openSUSE Tumbleweed
+KDE live, Plasma 6.7.5, with `plasma6-keyboard` 6.7.3 installed and
+enabled for the owner's own look at the QtVKB/maliit stack — LIVE
+session in RAM: a reboot loses the package and the kwinrc key (the
+three restore commands are in the conversation log; KWin's InputMethod
+key takes the .desktop path, not the binary).
+
+**35 (language control shapes) — implemented + reviewed `ship`**
+(commits 2fa745e, 86a57b7): one layout hides the chip (width and
+margin collapse — hintText anchors its right edge), two keep the direct
+toggle, three or more open a chooser dropping INTO the card over the
+grid; `LanguageControl.js` (8-test suite, red first),
+`Keyboard.switchToGroup` is the one primitive both shapes use;
+review round 1 `block` (menu outside the input mask above the top bar;
+panel-close race) → fixed → round 2 `ship`. Residuals on record in the
+ticket: 8+ layouts would overflow (cap-and-scroll if ever needed).
+Decisions §49. Owner's eyes on his three-layout seat pending, with the
+standing round.
+
+**36 (emoji search ru/uk) — IN FLIGHT**: a background implement agent
+is vendoring CLDR 46 ru/uk keywords into the catalogue and widening the
+tiered search (English results byte-identical). Its contract:
+`.scratch/next-iteration/issues/36-emoji-search-ru-uk.md`. When it
+lands: orchestrator verification + one independent adversarial review
+before `ship`; predictions/autocorrect were considered and DECLINED
+(decisions §50).
+
+Owner gates otherwise unchanged from below: mouse/eyes acceptance of
+the round (now including 34's click-through and 35's three-layout
+menu), and the publish decision.
+
+---
+
+# Handoff — updated 2026-09-13 (night)
+
+**START HERE (previous round) — superseded by the block above.**
 
 The external audit's execution round is COMPLETE and the RELEASE
 CANDIDATE has passed its closing fresh adversarial review: **Verdict:
