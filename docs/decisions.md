@@ -1537,3 +1537,41 @@ functions, and the cap vocabulary was renamed throughout (`chr`,
 `chrShift`, `xkb`, `cellGap`, `capGlyphSize`). History keeps the derived
 code visible in old commits; the licence statement covers the tree as
 published, which is what the gate measures.
+
+
+## 49. The language control takes three shapes
+
+2026-09-13, the owner's call (ticket 35, the audit backlog's item 1).
+One installed layout hides the chip entirely — an inert chip is noise
+and a false affordance. Two keep the direct toggle the bar always had.
+Three or more open a chooser listing every layout in group order; the
+current group reads armed (accent fill), and a pick moves the whole
+switch set to that ABSOLUTE group — the same move-every-device contract
+the cycle always issued (`switchToGroup` is the one primitive both
+shapes use). Hidden stays distinct from grey: hidden means "nothing to
+switch", grey keeps meaning "nobody safe to move"
+(`pullLayoutsFromCompositor`'s guessed-device caveat). The chooser
+drops INTO the card over the grid, under the bar — the settings
+popover's pattern — because the panel window's input mask is the card
+rect: above the chip is outside the surface (invisible docked,
+unclickable floating; the ticket-35 review caught the first cut doing
+exactly that). The armed row and its click guard read the LIVE group
+index, not the flag baked at open — the group can move while the menu
+stands, from a physical switch or the shell's own widget.
+
+## 50. No prediction or autocorrect layer
+
+2026-09-13, the owner asked whether to build the IME-style features the
+Plasma keyboard has (candidate strip, prediction, autocorrect).
+Declined for now, deliberately. The product's core promise is drawn-is-
+typed exactness through the virtual-keyboard protocol; autocorrect
+fights that promise at the seam it lives on. A candidate strip adds
+pointer targets to a pointer-driven surface — the prediction's value is
+fewer clicks, but each candidate is one more small moving target, the
+exact defect ticket 34 just removed from the usage view. And the layer
+is an IME's worth of scope: per-language dictionaries shipped, ranked,
+and kept honest against the layouts the panel mirrors — a product
+direction, not a feature. Revisit trigger: a measured heavy mouse-typist
+asking for fewer clicks, not a competitor's feature list. Search
+vocabulary, by contrast, is cheap and exact — ticket 36 widens it to
+CLDR ru/uk keywords without touching the input path.
