@@ -1064,6 +1064,23 @@ QtObject {
                 { ctrl: true, shift: false, position: "AB04" })
         })
 
+        T.test("usesWinePasteChord switches the delivery path", function () {
+            // The classifier that routes a paste to the paced wine path
+            // (Keyboard.qml's pasteCurrent) — pin it at the seam. Restored
+            // from the pre-squash history: the chord-shape test above kept
+            // the positives, but only this one pins the negatives.
+            var wines = ["steam_proton", "football.exe", "wine64-preloader",
+                "steam_app_311210", "explorer.exe"]
+            // "notepad.exex" CONTAINS ".exe" and still must not classify:
+            // the check is the trailing four characters, never a substring.
+            var notWines = ["foot", "brave-browser", "",
+                "notepad.exe.".slice(0, -1) + "x"]
+            for (var i = 0; i < wines.length; i++)
+                T.equal(Reducer.usesWinePasteChord(wines[i]), true)
+            for (var j = 0; j < notWines.length; j++)
+                T.equal(Reducer.usesWinePasteChord(notWines[j]), false)
+        })
+
         T.test("pasteChordForClass prefers CLIPBOARD chord when class is empty", function () {
             T.deepEqual(Reducer.pasteChordForClass(""),
                 { ctrl: true, shift: true, position: "AB04" })

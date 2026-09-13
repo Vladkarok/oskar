@@ -835,10 +835,6 @@ Rectangle {
 
             SettingsHairline {}
 
-            // EMOJI (spec-v1.1 §1): which app the ☺ cap execs. The chooser
-            // names the selected app; the alternatives — the pickers the
-            SettingsHairline {}
-
             // ---- APPEARANCE (spec-v1.1 §5, 2026-09-06 amendment) ----
             //
             // Two radii, five colours. Every control applies through
