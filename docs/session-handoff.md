@@ -3,14 +3,8 @@
 **START HERE — this section supersedes everything below it.**
 
 The owner is switching the session model; no new agents are to be
-launched until he says so. Two background agents were in flight and
-finish on their own: (a) the lab-VM verification of the ≥3-layout
-language chooser (screenshots land in
-`.scratch/next-iteration/evidence/35/`, evidence goes into ticket 35);
-(b) the adversarial review of ticket 42 (commit 5460dea) — watch for
-its verdict on the AltGr question (the router gates Ctrl chords; on
-EU layouts AltGr may report Ctrl+Alt and kill §/é typing — first
-block candidate).
+launched until he says so. Both in-flight background agents have since
+completed.
 
 Landed since the block below, all reviewed `ship` unless said:
 - **39** — "языки сломаны" root-caused LIVE: the §43 rename left ONE
@@ -30,15 +24,24 @@ Landed since the block below, all reviewed `ship` unless said:
   ALWAYS arms (the old toggle disarmed exactly when the owner clicked
   to focus); placeholder speaks the active layout (Пошук/Поиск/
   Search) and hides while armed. Owner asked for all three.
-- **42** (5460dea, review pending) — armed emoji search accepts the
-  PHYSICAL keyboard: settingsLayer keyboardFocus primes Exclusive
-  75ms then OnDemand while emojiSearchActive (None→OnDemand never
-  grants focus on a mapped surface — read from Hyprland 0.56.2
+- **42** (5460dea + ae12035, review `ship`) — armed emoji search
+  accepts the PHYSICAL keyboard: settingsLayer keyboardFocus primes
+  Exclusive 75ms then OnDemand while emojiSearchActive (None→OnDemand
+  never grants focus on a mapped surface — read from Hyprland 0.56.2
   source), FocusScope routes events through the pure
   `EmojiPage.searchKeyAction`; every disarm path restores None by
-  binding. §52 + spec-v1.1 §5 amendment. Its VM leg is OWED (queued
-  behind the menu verification): armed QMP typing lands in the query,
-  Escape hands keys back, record the honoured mode.
+  binding. §52 + spec-v1.1 §5 amendment. Review round 1 block: the
+  chord gate gated 0x08000000 as Meta (it is Alt) — Super chords
+  leaked; fixed to Ctrl|Alt|Meta with AltGr explicitly typing
+  (GroupSwitchModifier on Wayland). Its VM focus leg is STILL OWED
+  (armed QMP typing lands in the query, Escape hands keys back,
+  record the honoured mode).
+- The ticket-35 chooser was lab-verified in the VM (green through the
+  real UI path on us,ua,ru; screenshots in
+  `.scratch/next-iteration/evidence/35/`) — and the same leg found a
+  DEPLOYMENT defect, fixed in 56d7601: the Makefile's PLUGIN_RUNTIME
+  missed LanguageControl.js/HoldColumn.js so a make-installed panel
+  could not load; qml-check.sh now gates the packaged file set.
 - SKIN_TONES pin (9b9fd07) — the last unpinned EmojiPage family.
 
 Queue after the switch (owner decides order): 38 (restart-settle
