@@ -1171,13 +1171,19 @@ Item {
     }
 
     // Emoji delivery through the clipboard (ticket 28, "clipboard" mode).
-    // The correlation lives in the pure ClipboardPaste.publish* machine;
-    // these are only its processes. The publisher stays alive as the
-    // selection owner — killing it would recreate ticket 25's dead-owner
-    // behaviour; the next pick replaces it, which is replacement, not
-    // loss. The pick's payload is what the mode REPLACES the clipboard
-    // with (spec-v1.1 §1): text only, stated in the toggle's tooltip.
-    property var emojiPublishState: ClipboardPaste.publishInitial()
+    // The transaction lives in the pure ClipboardPaste.txn* machine;
+    // these are only its processes and timers. One pick owns the
+    // clipboard and its paste chord END TO END: a pick accepted while
+    // another is unfinished queues in order, so a queued payload never
+    // replaces the clipboard owner an unfinished paste still depends on,
+    // and usage/settle/close fire only from the chord's real completion
+    // (audit 2026-09-13 — the old code recorded success the instant the
+    // paste was dispatched). The publisher stays alive as the selection
+    // owner — killing it would recreate ticket 25's dead-owner behaviour;
+    // the next pick replaces it, which is replacement, not loss. The
+    // pick's payload is what the mode REPLACES the clipboard with
+    // (spec-v1.1 §1): text only, stated in the toggle's tooltip.
+    property var emojiTxnState: ClipboardPaste.txnInitial()
 
     Process {
         id: emojiClipboardPublish
@@ -1200,7 +1206,7 @@ Item {
         interval: 60
         repeat: false
         onTriggered: () => {
-            emojiClipboardVerify.seq = root.emojiPublishState.seq
+            emojiClipboardVerify.seq = root.emojiTxnState.seq
             if (emojiClipboardVerify.running)
                 emojiClipboardVerify.running = false
             emojiClipboardVerify.running = true
@@ -1208,11 +1214,23 @@ Item {
     }
 
     function pickViaClipboard(emoji) {
-        var started = ClipboardPaste.publishStart(root.emojiPublishState, emoji)
-        if (started.action === "publish-superseding")
-            console.warn("[osk] emoji pick superseded an unresolved publish;"
-                + " the earlier pick was never pasted")
-        root.emojiPublishState = started.state
+        var picked = ClipboardPaste.txnPick(root.emojiTxnState, emoji)
+        root.emojiTxnState = picked.state
+        if (picked.action === "queued") {
+            console.log("[osk] emoji pick queued behind an unfinished paste")
+            return
+        }
+        if (picked.action === "refused") {
+            console.warn("[osk] emoji pick refused: empty payload")
+            return
+        }
+        beginEmojiPublish(emoji)
+    }
+
+    // The effects of one accepted pick: replace the clipboard owner, then
+    // verify. Called for the first pick and for every pick the queue
+    // hands over — never for a pick still waiting its turn.
+    function beginEmojiPublish(emoji) {
         if (emojiClipboardPublish.running)
             emojiClipboardPublish.running = false
         emojiClipboardPublish.command = ["wl-copy", "--foreground", emoji]
@@ -1221,16 +1239,15 @@ Item {
     }
 
     function cancelEmojiPublish(reason) {
-        var cancelled = ClipboardPaste.publishCancel(root.emojiPublishState)
+        var cancelled = ClipboardPaste.txnCancel(root.emojiTxnState)
         if (cancelled.action === "dropped")
-            console.warn("[osk] emoji publish cancelled:", reason)
-        root.emojiPublishState = cancelled.state
+            console.warn("[osk] emoji paste transaction cancelled:", reason)
+        root.emojiTxnState = cancelled.state
     }
 
     function finishEmojiPublishVerify(seq, served) {
-        var result = ClipboardPaste.publishServed(root.emojiPublishState,
-            seq, served)
-        root.emojiPublishState = result.state
+        var result = ClipboardPaste.txnServed(root.emojiTxnState, seq, served)
+        root.emojiTxnState = result.state
         if (result.action === "stale") return
         if (result.action === "retry") {
             emojiPublishVerifyTimer.restart()
@@ -1239,30 +1256,46 @@ Item {
         if (result.action === "drop") {
             console.warn("[osk] emoji clipboard publication not confirmed;"
                 + " pick dropped, no chord sent")
+            startNextEmojiTxn()
             return
         }
-        // The chord: only when the helper can actually send it — a stopped
-        // helper drops the paste silently, and a delivery that never went
-        // out must not record usage, settle the search or close the page
-        // (review finding: the direct path waits for text-ok; this path
-        // must not be weaker). The emoji IS on the clipboard; a manual
-        // Ctrl+V remains possible.
-        if (!keyboard.inputReady) {
-            console.warn("[osk] helper not ready; emoji published to the"
-                + " clipboard but no paste chord was sent")
-            root.emojiPublishState = ClipboardPaste.publishCancel(
-                root.emojiPublishState).state
-            return
+        // "chord": the transaction owns the paste. Usage, search settle
+        // and close-after-pick wait for the chord's real completion — a
+        // paced wine chord is still draining line by line when dispatch
+        // returns, and a refusal (a busy pacer, an unready helper, a
+        // socket that died mid-chord) is reported to the callback instead
+        // of passing unnoticed. The emoji stays published; if the chord
+        // never completes, manual Ctrl+V remains possible.
+        keyboard.pasteCurrent(root.focusedClientClass(), function (success) {
+            finishEmojiChord(success)
+        })
+    }
+
+    // The chord's verdict. Only a real completion records usage, settles
+    // the search and closes the page; a cancellation leaves all three
+    // alone. A completion arriving for a cancelled transaction (mode
+    // flipped mid-chord) lands as "ignore" and records nothing, then the
+    // queue — empty after a cancel — hands over nothing.
+    function finishEmojiChord(success) {
+        var done = ClipboardPaste.txnChordDone(root.emojiTxnState, success)
+        root.emojiTxnState = done.state
+        if (done.action === "completed") {
+            recordEmojiSuccess(done.emoji)
+            // Ticket 29's flow: the keys go back to the chat the emoji
+            // landed in.
+            emojiPickSettled()
+            if (root.emojiCloseAfterPick) root.emojiOpen = false
+        } else if (done.action === "cancelled") {
+            console.warn("[osk] emoji paste chord refused or aborted;"
+                + " no usage recorded (the clipboard keeps the pick)")
         }
-        var wanted = result.state.pending
-        root.emojiPublishState = ClipboardPaste.publishCancel(
-            root.emojiPublishState).state
-        keyboard.pasteCurrent(root.focusedClientClass())
-        root.recordEmojiSuccess(wanted)
-        // Ticket 29's flow: the keys go back to the chat the emoji
-        // landed in.
-        root.emojiPickSettled()
-        if (root.emojiCloseAfterPick) root.emojiOpen = false
+        startNextEmojiTxn()
+    }
+
+    function startNextEmojiTxn() {
+        var next = ClipboardPaste.txnNext(root.emojiTxnState)
+        root.emojiTxnState = next.state
+        if (next.action === "publish") beginEmojiPublish(next.emoji)
     }
 
     // Reports {"x": n, "y": n} in compositor coordinates, which is the same

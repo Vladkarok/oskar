@@ -2,14 +2,93 @@
 
 **START HERE — this section supersedes everything below it.**
 
-The tree is in a clean, working state: branch `spec/v1.1-fixes`, **10
-commits** (squashed history + fixes), suites 10/10, provenance gate 0,
-panel live-verified on the host (toggle via the bar icon alternates
-open/close, handshake + layout reading clean, language button shows the
-proper name). `backup/pre-squash` holds the original 247-commit history
-for reference; delete it when confident.
+The tree was in a clean, working state at `d01ee62` (branch
+`spec/v1.1-fixes`, 10 commits, suites green, provenance 0, panel
+live-verified). Since then, **ticket 28's audit reopen is fixed,
+reviewed `ship`, committed** — see below. `backup/pre-squash` still
+holds the original 247-commit history for reference; delete it when
+confident.
 
-## What just happened (2026-09-12 evening → 09-13)
+## Ticket 28 (P1) — landed 2026-09-13, reviewed `ship`
+
+The audit's clipboard race is fixed: one pick owns publish→verify→
+chord→completion (`ClipboardPaste.txn*`, pure); later picks queue in
+order and never replace the owner an unfinished paste depends on;
+`Keyboard.pasteCurrent(wmClass, completed)` reports the real outcome
+(paced completion after the final dispatched line, immediate after the
+writer accepts every line, synchronous false on refusal); usage/settle/
+close only from `completed`; an aborted chord pays pure
+`compensatingReleases` and converges by lifting. Decisions §44,
+spec-v1.1 §1 amended, evidence in `.scratch/next-iteration/evidence/28/`
+(VM wine leg: 😀 then 🔥 120 ms apart → journal shows the queue line and
+two serialized Ctrl+AB04 chords; notepad reads exactly 😀🔥, each once,
+in order). Host: 10 suites / 299 cases, 40 Rust, clippy, qml-check,
+provenance 0, plugin-validate. Independent adversarial review:
+**Verdict: ship**; its two actionable MINORs (empty-payload queue wedge,
+abort sent-prefix overcount) fixed before the commit. Owner mouse/feel
+acceptance remains a separate gate.
+
+## VM lab faults found during the leg (both pre-date the fix; not code)
+
+1. **Overlay input dies while the emoji page is open in THIS guest**:
+   every pointer click (tiles, toggles, toast, keys) stops registering
+   until the shell restarts; reproduced identically on the dd7b0c6
+   packaged plugin. Same quickshell 0.3.1 / Hyprland 0.56.2 / scale 2 as
+   the host, where the owner daily-drives the page — so guest-specific.
+   Workaround used: drive `pickViaClipboard` through a guest-only
+   FileView hook (removed after the run). If it recurs, bisect against
+   the overlay layer's input mask.
+2. **After the domain power-cycle the nested suite's Electron leg dies**
+   (SIGTRAP; nested Hyprland logs "EGL setup failed", guest on llvmpipe;
+   the domain video model is plain `vga`, no GL). All other legs pass
+   and the daemon source is byte-identical to dd7b0c6 — an environment
+   regression. Re-provisioning the domain with virtio-gpu+virgl would
+   likely restore the leg.
+
+## NEXT WORK — docs/audit-2026-09-13.md is the execution brief
+
+Work its remaining tickets in order, one board ticket at a time:
+
+1. **32 (P1)** — the AUR lifecycle: /usr/bin/omarchy-osk
+   setup/upgrade/status/teardown, real dependencies (libxkbcommon,
+   wl-clipboard are hard), .SRCINFO, clean-chroot build, the full VM
+   choreography.
+2. **06 (P2)** — a shell SIGKILL loses the custom kb_file;
+   helper-owned runtime sidecar, exact-path identity.
+3. **31 (P2)** — bound the remembered layout group to the current
+   keymap (panel seam + daemon defence in depth).
+4. **33 (P2)** — restore the lost tests, sweep stale picker text,
+   reconcile the docs, add the compatibility matrix.
+
+The audit's post-release backlog (#1-#8) stays post-release. Omarchy
+first, direct emoji delivery the default, one coherent package.
+
+## Standing owner decisions
+
+- **Publish gate**: push + tag + AUR when the owner says so. The AUR
+  PKGBUILD is committed and honest about its gates (public push, tag,
+  .SRCINFO). The repo currently has no public remote.
+- `backup/pre-squash` branch retention.
+- Upstream notes to file (not blocking): Electron-version issue for the
+  docked-content verdict (ticket 30 has the lab evidence); Hyprland
+  same-window-click event absence.
+
+## Verification shortlist for a cold start
+
+```sh
+./tools/run-tests.sh          # 10 suites (config 38/0, reducer 96/0,
+                              # clipboard-paste 22/0 ...)
+./tools/provenance.py         # exit 0
+./tools/qml-check.sh
+cargo clippy --manifest-path daemon/Cargo.toml --all-targets -- -D warnings
+```
+VM lab: `ssh omarchy-vm`, scripts /tmp/vmclean.sh (bottomtest fixture
+in ~/bottomtest), signature via the socat probe (see vm-handoff). The
+host panel is a symlink to this tree; `omarchy restart shell` after
+QML edits; `./install.sh` after Rust edits. NOTE the two lab faults
+above before trusting click choreography in this VM.
+
+## History — what just happened (2026-09-12 evening → 09-13)
 
 1. **Provenance zero**: the tree shares ZERO substantive lines with the
    upstream sketch (tools/provenance.py, gate = exit 0). Sole copyright
@@ -39,56 +118,6 @@ for reference; delete it when confident.
    only picker. Spec §1 records the removal.
 5. Audit round 1 landed (dead code, duplication); audit round 2 is the
    NEXT WORK.
-
-## NEXT WORK — docs/audit-2026-09-13.md is the execution brief
-
-The owner's external audit (2026-09-13, at dd7b0c6) reprioritized the
-plan; its factual claims were verified (the 28 race, the lost classifier
-test, the undeclared libxkbcommon). Work its tickets in order, one board
-ticket at a time:
-
-1. **28 reopened (P1)** — serialize clipboard delivery: the paced wine
-   chord races rapid A→B picks; usage/settle/close only from a real
-   completion. Red tests first.
-2. **32 new (P1)** — the AUR lifecycle: /usr/bin/omarchy-osk
-   setup/upgrade/status/teardown, real dependencies (libxkbcommon,
-   wl-clipboard are hard, undeclared), .SRCINFO, clean-chroot build,
-   the full VM choreography.
-3. **06 reopened (P2)** — a shell SIGKILL loses the custom kb_file;
-   helper-owned runtime sidecar, exact-path identity.
-4. **31 new (P2)** — bound the remembered layout group to the current
-   keymap (panel seam + daemon defence in depth).
-5. **33 new (P2)** — restore the lost tests (usesWinePasteChord verified
-   gone; floatingAnchor survived), sweep stale picker text, reconcile
-   the docs, add the compatibility matrix.
-
-The old audit-round-2 items (QML smoke loading, OverlayCard, pure
-seams) are the audit's **post-release backlog** (#1-#8 there) — do not
-start them before release. The audit also fixes scope: Omarchy-only
-first, direct emoji delivery the default, one coherent package.
-
-## Standing owner decisions
-
-- **Publish gate**: push + tag + AUR when the owner says so. The AUR
-  PKGBUILD is committed and honest about its gates (public push, tag,
-  .SRCINFO). The repo currently has no public remote.
-- `backup/pre-squash` branch retention.
-- Upstream notes to file (not blocking): Electron-version issue for the
-  docked-content verdict (old-Chromium ozone, fixed by 152 — ticket 30
-  has the lab evidence); Hyprland same-window-click event absence.
-
-## Verification shortlist for a cold start
-
-```sh
-./tools/run-tests.sh          # 10 suites (config 38/0, reducer 96/0...)
-./tools/provenance.py         # exit 0
-./tools/qml-check.sh
-cargo clippy --manifest-path daemon/Cargo.toml --all-targets -- -D warnings
-```
-VM lab: `ssh omarchy-vm`, scripts /tmp/vmclean.sh (bottomtest fixture
-in ~/bottomtest), signature via the socat probe (see vm-handoff).
-The host panel is a symlink to this tree; `omarchy restart shell` after
-QML edits; `./install.sh` after Rust edits.
 
 ---
 

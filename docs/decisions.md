@@ -1308,6 +1308,34 @@ The §6 rules it implements:
 - Usage counts the acknowledged send, not the client's insertion — the
   same semantics §39 already records for `text-ok`.
 
+## 44. One pick owns the clipboard and its chord: a serialized delivery transaction
+
+The 2026-09-13 audit's P1 race, fixed on reopened ticket 28. The §42 route
+recorded success the instant the paste was *dispatched* — while the wine
+chord was still draining line by line — and `pasteCurrent()` refused a
+second paste silently. Rapid A→B picks could replace the clipboard owner
+before A's delayed Ctrl+V reached the client: A lost, B possibly twice,
+both counted. The fix makes publication plus paste one owned transaction
+(`ClipboardPaste.txn*`, pure and test-covered):
+
+- One pick in flight end to end — publish, verify, chord, completion. A
+  pick while another is unfinished queues IN ORDER; a queued payload never
+  replaces the clipboard owner an unfinished paste depends on. No guessed
+  delay: the queue is the ordering, the completion is the gate.
+- `Keyboard.pasteCurrent(wmClass, completed)` reports the real outcome:
+  after the final paced line for a wine chord, after the socket writer
+  accepted every line for an immediate one, `false` synchronously on any
+  refusal (busy pacer, held key, unready input, dead socket mid-chord).
+- Usage, search settle and close-after-pick fire only from `completed`;
+  a refusal is a cancellation and the queue proceeds.
+- An aborted paced chord emits compensating `up` lines for every unlifted
+  press of its sent prefix (`compensatingReleases`), then converges by
+  lifting (`releaseAll`) — never by re-pressing a lock whose world the
+  abort just reset. A chord also aborts when the held-modifier world it
+  planned around changes under it (a draining configure, a close).
+- A socket loss or mode flip cancels the queue; a completion arriving for
+  a cancelled transaction lands as `ignore` and records nothing.
+
 ## Dead ends — do not retry
 
 - Subscribing to / mirroring the seat keymap (§3). Also: guarding its
