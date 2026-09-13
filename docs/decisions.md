@@ -1450,6 +1450,21 @@ bounds, one per side:
   a correct grow — while a `group` command is bounded by the map that is
   installed, because that is the one it moves.
 
+## 48. The usage view is a snapshot; the store stays live
+
+Ticket 34, the owner's request at the audit round's close. The
+recent/frequent category used to re-rank live — every completed delivery
+re-evaluated the sections binding, so an emoji picked repeatedly moved
+under the cursor by frequency and the last clicks of a run landed on the
+wrong tile (and the model swap reset the scroll to top mid-clicking).
+Now the category renders a snapshot taken when the view is ENTERED — on
+page open and on re-entry into the usage group — and nothing else moves
+it. Positional stability while clicking beats live re-ranking; a pick's
+evidence appears the next time the view is entered. The persisted store
+keeps its per-delivery discipline from §44 untouched — only the view
+defers. Search is not a category switch: clearing a search returns to
+the standing snapshot.
+
 ## Dead ends — do not retry
 
 - Subscribing to / mirroring the seat keymap (§3). Also: guarding its

@@ -328,6 +328,75 @@ QtObject {
             T.equal(records[1].emoji, "👍🏿")
         })
 
+        T.test("the usage view opens on a snapshot, not the live records", function () {
+            // Ticket 34: the open snapshot reflects the records as they
+            // stand at that moment and nothing later. The copy is deep —
+            // aliasing is the classic bug a snapshot can hide, so a
+            // mutated record or a pushed one must not leak in.
+            var records = [
+                { emoji: "😀", count: 3, lastUsed: 1 },
+                { emoji: "👍", count: 1, lastUsed: 2 }
+            ]
+            var snapshot = Page.usageViewOnOpen(records)
+            T.deepEqual(snapshot, records)
+            T.equal(snapshot === records, false)
+            records[0].count = 99
+            records.push({ emoji: "😛", count: 7, lastUsed: 3 })
+            T.equal(snapshot.length, 2)
+            T.equal(snapshot[0].count, 3)
+        })
+
+        T.test("re-entering the usage group re-snapshots; leaving it keeps the view", function () {
+            // The owner's fruits-and-back round trip: picks accumulate in
+            // the store while another category shows, the return hands the
+            // view the re-snapshot, and leaving again changes nothing.
+            var records = [{ emoji: "😀", count: 1, lastUsed: 1 }]
+            var snapshot = Page.usageViewOnOpen(records)
+            records = Page.usageAfterSuccess(records, "😛")
+            records = Page.usageAfterSuccess(records, "😛")
+            var kept = Page.usageViewOnGroupChange("Food & Drink", records,
+                snapshot)
+            T.equal(kept === snapshot, true)
+            var reentered = Page.usageViewOnGroupChange("__usage__", records,
+                snapshot)
+            T.deepEqual(reentered, records)
+            T.equal(reentered === snapshot, false)
+        })
+
+        T.test("five picks under the usage view move no tile", function () {
+            // The exact report that opened ticket 34: a new emoji clicked
+            // five times climbs the frequency ranking live and lands under
+            // the pointer on the last clicks. No reopen and no group
+            // change means no refresh call at all — the view derives from
+            // the untouched snapshot while the store re-ranks beneath it.
+            var records = [
+                { emoji: "😀", count: 5, lastUsed: 2 },
+                { emoji: "👍", count: 1, lastUsed: 3 }
+            ]
+            var snapshot = Page.usageViewOnOpen(records)
+            var before = Page.usageSections(snapshot, 1)
+            T.equal(before.frequent[0].emoji, "😀")
+            T.equal(before.recent[0].emoji, "👍")
+            for (var i = 0; i < 5; i++)
+                records = Page.usageAfterSuccess(records, "👍")
+            // The store itself re-ranked (its per-delivery update is
+            // untouched)...
+            var store = Page.usageSections(records, 1)
+            T.equal(store.frequent[0].emoji, "👍")
+            // ...but the snapshot's sections are byte-identical.
+            T.deepEqual(Page.usageSections(snapshot, 1), before)
+        })
+
+        T.test("an empty store snapshots to empty sections", function () {
+            // The empty-store path is unchanged: the snapshot of nothing
+            // is nothing — no usage header, no chrome.
+            var snapshot = Page.usageViewOnOpen([])
+            T.deepEqual(snapshot, [])
+            var sections = Page.usageSections(snapshot, 1)
+            T.equal(sections.frequent.length, 0)
+            T.equal(sections.recent.length, 0)
+        })
+
         T.test("the page stays clear of the keyboard band at every size preset", function () {
             var output = { x: 0, y: 0, w: 1280, h: 800 }
             var presets = Page.PAGE_SIZES
