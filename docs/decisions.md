@@ -1512,6 +1512,11 @@ substantive lines against the upstream snapshot `e3771b6` (from 235 that
 morning), `LICENSE` carries a sole copyright, and the README, orientation
 and spec-v1 §13 state the history without attributing the present.
 
+2026-09-13, owner's follow-up: the README no longer states the history
+at all — with zero shared lines, the public mention only misled readers
+into expecting shared code. The history record stays internal
+(orientation, spec-v1 §13, this section); the provenance gate stays.
+
 The measurement stays honest by counting everything that could have been
 written any other way and excluding only what could not: module imports,
 `.pragma library`, the host shell's required type and property names
