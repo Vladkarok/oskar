@@ -9,6 +9,7 @@ import "ClipboardPaste.js" as ClipboardPaste
 import "Config.js" as ConfigFile
 import "EmojiCatalog.js" as Catalog
 import "EmojiPage.js" as EmojiGrid
+import "LanguageControl.js" as LanguageControl
 import "SettingsPlacement.js" as SettingsPlacement
 
 Item {
@@ -1810,6 +1811,16 @@ Item {
 
                 Rectangle {
                     id: langCtl
+                    // The control's shape follows the installed layout count
+                    // (ticket 35): one layout hides it — an inert chip is
+                    // noise and a false affordance; two toggle directly, the
+                    // shape this bar always had; three or more open the
+                    // chooser above. Grey keeps its old meaning: hidden is
+                    // "nothing to switch", not "nobody safe to move".
+                    property string shape: LanguageControl.controlState(
+                        keyboard.layoutCodes.length,
+                        keyboard.switchKeyboards.length)
+                    visible: shape !== "hidden"
                     anchors {
                         left: settingsGear.right
                         leftMargin: keyboard.cellGap
@@ -1847,7 +1858,10 @@ Item {
                     MouseArea {
                         id: langHit
                         anchors { fill: parent }
-                        onClicked: keyboard.stepLayout()
+                        onClicked: {
+                            if (langCtl.shape === "menu") languageMenu.open()
+                            else keyboard.stepLayout()
+                        }
                     }
                 }
 
@@ -2114,6 +2128,102 @@ Item {
                 HoverTooltip {
                     text: "Paste clipboard"
                     hovered: pasteArea.containsMouse
+                }
+            }
+
+            // The >=3-layout chooser (ticket 35), card-local like the paste
+            // chip so its z outranks keys and bar. The catch area underneath
+            // eats the everywhere-outside click — the same contract the
+            // settings popover keeps with its own layer — so a menu that
+            // outlived the panel closing cannot reopen standing.
+            MouseArea {
+                anchors { fill: parent }
+                enabled: languageMenu.opened
+                z: 39
+                onClicked: languageMenu.close()
+            }
+
+            Rectangle {
+                id: languageMenu
+                property bool opened: false
+                property var entries: []
+                property real anchorX: 0
+                function open() {
+                    // Rebuilt from live state every time: a configure that
+                    // ran while it stood closed must not leave a stale list,
+                    // and the active flag is the group at open time.
+                    entries = LanguageControl.menuEntries(
+                        keyboard.layoutCodes, keyboard.layoutTitles,
+                        keyboard.groupCursor)
+                    anchorX = langCtl.mapToItem(card, 0, 0).x
+                    opened = true
+                }
+                function close() { opened = false }
+
+                visible: opened && root.opened
+                z: 40
+                x: Math.max(keyboard.cellGap,
+                    Math.min(anchorX, parent.width - width - keyboard.cellGap))
+                // Bottom edge at the language chip's top: the chip sits
+                // cellGap above the bar's bottom edge and is space(30) tall.
+                y: dragBar.height - keyboard.cellGap - tokens.space(30)
+                    - height - keyboard.cellGap
+                width: menuList.childrenRect.width + keyboard.cellGap * 4
+                height: menuList.childrenRect.height + keyboard.cellGap * 2
+                radius: tokens.cornerRadius
+                color: tokens.popupsBackground
+                border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                border.width: tokens.normalBorderWidth
+
+                Column {
+                    id: menuList
+                    x: keyboard.cellGap * 2
+                    y: keyboard.cellGap
+                    spacing: keyboard.cellGap / 2
+
+                    Repeater {
+                        model: languageMenu.entries
+                        Rectangle {
+                            // modelData through locals, the emoji-page
+                            // delegate style.
+                            property var entry: modelData
+                            width: menuRowLabel.implicitWidth + keyboard.cellGap * 2
+                            height: tokens.space(30)
+                            radius: tokens.cornerRadius
+                            // The active group reads as armed: accent fill,
+                            // knocked-out text — the locked-modifier idiom.
+                            color: entry.active ? tokens.accent
+                                : menuRowHit.containsMouse
+                                    ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
+                                    : "transparent"
+                            MouseArea {
+                                id: menuRowHit
+                                anchors { fill: parent }
+                                hoverEnabled: true
+                                Accessible.role: Accessible.Button
+                                Accessible.name: "Switch to " + entry.title
+                                onClicked: {
+                                    languageMenu.close()
+                                    if (!entry.active)
+                                        keyboard.switchToGroup(entry.group)
+                                }
+                            }
+                            Text {
+                                id: menuRowLabel
+                                anchors {
+                                    verticalCenter: parent.verticalCenter
+                                    left: parent.left
+                                    leftMargin: keyboard.cellGap
+                                }
+                                text: entry.title
+                                color: entry.active ? tokens.background
+                                    : tokens.foreground
+                                font.family: tokens.fontFamily
+                                font.pixelSize: tokens.fontBodySmall
+                                font.bold: entry.active
+                            }
+                        }
+                    }
                 }
             }
         }

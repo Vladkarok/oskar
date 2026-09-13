@@ -819,9 +819,16 @@ Item {
         compositorQuery.running = true
     }
 
-    function stepLayout() {
-        if (layoutCodes.length < 2 || switchKeyboards.length === 0) return
-        var next = (groupCursor + 1) % layoutCodes.length
+    // The one switch primitive both language-control shapes use: move every
+    // device in the switch set to one ABSOLUTE group. The chooser passes the
+    // picked index (ticket 35); stepLayout passes the two-layout cycle.
+    function switchToGroup(next) {
+        // The group index is the seat's truth — xkb lists can repeat a code
+        // across variants, so a code is not an address. Bounded against the
+        // list as it stands NOW: a configure that shrank it while a chooser
+        // stood open turns the stale pick into a no-op, not a hyprctl error.
+        if (next < 0 || next >= layoutCodes.length) return
+        if (switchKeyboards.length === 0) return
         // Hyprland stores the group per device. Move every device with this
         // layout list to one absolute index; switching one guessed physical
         // keyboard changed the panel while another keyboard kept typing the
@@ -834,6 +841,11 @@ Item {
         for (var i = 0; i < switchKeyboards.length; i++)
             command.push(String(switchKeyboards[i]))
         Quickshell.execDetached(command)
+    }
+
+    function stepLayout() {
+        if (layoutCodes.length < 2 || switchKeyboards.length === 0) return
+        switchToGroup((groupCursor + 1) % layoutCodes.length)
     }
 
     Component.onCompleted: {
