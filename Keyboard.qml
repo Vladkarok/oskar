@@ -10,6 +10,7 @@ import "HoldColumn.js" as HoldColumn
 import "KeyboardSession.js" as Session
 import "Config.js" as ConfigFile
 import "LayoutDevices.js" as LayoutDevices
+import "SettleGuard.js" as SettleGuard
 import "ClipboardPaste.js" as ClipboardPaste
 
 Item {
@@ -334,6 +335,14 @@ Item {
     // which is what makes a superseded reply discardable and keeps the
     // drawn caps from ever describing a keymap the helper no longer has.
     property var session: Session.initial()
+    // The restart-settle guard's ledger (ticket 38): which group the panel
+    // last FOLLOWED into a configure, what the click's own loop last
+    // commanded, and the uncommanded flip currently held out. Everything
+    // the reading path consults before following a group change; pure, in
+    // SettleGuard.js with its tests. Reset by a genuinely new helper
+    // connection (the fresh-hello arm below) — never by the repair
+    // timer's re-hello of a live socket, whose world is intact.
+    property var settleGuard: SettleGuard.initial()
     // Every drawn cap's facts (decisions §23). Since ticket 18 there is no
     // second source: the §11 xkbcli pipeline that used to supply the curated
     // page was removed once every cap became a glyph cap, so nothing spawns a
@@ -696,6 +705,33 @@ Item {
         console.log("[osk] layout reading:", reading.name, "group:", configGroup,
             "named:", anchorKeyboardName || "(none)",
             "remembered:", root.rememberedLayoutGroup)
+        // The restart-settle guard (ticket 38): for a short window after
+        // the establishing configure that follows a daemon (re)connect, an
+        // UNcommanded group flip is Hyprland's own keymap re-application
+        // churn — a fresh vkb registration makes the compositor re-apply
+        // keymaps, a devices read can return the reading keyboard at its
+        // pre-churn group, and following that echo once split the seat
+        // (ITE keyboards on the clicked group, at Translated back on 0)
+        // while dragging `remembered` onto the churn. The click's own
+        // hyprctl loop (switchToGroup) is never gated: only this FOLLOW is.
+        // On hold, the panel keeps configuring the group it followed last
+        // — so the vkb, the caps, the cursor and `remembered` (persisted
+        // from configure acks) all stay on the clicked group, and one
+        // re-read after the quiesce interval supplies the second agreeing
+        // reading a genuine external switch deserves to be followed on.
+        // The establishing configure itself is never held, which is what
+        // keeps the §47 remembered tie-breaker answering on a cold start
+        // exactly as before (SettleGuard.decide's first arm).
+        var settle = SettleGuard.decide(root.settleGuard, configGroup,
+            Date.now())
+        root.settleGuard = settle.state
+        if (!settle.follow) {
+            console.log("[osk] settle guard: holding group", settle.held,
+                "— uncommanded reading", configGroup,
+                "inside the post-reconnect window")
+            configGroup = settle.held
+            settleRecheck.restart()
+        }
         var active = (configGroup !== (reading.active_layout_index || 0))
             ? LayoutDevices.activeLayoutForGroup(reading, configGroup)
             : LayoutDevices.activeLayout(reading)
@@ -859,6 +895,15 @@ Item {
         // and the seat still converges on one group.)
         if (next < 0 || next >= layoutCodes.length) return
         if (switchKeyboards.length === 0) return
+        // Ticket 38: the click is user intent. Told to the settle guard so
+        // its echo reading is followed immediately inside the post-reconnect
+        // window (a guard that held its own click would break language
+        // switching for the window's length) and so any flip the guard was
+        // holding dies when the user clicks through it. The loop below is
+        // untouched — the guard only gates the panel's FOLLOW of what the
+        // seat then reads.
+        root.settleGuard = SettleGuard.commanded(root.settleGuard, next,
+            Date.now())
         // Hyprland stores the group per device. Move every device with this
         // layout list to one absolute index; switching one guessed physical
         // keyboard changed the panel while another keyboard kept typing the
@@ -905,6 +950,19 @@ Item {
             if (code !== 0 || status !== 0) return
             root.ingestLayoutSnapshot(compositorQuery.snapshotText)
         }
+    }
+
+    // Ticket 38: one re-read per held reading. A held flip is one
+    // observation; a genuine external switch persists, so a fresh snapshot
+    // after the quiesce interval supplies the agreeing reading that lets
+    // the guard follow it, while churn keeps re-anchoring the candidate's
+    // clock and staying held. Each hold restarts this timer, and the
+    // window's expiry is the ultimate bound on how long any of this runs.
+    Timer {
+        id: settleRecheck
+        interval: SettleGuard.QUIESCE_MS + 100
+        repeat: false
+        onTriggered: root.pullLayoutsFromCompositor()
     }
 
 
@@ -1388,6 +1446,16 @@ Item {
                         if (root.socketReconnected) {
                             root.socketReconnected = false
                             root.capsFactsFailed = false
+                            // Ticket 38: a genuinely new connection also
+                            // resets the settle guard's world — the helper
+                            // is back at group 0 and whatever this panel
+                            // followed or commanded belongs to the old
+                            // socket. The next reading establishes and arms
+                            // the post-reconnect window. The repair timer's
+                            // re-hello (the else arm below) changes nothing
+                            // here: a live socket's world is intact.
+                            root.settleGuard = SettleGuard.connected(
+                                root.settleGuard)
                             root.modifierState = Modifiers.reduce(
                                 root.modifierState, { type: "releaseAll" }).state
                             // Session bookkeeping starts over with the
