@@ -1661,3 +1661,57 @@ The live measurement of which mode the compositor honours is QUEUED
 the query, after Escape keys reach the app again, and the honoured
 mode confirmed against this source reading. Until that leg runs, the
 ticket stays open.
+
+## 53. A settle guard owns the post-reconnect echo window, panel-side only
+
+Ticket 38, after the owner's live hit (2026-09-13 18:53): the daemon
+restarted under a live panel, the first configure after the reconnect
+re-established the world, one language click three seconds later moved
+all three keyboards to group 1 — and a devices read that returned the
+reading keyboard at 0 (Hyprland re-applying keymaps around the fresh
+virtual-keyboard registration; the mover is outside the panel) was
+FOLLOWED, splitting the seat and dragging the persisted `remembered`
+onto the churn. The fix is a pure seam, `SettleGuard.js`, consulted at
+exactly one point — the reading path's follow — with the injected clock
+and three inputs: the group the panel last followed, the group the
+click's own hyprctl loop last commanded, and the observed reading.
+
+- **What is guarded, and what never is.** For `WINDOW_MS` (10 s) after
+  the ESTABLISHING configure — the first one following a genuinely new
+  helper connection (the fresh-hello arm; the repair timer's re-hello of
+  a live socket changes nothing) or a panel's birth — an uncommanded
+  group flip is HELD: the panel keeps configuring the group it followed
+  last, so the helper's device, the caps, the cursor and `remembered`
+  (persisted from configure acks, and a held group is never sent) all
+  stay on the clicked value. A flip is followed only once the SAME value
+  persists a full `QUIESCE_MS` (1 s) past its last sighting — continuous
+  churn re-anchors that clock and never accumulates into agreement. The
+  click itself is never gated: `switchToGroup` records the command before
+  its loop runs, the echo is followed immediately inside the window, and
+  a command while armed re-anchors the window around the click (the race
+  is the click's loop × the fresh registration). Outside the window
+  every reading is followed at first sight — today's behavior exactly.
+- **The establishing configure is exempt by design, and that is what
+  keeps §47 whole.** The remembered-group tie-breaker answers from
+  LayoutDevices as part of the FIRST reading a new world establishes; a
+  fresh panel over a diverged sleeper seat follows it unconditionally,
+  exactly as before the guard (the pure test pins it, and the lab's
+  cold-start control ran it live: majority 0, sleeper 1, remembered 1,
+  no `main` on a safe device, no named typist — the fresh panel answered
+  1 with the guard silent). The residual: a genuine external switch
+  inside the window is followed ~1 s late (one re-read after the
+  quiesce), never dropped — the panel re-pulls once per held reading.
+- **Why a separate module and not KeyboardSession.** The session's
+  ledger is reduced exclusively by helper replies on the socket; the
+  settle question is about compositor readings over wall-clock time plus
+  a command the panel issued through Hyprland — a different input
+  stream, the same one-module-per-decision shape as LayoutDevices and
+  ModifierReducer (`tests/settle-guard.qml`, 14 cases).
+- **The daemon is untouched.** The guard stops the panel from echoing
+  churn into the configure it sends; the seat's own churn (Hyprland
+  re-applying keymaps to physical devices) is outside the panel and
+  stays an upstream problem (the §5 queue). The lab leg proved the
+  guarded click both ways — daemon restart, click inside the window,
+  all three switch-set devices converged on the clicked group, exactly
+  one `group ->` line in the helper's log (the bounce was a second one),
+  `remembered` on the clicked value after the settle.
