@@ -1623,10 +1623,12 @@ Item {
                             // refuses facts for a group its keymap does not
                             // carry; since ticket 31 a refused configure or
                             // `group` command answers the same way. The
-                            // panel cannot earn the latter two (its groups
-                            // come from the compositor's own indices or the
-                            // bounded remembered seam), so the handling
-                            // below stays caps-shaped on purpose. For the group being DRAWN that
+                            // panel can earn the latter two in one place
+                            // since §53: a settle-held group meeting a
+                            // layout list that shrank inside the window —
+                            // a triple coincidence that self-heals through
+                            // the quiesce follow — and the handling below
+                            // stays caps-shaped on purpose there too. For the group being DRAWN that
                             // is keymap-wide disagreement about the world, and
                             // the hint says so instead of letting the built-in
                             // table pass for it. For one of the other groups

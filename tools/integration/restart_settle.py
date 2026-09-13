@@ -26,7 +26,8 @@ venue finding, so this runs live only):
      carried) shows exactly the clicked group and nothing else — the
      bounce that once added a second, churn-following move is gone;
    - `remembered` (persisted from configure acks) matches the clicked
-     group after the settle, and typing readiness is never lost.
+     group after the settle, and typing readiness is true at the leg's
+     end (asserted at settle, not continuously through the click).
 2. THE COLD-START CONTROL (decisions §47): a genuinely diverged seat
    (majority 0, one sleeper 1), no safe device holding `main`, no named
    typist — the remembered group must still be the tie-breaker a FRESH
