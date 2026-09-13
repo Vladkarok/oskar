@@ -363,6 +363,21 @@ phase_coldboot() {
   summary
 }
 
+# The regression wall's packaged-panel layer (ticket 43): the REAL panel
+# from the synced tree, hosted in this lab session, drawing against the
+# tree's daemon — zero keycap fallbacks, no new QML warnings, facts for
+# every group, ua draws й. The phase IS the deliberate invocation the
+# leg's guard demands (OSK_PANEL_CANARY_LIVE=1); the hostname gate still
+# refuses any machine that is not the lab.
+phase_canary() {
+  if OSK_PANEL_CANARY_LIVE=1 python3 "$HERE/tools/integration/panel_canary.py"; then
+    ok "canary: the real panel drew live facts clean"
+  else
+    no "canary: see the leg's output above"
+  fi
+  summary
+}
+
 case "$phase" in
 build) phase_build ;;
 chroot-build) phase_chroot_build ;;
@@ -375,9 +390,10 @@ teardown) phase_teardown ;;
 reinstall) phase_reinstall ;;
 legacy) phase_legacy ;;
 coldboot) phase_coldboot ;;
+canary) phase_canary ;;
 *)
   echo "unknown phase: $phase" >&2
-  echo "phases: build chroot-build install status setup protocol upgrade teardown reinstall legacy coldboot" >&2
+  echo "phases: build chroot-build install status setup protocol upgrade teardown reinstall legacy coldboot canary" >&2
   exit 2
   ;;
 esac
