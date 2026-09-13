@@ -453,6 +453,55 @@ QtObject {
             T.equal(fitted.h < natural.h, true)
         })
 
+        // ---- ticket 40: field contracts — the page's builders vs the
+        // ---- delegates' reads ----
+        //
+        // The tab delegate reads modelData.value/modelData.label (tab 429
+        // of EmojiPage.qml), the grid delegate reads modelData.emoji and
+        // modelData.name off whatever its model carries, and the usage
+        // sections read emoji/count/lastUsed off the store's records. A
+        // rename in any builder must break this suite, not the page.
+        T.test("tab entries carry exactly the two fields the tab delegate reads", function () {
+            var tabs = Page.tabs(Catalog.groups())
+            T.equal(tabs.length, groups.length)
+            for (var i = 0; i < tabs.length; i++) {
+                T.deepEqual(Object.keys(tabs[i]).sort(), ["label", "value"])
+                T.equal(typeof tabs[i].value, "string")
+                T.equal(tabs[i].value.length > 0, true)
+                T.equal(typeof tabs[i].label, "string")
+                T.equal(tabs[i].label.length > 0, true)
+            }
+        })
+
+        T.test("grid slices are catalogue entries; usage records keep their three fields", function () {
+            var slice = Page.groupEntries(Catalog.entries(), groups[0])
+            T.equal(slice.length > 0, true)
+            for (var i = 0; i < slice.length; i++) {
+                var keys = Object.keys(slice[i]).sort().join(",")
+                if (keys !== "base,emoji,group,keywords,name,ru,uk,variants") {
+                    T.fail("grid tile " + i + " carries " + keys)
+                    return
+                }
+                if (typeof slice[i].emoji !== "string"
+                        || typeof slice[i].name !== "string") {
+                    T.fail("grid tile " + i + " lost emoji/name")
+                    return
+                }
+            }
+            var records = Page.usageAfterSuccess([], "\u{1F600}")
+            records = Page.usageAfterSuccess(records, "\u{1F602}")
+            T.deepEqual(Object.keys(records[0]).sort(),
+                ["count", "emoji", "lastUsed"])
+            var snapshot = Page.usageViewOnOpen(records)
+            T.deepEqual(Object.keys(snapshot[0]).sort(),
+                ["count", "emoji", "lastUsed"])
+            var sectioned = Page.usageSections(records, 1)
+            T.deepEqual(Object.keys(sectioned.frequent[0]).sort(),
+                ["count", "emoji", "lastUsed"])
+            T.deepEqual(Object.keys(sectioned.recent[0]).sort(),
+                ["count", "emoji", "lastUsed"])
+        })
+
         Qt.exit(T.report("emoji page"))
     }
 }

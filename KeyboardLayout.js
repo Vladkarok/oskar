@@ -641,9 +641,12 @@ function applyLanguage(rowsSource, layoutCode, capsFacts) {
                         misses.push(capData.shiftGlyph + " (shift of "
                             + capData.glyph + ") is unreachable: its base is not")
                 }
-            } else if (capData.fixedGlyph || capData.latin)
-                overlay = {}
-            else if (!capData.xkb)
+            } else if (!capData.xkb)
+                // No position, no keymap question. (The retired §3 curated
+                // page's `fixedGlyph`/`latin` test went with ticket 40:
+                // fields nothing in the tree has set since that page died —
+                // the declared-vocabulary pin in tests/keyboard-layout.qml
+                // keeps them from coming back by accident.)
                 overlay = {}
             else if (capsFacts)
                 overlay = capOverlay(capData, capsFacts[capData.xkb], misses)
