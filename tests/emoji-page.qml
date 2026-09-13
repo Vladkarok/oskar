@@ -461,6 +461,18 @@ QtObject {
         // modelData.name off whatever its model carries, and the usage
         // sections read emoji/count/lastUsed off the store's records. A
         // rename in any builder must break this suite, not the page.
+        T.test("the search placeholder speaks the active layout's language", function () {
+            // The owner's 2026-09-13 call: the word under the field follows
+            // the layout he types in — Пошук on ua, Поиск on ru, Search
+            // elsewhere; an unknown or missing code falls through rather
+            // than guess.
+            T.equal(Page.searchPlaceholder("ua"), "Пошук")
+            T.equal(Page.searchPlaceholder("ru"), "Поиск")
+            T.equal(Page.searchPlaceholder("us"), "Search")
+            T.equal(Page.searchPlaceholder("de"), "Search")
+            T.equal(Page.searchPlaceholder(""), "Search")
+            T.equal(Page.searchPlaceholder(undefined), "Search")
+        })
         T.test("tab entries carry exactly the two fields the tab delegate reads", function () {
             var tabs = Page.tabs(Catalog.groups())
             T.equal(tabs.length, groups.length)

@@ -2432,6 +2432,7 @@ Item {
             pageSize: root.emojiPageSize
             usageRecords: root.emojiUsage
             skinTone: root.emojiSkinTone
+            layoutCode: keyboard.activeLayoutCode
             hostWidth: settingsLayer.leftoverBox.w
             hostHeight: settingsLayer.leftoverBox.h
             x: settingsLayer.emojiPlace.x

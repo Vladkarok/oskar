@@ -46,10 +46,16 @@ Rectangle {
     // is not asked (its empty answer is for found-nothing, not not-searching).
     property string query: ""
     // Ticket 29: whether the keys feed the search. Armed when the page
-    // opens and when the search field is clicked; disarmed when another
-    // client takes the pointer's focus (the panel watches Hyprland), so a
-    // cap types into that client until the owner returns to the field.
+    // opens and when the search field is clicked (2026-09-13: a click is
+    // ALWAYS an arm — the old toggle handed the keys to the app beneath
+    // the owner's pointer the moment he clicked the field to focus it);
+    // disarmed when another client takes the pointer's focus (the panel
+    // watches Hyprland) and after a delivered pick.
     property bool searchArmed: true
+    // The active xkb layout code, wired from the panel: the placeholder
+    // word speaks the language the owner is typing in (Пошук/Поиск/
+    // Search — EmojiGrid.searchPlaceholder).
+    property string layoutCode: ""
     // Panel-local tab state, never persisted; defaults to the first group.
     property string activeGroup: "__usage__"
     // Ticket 34: the usage category renders this snapshot of the records,
@@ -231,7 +237,14 @@ Rectangle {
                         rightMargin: tokens.space(6)
                         verticalCenter: parent.verticalCenter
                     }
-                    text: emojiRoot.query !== "" ? emojiRoot.query : "Search"
+                    // The query once there is one. Empty and armed (the
+                    // field is the keys' target): NOTHING — the caret is
+                    // the whole story, the placeholder word would only sit
+                    // under it. Empty and disarmed: the placeholder, in
+                    // the active layout's language.
+                    text: emojiRoot.query !== "" ? emojiRoot.query
+                        : (emojiRoot.searchArmed ? ""
+                            : EmojiGrid.searchPlaceholder(emojiRoot.layoutCode))
                     color: emojiRoot.query !== "" ? tokens.foreground : tokens.muted
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -253,16 +266,14 @@ Rectangle {
                     }
                 }
 
-                // Clicking the field TOGGLES the search (ticket 29): armed
-                // is the page's default, and a click re-arms after a focus
-                // change or a pick settles it. The toggle back is the
-                // sanctioned escape for the one gesture Hyprland cannot
-                // report — a click on the ALREADY-FOCUSED client emits no
-                // event (0.56 source: rawWindowFocus early-returns on
-                // same-surface), so "click the chat, type in the chat"
-                // needs a visible control of our own: click the field to
-                // hand the keys back, click it again to search. The clear
-                // chip stays clickable on top.
+                // Clicking the field ARMS the search, always (2026-09-13;
+                // was a toggle, ticket 29). A click on a search field means
+                // "type here" — the owner's pointer gesture said so — and
+                // an armed field stays armed. Handing the keys back to the
+                // app is the focus watcher's job (a real focus change) and
+                // a delivered pick's; both fire without asking the field
+                // to guess what a click meant. The clear chip stays
+                // clickable on top.
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.IBeamCursor
@@ -271,10 +282,9 @@ Rectangle {
                         ? "Search field — typing goes here"
                         : "Search field — click to type here"
                     onClicked: {
-                        emojiRoot.searchArmed = !emojiRoot.searchArmed
-                        console.log("[osk] emoji search",
-                            emojiRoot.searchArmed ? "armed by field click"
-                                : "disarmed by field click")
+                        if (emojiRoot.searchArmed) return
+                        emojiRoot.searchArmed = true
+                        console.log("[osk] emoji search armed by field click")
                     }
                 }
 
