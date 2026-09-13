@@ -505,6 +505,72 @@ QtObject {
             T.equal(Session.isPublishedKeymap(ours + ".backup", dir), false)
         })
 
+        // ---- ticket 40: field contracts — the state and reply shapes the
+        // ---- panel binds ----
+        //
+        // Keyboard.qml binds session.group/ackedGen/sends/queue and draws
+        // through capsMap; it reads parsed.gen/group/byPosition off every
+        // caps reply. A renamed builder field here reads as `undefined`
+        // with no warning — the shape is the contract, so pin it exactly.
+        T.test("the initial state carries exactly the fields the panel binds", function () {
+            T.deepEqual(Object.keys(Session.initial()).sort(),
+                ["acked", "ackedGen", "caps", "group", "helloOk", "queue",
+                 "sends"])
+        })
+
+        T.test("every event kind leaves the fields the panel reads in place", function () {
+            var s = Session.reduce(s0, { type: "configureSent", payload:
+                "configure\tevdev\tpc105\tus,ua\t\tgrp:alt_shift_toggle\t\t1" })
+            T.deepEqual(Object.keys(s.queue[0]).sort(),
+                ["changed", "group", "identity", "payload", "seq"])
+            T.equal(typeof s.queue[0].seq, "number")
+            T.equal(typeof s.queue[0].changed, "boolean")
+            T.equal(typeof s.sends, "number")
+            s = Session.reduce(s, { type: "configureAck", gen: 3 })
+            T.deepEqual(Object.keys(s).sort(), Object.keys(Session.initial()).sort())
+            T.equal(typeof s.acked, "string")
+            T.equal(typeof s.ackedGen, "number")
+            T.equal(typeof s.group, "number")
+            s = Session.reduce(s, { type: "capsFacts", gen: 3, group: 1,
+                byPosition: {
+                    AD01: [{ text: "\u0439" }, { text: "\u0419" }],
+                    RALT: [{ none: "ISO_Level3_Shift" }]
+                } })
+            T.deepEqual(Object.keys(s.caps).sort(), ["byGroup", "gen"])
+            T.equal(s.caps.gen, 3)
+            // A level entry is exactly one honest kind: text, or none.
+            var levels = s.caps.byGroup[1].AD01
+            for (var i = 0; i < levels.length; i++) {
+                T.deepEqual(Object.keys(levels[i]), ["text"])
+                T.equal(typeof levels[i].text, "string")
+            }
+            T.deepEqual(Object.keys(s.caps.byGroup[1].RALT[0]), ["none"])
+            // applyCapsReply wraps the same event: the panel's accept seam
+            // reads accepted off it and the state out of it.
+            var applied = Session.applyCapsReply(s, { gen: 3, group: 0,
+                byPosition: { AD01: [{ text: "q" }] } })
+            T.deepEqual(Object.keys(applied).sort(), ["accepted", "state"])
+            T.equal(applied.accepted, true)
+            s = Session.reduce(s, { type: "helloAcked", fresh: false })
+            T.equal(s.helloOk, true)
+            s = Session.reduce(s, { type: "connectionDown" })
+            T.equal(s.helloOk, false)
+            // A failure with an empty queue changes nothing and crashes
+            // nothing — the panel dispatches it from the err path.
+            var failed = Session.reduce(s, { type: "configureFailed" })
+            T.equal(failed.helloOk, false)
+        })
+
+        T.test("parseCapsReply carries exactly gen, group and byPosition", function () {
+            var parsed = Session.parseCapsReply(
+                "caps\t7\t1\tAD01\u001Ft\u0439\u001Ft\u0419")
+            T.deepEqual(Object.keys(parsed).sort(),
+                ["byPosition", "gen", "group"])
+            T.equal(typeof parsed.gen, "number")
+            T.equal(typeof parsed.group, "number")
+            T.deepEqual(Object.keys(parsed.byPosition.AD01[0]), ["text"])
+        })
+
         Qt.exit(T.report("keyboard session"))
     }
 }

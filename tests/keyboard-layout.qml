@@ -550,6 +550,197 @@ QtObject {
             T.equal(positions.length >= 40, true)
         })
 
+        // ---- ticket 40: field contracts — a renamed field must never
+        // ---- again miss a reader ----
+        //
+        // The §43 rename renamed a builder field and missed one QML-side
+        // reader; the reader got `undefined`, nothing warned, and the
+        // built-in tables drew for weeks. These pins walk the SHIPPED
+        // declarations and the resolver's construction paths, so a rename
+        // in a builder breaks THIS suite instead of the panel.
+
+        T.test("every declared cap carries exactly the fields the panel reads", function () {
+            var pages = [Layout.rows, Layout.symbolRows("ABC"),
+                         Layout.symbolFunctionRows("ABC")]
+            var declared = ["chr", "chrShift", "xkb", "label", "key", "w",
+                            "glyph", "shiftGlyph"]
+            // The fields applyLanguage attaches at its named paths. A
+            // declaration carrying one is a stale hand-attach: the
+            // construction site owns them (and the construction-path pin
+            // below owns their shapes).
+            var constructed = ["exact", "baseLvl", "slvl", "xkbShift",
+                               "level3", "shiftLevel3", "dual", "unavailable"]
+            var checked = 0
+            for (var p = 0; p < pages.length; p++) {
+                for (var r = 0; r < pages[p].length; r++) {
+                    var sum = 0
+                    for (var c = 0; c < pages[p][r].length; c++) {
+                        var cap = pages[p][r][c]
+                        var at = p + "/" + r + "/" + c
+                        checked += 1
+                        var keys = Object.keys(cap)
+                        for (var k = 0; k < keys.length; k++) {
+                            if (declared.indexOf(keys[k]) < 0)
+                                T.fail("cap " + at + " carries undeclared field " + keys[k])
+                            if (constructed.indexOf(keys[k]) >= 0)
+                                T.fail("cap " + at + " pre-carries constructed field " + keys[k])
+                        }
+                        // Exactly one identity: a position (xkb), a
+                        // special key (key), or an exact character
+                        // (glyph). No cap is none of the three — the
+                        // delegate would have nothing to draw or press —
+                        // and none is two, which would make the identity
+                        // ambiguous.
+                        var identities = (cap.xkb !== undefined ? 1 : 0)
+                            + (cap.key !== undefined ? 1 : 0)
+                            + (cap.glyph !== undefined ? 1 : 0)
+                        if (identities !== 1)
+                            T.fail("cap " + at + " carries " + identities
+                                + " identities (xkb/key/glyph), expected exactly 1")
+                        // Positioned caps always name their evdev
+                        // position — the exact read whose silent miss
+                        // degraded the ticket-39 caps request.
+                        if (cap.xkb !== undefined) {
+                            if (!/^[A-Z][A-Z0-9]{3}$/.test(String(cap.xkb)))
+                                T.fail("cap " + at + " xkb " + cap.xkb + " is not an evdev position")
+                            // A positioned typed cap names its character
+                            // and (unless it draws a fixed label — the
+                            // Space cap) its shifted character.
+                            if (cap.key === undefined) {
+                                if (typeof cap.chr !== "string" || cap.chr.length !== 1)
+                                    T.fail("cap " + at + " chr is not one character: " + cap.chr)
+                                if (cap.label === undefined
+                                        && (typeof cap.chrShift !== "string"
+                                            || cap.chrShift.length !== 1))
+                                    T.fail("cap " + at + " chrShift is not one character: " + cap.chrShift)
+                            }
+                        }
+                        // A key cap draws its label: without one the
+                        // delegate falls through to the character rule
+                        // and draws nothing.
+                        if (cap.key !== undefined
+                                && (typeof cap.label !== "string" || cap.label.length === 0))
+                            T.fail("cap " + at + " is a key cap without a label")
+                        // Glyph caps name characters; they carry no
+                        // built-in chr — resolution attaches it.
+                        if (cap.glyph !== undefined) {
+                            if (typeof cap.glyph !== "string" || cap.glyph.length !== 1)
+                                T.fail("cap " + at + " glyph is not one character: " + cap.glyph)
+                            if (cap.shiftGlyph !== undefined
+                                    && (typeof cap.shiftGlyph !== "string"
+                                        || cap.shiftGlyph.length !== 1))
+                                T.fail("cap " + at + " shiftGlyph is not one character: " + cap.shiftGlyph)
+                            if (cap.chr !== undefined || cap.chrShift !== undefined)
+                                T.fail("cap " + at + " is a glyph cap carrying built-in chr/chrShift")
+                        }
+                        if (cap.w !== undefined
+                                && (typeof cap.w !== "number" || cap.w <= 0
+                                    || (cap.w * 2) % 1 !== 0))
+                            T.fail("cap " + at + " width " + cap.w + " is off the half-unit lattice")
+                        // The shipped board declares no spacer: every cap
+                        // draws. A declared spacer must arrive as a
+                        // deliberate edit here, not silently.
+                        if (Layout.isSpacer(cap))
+                            T.fail("cap " + at + " is a declared spacer; the shipped board has none")
+                        sum += cap.w || 1
+                    }
+                    // The shared pitch: every row of every page fills the
+                    // card exactly (Keyboard.qml reports the same sum per
+                    // rebuild; here it is a contract the tables must keep).
+                    if (Math.abs(sum - 15.5) > 0.01)
+                        T.fail("row " + p + "/" + r + " widths sum to " + sum + ", expected 15.5")
+                }
+            }
+            // The walk saw the real board, not empty arrays.
+            T.equal(checked > 150, true)
+        })
+
+        T.test("the resolver attaches only its named fields, shaped as the delegate reads them", function () {
+            var declared = ["chr", "chrShift", "xkb", "label", "key", "w",
+                            "glyph", "shiftGlyph"]
+            var constructed = ["exact", "baseLvl", "slvl", "xkbShift",
+                               "level3", "shiftLevel3", "dual", "unavailable"]
+            var facts = usDigitRowFacts()
+            // The main page resolves against no facts (built-ins kept, no
+            // miss flood — that window is pinned separately); the symbol
+            // page against facts that answer every glyph.
+            var pages = [
+                { source: Layout.rows, facts: null },
+                { source: Layout.symbolRows("ABC"), facts: facts }
+            ]
+            var checked = 0
+            for (var p = 0; p < pages.length; p++) {
+                var resolved = Layout.applyLanguage(pages[p].source, "us",
+                    pages[p].facts)
+                for (var r = 0; r < resolved.length; r++) {
+                    for (var c = 0; c < resolved[r].length; c++) {
+                        var cap = resolved[r][c]
+                        var at = p + "/" + r + "/" + c
+                        checked += 1
+                        var keys = Object.keys(cap)
+                        for (var k = 0; k < keys.length; k++) {
+                            if (declared.indexOf(keys[k]) < 0
+                                    && constructed.indexOf(keys[k]) < 0)
+                                T.fail("resolved cap " + at + " carries unknown field " + keys[k])
+                        }
+                        // The declaration survives resolution: the delegate
+                        // still finds the key, label and width the table
+                        // gave it. xkb is the one declared field resolution
+                        // may legitimately change — a glyph cap GAINS the
+                        // position its character resolved to.
+                        var source = pages[p].source[r][c]
+                        if (cap.key !== source.key || cap.glyph !== source.glyph
+                                || cap.label !== source.label || cap.w !== source.w)
+                            T.fail("resolved cap " + at + " lost its declared identity")
+                        if (source.xkb !== undefined && cap.xkb !== source.xkb)
+                            T.fail("resolved cap " + at + " lost its declared position")
+                        // Every glyph cap went down the exact-chord path:
+                        // these are the fields typeCap's press reads.
+                        if (source.glyph !== undefined) {
+                            if (cap.exact !== true)
+                                T.fail("glyph cap " + at + " did not come out exact")
+                            if (typeof cap.baseLvl !== "number" || cap.baseLvl < 1)
+                                T.fail("glyph cap " + at + " baseLvl " + cap.baseLvl + " is not a level")
+                            if (typeof cap.level3 !== "boolean")
+                                T.fail("glyph cap " + at + " level3 " + cap.level3 + " is not a boolean")
+                            if (typeof cap.chr !== "string" || cap.chr !== source.glyph)
+                                T.fail("glyph cap " + at + " chr " + cap.chr + " is not its glyph")
+                            if (!/^[A-Z][A-Z0-9]{3}$/.test(String(cap.xkb)))
+                                T.fail("glyph cap " + at + " xkb " + cap.xkb + " is not an evdev position")
+                            if (source.shiftGlyph !== undefined) {
+                                if (cap.dual !== true)
+                                    T.fail("dual cap " + at + " did not come out dual")
+                                if (!/^[A-Z][A-Z0-9]{3}$/.test(String(cap.xkbShift)))
+                                    T.fail("dual cap " + at + " xkbShift " + cap.xkbShift + " is not an evdev position")
+                                if (typeof cap.slvl !== "number" || cap.slvl < 1)
+                                    T.fail("dual cap " + at + " slvl " + cap.slvl + " is not a level")
+                                if (typeof cap.shiftLevel3 !== "boolean")
+                                    T.fail("dual cap " + at + " shiftLevel3 " + cap.shiftLevel3 + " is not a boolean")
+                                if (cap.chrShift !== source.shiftGlyph)
+                                    T.fail("dual cap " + at + " chrShift " + cap.chrShift + " is not its shiftGlyph")
+                            } else if (cap.xkbShift !== undefined || cap.slvl !== undefined
+                                    || cap.shiftLevel3 !== undefined || cap.dual !== undefined) {
+                                T.fail("single glyph cap " + at + " carries a Shift-half field")
+                            }
+                        }
+                        // These facts answer everything: nothing came out
+                        // unavailable, so the unavailable shape is pinned
+                        // separately below.
+                        if (cap.unavailable !== undefined)
+                            T.fail("cap " + at + " came out unavailable against answering facts")
+                    }
+                }
+            }
+            T.equal(checked > 100, true)
+            // The unavailable shape: the whole cap is refused — the glyph
+            // it names, the character, the flag, and nothing else.
+            var gone = Layout.applyLanguage(
+                [[{ glyph: "\u2603" }]], "us", facts)[0][0]
+            T.deepEqual(Object.keys(gone).sort(), ["chr", "glyph", "unavailable"])
+            T.equal(gone.unavailable, true)
+            T.equal(gone.chr, "\u2603")
+        })
+
         Qt.exit(T.report("keyboard layout"))
     }
 }

@@ -67,6 +67,31 @@ QtObject {
             T.equal(entries[0].active, false)
         })
 
+        // ---- ticket 40: the chooser's field contract ----
+        //
+        // Panel.qml's chooser rows read entry.group (the click switches by
+        // it, the armed row compares it to the live cursor) and entry.title
+        // (the label and the accessible name). A rename in menuEntries
+        // must break this suite, not read as `undefined` in the menu.
+        T.test("every menu entry carries exactly the fields the chooser reads", function () {
+            var entries = LanguageControl.menuEntries(
+                ["us", "ua", "us"], { us: "English (US)", ua: "Ukrainian" }, 1)
+            T.equal(entries.length, 3)
+            for (var i = 0; i < entries.length; i++) {
+                var entry = entries[i]
+                T.deepEqual(Object.keys(entry).sort(),
+                    ["active", "code", "group", "title"])
+                T.equal(typeof entry.group, "number")
+                T.equal(typeof entry.code, "string")
+                T.equal(entry.code.length > 0, true)
+                T.equal(typeof entry.title, "string")
+                T.equal(entry.title.length > 0, true)
+                T.equal(typeof entry.active, "boolean")
+            }
+            T.equal(entries[1].group, 1)
+            T.equal(entries[1].active, true)
+        })
+
         Qt.exit(T.report("language control"))
     }
 }

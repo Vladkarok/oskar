@@ -331,6 +331,39 @@ QtObject {
             T.deepEqual(tail, ["house", "house with garden", "stethoscope"])
         })
 
+        // ---- ticket 40: the catalogue's field contract ----
+        //
+        // The page's grid delegate reads entry.emoji and entry.name; the
+        // search reads keywords/ru/uk; the tabs come from group; the tone
+        // families hang off base and variants. A rename in the generator
+        // (or a hand edit of the generated file) must break this suite,
+        // not read as `undefined` in a shipped page.
+        T.test("every catalogue entry carries exactly the fields the panel reads", function () {
+            var shape = ["base", "emoji", "group", "keywords", "name",
+                         "ru", "uk", "variants"]
+            var offender = -1
+            for (var i = 0; i < entries.length; i++) {
+                var keys = Object.keys(entries[i]).sort().join(",")
+                if (keys !== shape.join(",")) { offender = i; break }
+            }
+            T.equal(offender, -1)
+            for (i = 0; i < entries.length; i++) {
+                var entry = entries[i]
+                if (typeof entry.emoji !== "string" || entry.emoji.length === 0
+                        || typeof entry.name !== "string" || entry.name.length === 0
+                        || typeof entry.group !== "string"
+                        || typeof entry.base !== "number"
+                        || !Array.isArray(entry.keywords)
+                        || !Array.isArray(entry.ru)
+                        || !Array.isArray(entry.uk)
+                        || !Array.isArray(entry.variants)) {
+                    offender = i
+                    break
+                }
+            }
+            T.equal(offender, -1)
+        })
+
         Qt.exit(T.report("emoji catalogue"))
     }
 }
