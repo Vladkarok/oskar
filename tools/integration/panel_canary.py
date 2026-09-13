@@ -39,8 +39,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hold_column import (ANSI, Daemon, Failure, LiveSession, hyprctl,
-                         parse_caps, wait_for)
+from hold_column import ANSI, Daemon, Failure, LiveSession, wait_for
 
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "")
 
@@ -57,12 +56,26 @@ GRANDFATHERED = "Cannot anchor to an item that isn't a parent or sibling"
 FALLBACK = "keycap fallback"
 
 
+LAB_HOSTNAME = "testprod"
+
+
 def guard():
-    # Live-only: the nested polygon cannot host the panel (ticket 37's
-    # venue finding), so this leg runs only in the lab session itself.
-    if not os.path.isdir("/usr/share/omarchy/shell"):
-        raise Failure("the canary leg belongs to the omarchy-vm lab guest "
-                      "(docs/vm-handoff.md)")
+    # Live-only, and PROVEN live: the nested polygon cannot host the panel
+    # (ticket 37's venue finding), so this leg runs only in the lab session
+    # itself — and a wrong machine must refuse before it can stop a service,
+    # unlink a control socket or open a panel on someone's working
+    # compositor. The old check (a directory the working HOST also has)
+    # passed exactly there (ticket-40 review, block): two gates now, the
+    # deliberate human opt-in the hold_column leg already uses, and the
+    # lab's documented hostname (docs/vm-handoff.md) as the positive proof.
+    if os.environ.get("OSK_PANEL_CANARY_LIVE", "") != "1":
+        raise Failure("this leg stops the osk service and drives the live "
+                      "session — run it only in the omarchy-vm lab, with "
+                      "OSK_PANEL_CANARY_LIVE=1 (docs/vm-handoff.md)")
+    if os.uname().nodename != LAB_HOSTNAME:
+        raise Failure(f"OSK_PANEL_CANARY_LIVE=1 is set, but this host is "
+                      f"{os.uname().nodename!r}, not the lab "
+                      f"({LAB_HOSTNAME!r}); refusing (docs/vm-handoff.md)")
 
 
 def journal_lines(since_epoch, until_epoch):
@@ -515,7 +528,6 @@ def _run_leg(repo, window_start):
             # group move — and read the drawn map. The move is issued
             # through a detached compositor call by the panel itself, so a
             # settle-and-retry is the honest driving rhythm.
-            ua_group = codes.index("ua")
             moved = False
             for attempt in range(5):
                 panel.command(f"group {ua_group}", "grouped")
