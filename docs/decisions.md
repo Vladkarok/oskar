@@ -1701,6 +1701,14 @@ click's own hyprctl loop last commanded, and the observed reading.
   1 with the guard silent). The residual: a genuine external switch
   inside the window is followed ~1 s late (one re-read after the
   quiesce), never dropped — the panel re-pulls once per held reading.
+  The same arm cuts both ways and the review said so plainly: churn
+  that PERSISTS past the quiesce is followed too, so the incident's
+  own settled end-state (a split seat at rest) would re-emerge ~1.1 s
+  later rather than never. That is the spec's own answer — the
+  compositor's indices are the truth, and the mover is upstream of the
+  panel (§5); a panel cannot tell a persistent flip from a real switch
+  and must not try. Interleaved event reads can re-anchor the
+  candidate and stretch the follow to window expiry at most.
 - **Why a separate module and not KeyboardSession.** The session's
   ledger is reduced exclusively by helper replies on the socket; the
   settle question is about compositor readings over wall-clock time plus
