@@ -2122,6 +2122,30 @@ fn published_keymap_path() -> Option<PathBuf> {
 /// `$XDG_RUNTIME_DIR` and the two spellings need not be byte-identical — a
 /// doubled separator or a symlinked runtime directory would otherwise let our
 /// own output back in as an input.
+/// Whether a group index can be carried by the installed keymap. The
+/// caps facts are per-group, so their count IS the group count; nothing
+/// installed validates nothing (ticket 31: the daemon is the defence in
+/// depth — the panel bounds its remembered group at the selection seam,
+/// and an out-of-range `group` command from ANY client is refused here
+/// without touching device state).
+fn group_in_range(group: u32, installed_groups: usize) -> bool {
+    installed_groups > 0 && (group as usize) < installed_groups
+}
+
+/// The group count a configure DECLARES for itself: the non-empty
+/// entries of its layouts field. A configure's group is bounded by the
+/// map it is INSTALLING, not the one already installed — bounding by the
+/// old map refuses every grow (a one-group map installing two), which is
+/// a client acting correctly. Zero declared layouts still carries group
+/// 0: a file-only configure owes no layout list.
+fn declared_group_count(layouts: &str) -> usize {
+    layouts
+        .split(',')
+        .filter(|entry| !entry.trim().is_empty())
+        .count()
+        .max(1)
+}
+
 fn is_published_keymap(path: &str) -> bool {
     let Some(ours) = published_keymap_path() else {
         return false;
@@ -2768,6 +2792,15 @@ fn apply_locked(
                 eprintln!("[osk] could not record the user keymap source: {error}");
             }
         }
+        // Ticket 31's defence in depth: a group the configure's OWN map
+        // cannot carry is refused whole, with no device state changed —
+        // the same refusal `caps` already made, extended to the two
+        // commands that MOVE the group. Bounded by the INCOMING layout
+        // list, never the installed one: a shrink-then-grow would
+        // otherwise refuse a correct grow.
+        if !group_in_range(config.group, declared_group_count(&config.layouts)) {
+            return "err bad group".to_string();
+        }
         let installed = shared.install_config(config);
         let _ = connection.flush();
         // The generation rides on the reply (decisions §23): it is what the
@@ -2889,6 +2922,9 @@ fn apply_locked(
         // group goes out alongside the mask the held keys imply rather than
         // alongside a zero.
         Command::Group(group) => {
+            if !group_in_range(group, shared.caps_per_group.len()) {
+                return "err bad group".to_string();
+            }
             let keyboard = keyboard.clone();
             shared.group = group;
             keyboard.modifiers(shared.modifier_mask(), 0, 0, group);
@@ -3566,6 +3602,33 @@ mod tests {
                 SourceDecision::Leave
             ));
         }
+    }
+
+    /// Ticket 31: the installed keymap's group count is the authority for
+    /// what a `configure` or `group` command may carry. Nothing installed
+    /// (an empty caps table) validates nothing.
+    #[test]
+    fn group_bounds_come_from_the_installed_keymap() {
+        assert!(group_in_range(0, 1), "a one-group map carries group 0");
+        assert!(group_in_range(1, 2));
+        assert!(!group_in_range(2, 2), "two groups stop before 2");
+        assert!(!group_in_range(9, 2));
+        assert!(!group_in_range(0, 0), "nothing installed validates nothing");
+    }
+
+    #[test]
+    fn a_configures_group_is_bounded_by_its_own_declared_layouts() {
+        // The incoming map is the authority: a grow from one group to
+        // two must not be refused for the old map's count.
+        assert_eq!(declared_group_count("us,ua"), 2);
+        assert_eq!(declared_group_count("us,ua,de,ru"), 4);
+        assert_eq!(declared_group_count("us"), 1);
+        // Separators are not layouts.
+        assert_eq!(declared_group_count("us,"), 1);
+        assert_eq!(declared_group_count(""), 1, "file-only configures still carry group 0");
+        assert!(group_in_range(1, declared_group_count("us,ua")));
+        assert!(!group_in_range(2, declared_group_count("us,ua")));
+        assert!(group_in_range(0, declared_group_count("")));
     }
 
     /// Ticket 06: the sidecar sits BESIDE the published keymap — the one

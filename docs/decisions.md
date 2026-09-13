@@ -1429,6 +1429,27 @@ Two priced exceptions, accepted with the design:
   inside one login session, and is bounded by the runtime directory's
   session lifetime.
 
+## 47. A remembered group is bounded by the map that must carry it
+
+Audit 2026-09-13 §31. The panel's remembered layout group is a
+persisted index from a PAST session's map; a session whose layout list
+shrank (four→two, two→one) cannot carry the old index, and asking for it
+left caps refused and typing gated on a map that never answers. Two
+bounds, one per side:
+
+- The panel's selection seam honors the remembered group only while the
+  CURRENT reading's own non-empty layout count carries it
+  (`LayoutDevices.layoutCount`); otherwise the consensus fallback
+  answers — the same answer a panel with no memory gives. The persisted
+  domain itself stays XKB-wide (0–3): the defect is validity against
+  the current map, not syntax.
+- The daemon refuses an out-of-range group without touching device
+  state (`err bad group`, the refusal `caps` already made): a configure
+  is bounded by the map IT is installing — its own declared layout list,
+  never the previously installed one, or a shrink-then-grow would refuse
+  a correct grow — while a `group` command is bounded by the map that is
+  installed, because that is the one it moves.
+
 ## Dead ends — do not retry
 
 - Subscribing to / mirroring the seat keymap (§3). Also: guarding its
