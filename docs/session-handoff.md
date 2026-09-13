@@ -1,6 +1,57 @@
-# Handoff — updated 2026-09-13 (late night)
+# Handoff — updated 2026-09-13 (evening, pre model-switch)
 
 **START HERE — this section supersedes everything below it.**
+
+The owner is switching the session model; no new agents are to be
+launched until he says so. Two background agents were in flight and
+finish on their own: (a) the lab-VM verification of the ≥3-layout
+language chooser (screenshots land in
+`.scratch/next-iteration/evidence/35/`, evidence goes into ticket 35);
+(b) the adversarial review of ticket 42 (commit 5460dea) — watch for
+its verdict on the AltGr question (the router gates Ctrl chords; on
+EU layouts AltGr may report Ctrl+Alt and kill §/é typing — first
+block candidate).
+
+Landed since the block below, all reviewed `ship` unless said:
+- **39** — "языки сломаны" root-caused LIVE: the §43 rename left ONE
+  stale `.k` reader in `capsPositions` (Keyboard.qml), the caps
+  request degraded to RALT alone, 26 letter caps fell back to the
+  built-in tables — invisible on us (built-in IS qwerty), a broken
+  ЙЦУКЕН on ua. Fixed in 6bcf8c5 (KeyboardLayout.declaredPositions,
+  pin-tested); the owner confirmed it works.
+- **40** — field-contract pins on every module-built family + the
+  live-panel canary leg (panel_canary.py). Review round 1 block:
+  the canary's venue guard passed on the working HOST; fixed in
+  1d8a32d (OSK_PANEL_CANARY_LIVE=1 + lab hostname `testprod`, both
+  refusals reproduced). Re-review ship. The canary's first live run
+  caught the ticket-39 bug surviving in the lab's installed package
+  (upgraded 0.1.0-1→0.1.0-2).
+- Emoji search UX (5f272e3, ticket-29 follow-up): a field click now
+  ALWAYS arms (the old toggle disarmed exactly when the owner clicked
+  to focus); placeholder speaks the active layout (Пошук/Поиск/
+  Search) and hides while armed. Owner asked for all three.
+- **42** (5460dea, review pending) — armed emoji search accepts the
+  PHYSICAL keyboard: settingsLayer keyboardFocus primes Exclusive
+  75ms then OnDemand while emojiSearchActive (None→OnDemand never
+  grants focus on a mapped surface — read from Hyprland 0.56.2
+  source), FocusScope routes events through the pure
+  `EmojiPage.searchKeyAction`; every disarm path restores None by
+  binding. §52 + spec-v1.1 §5 amendment. Its VM leg is OWED (queued
+  behind the menu verification): armed QMP typing lands in the query,
+  Escape hands keys back, record the honoured mode.
+- SKIN_TONES pin (9b9fd07) — the last unpinned EmojiPage family.
+
+Queue after the switch (owner decides order): 38 (restart-settle
+group bounce — hit the owner live 18:53; ticket written with journal
+evidence), the 42 VM leg, 41 (hold-menu accent layer via the §33
+reserved block — design-first; a good pass for a heavier model),
+publish decision (owner).
+
+---
+
+# Handoff — updated 2026-09-13 (late night)
+
+**START HERE (previous round) — superseded by the block above.**
 
 Since the RC close below, in order: **34** (usage-view snapshot —
 implemented by a bounded subagent, verified twice, `ship`; owner's
