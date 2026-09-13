@@ -1,3 +1,89 @@
+# Handoff — updated 2026-09-13
+
+**START HERE — this section supersedes everything below it.**
+
+The tree is in a clean, working state: branch `spec/v1.1-fixes`, **10
+commits** (squashed history + fixes), suites 10/10, provenance gate 0,
+panel live-verified on the host (toggle via the bar icon alternates
+open/close, handshake + layout reading clean, language button shows the
+proper name). `backup/pre-squash` holds the original 247-commit history
+for reference; delete it when confident.
+
+## What just happened (2026-09-12 evening → 09-13)
+
+1. **Provenance zero**: the tree shares ZERO substantive lines with the
+   upstream sketch (tools/provenance.py, gate = exit 0). Sole copyright
+   in LICENSE. The forced-line exclusions (imports, shell type names,
+   QML anchor idioms, the shell-IPC surface) are enumerated in the tool
+   with reasons. The vocabulary was renamed throughout (chr/chrShift/xkb,
+   cellGap, capGlyphSize, capCorner, capData, ...).
+2. **History squashed**: 247 commits → 8 milestone commits (+2 fixes).
+   Built via commit-tree (exact trees), verified identical to the
+   pre-squash tip.
+3. **Three contract bugs from the renames, all found by the owner, all
+   fixed** — the lesson: never rename what is actually someone else's
+   interface:
+   - Quickshell `onExited`'s 2nd arg is **ExitStatus (0 = normal)**, not
+     a boolean — `!ok` treated every clean exit as a crash (b98c520,
+     folded into the squash tip).
+   - The base.lst awk lookup: `$1=""; sub(/^ +/,"")` rebuilds the record
+     (drops code AND separator); my `sub()` rewrite left garbage in the
+     language-button label (670d6f2).
+   - The **Omarchy shell-IPC contract**: the shell reads
+     `loader.item.opened` and invokes `close()` BY NAME (shell.qml
+     invokeIfLoaded). Renaming opened→shown / close→hide made the bar
+     icon unable to hide the panel (dd7b0c6). All contract sites are now
+     annotated and enumerated in provenance.py's forced set.
+4. **Emoji-app machinery removed** (670d6f2): settings row, page chip,
+   PATH probes, the emoji_app override — the panel's own page is the
+   only picker. Spec §1 records the removal.
+5. Audit round 1 landed (dead code, duplication); audit round 2 is the
+   NEXT WORK.
+
+## NEXT WORK — the audit's remaining items, in priority order
+
+1. **QML smoke-load test** (the headline): no suite instantiates
+   Panel/Keyboard/EmojiPage; qml-check catches only syntax. All three
+   contract bugs above passed every existing check. Build an offscreen
+   test that Loader-loads each component and fails on any
+   runtime/Reference error. This pays for itself daily.
+2. **OverlayCard extraction**: the card frame + scrollbar + clamp logic
+   is near-duplicated between EmojiPage.qml and SettingsPopover.qml.
+3. **Pure seams for QML logic** (each cheap): the hint-state precedence
+   table, typeCap's press plan (twin of tested charUnderModifiers), the
+   search armed/disarmed machine, the paste-chip choreography.
+4. Emoji-page test restates the page geometry by hand — move the formula
+   to EmojiPage.js and bind both.
+5. The tested clamp (SettingsPlacement.fitSizeInLeftover) has no
+   production callers; the live clamps are untested — route or delete.
+6. Minor: capActsOnPress (cap-kind derived 3x in Keyboard.qml), the
+   size-arithmetic consolidation, the hint/chip anchor chain.
+
+## Standing owner decisions
+
+- **Publish gate**: push + tag + AUR when the owner says so. The AUR
+  PKGBUILD is committed and honest about its gates (public push, tag,
+  .SRCINFO). The repo currently has no public remote.
+- `backup/pre-squash` branch retention.
+- Upstream notes to file (not blocking): Electron-version issue for the
+  docked-content verdict (old-Chromium ozone, fixed by 152 — ticket 30
+  has the lab evidence); Hyprland same-window-click event absence.
+
+## Verification shortlist for a cold start
+
+```sh
+./tools/run-tests.sh          # 10 suites (config 38/0, reducer 96/0...)
+./tools/provenance.py         # exit 0
+./tools/qml-check.sh
+cargo clippy --manifest-path daemon/Cargo.toml --all-targets -- -D warnings
+```
+VM lab: `ssh omarchy-vm`, scripts /tmp/vmclean.sh (bottomtest fixture
+in ~/bottomtest), signature via the socat probe (see vm-handoff).
+The host panel is a symlink to this tree; `omarchy restart shell` after
+QML edits; `./install.sh` after Rust edits.
+
+---
+
 # Handoff — updated 2026-09-11
 
 **Start the next session with [release-readiness-plan.md](release-readiness-plan.md).**
