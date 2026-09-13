@@ -522,6 +522,34 @@ QtObject {
             }
         })
 
+        T.test("declaredPositions answers every positioned cap the pages declare", function () {
+            // The caps request is built from this list (ticket 39): when it
+            // degenerated to RALT alone — a stale `.k` read on caps renamed
+            // to `xkb` — the helper honestly answered one position, twenty-six
+            // letter caps missed, and the built-in tables drew a us/ua
+            // frankenstein while the label said the layout was fine.
+            var positions = Layout.declaredPositions()
+            T.equal(positions.indexOf("AD01") >= 0, true)
+            T.equal(positions.indexOf("AC10") >= 0, true)
+            T.equal(positions.indexOf("AB04") >= 0, true)
+            T.equal(positions.indexOf("TLDE") >= 0, true)
+            T.equal(positions.indexOf("BKSL") >= 0, true)
+            T.equal(positions.indexOf("RALT") >= 0, true)
+            for (var i = 0; i < Layout.reservedPositions.length; i++)
+                T.equal(positions.indexOf(Layout.reservedPositions[i]) >= 0, true)
+            // No duplicates: the helper answers each position once, and a
+            // repeated name would silently double a record.
+            var seen = {}
+            for (var p = 0; p < positions.length; p++) {
+                T.equal(seen[positions[p]] || false, false)
+                seen[positions[p]] = true
+            }
+            // Two letter-and-number boards' worth of positions plus the
+            // symbol page's, RALT and the reserved block — a degenerate list
+            // of one or two cannot pass.
+            T.equal(positions.length >= 40, true)
+        })
+
         Qt.exit(T.report("keyboard layout"))
     }
 }
