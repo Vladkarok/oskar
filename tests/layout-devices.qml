@@ -253,6 +253,57 @@ QtObject {
             T.equal(Devices.isTyped("keychron-power-button-keyboard"), true)
         })
 
+        // Ticket 31 (audit 2026-09-13): the remembered group is only
+        // honored while the CURRENT keymap can carry it. A session whose
+        // layout list shrank (four→two, two→one) must fall back to the
+        // consensus path instead of requesting a group the map does not
+        // have — which the caps command would refuse and typing would be
+        // gated on.
+        T.test("layout count: non-empty entries of the device's own list", function () {
+            T.equal(Devices.layoutCount({ layout: "us,ua" }), 2)
+            T.equal(Devices.layoutCount({ layout: "us,ua,de,ru" }), 4)
+            T.equal(Devices.layoutCount({ layout: "us" }), 1)
+            // A trailing separator is not a layout.
+            T.equal(Devices.layoutCount({ layout: "us," }), 1)
+            T.equal(Devices.layoutCount({ layout: "us,," }), 1)
+            T.equal(Devices.layoutCount({}), 0)
+            T.equal(Devices.layoutCount(null), 0)
+        })
+
+        T.test("a remembered group past a two-layout map falls back (four→two)", function () {
+            var devices = [
+                { name: "k1", layout: "us,ua", active_layout_index: 0 },
+                { name: "k2", layout: "us,ua", active_layout_index: 1 }
+            ]
+            var picked = Devices.select(devices, "", ["k1", "k2"], 3)
+            // The set diverges, no main/named evidence: the remembered 3
+            // cannot ride a 2-layout map, so the consensus fallback answers
+            // — a tie, and the lowest wins.
+            T.equal(picked.group, 0)
+            T.equal(picked.reading === null, false)
+        })
+
+        T.test("a remembered group past a one-layout map falls back (two→one)", function () {
+            // One device still reports the previous keymap's index — the
+            // divergence that arms the remembered branch — while the list
+            // has shrunk to one layout.
+            var devices = [
+                { name: "k1", layout: "us", active_layout_index: 0 },
+                { name: "k2", layout: "us", active_layout_index: 1 }
+            ]
+            var picked = Devices.select(devices, "", ["k1", "k2"], 1)
+            T.equal(picked.group, 0)
+        })
+
+        T.test("a remembered group inside the current map is still honored", function () {
+            var devices = [
+                { name: "k1", layout: "us,ua,de,ru", active_layout_index: 0 },
+                { name: "k2", layout: "us,ua,de,ru", active_layout_index: 2 }
+            ]
+            var picked = Devices.select(devices, "", ["k1", "k2"], 2)
+            T.equal(picked.group, 2)
+        })
+
         Qt.exit(T.report("layout devices"))
     }
 }

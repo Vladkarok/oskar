@@ -2,11 +2,11 @@
 
 **START HERE — this section supersedes everything below it.**
 
-Audit execution so far: **28 fixed + reviewed ship (f5bd4d6)**, **32
-implemented + full VM choreography green + review findings fixed
-(re-review pending)**, **06 fixed + 15/15 recovery choreography**. Branch
-`spec/v1.1-fixes`; the VM lab runs the PACKAGED product (package installed,
-`omarchy-osk setup` active) — not a dev symlink.
+Audit execution so far: **28 (f5bd4d6), 32 (42e4655), 06 (a7acbb3) — all
+fixed, reviewed `ship`, committed**; **31 implemented + nested leg green
+(uncommitted at this writing)**. Branch `spec/v1.1-fixes`; the VM lab
+runs the PACKAGED product (package installed, `omarchy-osk setup`
+active) — not a dev symlink.
 
 ## Ticket 32 (P1) — the AUR lifecycle, landed 2026-09-13 evening
 
@@ -55,12 +55,22 @@ choreography hardened accordingly (dvorak/colemak discriminating fixtures,
 helper restart BETWEEN the SIGKILL and the respawn, an upgrade-with-
 custom-map step): **18/18** (evidence 06).
 
+## Ticket 31 (P2) — the remembered group is bounded by the map (2026-09-13)
+
+`LayoutDevices.layoutCount` bounds the remembered group at the selection
+seam (stale index → consensus fallback); the daemon refuses out-of-range
+groups with `err bad group` — a configure bounded by the map IT installs
+(declared layouts; the installed map would refuse a legitimate grow),
+`group` bounded by the installed map. Persisted 0–3 domain untouched.
+Decisions §47. Red-first (JS 3 + Rust 2); nested leg green, suite exit 0
+(92 ≤ 142); 45/45 Rust, all ten JS suites.
+
 ## NEXT WORK — docs/audit-2026-09-13.md is the execution brief
 
-1. **31 (P2)** — bound the remembered layout group to the current
-   keymap (panel seam + daemon defence in depth).
-2. **33 (P2)** — restore the lost tests, sweep stale picker text,
-   reconcile the docs, add the compatibility matrix.
+1. **33 (P2)** — restore the lost tests (DONE: floatingAnchor +
+   usesWinePasteChord back, green), sweep stale picker text (mostly
+   done; Keyboard.qml:~1792 waits for the 31 commit), reconcile the
+   docs, add the compatibility matrix.
 
 The audit's post-release backlog (#1-#8) stays post-release. Omarchy
 first, direct emoji delivery the default, one coherent package.

@@ -230,6 +230,31 @@ def group_follows_protocol(helper, keyboard):
     client.close()
 
 
+@test("out-of-range groups are refused without touching the installed map")
+def out_of_range_groups_fail_closed(helper, keyboard):
+    # Ticket 31's daemon defence in depth: `caps` already refused a group
+    # the keymap does not carry (decisions §23); configure and `group` —
+    # the two commands that MOVE the group — refuse it the same way, with
+    # no device state change, no recompile, and the previously installed
+    # generation intact.
+    client = helper.connect()
+    client.expect("hello 5", "hello 5")
+    gen = client.configure(CONFIGURE)  # us,ua — two groups, group 1
+    keyboard.expect_group(1)
+    # A configure naming a group the map cannot carry. A different model,
+    # so a buggy acceptance would take the full compile path.
+    client.expect(CONFIGURE_SWAPPED[:-1] + "9", "err bad group")
+    keyboard.expect_group(1)
+    # The refusal installed nothing: the same configure short-circuits
+    # with the identical generation afterwards.
+    assert client.configure(CONFIGURE) == gen
+    client.expect("group 9", "err bad group")
+    keyboard.expect_group(1)
+    client.expect("group 0", "ok")
+    keyboard.expect_group(0)
+    client.close()
+
+
 @test("a release sent from inside the not-ready window lifts the key immediately")
 def release_crosses_the_unready_window(helper, keyboard):
     # The socket boundary under the round-2 blocker. On the panel side the

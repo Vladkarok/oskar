@@ -80,6 +80,17 @@ function consensusGroup(devices) {
     return best < 0 ? 0 : best
 }
 
+/// The number of layouts a device's own list actually carries: the
+/// non-empty entries. A trailing or doubled separator is not a layout,
+/// and an absent list carries nothing. A remembered group is only
+/// meaningful while it is smaller than this (audit 31): a session whose
+/// layout list shrank cannot carry an index from the wider one.
+function layoutCount(device) {
+    if (!device) return 0
+    return String(device.layout || "").split(",")
+        .filter(function (code) { return String(code || "").trim() !== "" }).length
+}
+
 /// (devices, anchor, safeNames, fallbackGroup)
 ///   -> { reading, typing, switchSet, group }
 ///
@@ -138,11 +149,19 @@ function select(devices, namedDevice, safeNames, fallbackGroup) {
         var facts = safe.filter(function (device) {
             return groupOf(device) === consensusGroup(safe)
         })[0] || safe[0]
-        return {
-            reading: facts,
-            typing: "",
-            switchSet: switchSetFor(facts, safe),
-            group: remembered
+        // The remembered group is bounded by the CURRENT map: a session
+        // that shrank its layout list (four→two, two→one) cannot carry an
+        // index from the wider one, and asking for it would leave caps
+        // refused and typing gated (audit 31). Fall through to the
+        // consensus fallback — the same answer a panel with no memory
+        // gives — instead of honoring a group the keymap does not have.
+        if (remembered < Math.max(layoutCount(facts), 1)) {
+            return {
+                reading: facts,
+                typing: "",
+                switchSet: switchSetFor(facts, safe),
+                group: remembered
+            }
         }
     }
     if (!reading) {
