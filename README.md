@@ -4,10 +4,6 @@ A mouse-driven on-screen keyboard for Omarchy Quattro. The key caps follow the
 active keyboard layout, so what is drawn is what gets typed, and the panel takes
 its colours and geometry from the Omarchy theme.
 
-Every line of this tree is our own: `tools/provenance.py` verifies against
-the upstream project that once seeded the first panel sketch that zero
-substantive lines are shared, and the licence is a sole copyright.
-
 ## Status
 
 The audit round of 2026-09-13 is complete: every ticket implemented,
@@ -43,7 +39,6 @@ on that day (this one).
 | `tools/nested-session.sh` | runs a command against a throwaway nested Hyprland |
 | `tools/smoke-daemon.sh` | end-to-end check of the helper |
 | `tools/integration/` | the assertions that check runs, and their plumbing |
-| `tools/provenance.py` | measures what the shell layer still shares with upstream |
 | `docs/orientation.md` | what this is, current state, how the work runs |
 | `docs/decisions.md` | why the design looks like this, and the dead ends |
 | `docs/vm-handoff.md` | the dogfooding VM: operating manual and queue |
@@ -188,25 +183,6 @@ implementation found that follows the system layout at all.
    never claimed the code is refused, a tap cannot lift another connection's
    hold, and a disconnect releases only that connection's claims (smoke
    covered, including two clients sharing one hold).
-
-## Provenance
-
-One script keeps the "is anything still derived" question a number instead
-of an argument, measured against the upstream snapshot `e3771b6` that the
-first panel sketch grew out of (spec-v1 §13 records the history):
-
-```sh
-tools/provenance.py
-```
-
-It prints shared substantive lines per file and a total. Substantive
-excludes blank lines, lone braces, comments, and lines of twelve characters
-or fewer — the boilerplate independently written QML still coincides on,
-which should not be counted. The upstream checkout is verified against the
-exact commit and the measurement is refused against anything else; pass
-`--upstream DIR` to use an existing checkout, `--verbose` to list the shared
-lines. The script exits `1` while the total is above zero, so the licence
-change to a sole copyright can gate on it reading zero.
 
 ## Testing
 
