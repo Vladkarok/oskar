@@ -291,6 +291,41 @@ var reservedPositions = [
     "AB11", "AE13"
 ]
 
+
+/// Every positioned cap the panel can draw, in declaration order — the
+/// position list a caps request carries. Built from the page declarations
+/// (typedRow names each cap's `xkb`), plus RALT and the reserved block,
+/// which no page declares. Lives here, beside the declarations it reads,
+/// so the field name cannot drift away from the panel's copy of it: the
+/// caller that read a renamed field (`k` after the `xkb` rename) got a
+/// one-position list back, the helper honestly answered just that
+/// position, and twenty-six letter caps drew the built-in tables.
+function declaredPositions() {
+    var seen = {}
+    var out = []
+    var pages = [rows, symbolRows("")]
+    for (var p = 0; p < pages.length; p++) {
+        for (var r = 0; r < pages[p].length; r++) {
+            for (var c = 0; c < pages[p][r].length; c++) {
+                var pos = pages[p][r][c].xkb
+                if (pos && !seen[pos]) {
+                    seen[pos] = true
+                    out.push(pos)
+                }
+            }
+        }
+    }
+    if (!seen.RALT) out.push("RALT")
+    for (var i = 0; i < reservedPositions.length; i++) {
+        var reserved = reservedPositions[i]
+        if (!seen[reserved]) {
+            seen[reserved] = true
+            out.push(reserved)
+        }
+    }
+    return out
+}
+
 /// Which real modifiers an exact-level cap holds around its key.
 ///
 /// Levels five to eight are the reserved block's (decisions §33): `<LVL5>`

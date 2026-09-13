@@ -348,37 +348,14 @@ Item {
     // never per-cap.
     property bool capsFactsFailed: false
     // Every positioned cap the panel can draw, in declaration order — the
-    // position list a caps request carries. Built once from the page
-    // declarations: the helper resolves what the panel actually shows, not
-    // every key the keymap happens to define.
-    readonly property string capsPositions: {
-        var seen = {}
-        var out = []
-        var pages = [Layout.rows, Layout.symbolRows("")]
-        for (var p = 0; p < pages.length; p++) {
-            for (var r = 0; r < pages[p].length; r++) {
-                for (var c = 0; c < pages[p][r].length; c++) {
-                    var pos = pages[p][r][c].k
-                    if (pos && !seen[pos]) {
-                        seen[pos] = true
-                        out.push(pos)
-                    }
-                }
-            }
-        }
-        if (!seen.RALT) out.push("RALT")
-        // The reserved block's positions (ticket 18). They appear in no page
-        // declaration — a glyph cap names a character and lets the keymap say
-        // which position carries it — so they are asked for by name here.
-        for (var i = 0; i < Layout.reservedPositions.length; i++) {
-            var reserved = Layout.reservedPositions[i]
-            if (!seen[reserved]) {
-                seen[reserved] = true
-                out.push(reserved)
-            }
-        }
-        return out.join(" ")
-    }
+    // position list a caps request carries. The helper resolves what the
+    // panel actually shows, not every key the keymap happens to define.
+    // The derivation lives in KeyboardLayout.js beside the declarations it
+    // reads (ticket 39): this used to re-walk the pages here and read a
+    // field the §43 rename had called something else, so the list degraded
+    // to RALT alone and the built-in tables drew over twenty-six good
+    // letters.
+    readonly property string capsPositions: Layout.declaredPositions().join(" ")
 
     /// The caps request for one group: the group, then the declared
     /// positions. The helper answers per level from the keymap it installed,
