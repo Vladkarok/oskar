@@ -212,6 +212,125 @@ QtObject {
             T.equal(shouted[0].name, "flag: Ukraine")
         })
 
+        // Ticket 36: the ru/uk keyword halves below were red on the
+        // English-only catalogue (2026-09-13); the pinned English orderings
+        // were captured from that same pre-change catalogue and must stay
+        // identical once the Russian and Ukrainian vocabularies ship.
+        T.test("ru and uk keywords ship in lockstep, never on variants", function () {
+            // CLDR 46 keywords the same 1948 sequences for en, ru and uk;
+            // the catalogue keeps ru/uk presence in lockstep and off the
+            // variants, which carry no keywords in any language. English
+            // lists can additionally be emptied by the generator's
+            // keyword-equals-name drop ("hole", "battery") — a per-language
+            // rule with no Cyrillic equivalent, so it is not asserted here.
+            var offender = -1
+            for (var i = 0; i < entries.length; i++) {
+                var entry = entries[i]
+                var hasRu = entry.ru.length > 0
+                var hasUk = entry.uk.length > 0
+                if (entry.base >= 0 && (hasRu || hasUk)) { offender = i; break }
+                if (hasRu !== hasUk) { offender = i; break }
+            }
+            T.equal(offender, -1)
+        })
+
+        T.test("Russian queries find emoji through CLDR ru keywords", function () {
+            var kot = Catalog.search("кот", 0)
+            T.equal(kot.length > 0, true)
+            T.equal(containsName(kot, "cat"), true)
+            T.equal(containsName(kot, "cat face"), true)
+            T.equal(containsName(Catalog.search("КОТ", 0), "cat"), true)
+            var serdce = Catalog.search("сердце", 0)
+            T.equal(serdce.length > 0, true)
+            T.equal(containsName(serdce, "red heart"), true)
+            T.equal(containsName(serdce, "black heart"), true)
+        })
+
+        T.test("Ukrainian queries find emoji through CLDR uk keywords", function () {
+            var kit = Catalog.search("кіт", 0)
+            T.equal(kit.length > 0, true)
+            T.equal(containsName(kit, "cat"), true)
+            var yabluko = Catalog.search("яблуко", 0)
+            T.equal(yabluko.length > 0, true)
+            T.equal(containsName(yabluko, "red apple"), true)
+        })
+
+        T.test("a Cyrillic multi-term query ANDs its terms", function () {
+            // black heart carries both "чорне" and "серце" as uk keywords;
+            // red heart has "серце" but not "чорне", so one unmatched term
+            // must keep it out.
+            var chorne = Catalog.search("чорне серце", 0)
+            T.equal(containsName(chorne, "black heart"), true)
+            T.equal(containsName(chorne, "red heart"), false)
+        })
+
+        T.test("English results and ordering are pinned: cat, star, 100", function () {
+            var catNames = []
+            var cat = Catalog.search("cat", 0)
+            for (var i = 0; i < cat.length; i++) catNames.push(cat[i].name)
+            T.deepEqual(catNames, [
+                "grinning cat", "grinning cat with smiling eyes",
+                "cat with tears of joy", "smiling cat with heart-eyes",
+                "cat with wry smile", "kissing cat", "weary cat",
+                "crying cat", "pouting cat", "cat face", "cat", "black cat",
+                "palm up hand", "person playing handball",
+                "man playing handball", "woman playing handball",
+                "tiger face", "tiger", "leopard", "hook", "woozy face",
+                "sad but relieved face", "backpack", "graduation cap",
+                "loudspeaker", "mobile phone", "mobile phone with arrow",
+                "telephone receiver", "pager", "fax machine",
+                "notebook with decorative cover", "closed book", "open book",
+                "green book", "blue book", "orange book", "books",
+                "newspaper", "envelope with arrow", "package",
+                "closed mailbox with raised flag", "memo", "round pushpin",
+                "pill", "identification card", "antenna bars",
+                "vibration mode", "multiply", "cross mark",
+                "cross mark button", "Japanese “application” button",
+            ])
+            var starNames = []
+            var star = Catalog.search("star", 0)
+            for (var s = 0; s < star.length; s++) starNames.push(star[s].name)
+            T.deepEqual(starNames, [
+                "star-struck", "night with stars", "star", "glowing star",
+                "shooting star", "star of David", "star and crescent",
+                "dotted six-pointed star", "eight-pointed star",
+                "face with peeking eye", "dizzy", "singer", "man singer",
+                "woman singer", "sparkles", "custard",
+            ])
+            // CLDR ru/uk also publish "100" as a keyword (on other emoji
+            // too); an ASCII query must keep seeing only the English hits,
+            // in the English order.
+            var hundred = Catalog.search("100", 0)
+            T.equal(hundred.length, 2)
+            T.equal(hundred[0].name, "hundred points")
+            T.equal(hundred[1].name, "euro banknote")
+        })
+
+        T.test("English results and ordering are pinned: heart", function () {
+            var heart = Catalog.search("heart", 0)
+            T.equal(heart.length, 148)
+            var head = []
+            for (var h = 0; h < 30; h++) head.push(heart[h].name)
+            T.deepEqual(head, [
+                "smiling face with hearts", "smiling face with heart-eyes",
+                "smiling cat with heart-eyes", "heart with arrow",
+                "heart with ribbon", "sparkling heart", "growing heart",
+                "beating heart", "revolving hearts", "two hearts",
+                "heart decoration", "heart exclamation", "broken heart",
+                "heart on fire", "mending heart", "red heart", "pink heart",
+                "orange heart", "yellow heart", "green heart", "blue heart",
+                "light blue heart", "purple heart", "brown heart",
+                "black heart", "grey heart", "white heart", "heart hands",
+                "heart hands: light skin tone",
+                "heart hands: medium-light skin tone",
+            ])
+            var tail = []
+            for (var t = heart.length - 3; t < heart.length; t++) {
+                tail.push(heart[t].name)
+            }
+            T.deepEqual(tail, ["house", "house with garden", "stethoscope"])
+        })
+
         Qt.exit(T.report("emoji catalogue"))
     }
 }

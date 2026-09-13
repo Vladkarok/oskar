@@ -3,17 +3,20 @@
 
 Turns third_party/emoji/ — emoji-test.txt 16.0 for the set, order, groups,
 variant structure and names; CLDR 46 English annotations and derived
-annotations as name fallbacks and the keyword source — into the .pragma
-library module at the repo root (decisions.md §37). Offline, stdlib-only,
-byte-deterministic: the inputs fix the order of everything, nothing else
-is consulted, and two runs on the same inputs produce identical bytes.
+annotations as name fallbacks and the English keyword source; CLDR 46
+Russian and Ukrainian annotations as further keyword sources — into the
+.pragma library module at the repo root (decisions.md §37). Offline,
+stdlib-only, byte-deterministic: the inputs fix the order of everything,
+nothing else is consulted, and two runs on the same inputs produce
+identical bytes.
 
 Names come from the emoji-test.txt data-line comments first — they are
 regenerated with each emoji-data release, and CLDR 46's derived
 annotations have gone stale against 16.0 before (the E15.1 facing-right
 family shipped without its tone suffixes) — with the annotations and
 derived annotations as fallbacks. Every kept sequence must end with a
-non-empty name.
+non-empty name. Names stay English in every language: the ru and uk files
+contribute keywords only, their tts names are read past, not used.
 
 Fails loudly rather than write a bad catalogue:
 
@@ -32,8 +35,12 @@ different and matches a kept entry (compared without U+FE0F, as the name
 lookups already compare), the sequence is that entry's variant and is
 hoisted to follow it. Everything else is a base — including the two-tone
 families whose tone-stripped form is not itself an RGI sequence. Keywords
-come from the annotations only — variants are found through their names —
-with keywords equal to the name dropped.
+come from the annotations only, the same file role in every language
+(CLDR keywords the same 1948 sequences for en, ru and uk, so the mirror
+is exact), with English keywords equal to the name dropped — a Cyrillic
+keyword can never equal an English name, so nothing equivalent applies to
+ru/uk. Variants are found through their names and carry no keywords in
+any language.
 
 Exit codes:
 
@@ -62,6 +69,12 @@ SHA256 = {
     "emoji-test.txt": "24f0c534e86cf142e2496953e8f0e46a3e702392911eddcd29c6cced85139697",
     "cldr46-annotations-en.xml": "b33e2e88ed2fb8c438c1efa9747b9d845e8d7d74ef0c32342a805c0f46fdd7ec",
     "cldr46-annotations-derived-en.xml": "461d1578079c5ebc947e506df6b5a55c93f006160e8dff3f05dcf917ce081604",
+    "cldr46-annotations-ru.xml": "72a09fb4292687f3538420ebe723da1590f0ef0910e5ced5e0375339ae6c6dcd",
+    "cldr46-annotations-uk.xml": "77fbefc84fc99ba28f40103eb7bf755491881b039301c6967ef633c1f1b6990a",
+    # Read for checksum only: the ru/uk keywords mirror the English file
+    # role and come from the annotations files, never the derived ones.
+    "cldr46-annotations-derived-ru.xml": "7532ab16dca25f11d92ed9aed4467d3d1a5f07fb043c09eb6c5a1ea824244226",
+    "cldr46-annotations-derived-uk.xml": "25aa443e3ed2f55da4ef49414ef19623203480a154f1fb2c3685d8b19c19afc5",
     "LICENSE": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
 }
 
@@ -165,14 +178,16 @@ def split_variants(kept):
     return bases, variants
 
 
-def resolve_names(kept, bases, variants, ann_names, ann_keywords, der_names):
-    """Names and keywords per sequence; variants carry no keywords.
+def resolve_names(kept, bases, variants, ann_names, ann_keywords, der_names,
+                  ru_keywords, uk_keywords):
+    """Names and per-language keywords per sequence; variants carry none.
 
     The comment name published with emoji-test.txt wins; the annotations
     cover bases and the derived annotations cover variants as fallbacks,
-    each falling back to the other file. Every kept sequence must come
-    out named — an unnamed entry is a data bug, never an empty cap name,
-    so the run dies listing them instead.
+    each falling back to the other file. Keywords come from the three
+    annotations files, looked up FE0F-stripped like the names. Every kept
+    sequence must come out named — an unnamed entry is a data bug, never
+    an empty cap name, so the run dies listing them instead.
     """
     comment_of = {sequence: name for sequence, _, name in kept}
 
@@ -182,18 +197,24 @@ def resolve_names(kept, bases, variants, ann_names, ann_keywords, der_names):
 
     resolved = {}
     for sequence in bases:
+        key = strip_fe0f(sequence)
         resolved[sequence] = (name_for(sequence, ann_names, der_names),
-                              ann_keywords.get(strip_fe0f(sequence), []))
+                              ann_keywords.get(key, []),
+                              ru_keywords.get(key, []),
+                              uk_keywords.get(key, []))
     for group in variants.values():
         for sequence in group:
-            resolved[sequence] = (name_for(sequence, der_names, ann_names), [])
+            resolved[sequence] = (name_for(sequence, der_names, ann_names),
+                                  [], [], [])
 
-    lowered = {sequence: (name or "").lower() for sequence, (name, _) in resolved.items()}
-    for sequence, (_, words) in resolved.items():
+    lowered = {sequence: (name or "").lower()
+               for sequence, (name, _, _, _) in resolved.items()}
+    for sequence, (_, words, _, _) in resolved.items():
         for word in [w for w in words if w.lower() == lowered[sequence]]:
             words.remove(word)
 
-    unnamed = [sequence for sequence, (name, _) in resolved.items() if not name]
+    unnamed = [sequence for sequence, (name, _, _, _) in resolved.items()
+               if not name]
     if unnamed:
         print(f"{len(unnamed)} kept sequence(s) have no name in the comments "
               "or either annotations file; the first ones:", file=sys.stderr)
@@ -237,52 +258,85 @@ HEADER = """\
 // entries are compared without U+FE0F) is that entry's variant and is
 // hoisted to follow it: the variant's `base` is the base's index and the
 // base's `variants` lists its variants' indexes, with bases at -1.
-// Variants carry no keywords — search reaches them through their names.
-// Groups follow emoji-test.txt; the ones with no fully-qualified entry
-// are not here. Treat entries() and groups() as read-only; names and
-// keywords are stored verbatim for display and lowercased once below for
-// matching, so search is case-insensitive on both sides.
+// Variants carry no keywords in any language — search reaches them
+// through their names. Besides the English keywords, each entry carries
+// CLDR 46 Russian (`ru`) and Ukrainian (`uk`) keywords from that
+// release's annotation files: search vocabulary only, display names stay
+// English, and the entries that carry them are exactly the ones that
+// carry English keywords. Groups follow emoji-test.txt; the ones with no
+// fully-qualified entry are not here. Treat entries() and groups() as
+// read-only; names and keywords are stored verbatim for display and
+// lowercased once below for matching, so search is case-insensitive on
+// both sides.
 """
 
 SEARCH = """
 // Matching text, lowercased once at load: names and keywords are stored
 // verbatim above for display, and search must not depend on the case
-// CLDR happens to publish ("flag: Ukraine", "CD", "Mrs.").
+// CLDR happens to publish ("flag: Ukraine", "CD", "Mrs.", "Дед Мороз").
 var matchNames = []
 var matchKeywords = []
+var matchRu = []
+var matchUk = []
 for (var e = 0; e < catalog.length; e++) {
     matchNames.push(catalog[e].name.toLowerCase())
+    matchKeywords.push(lowerAll(catalog[e].keywords))
+    matchRu.push(lowerAll(catalog[e].ru))
+    matchUk.push(lowerAll(catalog[e].uk))
+}
+
+function lowerAll(words) {
     var lowered = []
-    for (var ek = 0; ek < catalog[e].keywords.length; ek++) {
-        lowered.push(catalog[e].keywords[ek].toLowerCase())
+    for (var i = 0; i < words.length; i++) {
+        lowered.push(words[i].toLowerCase())
     }
-    matchKeywords.push(lowered)
+    return lowered
 }
 
 // Query terms are ANDed across name and keywords. A term earns the
 // strongest tier any of its own matches reaches — the name or a name word
 // leading with it, a keyword word leading with it, or merely a substring
 // somewhere — and the entry ranks at the weakest of its terms' tiers;
-// catalogue order breaks ties inside a tier. limit caps the result; 0 or
-// undefined means all.
+// catalogue order breaks ties inside a tier. The ru and uk keyword lists
+// join the keyword tier with the same numbers, but only for terms with a
+// character beyond ASCII: CLDR ships the occasional Latin keyword in
+// those lists ("100", "SUV"), and an English query's results must stay
+// exactly what the English data alone yields. Every Cyrillic term is
+// beyond ASCII by construction, so the added vocabulary stays fully
+// reachable. limit caps the result; 0 or undefined means all.
 
-function termTier(index, term, query) {
+function outsideAscii(term) {
+    for (var i = 0; i < term.length; i++) {
+        if (term.charCodeAt(i) > 127) return true
+    }
+    return false
+}
+
+function termTier(index, term, query, extended) {
     var name = matchNames[index]
     if (name === query) return 1
     var words = name.split(" ")
     for (var i = 0; i < words.length; i++) {
         if (words[i].indexOf(term) === 0) return 1
     }
-    var keywords = matchKeywords[index]
-    for (var k = 0; k < keywords.length; k++) {
-        var kw = keywords[k].split(" ")
-        for (var j = 0; j < kw.length; j++) {
-            if (kw[j].indexOf(term) === 0) return 2
+    var keywordSets = extended
+        ? [matchKeywords[index], matchRu[index], matchUk[index]]
+        : [matchKeywords[index]]
+    for (var s = 0; s < keywordSets.length; s++) {
+        var keywords = keywordSets[s]
+        for (var k = 0; k < keywords.length; k++) {
+            var kw = keywords[k].split(" ")
+            for (var j = 0; j < kw.length; j++) {
+                if (kw[j].indexOf(term) === 0) return 2
+            }
         }
     }
     if (name.indexOf(term) >= 0) return 3
-    for (var m = 0; m < keywords.length; m++) {
-        if (keywords[m].indexOf(term) >= 0) return 3
+    for (var m = 0; m < keywordSets.length; m++) {
+        var substrings = keywordSets[m]
+        for (var n = 0; n < substrings.length; n++) {
+            if (substrings[n].indexOf(term) >= 0) return 3
+        }
     }
     return 0
 }
@@ -290,16 +344,20 @@ function termTier(index, term, query) {
 function search(query, limit) {
     var text = String(query === undefined || query === null ? "" : query).trim().toLowerCase()
     var terms = []
+    var beyond = []
     var raw = text.split(/\\s+/)
     for (var r = 0; r < raw.length; r++) {
-        if (raw[r] !== "") terms.push(raw[r])
+        if (raw[r] !== "") {
+            terms.push(raw[r])
+            beyond.push(outsideAscii(raw[r]))
+        }
     }
     if (terms.length === 0) return []
     var tiers = [[], [], []]
     for (var i = 0; i < catalog.length; i++) {
         var tier = 0
         for (var t = 0; t < terms.length; t++) {
-            var earned = termTier(i, terms[t], text)
+            var earned = termTier(i, terms[t], text, beyond[t])
             if (earned === 0) { tier = 0; break }
             if (earned > tier) tier = earned
         }
@@ -326,6 +384,8 @@ def emit(entries, groups):
             f"emoji: {js(entry['emoji'])}",
             f"name: {js(entry['name'])}",
             f"keywords: [{', '.join(js(word) for word in entry['keywords'])}]",
+            f"ru: [{', '.join(js(word) for word in entry['ru'])}]",
+            f"uk: [{', '.join(js(word) for word in entry['uk'])}]",
             f"group: {js(entry['group'])}",
             f"base: {entry['base']}",
             f"variants: [{', '.join(str(v) for v in entry['variants'])}]",
@@ -343,9 +403,13 @@ def build():
     verify_checksums()
     kept = parse_emoji_test()
     ann_names, ann_keywords = parse_annotations("cldr46-annotations-en.xml")
+    # tts names are read past for ru/uk: only the keyword maps are kept.
+    _, ru_keywords = parse_annotations("cldr46-annotations-ru.xml")
+    _, uk_keywords = parse_annotations("cldr46-annotations-uk.xml")
     der_names, _ = parse_annotations("cldr46-annotations-derived-en.xml")
     bases, variants = split_variants(kept)
-    resolved = resolve_names(kept, bases, variants, ann_names, ann_keywords, der_names)
+    resolved = resolve_names(kept, bases, variants, ann_names, ann_keywords,
+                             der_names, ru_keywords, uk_keywords)
     ordered = order_entries(kept, variants)
 
     index_of = {sequence: index for index, sequence in enumerate(ordered)}
@@ -355,7 +419,7 @@ def build():
     group_of = {sequence: group for sequence, group, _ in kept}
     entries = []
     for sequence in ordered:
-        name, keywords = resolved[sequence]
+        name, keywords, ru, uk = resolved[sequence]
         stripped = strip_trailing_tones(sequence)
         # A base strips to itself; only a genuine reduction that lands on
         # a kept entry names a base — two-tone families strip to a
@@ -367,6 +431,8 @@ def build():
             "emoji": "".join(chr(cp) for cp in sequence),
             "name": name,
             "keywords": keywords,
+            "ru": ru,
+            "uk": uk,
             "group": group_of[sequence],
             "base": base,
             "variants": [index_of[v] for v in variants.get(sequence, [])],
