@@ -4,14 +4,15 @@
 #   make check   — the host-runnable suites (offscreen JS + helper unit)
 #   make stage DESTDIR=/staging/root
 #                — lay the package's file set out under DESTDIR:
+#                  /usr/bin/omarchy-osk            (lifecycle command)
 #                  /usr/lib/omarchy-osk/omarchy-osk-daemon
 #                  /usr/lib/systemd/user/omarchy-osk.service
 #                  /usr/share/omarchy-osk/plugin/  (runtime QML/JS/assets)
 #   make install DESTDIR=  — stage into / (for Make-driven installs)
 #
 # User activation (plugin registration, unit enable) is deliberately NOT
-# here: package() writes only files; activation is an explicit, idempotent
-# user action documented in the package notes (release plan §7).
+# here: package() writes only files; activation is the explicit, idempotent
+# user action `omarchy-osk setup` (audit 2026-09-13, ticket 32).
 
 HELPER := daemon/target/release/omarchy-osk-daemon
 DESTDIR ?=
@@ -38,6 +39,7 @@ check: build
 # The transform lives here so systemd/omarchy-osk.service stays the one
 # reviewed source.
 stage: build
+	install -Dm755 bin/omarchy-osk "$(DESTDIR)/usr/bin/omarchy-osk"
 	install -Dm755 "$(HELPER)" \
 		"$(DESTDIR)/usr/lib/omarchy-osk/omarchy-osk-daemon"
 	install -Dm644 systemd/omarchy-osk.service \

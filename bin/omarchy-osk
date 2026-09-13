@@ -1,0 +1,367 @@
+#!/bin/bash
+
+# omarchy-osk — one user-facing lifecycle command for the on-screen
+# keyboard (audit 2026-09-13, ticket 32).
+#
+#   omarchy-osk setup [--migrate-source]   activate; idempotent
+#   omarchy-osk upgrade                    reload helper + shell after a
+#                                          package/source update
+#   omarchy-osk status                     report; changes nothing
+#   omarchy-osk teardown                   deactivate, keep config/state
+#
+# The same script serves both worlds and tells them apart by its own
+# location: installed as /usr/bin/omarchy-osk it manages the packaged
+# payload (/usr/share/omarchy-osk/plugin, /usr/lib/omarchy-osk); run from
+# a source checkout (directly or through the ~/.local/bin symlink
+# install.sh maintains) it manages that checkout. Activation is always a
+# user action — a package hook runs as root and must not guess a user's
+# session bus (the .install message only points here).
+#
+# Registration is the stable plugin id's symlink in
+# ~/.config/omarchy/plugins. This script replaces a symlink without
+# asking (the old target survives untouched — that is recoverable), and
+# REFUSES to touch a real directory: that is either a `git clone` made by
+# `omarchy plugin add` or a developer's checkout, not ours to manage.
+# Teardown unlinks the registration only when it resolves to the payload
+# this script owns. Config (~/.config/omarchy-osk) and state
+# (~/.local/state/omarchy-osk) are the user's and are never touched.
+
+set -euo pipefail
+
+PLUGIN_ID="io.github.vladkarok.osk"
+UNIT="omarchy-osk.service"
+REGISTRATION="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+USER_UNIT="$HOME/.config/systemd/user/$UNIT"
+SOURCE_HELPER="$HOME/.local/libexec/omarchy-osk-daemon"
+SOCKET="${XDG_RUNTIME_DIR:-$HOME/.run}/omarchy-osk/control.sock"
+PROTOCOL_VERSION="5"
+
+say() { printf 'omarchy-osk: %s\n' "$*"; }
+warn() { printf 'omarchy-osk: WARNING: %s\n' "$*" >&2; }
+die() { printf 'omarchy-osk: %s\n' "$*" >&2; exit 1; }
+
+self_path() { realpath "$0" 2>/dev/null || readlink -f "$0"; }
+
+detect_mode() {
+  SELF="$(self_path)"
+  if [[ "$SELF" == /usr/bin/omarchy-osk && -d /usr/share/omarchy-osk/plugin ]]; then
+    MODE="packaged"
+    PAYLOAD="/usr/share/omarchy-osk/plugin"
+    HELPER="/usr/lib/omarchy-osk/omarchy-osk-daemon"
+    return
+  fi
+  local root
+  root="$(cd "$(dirname "$SELF")/.." && pwd)"
+  if [[ -f "$root/daemon/Cargo.toml" && -f "$root/Panel.qml" ]]; then
+    MODE="source"
+    PAYLOAD="$root"
+    HELPER="$SOURCE_HELPER"
+    return
+  fi
+  die "cannot locate the installation (self: $SELF); run from /usr/bin, \
+a checkout, or the ~/.local/bin symlink install.sh maintains"
+}
+
+registration_target() {
+  # Prints the symlink's resolved target, or nothing when the
+  # registration is absent or is a real directory.
+  [[ -L "$REGISTRATION" ]] || return 0
+  realpath "$REGISTRATION" 2>/dev/null || return 0
+}
+
+registration_link_text() {
+  # The symlink's own text, even when its target no longer resolves —
+  # a payload removed under a live registration leaves a dangling link
+  # whose realpath is empty but whose text still names our payload.
+  [[ -L "$REGISTRATION" ]] || return 0
+  readlink "$REGISTRATION"
+}
+
+graphical_session_active() {
+  systemctl --user --quiet is-active graphical-session.target 2>/dev/null
+}
+
+preflight() {
+  local missing=() pkgs=()
+  local probe
+  for probe in "omarchy:omarchy" "omarchy-shell:omarchy" "hyprctl:hyprland" \
+    "systemctl:systemd" "jq:jq" "wl-copy:wl-clipboard" "wl-paste:wl-clipboard"; do
+    local cmd="${probe%%:*}" pkg="${probe##*:}"
+    command -v "$cmd" >/dev/null 2>&1 || { missing+=("$cmd"); pkgs+=("$pkg"); }
+  done
+  # No grep -q here: it exits at the first match and the writing ldconfig
+  # dies of SIGPIPE, which pipefail turns into a false "missing".
+  if ! ldconfig -p 2>/dev/null | grep 'libxkbcommon\.so' >/dev/null; then
+    missing+=("libxkbcommon.so.0"); pkgs+=("libxkbcommon")
+  fi
+  if ((${#missing[@]})); then
+    say "missing runtime dependencies:"
+    local i
+    for i in "${!missing[@]}"; do say "  ${missing[$i]}  (pacman: ${pkgs[$i]})"; done
+    die "install the packages above, then rerun: omarchy-osk setup"
+  fi
+}
+
+report_legacy_source() {
+  # A source install's user unit OVERRIDES the packaged unit while it
+  # exists, so the packaged helper can be enabled but never runs. Removal
+  # is explicit (--migrate-source) and recoverable: the unit is renamed,
+  # never deleted.
+  local found=0
+  [[ -f "$USER_UNIT" ]] && { found=1; say "legacy source unit: $USER_UNIT"; }
+  [[ -f "$SOURCE_HELPER" ]] && { found=1; say "legacy source helper: $SOURCE_HELPER"; }
+  ((found)) || return 1
+  return 0
+}
+
+migrate_source() {
+  local stamp
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  if [[ -f "$USER_UNIT" ]]; then
+    mv "$USER_UNIT" "$USER_UNIT.migrated-$stamp"
+    say "user unit moved aside: $USER_UNIT.migrated-$stamp"
+  fi
+  if [[ -f "$SOURCE_HELPER" ]]; then
+    rm "$SOURCE_HELPER"
+    say "source helper binary removed (rebuild it any time from the checkout)"
+  fi
+  # The ~/.local/bin symlink shadows /usr/bin on default PATHs; left
+  # behind, the next bare `omarchy-osk setup` resolves to the source
+  # copy and silently re-creates the legacy state just migrated away.
+  if [[ -L "$HOME/.local/bin/omarchy-osk" ]]; then
+    rm "$HOME/.local/bin/omarchy-osk"
+    say "source lifecycle symlink removed from ~/.local/bin"
+  fi
+  systemctl --user daemon-reload
+}
+
+ensure_registration() {
+  local target
+  target="$(registration_target)"
+  [[ -e "$REGISTRATION" && ! -L "$REGISTRATION" ]] && \
+    die "$REGISTRATION is a real directory (a git clone or a checkout); \
+this script manages symlinks only — remove or rename it yourself if you \
+want the $MODE payload registered instead"
+  if [[ "$target" == "$PAYLOAD" ]]; then
+    say "plugin registration already points at the $MODE payload"
+    return
+  fi
+  [[ -n "$target" ]] && say "re-pointing registration (was: $target)"
+  mkdir -p "$(dirname "$REGISTRATION")"
+  ln -sfn "$PAYLOAD" "$REGISTRATION"
+  say "registered $PLUGIN_ID -> $PAYLOAD"
+}
+
+rescan_and_enable_plugin() {
+  if omarchy-shell shell rescanPlugins >/dev/null 2>&1; then
+    say "shell rescanned plugins"
+  else
+    warn "shell not answering; the plugin is picked up on the next shell start"
+  fi
+  if omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1; then
+    say "plugin enabled in the shell"
+  else
+    # The shell occasionally has not finished absorbing the rescan when
+    # the first enable lands; one retry after a beat clears it, and a
+    # persistent failure stays a warning (the registration is what setup
+    # guarantees — rerunning setup converges).
+    sleep 1
+    if omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1; then
+      say "plugin enabled in the shell (second attempt after rescan)"
+    else
+      warn "could not enable the plugin (shell down?); it stays registered"
+    fi
+  fi
+}
+
+enable_unit() {
+  systemctl --user daemon-reload
+  systemctl --user enable "$UNIT" >/dev/null 2>&1 || true
+  if graphical_session_active; then
+    systemctl --user restart "$UNIT"
+    say "helper restarted"
+  else
+    say "helper enabled; it starts with your next graphical session"
+  fi
+}
+
+cmd_setup() {
+  local migrate=0
+  if [[ $# -gt 1 ]]; then
+    die "usage: omarchy-osk setup [--migrate-source]"
+  fi
+  [[ "${1:-}" == "--migrate-source" ]] && migrate=1
+  [[ $# -eq 0 || $migrate -eq 1 ]] || die "setup takes only --migrate-source"
+  detect_mode
+  preflight
+
+  if [[ "$MODE" == "packaged" ]] && report_legacy_source; then
+    if ((migrate)); then
+      migrate_source
+    else
+      die "a source install overrides the packaged unit; rerun with \
+--migrate-source to move it aside (kept as *.migrated-<timestamp>)"
+    fi
+  fi
+
+  if [[ "$MODE" == "source" ]]; then
+    if [[ -x /usr/bin/omarchy-osk ]]; then
+      warn "a packaged install also exists; a bare 'omarchy-osk' may resolve \
+to /usr/bin first on your PATH — call this one by its full path"
+    fi
+    bash "$PAYLOAD/install.sh"
+  fi
+
+  ensure_registration
+  rescan_and_enable_plugin
+  enable_unit
+  say "setup complete ($MODE payload)"
+}
+
+cmd_upgrade() {
+  detect_mode
+  local target
+  target="$(registration_target)"
+  [[ "$target" == "$PAYLOAD" ]] || die "registration does not point at the \
+$MODE payload (has: ${target:-none}); run: omarchy-osk setup"
+  if [[ "$MODE" == "packaged" ]] && report_legacy_source; then
+    die "a source install overrides the packaged unit; restart would load \
+incompatible halves; run: omarchy-osk setup --migrate-source"
+  fi
+
+  if [[ "$MODE" == "source" ]]; then
+    bash "$PAYLOAD/install.sh"
+  else
+    systemctl --user daemon-reload
+    say "unit definitions reloaded"
+  fi
+
+  if systemctl --user --quiet is-active "$UNIT" 2>/dev/null; then
+    systemctl --user restart "$UNIT"
+    say "helper restarted"
+  else
+    say "helper not running; nothing to restart"
+  fi
+
+  # The panel is keepLoaded: a live shell keeps the OLD QML until it is
+  # restarted. Tolerate a non-interactive or headless context.
+  if omarchy restart shell >/dev/null 2>&1; then
+    say "shell restarted (QML reloaded)"
+  else
+    warn "could not restart the shell; run: omarchy restart shell"
+  fi
+  say "upgrade complete ($MODE payload)"
+}
+
+protocol_probe() {
+  # One hello roundtrip against the live helper. Prints the reply line.
+  command -v socat >/dev/null 2>&1 || { printf 'unknown (socat not installed)\n'; return; }
+  [[ -S "$SOCKET" ]] || { printf 'no socket\n'; return; }
+  printf 'hello %s\n' "$PROTOCOL_VERSION" |
+    timeout 2 socat -t1 - UNIX-CONNECT:"$SOCKET" 2>/dev/null | head -n1
+}
+
+cmd_status() {
+  detect_mode
+  local payload_state="present" reg target kind="absent"
+  [[ -d "$PAYLOAD" ]] || payload_state="MISSING"
+  if [[ -e "$REGISTRATION" && ! -L "$REGISTRATION" ]]; then
+    kind="directory (not ours to manage)"
+    target="$(cd "$REGISTRATION" && pwd)"
+  elif [[ -L "$REGISTRATION" ]]; then
+    kind="symlink"
+    target="$(registration_target)"
+  else
+    target=""
+  fi
+  # An empty answer (shell down, malformed output) reads as "not listed":
+  # the honest fallback for a report that must stay total.
+  local plugin
+  plugin="$(omarchy plugin list --json 2>/dev/null |
+    jq -r --arg id "$PLUGIN_ID" '.[] | select(.id == $id) |
+      if .enabled then "enabled" else "disabled" end' 2>/dev/null || true)"
+  [[ -n "$plugin" ]] || plugin="not listed"
+  local unit_enabled unit_active
+  unit_enabled="$(systemctl --user is-enabled "$UNIT" 2>/dev/null || true)"
+  unit_active="$(systemctl --user is-active "$UNIT" 2>/dev/null || true)"
+  local helper_state="present"
+  [[ -f "$HELPER" ]] || helper_state="MISSING"
+  local reply
+  reply="$(protocol_probe)"
+  local proto="ok (protocol $PROTOCOL_VERSION)"
+  [[ "$reply" == "hello $PROTOCOL_VERSION" ]] || proto="MISMATCH (reply: ${reply:-none})"
+
+  say "mode:            $MODE"
+  say "payload:         $PAYLOAD ($payload_state)"
+  say "helper:          $HELPER ($helper_state)"
+  say "registration:    $REGISTRATION ($kind -> ${target:-none})"
+  say "plugin state:    $plugin"
+  say "unit enabled:    ${unit_enabled:-unknown}"
+  say "unit active:     ${unit_active:-unknown}"
+  say "socket:          $SOCKET ($([[ -S "$SOCKET" ]] && echo present || echo absent))"
+  say "protocol:        $proto"
+  if [[ "$MODE" == "packaged" ]] && report_legacy_source; then
+    warn "a legacy source install overrides the packaged unit; \
+setup --migrate-source moves it aside"
+  fi
+}
+
+cmd_teardown() {
+  detect_mode
+  if omarchy plugin disable "$PLUGIN_ID" >/dev/null 2>&1; then
+    say "plugin disabled in the shell"
+  else
+    say "plugin not enabled (or shell down)"
+  fi
+  systemctl --user disable --now "$UNIT" >/dev/null 2>&1 \
+    && say "unit disabled and stopped" \
+    || say "unit already inactive"
+  if [[ -e "$REGISTRATION" && ! -L "$REGISTRATION" ]]; then
+    warn "$REGISTRATION is a real directory; left untouched"
+  elif [[ -L "$REGISTRATION" ]]; then
+    local target text
+    target="$(registration_target)"
+    text="$(registration_link_text)"
+    if [[ "$target" == "$PAYLOAD" ]] || [[ -z "$target" && "$text" == "$PAYLOAD" ]]; then
+      rm "$REGISTRATION"
+      say "registration unlinked (pointed at the $MODE payload)"
+    else
+      warn "registration points at ${target:-$text}, not the $MODE payload; left alone"
+    fi
+  else
+    say "no registration to remove"
+  fi
+  say "teardown complete; config and state preserved"
+}
+
+case "${1:-}" in
+setup) shift; cmd_setup "$@" ;;
+upgrade) [[ $# -eq 1 ]] || die "upgrade takes no arguments"; cmd_upgrade ;;
+status) [[ $# -eq 1 ]] || die "status takes no arguments"; cmd_status ;;
+teardown) [[ $# -eq 1 ]] || die "teardown takes no arguments"; cmd_teardown ;;
+-h|--help|help)
+  cat <<'EOF'
+Usage: omarchy-osk <command>
+
+  setup [--migrate-source]  Activate: register the plugin, enable it in
+                             the shell, enable/start the helper service.
+                             Idempotent. --migrate-source moves a legacy
+                             source-install unit aside (kept, renamed).
+  upgrade                   After a package/source update: reload unit
+                             definitions, restart the helper, restart the
+                             shell so the kept-loaded panel reloads.
+  status                    Report payload, registration, plugin state,
+                             unit state, socket and protocol. Read-only.
+  teardown                  Disable the plugin and unit, unlink the
+                             registration if it is ours. Keeps config,
+                             state and foreign directories.
+EOF
+  ;;
+*)
+  cat <<'EOF' >&2
+Usage: omarchy-osk {setup|upgrade|status|teardown}
+Run: omarchy-osk help
+EOF
+  exit 1
+  ;;
+esac

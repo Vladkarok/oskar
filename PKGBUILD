@@ -1,48 +1,43 @@
-# AUR PKGBUILD for omarchy-osk-git (release plan §7/D2, E).
+# AUR PKGBUILD for omarchy-osk — the stable, tag-pinned package that is
+# the public default (audit 2026-09-13 §32: one coherent product, not
+# "AUR helper plus a separately managed Git plugin").
 #
-# Status: NOT yet buildable as-is - the repo is unpushed; the -git
-# source clones a default branch that lacks Makefile/PKGBUILD. The
-# owner gate is: push public, tag, THEN makepkg --printsrcinfo.
-# PUBLISHING IS OWNER-GATED — pushing
-# to the AUR is an external action this repo's workflow forbids without an
-# explicit request. Before publishing the owner should:
+# PUBLISHING IS OWNER-GATED. This repo is currently unpushed and untagged;
+# before publishing the owner must:
 #   1. push the repo public (source= below points at GitHub),
-#   2. verify the tag exists and matches this pkgver,
-#   3. run makepkg --printsrcinfo > .SRCINFO and commit it.
-# A stable -release variant only needs source= pinned to the tag and a
-# concrete pkgver; this -git prototype tracks default.
+#   2. create tag v$pkgver at the release commit,
+#   3. replace sha256sums=('SKIP') with the tag tarball's real checksum
+#      (updpkgsums), run makepkg --printsrcinfo > .SRCINFO, commit both
+#      (omarchy-osk.install travels with the PKGBUILD or makepkg fails),
+#      and push to the AUR.
+# A -git VCS package may follow later as a separate optional PKGBUILD;
+# this one never resolves a moving branch.
 
-pkgname=omarchy-osk-git
-pkgver=r60.0d23126
+pkgname=omarchy-osk
+pkgver=0.1.0
 pkgrel=1
 pkgdesc='Mouse-driven on-screen keyboard for Omarchy (Hyprland + Quickshell)'
 arch=(x86_64)
 url='https://github.com/Vladkarok/omarchy-osk'
 license=(MIT)
-depends=(gcc-libs glibc)
-makedepends=(cargo rust git)
-checkdepends=(qt6-declarative)
+# The product is Omarchy-only by scope decision: `omarchy` is provided by
+# Omarchy's own packages (omarchy/omarchy-dev). The panel host and the
+# compositor it reads layouts from are hard requirements, as are the
+# clipboard tools the paste chip and the compatibility emoji route
+# execute, and the library the helper links.
+depends=(omarchy hyprland quickshell qt6-declarative jq wl-clipboard
+  libxkbcommon gcc-libs glibc)
+makedepends=(cargo)
 optdepends=(
-  'omarchy: the shell this panel is built for'
-  'wl-clipboard: the paste chip and clipboard-compat emoji delivery'
-  'qt6-multimedia: key-click sound (optional)'
+  'qt6-multimedia: key-click sound'
+  'ffmpeg: key-click sound transcoding'
 )
-provides=(omarchy-osk)
-conflicts=(omarchy-osk)
-source=('git+https://github.com/Vladkarok/omarchy-osk.git')
-sha256sums=('SKIP')
+conflicts=(omarchy-osk-git)
+install=omarchy-osk.install
+source=("$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')  # publish gate: replace with the tag tarball checksum
 
-pkgver() {
-  cd "$srcdir/$_repo"
-  # r<commits>.<short-sha> until a tag exists; with a tag:
-  # printf '%s.r%s.g%s' "$(git describe --tags --abbrev=0 | sed 's/^v//')" \
-  #   "$(git rev-list "$(git describe --tags --abbrev=0)..HEAD" --count)" \
-  #   "$(git rev-parse --short HEAD)"
-  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
-}
-
-# The git source clones to $srcdir/omarchy-osk regardless of pkgname.
-_repo=omarchy-osk
+_repo=omarchy-osk-$pkgver
 
 build() {
   make -C "$srcdir/$_repo" build

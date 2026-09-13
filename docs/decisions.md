@@ -1336,6 +1336,74 @@ both counted. The fix makes publication plus paste one owned transaction
 - A socket loss or mode flip cancels the queue; a completion arriving for
   a cancelled transaction lands as `ignore` and records nothing.
 
+## 45. One lifecycle command owns activation: the package installs files only
+
+Audit 2026-09-13 §32, ticket 32. The product is one coherent package —
+not "AUR helper plus a separately managed Git plugin" — and the line
+between them is a single user command, `omarchy-osk` (setup / upgrade /
+status / teardown). Package hooks run as root and must not guess a
+user's session bus, so a package install is files only and the
+`.install` message points at `setup`; activation (register
+`/usr/share/omarchy-osk/plugin` under the stable plugin id through a
+symlink, `omarchy plugin enable` through the official commands, unit
+enable/start) is explicit and idempotent. The same script serves a
+source checkout by resolving its own location, and `install.sh` links
+it into `~/.local/bin` — one command, two worlds.
+
+Rules the command enforces:
+
+- A registration that is a REAL directory (a git clone from
+  `omarchy plugin add`, a developer checkout) is never touched — not by
+  setup, not by teardown. A symlink is re-pointed (the old target
+  survives); teardown unlinks only a registration resolving to the
+  payload the invocation owns.
+- A legacy source install's `~/.config/systemd/user` unit OVERRIDES the
+  packaged unit, so plain setup refuses while it stands;
+  `--migrate-source` moves it aside renamed (`*.migrated-<timestamp>`)
+  and removes `~/.local/libexec/omarchy-osk-daemon` and the
+  `~/.local/bin/omarchy-osk` symlink — left behind, it PATH-shadows
+  `/usr/bin` and the next bare `omarchy-osk setup` silently re-creates
+  the legacy state. Never a silent delete of a user file.
+- Config (`~/.config/omarchy-osk`) and state (`~/.local/state/`)
+  survive everything, including teardown.
+- The dependency contract is declared, not discovered: `omarchy`
+  (provided by Omarchy's own packages), `hyprland`, `quickshell`,
+  `qt6-declarative` (the payload imports QtQuick directly), `jq`,
+  `wl-clipboard` (the chip and the compatibility route exec the
+  tools), `libxkbcommon` (the helper links it), `gcc-libs`, `glibc`;
+  the key-click sound is the one optional pair (qt6-multimedia +
+  ffmpeg). A stock clean chroot cannot resolve `omarchy` (its closure
+  is AUR-only) — the lab chroot builds `--nodeps` with the toolchain
+  installed by hand and documents why.
+
+## 46. The helper owns the user's keymap-source record
+
+Audit 2026-09-13 §06, ticket 06's reopen. The panel's in-memory
+`userKeymapFile` was the only record of the user's own `kb_file`; a shell
+that died without its destruction hook (SIGKILL, crash) left the compositor
+compiling the published keymap with the source lost, and the fresh shell fed
+the helper RMLVO — the custom keymap silently dropped for the session. The
+helper survives a shell crash and already owns the runtime directory, so the
+record is helper-owned: every configure's `kb_file` runs through a pure
+three-way decision (a user path is remembered verbatim, empty clears, the
+published path leaves the record untouched) and lands atomically beside the
+published keymap as `user-keymap-source`. The fresh panel seeds itself from
+that file synchronously at creation — before its first layout snapshot could
+configure with an empty file and clear the record it was recovering from.
+
+Two rules the record obeys:
+
+- It holds the panel's INTENT, not the compile outcome: even a refused
+  configure is evidence of what the user had configured, and the recovery
+  read happens on a shell that no longer has the value anywhere else.
+- The compositor's `kb_file` is compared to the published keymap by exact
+  identity, never by substring — a user's own file under a directory that
+  happens to end in the published suffix is the user's, and the substring
+  test adopted it as ours and silently dropped it.
+
+The protocol is unchanged: `configure` already carried `kb_file`, and the
+sidecar is one writer (the helper) and one reader (the panel).
+
 ## Dead ends — do not retry
 
 - Subscribing to / mirroring the seat keymap (§3). Also: guarding its
