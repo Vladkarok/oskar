@@ -59,7 +59,10 @@ the reasons; this file records required behaviour.
   sends the paste chord, for the clients that drop both typed routes
   (ZCode). It replaces the clipboard with the pick, is chosen from the
   page's header, never runs by default, and never applies to ordinary
-  keys; decisions §42.) (2026-09-09
+  keys; decisions §42. 2026-09-13 audit fix: the route is one serialized
+  transaction — a pick while another is unfinished queues behind it, and
+  usage, search settle and close-after-pick happen only at the chord's
+  real completion; decisions §44.) (2026-09-09
   amendment, ticket 24 step 5: the cap no longer launches a picker, and the
   external-picker machinery — the courtesy move, the managed session, the
   shell-overlay payload and the fitting — is removed; decisions §24

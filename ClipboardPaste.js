@@ -68,46 +68,153 @@ function readTimedOut(state, seq, target) {
     }
 }
 
-// Ticket 28's publish-verify-chord machine, extracted after review: one
-// pick in flight at a time, every verify run sequence-tagged (a killed
-// run's late empty answer carries an old sequence and counts for nothing,
-// where the first in-QML cut let it burn a retry), five attempts, then a
-// loud drop with no chord.
-function publishInitial() {
-    return { seq: 0, pending: "", attempts: 0 }
+// Ticket 28's delivery transaction (audit 2026-09-13): one pick owns the
+// clipboard and its paste chord end to end. A pick accepted while another
+// is unfinished queues IN ORDER — a queued payload must never replace the
+// clipboard owner an unfinished paste still depends on (the audit's A→B
+// race: B's wl-copy replaced A before A's paced Ctrl+V reached the client,
+// and both were recorded as success). Usage, search settle and
+// close-after-pick fire only from the chord's completion, which
+// Keyboard.pasteCurrent reports; a refused or aborted dispatch is a
+// cancellation, never a success.
+//
+// The phases: "idle" accepts a pick, "publishing" owns the wl-copy and the
+// verify rounds, "pasting" owns the chord dispatch. Every verify run stays
+// sequence-tagged (a killed run's late answer carries an old sequence and
+// counts for nothing), five attempts then a loud drop with no chord, and a
+// drop or cancellation hands the machine to the next queued pick.
+function txnInitial() {
+    return { seq: 0, phase: "idle", pending: "", attempts: 0, queue: [] }
 }
 
-function publishStart(state, emoji) {
+function txnPick(state, emoji) {
+    var payload = String(emoji || "")
+    // An empty payload is refused rather than queued: nothing could ever
+    // verify against it, and a transaction that can neither serve nor
+    // drop would wedge every pick behind it (review finding).
+    if (payload === "")
+        return { state: state, action: "refused" }
+    if (state.phase !== "idle" || state.pending !== "")
+        return {
+            state: {
+                seq: state.seq, phase: state.phase, pending: state.pending,
+                attempts: state.attempts, queue: state.queue.concat([payload])
+            },
+            action: "queued"
+        }
     return {
-        state: { seq: state.seq + 1, pending: String(emoji || ""), attempts: 0 },
-        action: state.pending !== "" ? "publish-superseding" : "publish"
+        state: {
+            seq: state.seq + 1, phase: "publishing", pending: payload,
+            attempts: 0, queue: state.queue
+        },
+        action: "publish"
     }
 }
 
-function publishServed(state, seq, served) {
-    if (!state.pending || seq !== state.seq)
+function txnServed(state, seq, served) {
+    if (state.phase !== "publishing" || state.pending === "" || seq !== state.seq)
         return { state: state, action: "stale" }
     if (String(served) === state.pending)
-        return { state: state, action: "chord" }
+        return {
+            state: {
+                seq: state.seq, phase: "pasting", pending: state.pending,
+                attempts: state.attempts, queue: state.queue
+            },
+            action: "chord"
+        }
     var attempts = state.attempts + 1
     if (attempts >= 5)
         return {
-            state: { seq: state.seq, pending: "", attempts: 0 },
+            state: {
+                seq: state.seq, phase: "idle", pending: "", attempts: 0,
+                queue: state.queue
+            },
             action: "drop"
         }
     // A retry is a NEW verify run: the sequence moves, so the answer of
     // the wl-paste this retry is about to kill cannot masquerade as it.
     return {
-        state: { seq: state.seq + 1, pending: state.pending, attempts: attempts },
+        state: {
+            seq: state.seq + 1, phase: "publishing", pending: state.pending,
+            attempts: attempts, queue: state.queue
+        },
         action: "retry"
     }
 }
 
-function publishCancel(state) {
-    if (!state.pending)
+// The chord's verdict, delivered by pasteCurrent's completion callback.
+// Only "completed" carries the emoji: it is the one outcome that may
+// record usage, settle the search and close the page.
+function txnChordDone(state, success) {
+    if (state.phase !== "pasting")
+        return { state: state, action: "ignore" }
+    var idle = {
+        seq: state.seq, phase: "idle", pending: "", attempts: 0,
+        queue: state.queue
+    }
+    return success === true
+        ? { state: idle, action: "completed", emoji: state.pending }
+        : { state: idle, action: "cancelled" }
+}
+
+// Starts the next queued pick after a terminal outcome. Called by the QML
+// glue once per ending; returns "publish" with the emoji to publish, or
+// "none" when the machine is empty. The sequence keeps counting up, so a
+// verify answer from any earlier transaction stays stale forever, and the
+// rest of the queue keeps its order behind the promoted pick.
+function txnNext(state) {
+    if (state.phase !== "idle" || state.queue.length === 0)
+        return { state: state, action: "none" }
+    var next = {
+        seq: state.seq + 1, phase: "publishing", pending: state.queue[0],
+        attempts: 0, queue: state.queue.slice(1)
+    }
+    return { state: next, action: "publish", emoji: state.queue[0] }
+}
+
+// A mode flip or teardown: the running pick and everything queued die.
+// A chord already dispatching cannot be un-dispatched; its late completion
+// lands on the idle machine as "ignore" and records nothing.
+function txnCancel(state) {
+    if (state.phase === "idle" && state.queue.length === 0)
         return { state: state, action: "ignore" }
     return {
-        state: { seq: state.seq, pending: "", attempts: 0 },
+        state: { seq: state.seq, phase: "idle", pending: "", attempts: 0, queue: [] },
         action: "dropped"
     }
+}
+
+// What an interrupted paced chord owes the device: an "up" for every
+// "down" the abort's prefix pressed without pairing, in reverse press
+// order. A prefix "up" whose restoring "down" never went out is owed
+// NOTHING here — an aborted transaction converges by lifting (the caller
+// follows with a releaseAll), never by re-pressing a lock whose state the
+// abort is about to reset anyway.
+function compensatingReleases(lines, sentCount) {
+    var chord = Array.isArray(lines) ? lines : []
+    var sent = chord.slice(0, Math.max(0, Math.min(sentCount, chord.length)))
+    var open = []
+    // A leading "up" the chord itself plans to restore: its pairing
+    // "down" is a restore, not a new press, so it must not read as owed.
+    var lifted = []
+    for (var i = 0; i < sent.length; i++) {
+        var line = String(sent[i])
+        if (line.indexOf("down ") === 0) {
+            var pressed = line.slice(5)
+            if (lifted.indexOf(pressed) !== -1)
+                lifted.splice(lifted.indexOf(pressed), 1)
+            else
+                open.push(pressed)
+        } else if (line.indexOf("up ") === 0) {
+            var rising = line.slice(3)
+            if (open.indexOf(rising) !== -1)
+                open.splice(open.indexOf(rising), 1)
+            else
+                lifted.push(rising)
+        }
+    }
+    var releases = []
+    for (var r = open.length - 1; r >= 0; r--)
+        releases.push("up " + open[r])
+    return releases
 }

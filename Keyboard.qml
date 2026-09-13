@@ -9,6 +9,7 @@ import "ModifierReducer.js" as Modifiers
 import "KeyboardSession.js" as Session
 import "Config.js" as ConfigFile
 import "LayoutDevices.js" as LayoutDevices
+import "ClipboardPaste.js" as ClipboardPaste
 
 Item {
     id: root
@@ -931,24 +932,98 @@ Item {
     // latency. The state settles immediately (the reducer ran); only the
     // writes are paced, and a second paste while one is pacing is
     // refused rather than interleaved.
+    //
+    // Ticket 28's transaction contract (audit 2026-09-13): a paste is no
+    // longer fire-and-forget. The optional `completed` callback fires
+    // exactly once — after the final paced line is dispatched for a wine
+    // chord, after every line is accepted by the socket writer for an
+    // immediate one, and synchronously with false on any refusal (already
+    // pacing, a held key, an unready input, a dead socket mid-pace). The
+    // emoji page records usage only from a real completion; the paste
+    // chip still calls without one, unchanged.
     property bool pastePacing: false
     property var pastePacedLines: []
+    // The full chord and how much of it went out, so an abort can owe the
+    // device exactly its unlifted presses.
+    property var pastePaceAllLines: []
+    property int pastePaceSent: 0
+    property var pastePaceDone: null
+    // Which modifiers were locked when the chord computed its lines: a
+    // mid-chord event that changes the held world (a configure draining
+    // the device, a releaseAll) invalidates the remaining lines, and the
+    // chord aborts instead of writing plans for a world that is gone.
+    property var pastePaceLocks: []
     Timer {
         id: pastePacedTick
         interval: 35
         repeat: false
         onTriggered: () => {
+            if (!root.pastePacing) return
             if (root.pastePacedLines.length === 0) {
                 root.pastePacing = false
                 return
             }
-            sendCommandUnchecked(root.pastePacedLines.shift())
+            if (!root.inputReady || !root.pasteChordAssumptionsHold()) {
+                // The head line is neither consumed nor counted: nothing
+                // was dispatched for it, so the sent prefix the abort
+                // compensates is exactly what left the panel.
+                root.abortPacedPaste()
+                return
+            }
+            if (!sendCommandUnchecked(root.pastePacedLines.shift())) {
+                // The write refused: the consumed line pressed nothing at
+                // the device (nothing owed for it), and the socket being
+                // gone means the compensations are forwarded no-ops —
+                // the helper already released its claims on disconnect.
+                root.abortPacedPaste()
+                return
+            }
+            root.pastePaceSent++
             if (root.pastePacedLines.length > 0) restart()
-            else root.pastePacing = false
+            else root.finishPacedPaste(true)
         }
     }
 
-    function pasteCurrent(wmClass) {
+    // The chord's assumptions still hold while no key press interleaved
+    // and the locked-modifier set is exactly the one its lines planned
+    // around. Pure comparison; the abort itself lives below.
+    function pasteChordAssumptionsHold() {
+        if (modifierState.pending) return false
+        for (var i = 0; i < Modifiers.ORDER.length; i++) {
+            var name = Modifiers.ORDER[i]
+            var lockedNow = modifierState[name] === "locked"
+            var lockedThen = root.pastePaceLocks.indexOf(name) !== -1
+            if (lockedNow !== lockedThen) return false
+        }
+        return true
+    }
+
+    function finishPacedPaste(success) {
+        root.pastePacing = false
+        var done = root.pastePaceDone
+        root.pastePaceDone = null
+        if (done) done(success)
+    }
+
+    // A paced chord that cannot continue: lift what its sent prefix
+    // pressed without pairing, converge the modifier state by lifting
+    // (never re-press — the releaseAll that follows resets the panel's
+    // locks to match a device that no longer holds them), and report the
+    // cancellation. After a socket loss every write here is a forwarded
+    // no-op: the helper released its claims on disconnect, and a dead
+    // socket cannot owe anything (the disconnect path's own argument).
+    function abortPacedPaste() {
+        var owed = ClipboardPaste.compensatingReleases(root.pastePaceAllLines,
+            root.pastePaceSent)
+        for (var i = 0; i < owed.length; i++)
+            sendCommandUnchecked(owed[i])
+        root.pastePacedLines = []
+        applyModifierEvent({ type: "releaseAll" })
+        root.finishPacedPaste(false)
+    }
+
+    function pasteCurrent(wmClass, completed) {
+        var done = completed || null
         var cls = String(wmClass || "")
         var chord = Modifiers.pasteChordForClass(cls)
         console.log("[osk] paste chord for", cls === "" ? "(unknown class)" : cls,
@@ -964,16 +1039,45 @@ Item {
             // Refused while pacing, not fallen through to the instant
             // path: an immediate write here would interleave with the
             // draining queue (review finding).
-            if (root.pastePacing) return
+            if (root.pastePacing) {
+                if (done) done(false)
+                return false
+            }
             root.pastePacing = true
             root.pastePacedLines = []
             applyModifierEvent(event, function (line) {
                 root.pastePacedLines.push(line)
             })
+            if (root.pastePacedLines.length === 0) {
+                // The reducer refused (a key press is pending) or input
+                // is not ready: nothing was dispatched and nothing will
+                // complete.
+                root.pastePacing = false
+                if (done) done(false)
+                return false
+            }
+            root.pastePaceAllLines = root.pastePacedLines.slice()
+            root.pastePaceSent = 0
+            root.pastePaceDone = done
+            root.pastePaceLocks = []
+            for (var m = 0; m < Modifiers.ORDER.length; m++)
+                if (modifierState[Modifiers.ORDER[m]] === "locked")
+                    root.pastePaceLocks.push(Modifiers.ORDER[m])
             pastePacedTick.restart()
-            return
+            return true
         }
-        applyModifierEvent(event)
+        var sent = 0
+        var wrote = true
+        applyModifierEvent(event, function (line) {
+            sent++
+            if (!sendCommandUnchecked(line)) wrote = false
+        })
+        if (sent === 0 || !wrote) {
+            if (done) done(false)
+            return false
+        }
+        if (done) done(true)
+        return true
     }
 
     /// One emoji's sequence to the focused client (ticket 24, step 4): the
@@ -1001,8 +1105,12 @@ Item {
 
     /// Lifts locked Shift and returns every modifier to idle. The panel closing
     /// is not the compositor forgetting: locked Shift is really held at the
-    /// device and must come up before the socket goes away.
+    /// device and must come up before the socket goes away. A paced chord
+    /// still draining aborts first — its remaining lines were planned for a
+    /// world this release is about to reset, and its tail (the Shift
+    /// re-press) would re-hold what the close is lifting.
     function releaseModifiers() {
+        if (root.pastePacing) root.abortPacedPaste()
         applyModifierEvent({ type: "releaseAll" })
     }
 
