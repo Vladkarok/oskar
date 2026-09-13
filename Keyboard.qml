@@ -2464,7 +2464,7 @@ Item {
                             Rectangle {
                                 visible: HoldColumn.marksVariant(capData,
                                     root.capHoldColumn(capData))
-                                width: Math.max(2, Math.round(root.cellGap * 0.4))
+                                width: Math.max(3, Math.round(root.cellGap * 0.55))
                                 height: width
                                 radius: width / 2
                                 anchors {
@@ -2474,7 +2474,7 @@ Item {
                                     bottomMargin: root.cellGap * 0.6
                                 }
                                 color: root.textDim
-                                opacity: capRect.disabled ? 0.25 : 0.55
+                                opacity: capRect.disabled ? 0.3 : 0.8
                             }
 
                             MouseArea {
