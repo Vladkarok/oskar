@@ -37,16 +37,23 @@ the ticket-28 overlay-input-death note stands as a rare-state hazard
 
 ## Ticket 06 (P2) — the custom kb_file survives a shell SIGKILL (2026-09-13)
 
-The helper owns the recovery record now: every configure's kb_file runs
+The helper owns the recovery record: every configure's kb_file runs
 through a pure three-way decision (user path → remember verbatim; empty →
 clear; published path → leave) persisted atomically as
-`$XDG_RUNTIME_DIR/omarchy-osk/user-keymap-source`; the fresh panel seeds
-`userKeymapFile` from it synchronously at creation; the compositor's
-kb_file is compared by exact identity (`Session.isPublishedKeymap`),
-never substring. Protocol unchanged. Decisions §46. Red-first (Rust 2,
-JS 2 — now 42/42 + 24/24); VM choreography
-`tools/keymap-recovery-test.sh run` **15/15** (SIGKILL with helper alive,
-helper restart, edited file, lookalike path, clear; evidence 06).
+`$XDG_RUNTIME_DIR/omarchy-osk/user-keymap-source`; the unit now sets
+`RuntimeDirectoryPreserve=yes` (ProtectSystem=strict leaves only that dir
+writable; preserve survives helper restarts — `omarchy-osk upgrade` —
+and dies with the session). The fresh panel seeds from the file at the
+decision point, but only until it has OBSERVED the compositor's own
+setting once (a clear can't be resurrected by the recovery read). The
+compositor's kb_file is compared by exact identity from the same
+normalizing builder the panel sets with (`Session.isPublishedKeymap`),
+never substring. Protocol unchanged. Decisions §46. First review round:
+do-not-ship on the MAJOR (systemd wiped the record at every helper stop)
+— fixed with Preserve + the observed flag + path symmetry; VM
+choreography hardened accordingly (dvorak/colemak discriminating fixtures,
+helper restart BETWEEN the SIGKILL and the respawn, an upgrade-with-
+custom-map step): **18/18** (evidence 06).
 
 ## NEXT WORK — docs/audit-2026-09-13.md is the execution brief
 

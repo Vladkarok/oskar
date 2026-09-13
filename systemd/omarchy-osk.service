@@ -26,9 +26,16 @@ Restart=always
 RestartSec=1
 RestartPreventExitStatus=78
 
-# Owns the socket directory, which also clears a stale socket after a crash.
+# Owns the socket directory. Preserved across service stops: the user
+# keymap-source record (ticket 06) must survive helper restarts within the
+# graphical session — `omarchy-osk upgrade` restarts the helper as a
+# routine step. systemd still removes runtime directories when the SESSION
+# ends, which is exactly the record's intended lifetime. A stale socket
+# after a crash is the daemon's own startup logic: it connects to tell a
+# live owner apart before unlinking.
 RuntimeDirectory=omarchy-osk
 RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
 UMask=0077
 
 Slice=session-graphical.slice
