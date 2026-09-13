@@ -1,0 +1,32 @@
+# The package installs files only; activation is the user's one command
+# (a package hook runs as root and must not guess a user's session bus).
+
+post_install() {
+  cat <<'EOF'
+omarchy-osk installed (files only). Activate in your session with:
+
+    omarchy-osk setup
+
+See `omarchy-osk help` for upgrade, status and teardown.
+EOF
+}
+
+post_upgrade() {
+  cat <<'EOF'
+omarchy-osk upgraded. Reload the helper and the panel with:
+
+    omarchy-osk upgrade
+
+EOF
+}
+
+pre_remove() {
+  cat <<'EOF'
+Removing omarchy-osk. Deactivate first so nothing dangles:
+
+    omarchy-osk teardown
+
+(disable the unit and unlink the plugin registration before pacman
+removes the payload; config and state survive either way).
+EOF
+}

@@ -224,14 +224,28 @@ cd daemon && cargo test
 
 ## Install
 
+From an AUR package (`omarchy-osk`): install it, then activate with the
+one lifecycle command — it registers the packaged payload under the
+stable plugin id, enables the plugin through Omarchy, and enables/starts
+the helper service:
+
 ```sh
-./install.sh
+omarchy-osk setup      # idempotent; also: upgrade / status / teardown
 ```
 
-That builds the helper, installs it and its user unit, and enables and
-starts the service for the graphical session (spec-v1.1 §6: an installed
-but disabled unit is indistinguishable from a broken keyboard). Run it
-again after updating the plugin. Manually, the same steps are:
+From a source checkout, the same command manages the checkout (the
+installer links it into `~/.local/bin`):
+
+```sh
+./install.sh           # helper + unit + the omarchy-osk command
+omarchy-osk setup      # registration, plugin enable, service
+```
+
+The installer builds the helper, installs it and its user unit, and
+enables and starts the service for the graphical session (spec-v1.1 §6:
+an installed but disabled unit is indistinguishable from a broken
+keyboard). Run `omarchy-osk upgrade` after updating the plugin. Manually,
+the same steps are:
 
 ```sh
 cd daemon && cargo build --release

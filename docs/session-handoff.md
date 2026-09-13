@@ -1,6 +1,92 @@
-# Handoff — updated 2026-09-13
+# Handoff — updated 2026-09-13 (evening)
 
 **START HERE — this section supersedes everything below it.**
+
+Audit execution so far: **28 fixed + reviewed ship (f5bd4d6)**, **32
+implemented + full VM choreography green + review findings fixed
+(re-review pending)**, **06 fixed + 15/15 recovery choreography**. Branch
+`spec/v1.1-fixes`; the VM lab runs the PACKAGED product (package installed,
+`omarchy-osk setup` active) — not a dev symlink.
+
+## Ticket 32 (P1) — the AUR lifecycle, landed 2026-09-13 evening
+
+`bin/omarchy-osk` (staged to `/usr/bin`; `install.sh` symlinks it into
+`~/.local/bin` for source checkouts): setup [--migrate-source] /
+upgrade / status / teardown. PKGBUILD is now the stable tag-pinned
+`omarchy-osk` (publish-gated: push + tag + real checksum + .SRCINFO;
+depends incl. omarchy, qt6-declarative, wl-clipboard, libxkbcommon;
+optdepends qt6-multimedia + ffmpeg). Panel's Copy chip copies
+`omarchy-osk setup` (probed, with the install.sh fallback for a
+never-installed checkout). Package-notes and README rewritten around
+the one command. Decisions §45.
+
+VM choreography (`tools/package-test.sh <phase>`, no developer
+checkout): ALL PASS — build 6 (makepkg+check, .SRCINFO, symlink-free,
+namcap, ldd), chroot-build 1 (clean chroot, `--nodeps` + hand-installed
+toolchain — omarchy's AUR closure is unreachable from mirrors,
+documented), install 3, status 2, setup 6 (idempotent), protocol 3,
+upgrade 4, teardown 6 (×2), reinstall 2, legacy 9 (source install →
+package → setup refuses → `--migrate-source` converges, unit kept
+renamed), coldboot 4. Evidence in `.scratch/next-iteration/evidence/32/`.
+
+Lab notes: the nested Electron leg that broke after the 09-13
+power-cycle ("EGL setup failed") RECOVERED by itself after the next
+cold boot (exit 0, 88 rebuilds ≤ 142) — transient, not a regression;
+the ticket-28 overlay-input-death note stands as a rare-state hazard
+(did not recur).
+
+## Ticket 06 (P2) — the custom kb_file survives a shell SIGKILL (2026-09-13)
+
+The helper owns the recovery record now: every configure's kb_file runs
+through a pure three-way decision (user path → remember verbatim; empty →
+clear; published path → leave) persisted atomically as
+`$XDG_RUNTIME_DIR/omarchy-osk/user-keymap-source`; the fresh panel seeds
+`userKeymapFile` from it synchronously at creation; the compositor's
+kb_file is compared by exact identity (`Session.isPublishedKeymap`),
+never substring. Protocol unchanged. Decisions §46. Red-first (Rust 2,
+JS 2 — now 42/42 + 24/24); VM choreography
+`tools/keymap-recovery-test.sh run` **15/15** (SIGKILL with helper alive,
+helper restart, edited file, lookalike path, clear; evidence 06).
+
+## NEXT WORK — docs/audit-2026-09-13.md is the execution brief
+
+1. **31 (P2)** — bound the remembered layout group to the current
+   keymap (panel seam + daemon defence in depth).
+2. **33 (P2)** — restore the lost tests, sweep stale picker text,
+   reconcile the docs, add the compatibility matrix.
+
+The audit's post-release backlog (#1-#8) stays post-release. Omarchy
+first, direct emoji delivery the default, one coherent package.
+
+## Standing owner decisions
+
+- **Publish gate**: push + tag + AUR when the owner says so (the new
+  PKGBUILD documents the three publish steps). The repo has no public
+  remote yet.
+- `backup/pre-squash` branch retention.
+- Upstream notes to file (not blocking): Electron-version issue for the
+  docked-content verdict (ticket 30); Hyprland same-window-click event
+  absence.
+
+## Verification shortlist for a cold start
+
+```sh
+./tools/run-tests.sh          # 10 suites (clipboard-paste 22/0 ...)
+./tools/provenance.py         # exit 0
+./tools/qml-check.sh
+cargo clippy --manifest-path daemon/Cargo.toml --all-targets -- -D warnings
+bash -n bin/omarchy-osk tools/package-test.sh
+```
+VM lab: `ssh omarchy-vm` — the PACKAGED product is installed there
+(`/usr/bin/omarchy-osk status`); `~/omarchy-osk` remains the synced
+source tree for `tools/package-test.sh` phases and nested suites
+(`tools/nested-session.sh tools/smoke-daemon.sh`). Known trap: over
+ssh export `OMARCHY_PATH=/usr/share/omarchy` before `omarchy restart
+shell`/plugin IPC.
+
+---
+
+# Handoff — 2026-09-13 (morning, ticket 28)
 
 The tree was in a clean, working state at `d01ee62` (branch
 `spec/v1.1-fixes`, 10 commits, suites green, provenance 0, panel
@@ -38,55 +124,11 @@ acceptance remains a separate gate.
    Workaround used: drive `pickViaClipboard` through a guest-only
    FileView hook (removed after the run). If it recurs, bisect against
    the overlay layer's input mask.
-2. **After the domain power-cycle the nested suite's Electron leg dies**
+2. **After the domain power-cycle the nested suite's Electron leg died**
    (SIGTRAP; nested Hyprland logs "EGL setup failed", guest on llvmpipe;
-   the domain video model is plain `vga`, no GL). All other legs pass
-   and the daemon source is byte-identical to dd7b0c6 — an environment
-   regression. Re-provisioning the domain with virtio-gpu+virgl would
-   likely restore the leg.
-
-## NEXT WORK — docs/audit-2026-09-13.md is the execution brief
-
-Work its remaining tickets in order, one board ticket at a time:
-
-1. **32 (P1)** — the AUR lifecycle: /usr/bin/omarchy-osk
-   setup/upgrade/status/teardown, real dependencies (libxkbcommon,
-   wl-clipboard are hard), .SRCINFO, clean-chroot build, the full VM
-   choreography.
-2. **06 (P2)** — a shell SIGKILL loses the custom kb_file;
-   helper-owned runtime sidecar, exact-path identity.
-3. **31 (P2)** — bound the remembered layout group to the current
-   keymap (panel seam + daemon defence in depth).
-4. **33 (P2)** — restore the lost tests, sweep stale picker text,
-   reconcile the docs, add the compatibility matrix.
-
-The audit's post-release backlog (#1-#8) stays post-release. Omarchy
-first, direct emoji delivery the default, one coherent package.
-
-## Standing owner decisions
-
-- **Publish gate**: push + tag + AUR when the owner says so. The AUR
-  PKGBUILD is committed and honest about its gates (public push, tag,
-  .SRCINFO). The repo currently has no public remote.
-- `backup/pre-squash` branch retention.
-- Upstream notes to file (not blocking): Electron-version issue for the
-  docked-content verdict (ticket 30 has the lab evidence); Hyprland
-  same-window-click event absence.
-
-## Verification shortlist for a cold start
-
-```sh
-./tools/run-tests.sh          # 10 suites (config 38/0, reducer 96/0,
-                              # clipboard-paste 22/0 ...)
-./tools/provenance.py         # exit 0
-./tools/qml-check.sh
-cargo clippy --manifest-path daemon/Cargo.toml --all-targets -- -D warnings
-```
-VM lab: `ssh omarchy-vm`, scripts /tmp/vmclean.sh (bottomtest fixture
-in ~/bottomtest), signature via the socat probe (see vm-handoff). The
-host panel is a symlink to this tree; `omarchy restart shell` after
-QML edits; `./install.sh` after Rust edits. NOTE the two lab faults
-above before trusting click choreography in this VM.
+   the domain video model is plain `vga`, no GL). **Recovered by itself
+   after the next cold boot** (exit 0, 88 rebuilds ≤ 142) — transient
+   environment state, not a regression; see the evening note above.
 
 ## History — what just happened (2026-09-12 evening → 09-13)
 

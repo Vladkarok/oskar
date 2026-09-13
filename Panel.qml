@@ -389,6 +389,7 @@ Item {
 
     function probeDependencies() {
         depProbe.running = true
+        lifecycleProbe.running = true
     }
 
     function setupDependencies() {
@@ -405,8 +406,18 @@ Item {
     // command to the compositor clipboard through Quickshell's own
     // clipboardText; nothing is ever installed, built or elevated by the
     // panel itself.
-    readonly property string installCommand: "bash " + (Quickshell.env("HOME") || "")
-        + "/.config/omarchy/plugins/io.github.vladkarok.osk/install.sh"
+    //
+    // The copied command is the lifecycle command (ticket 32): one
+    // `omarchy-osk setup` converges registration, plugin enable and the
+    // unit — and exists both for the package (/usr/bin) and after any
+    // source install.sh run (~/.local/bin). Only a never-installed source
+    // checkout lacks it, and exactly there the checkout's own install.sh
+    // is the honest command; the probe picks once at startup.
+    property bool lifecycleCommandAvailable: false
+    readonly property string installCommand: root.lifecycleCommandAvailable
+        ? "omarchy-osk setup"
+        : "bash " + (Quickshell.env("HOME") || "")
+            + "/.config/omarchy/plugins/io.github.vladkarok.osk/install.sh"
 
     function retryService() {
         Quickshell.execDetached(["systemctl", "--user", "start", "omarchy-osk.service"])
@@ -1472,6 +1483,19 @@ Item {
             "command -v hyprctl >/dev/null && command -v jq >/dev/null && command -v xkbcli >/dev/null && command -v udevadm >/dev/null"]
         onExited: (exitCode, exitStatus) => {
             root.depsOk = exitCode === 0 && exitStatus === 0
+        }
+    }
+
+    Process {
+        id: lifecycleProbe
+        // One startup check for the installed lifecycle command (ticket
+        // 32): present as /usr/bin/omarchy-osk from the package and as
+        // ~/.local/bin/omarchy-osk after any source install.sh. Reruns are
+        // pointless — installation paths do not appear mid-session.
+        command: ["bash", "-c",
+            "test -x /usr/bin/omarchy-osk || test -x \"$HOME/.local/bin/omarchy-osk\""]
+        onExited: (exitCode, exitStatus) => {
+            root.lifecycleCommandAvailable = exitCode === 0 && exitStatus === 0
         }
     }
 
