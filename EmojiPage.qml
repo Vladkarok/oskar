@@ -164,9 +164,10 @@ Rectangle {
     // — this handler only gates on the arm and passes the named action
     // and the event's text through. Disarmed, nothing routes: the surface
     // may hold compositor focus for a few commits before the panel's
-    // None binding lands, and those keystrokes belong to the app — so
-    // only Escape (dismiss) is honoured, exactly the dead handler's
-    // standing semantics above.
+    // None binding lands, and keystrokes in that transient window are
+    // EATEN here, not forwarded — the compositor has no other focused
+    // surface to hand them to yet. Transient and bounded by the disarm
+    // round trip; the settled state is what the VM leg asserts.
     FocusScope {
         id: searchKeyScope
         width: 0
