@@ -176,6 +176,39 @@ function nextQuery(query, action, text) {
     return q
 }
 
+// Ticket 42's seam: one PHYSICAL key event, named with the action
+// vocabulary nextQuery (and Keyboard.searchInput) already speak — "char",
+// "backspace", "escape" — or "" when the key produces nothing. `event` is
+// event-shaped (key: the Qt key code, text: the decoded character or ""),
+// never a live KeyEvent, so tests/emoji-page.qml drives it with plain
+// objects (decisions §36). "char" hands the caller back to event.text
+// verbatim — the physical layout's character, Cyrillic included, case
+// included, exactly the rule the caps' resolution follows. Control
+// payloads never type: Return/Enter (\r), Delete (U+007F) and everything
+// below space are "" — Enter picking the first result stays out (the
+// ticket's nice-to-have), and a key with no text (modifiers, arrows, Tab,
+// function keys) has nothing to append. Key codes are matched before text
+// so Escape's or Backspace's own control payload cannot be mistaken for
+// a character. The literals are Qt.Key_Escape (0x01000000) and
+// Qt.Key_Backspace (0x01000003). A Control- or Meta-chord
+// (0x04000000 / 0x08000000) is not typing: while armed the layer holds
+// the keyboard and the chord cannot reach the app anyway, but it must
+// not leave a stray character in the query. Shift is typing — "A" is
+// what was typed. Whether an event reaches here at all —
+// the armed gate, the scope's focus — is the page's QML, not this rule.
+function searchKeyAction(event) {
+    var key = event ? (event.key || 0) : 0
+    var modifiers = event ? (event.modifiers || 0) : 0
+    if ((modifiers & 0x04000000) || (modifiers & 0x08000000)) return ""
+    if (key === 0x01000000) return "escape"
+    if (key === 0x01000003) return "backspace"
+    var text = event && typeof event.text === "string" ? event.text : ""
+    if (text.length === 0) return ""
+    var code = text.charCodeAt(0)
+    if (code < 32 || code === 127) return ""
+    return "char"
+}
+
 // The search field's placeholder word, in the ACTIVE LAYOUT's language
 // (the owner's 2026-09-13 call): ua draws Пошук, ru Поиск, everything
 // else the English Search. Keyed by the xkb layout CODE the panel already

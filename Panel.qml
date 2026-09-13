@@ -121,15 +121,23 @@ Item {
     // helper; "clipboard" publishes the exact sequence and sends the paste
     // chord — the owner's choice for Chromium-family clients (ZCode).
     property string emojiDelivery: maintainedDefaults.emojiDelivery
-    // Colour-field entry — the panel's ONE sanctioned keyboard-focus
-    // exception (spec-v1.1 §5). False except while a hex/RGB/HSV field is
-    // the active entry: the popover or editor window that holds that field
-    // then asks for Exclusive then OnDemand so the main OSK types into it.
-    // The keyboard panel itself stays None. One field at a time, panel-owned.
+    // Colour-field entry (spec-v1.1 §5) and the armed emoji search
+    // (ticket 42) — the panel's only TWO sanctioned keyboard-focus
+    // exceptions, both on the settings overlay, never at once. False
+    // except while a hex/RGB/HSV field is the active entry: the popover
+    // or editor window that holds that field then asks for Exclusive
+    // then OnDemand so the main OSK types into it.
+    // The keyboard panel itself stays None. One exception at a time,
+    // panel-owned; opening a colour field disarms the search.
     property bool hexEditing: false
     property string hexEditField: ""
 
     function beginHexEdit(field) {
+        // Hex wins the keyboard (ticket 42): an armed emoji search would
+        // both eat the caps' input in the query and hold the layer focus
+        // this entry needs. Disarm first — the keyboardFocus binding then
+        // hands the surface to the hex prime untouched.
+        if (emojiPage.searchArmed) emojiPage.searchArmed = false
         root.hexEditField = field
         root.hexEditing = true
     }
@@ -171,8 +179,10 @@ Item {
     // state; nothing persists.
     property bool emojiOpen: false
     // Ticket 29: the page's search is the keys' target only while armed —
-    // one flag drives the caps' routing, the paste chip's target rule and
-    // the field's visible state, so what the user sees is what decides.
+    // one flag drives the caps' routing, the paste chip's target rule,
+    // the field's visible state, and (ticket 42) whether the settings
+    // overlay holds keyboard focus and its key scope routes physical
+    // typing, so what the user sees is what decides.
     readonly property bool emojiSearchActive: root.emojiOpen
         && emojiPage.searchArmed
     readonly property var emojiUsage: geometryState.emojiUsage || []
@@ -229,6 +239,29 @@ Item {
     function emojiPickSettled() {
         emojiPage.searchArmed = false
         emojiPage.query = ""
+    }
+
+    // One applied search input, whatever hand named it (ticket 42): the
+    // OSK caps arrive as Keyboard.searchInput, physical typing as the
+    // page's physicalSearchInput — both carry the same action vocabulary,
+    // so both run this rule. Escape disarms once and closes only on the
+    // next press; every other action is the pure seam's query update.
+    function applyEmojiSearchInput(action, text) {
+        if (action === "escape") {
+            // Esc is the natural "leave the search" gesture the platform
+            // cannot give a click: the first press hands the keys back to
+            // the focused chat (ticket 29; ticket 42 releases the layer's
+            // hold with it), the second closes the page as before.
+            if (emojiPage.searchArmed) {
+                emojiPage.searchArmed = false
+                emojiPage.query = ""
+                console.log("[osk] emoji search disarmed by Esc")
+                return
+            }
+            root.emojiOpen = false
+            return
+        }
+        emojiPage.applySearchKey(action, text)
     }
 
     // Every geometryState write goes through here: one place that knows
@@ -332,6 +365,33 @@ Item {
             hexFocusPrimeTimer.restart()
         } else {
             root.hexFocusPrimed = false
+        }
+    }
+
+    // Ticket 42's focus prime: the same machinery, keyed on the armed emoji
+    // search instead of hex editing. Arming (a field click, or the page
+    // opening armed) may happen with the pointer parked on the keyboard
+    // band — a surface whose interactivity is None — so OnDemand alone
+    // would wait for a hover that may never come; the 75 ms Exclusive prime
+    // acquires focus deterministically at commit, and OnDemand settles in
+    // for the rest of the arm. The settle is the clean world the ticket
+    // asked for: Hyprland's refocusLastWindow skips OnDemand layer
+    // surfaces, so a click into any client takes keyboard focus back, the
+    // activewindow watcher disarms, and the binding below returns the
+    // surface to None — which the compositor answers by refocusing the
+    // last window (the colour-field release's proven path).
+    property bool emojiFocusPrimed: false
+    Timer {
+        id: emojiFocusPrimeTimer
+        interval: 75
+        onTriggered: if (root.emojiSearchActive) root.emojiFocusPrimed = true
+    }
+    onEmojiSearchActiveChanged: {
+        if (root.emojiSearchActive) {
+            root.emojiFocusPrimed = false
+            emojiFocusPrimeTimer.restart()
+        } else {
+            root.emojiFocusPrimed = false
         }
     }
 
@@ -1546,8 +1606,9 @@ Item {
         onHeightChanged: root.applyFloatingPosition()
 
         // Never take keyboard focus: the app being typed into keeps it, and
-        // the helper's keystrokes land there. Colour-field entry is the one
-        // exception, and it lives on the settings overlay, not here.
+        // the helper's keystrokes land there. Colour-field entry and the
+        // armed emoji search are the exceptions, and both live on the
+        // settings overlay, not here.
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         WlrLayershell.namespace: "io.github.vladkarok.osk"
         WlrLayershell.layer: WlrLayer.Overlay
@@ -1965,21 +2026,7 @@ Item {
                 // does; every other intercepted key only moves the query.
                 searchMode: root.emojiSearchActive
                 onSearchInput: function (action, text) {
-                    if (action === "escape") {
-                        // Esc is the natural "leave the search" gesture the
-                        // platform cannot give a click: the first press
-                        // hands the keys back to the focused chat (ticket
-                        // 29), the second closes the page as before.
-                        if (emojiPage.searchArmed) {
-                            emojiPage.searchArmed = false
-                            emojiPage.query = ""
-                            console.log("[osk] emoji search disarmed by Esc")
-                            return
-                        }
-                        root.emojiOpen = false
-                        return
-                    }
-                    emojiPage.applySearchKey(action, text)
+                    root.applyEmojiSearchInput(action, text)
                 }
                 // Everything the card spends on its own padding is width the
                 // grid cannot have, so a large preset on a narrow output
@@ -2271,10 +2318,22 @@ Item {
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.namespace: "io.github.vladkarok.osk.settings"
         WlrLayershell.layer: WlrLayer.Overlay
+        // Two sanctioned exceptions, never at once: a colour field being
+        // typed (spec-v1.1 §5) and the armed emoji search (ticket 42).
+        // Each primes Exclusive for 75 ms to acquire the compositor's
+        // focus, then settles OnDemand; every other state — disarmed
+        // search, closed page, unedited colours — is None, so every
+        // disarm path (the activewindow watcher, a delivered pick, the
+        // Esc caps, physical Escape, page close) restores the
+        // never-takes-focus contract by binding, not by bookkeeping.
+        // Hex editing wins the tie: opening it disarms the search.
         WlrLayershell.keyboardFocus: root.hexEditing
             ? (root.hexFocusPrimed ? WlrKeyboardFocus.OnDemand
                                    : WlrKeyboardFocus.Exclusive)
-            : WlrKeyboardFocus.None
+            : root.emojiSearchActive
+                ? (root.emojiFocusPrimed ? WlrKeyboardFocus.OnDemand
+                                         : WlrKeyboardFocus.Exclusive)
+                : WlrKeyboardFocus.None
 
         // Any leftover-centre surface: the settings card, the custom
         // colour editor, or the emoji page (ticket 24). The mask and the
@@ -2449,6 +2508,15 @@ Item {
                 var delivered = applyTone
                     ? EmojiGrid.entryForTone(entry, root.emojiSkinTone,
                         Catalog.entries()) : entry
+                // Ticket 42: while the search is armed the overlay holds
+                // keyboard focus, and a delivery must land in the client
+                // that focus returns to — so the arm drops BEFORE the
+                // helper or the clipboard chord is asked for anything.
+                // The binding's None makes the compositor refocus the
+                // last window (the colour-field release's proven path)
+                // ahead of the first keystroke. On a refused send the
+                // search stays disarmed; a field click re-arms it.
+                if (emojiPage.searchArmed) emojiPage.searchArmed = false
                 // Ticket 28's explicit mode: clipboard compatibility
                 // publishes the exact sequence and pastes it, for the
                 // clients (ZCode) that drop the typed routes. Direct keeps
@@ -2473,6 +2541,12 @@ Item {
             }
             onSkinToneChosen: function (tone) { root.chooseEmojiSkinTone(tone) }
             onDismissed: root.emojiOpen = false
+            // Ticket 42: physical typing while the search is armed. The
+            // page routed the raw event through EmojiGrid.searchKeyAction;
+            // what lands here is the same action the caps would have sent.
+            onPhysicalSearchInput: function (action, text) {
+                root.applyEmojiSearchInput(action, text)
+            }
         }
     }
 }

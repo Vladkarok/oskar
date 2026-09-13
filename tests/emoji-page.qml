@@ -514,6 +514,127 @@ QtObject {
                 ["count", "emoji", "lastUsed"])
         })
 
+        // ---- ticket 42: physical key events route through the search seam
+        // ---- ----
+        //
+        // While the search is armed the overlay surface holds keyboard
+        // focus and physical keystrokes arrive on a focusable scope; the
+        // QML handler is thin, and the whole event → action decision is
+        // this pure function: an event-shaped object (key, text) names
+        // the action, and the action feeds the SAME nextQuery seam the
+        // OSK caps use. Qt.Key_* values as literals: .pragma library
+        // files share no Qt global with the suite, and the numbers are
+        // stable(Qt key codes).
+
+        T.test("a text key routes to char, text passed through verbatim", function () {
+            T.equal(Page.searchKeyAction({ key: 0x41, text: "a" }), "char")
+            T.equal(Page.searchKeyAction({ key: 0x52, text: "R" }), "char")
+            T.equal(Page.searchKeyAction({ key: 0x23, text: "#" }), "char")
+            T.equal(Page.searchKeyAction({ key: 0x20, text: " " }), "char")
+            // A char key that carries no text produces no action.
+            T.equal(Page.searchKeyAction({ key: 0x41, text: "" }), "")
+        })
+
+        T.test("a Cyrillic event routes to char with the character untouched", function () {
+            T.equal(Page.searchKeyAction({ key: 0x439, text: "й" }), "char")
+            T.equal(Page.searchKeyAction({ key: 0x43F, text: "п" }), "char")
+            var q = Page.nextQuery("", "char", "п")
+            q = Page.nextQuery(q, "char", "о")
+            q = Page.nextQuery(q, "char", "ш")
+            T.equal(q, "пош")
+            T.equal(Page.searchKeyAction({ key: 0x439, text: "й" }) === "char",
+                true)
+        })
+
+        T.test("Backspace routes to backspace", function () {
+            T.equal(Page.searchKeyAction(
+                { key: 0x01000003, text: "\b" }), "backspace")
+            // Even with no text payload the key names the action.
+            T.equal(Page.searchKeyAction(
+                { key: 0x01000003, text: "" }), "backspace")
+        })
+
+        T.test("Escape routes to escape", function () {
+            T.equal(Page.searchKeyAction({ key: 0x01000000, text: "" }), "escape")
+            // A stray control payload does not turn Escape into a char.
+            T.equal(Page.searchKeyAction(
+                { key: 0x01000000, text: "\u001b" }), "escape")
+        })
+
+        T.test("no-text keys produce no action", function () {
+            // Modifiers, navigation, Tab, function-ish codes: the armed
+            // gate must have nothing to route, or a focused scope would
+            // eat chords and arrows.
+            T.equal(Page.searchKeyAction({ key: 0x01000020, text: "" }), "")
+            T.equal(Page.searchKeyAction({ key: 0x01000021, text: "" }), "")
+            T.equal(Page.searchKeyAction({ key: 0x01000012, text: "" }), "")
+            T.equal(Page.searchKeyAction({ key: 0x01000013, text: "" }), "")
+            T.equal(Page.searchKeyAction({ key: 0x01000014, text: "" }), "")
+            T.equal(Page.searchKeyAction({ key: 0x01000015, text: "" }), "")
+            T.equal(Page.searchKeyAction({ key: 0x01000001, text: "" }), "")
+            T.equal(Page.searchKeyAction({ key: 0x01001234, text: "" }), "")
+            T.equal(Page.searchKeyAction({ key: 0, text: "" }), "")
+            T.equal(Page.searchKeyAction({}), "")
+            T.equal(Page.searchKeyAction(undefined), "")
+        })
+
+        T.test("Enter and Delete are control characters, never characters", function () {
+            // Enter picking the first result is deliberately out (the
+            // ticket's nice-to-have): Return must route to nothing so a
+            // focused scope cannot surprise-pick. Delete's U+007F payload
+            // is control text, and the router must not append it.
+            T.equal(Page.searchKeyAction({ key: 0x01000004, text: "\r" }), "")
+            T.equal(Page.searchKeyAction({ key: 0x01000005, text: "\r" }), "")
+            T.equal(Page.searchKeyAction(
+                { key: 0x01000007, text: "\u007F" }), "")
+        })
+
+        T.test("a Ctrl- or Meta-chord is not typing", function () {
+            // Qt.ControlModifier 0x04000000, Qt.MetaModifier 0x08000000:
+            // while armed the layer holds the keyboard, so a chord cannot
+            // reach the app anyway — but it must not leave a stray
+            // character in the query either. Shift stays a typing
+            // modifier: "A" is what was typed.
+            T.equal(Page.searchKeyAction(
+                { key: 0x43, text: "c", modifiers: 0x04000000 }), "")
+            T.equal(Page.searchKeyAction(
+                { key: 0x56, text: "v", modifiers: 0x04000000 }), "")
+            T.equal(Page.searchKeyAction(
+                { key: 0x01000003, text: "\b", modifiers: 0x04000000 }), "")
+            T.equal(Page.searchKeyAction(
+                { key: 0x41, text: "A", modifiers: 0x02000000 }), "char")
+            // An event-shaped object without modifiers is a plain press.
+            T.equal(Page.searchKeyAction({ key: 0x41, text: "a" }), "char")
+        })
+
+        T.test("a physical typing session builds the query the caps would", function () {
+            // f l a g, space, u k r a i n, a slip, Backspace, the fix —
+            // the same composed query the caps' seam test builds, from
+            // event-shaped objects.
+            var events = [
+                { key: 0x46, text: "f" }, { key: 0x4C, text: "l" },
+                { key: 0x41, text: "a" }, { key: 0x47, text: "g" },
+                { key: 0x20, text: " " },
+                { key: 0x55, text: "u" }, { key: 0x4B, text: "k" },
+                { key: 0x52, text: "r" }, { key: 0x41, text: "a" },
+                { key: 0x49, text: "i" },
+                { key: 0x4D, text: "m" },
+                { key: 0x01000003, text: "\b" },
+                { key: 0x4E, text: "n" }
+            ]
+            var q = ""
+            for (var i = 0; i < events.length; i++) {
+                var action = Page.searchKeyAction(events[i])
+                if (action !== "")
+                    q = Page.nextQuery(q, action,
+                        action === "char" ? events[i].text : "")
+            }
+            T.equal(q, "flag ukrain")
+            var results = Catalog.search(q, 0)
+            T.equal(results.length > 0, true)
+            T.equal(results[0].name, "flag: Ukraine")
+        })
+
         Qt.exit(T.report("emoji page"))
     }
 }

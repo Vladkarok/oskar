@@ -248,6 +248,19 @@ entry is refused inline, writes nothing, and stays active for correcting.
 Focusing hex selects all. Right-click on hex is the stock text menu
 (cut/copy/paste), not a custom menu.
 
+The armed emoji search is the second sanctioned exception (2026-09-13
+amendment, ticket 42, owner-requested). While the search is armed the
+settings overlay holds keyboard focus — the same Exclusive-prime then
+OnDemand machinery as colour entry, never at once with it — and a
+focusless scope on the emoji page routes physical typing into the
+standing query through the same pure rule the OSK caps feed. Every
+disarm path (a focus change to a client, a delivered pick, Escape —
+capped or physical — and page close) returns the overlay to
+`WlrKeyboardFocus.None`, so outside the armed search the panel's
+never-takes-focus contract stands exactly as written. A delivered pick
+drops the arm before the first keystroke is asked for, so the emoji
+lands in the client focus returned to.
+
 The OSK itself types into the focused hex/RGB/HSV field (2026-09-08
 amendment, owner-requested). There is no local hex-entry pad. While no
 colour field is focused, OSK keys type into the previously focused

@@ -1611,3 +1611,53 @@ nothing. Residuals on record in the ticket: a click on the menu's own
 gaps dismisses it (miss target); a standing menu does not fold when
 the settings overlay opens above it (unreachable, never mis-typing);
 the level-4 entry is proven at the seam, not end-to-end.
+
+## 52. The armed emoji search borrows the keyboard — primed Exclusive, settled OnDemand
+
+2026-09-13, ticket 42 (the owner's request: the emoji search types from
+the OSK caps but not from the real keyboard, and he wants the physical
+fallback). While `emojiSearchActive`, the settings overlay — never the
+keyboard panel — holds layer keyboard focus, and a focusless scope on
+the emoji page routes physical events through the same pure seam the
+caps feed (`searchKeyAction` → `nextQuery`). Four decisions inside it:
+
+- **Primed Exclusive, settled OnDemand — the §29 colour-field
+  machinery, verbatim.** Hyprland's own source (0.56.2,
+  `src/desktop/view/LayerSurface.cpp`) decides it: a mapped surface
+  flipping None→OnDemand gets nothing on commit (no branch grants
+  focus), so arming by page-open — pointer parked on the keyboard band,
+  a None-interactivity surface — would leave the armed caret pointing
+  at an app. The 75 ms Exclusive prime grabs at commit
+  (`rawSurfaceFocus` in the now-exclusive branch); OnDemand then
+  settles in, exactly the shipped hex pattern.
+- **The settle is the clean disarm world.** Hyprland's
+  `refocusLastWindow` explicitly skips OnDemand layer surfaces
+  (`InputManager.cpp`: "if interactivity == ON_DEMAND, foundSurface =
+  nullptr"), so clicking any client takes keyboard focus back, the
+  `activewindow` watcher disarms, and the binding returns None. Full
+  Exclusive (held for the arm's life) was declined: `refocusLastWindow`
+  refuses outright while any Exclusive layer exists, so clicks could
+  never reclaim the keyboard — the escape-mandatory world the ticket
+  kept as fallback only.
+- **Every disarm path releases by binding, not bookkeeping.**
+  `keyboardFocus` derives from `emojiSearchActive`; the watcher, a
+  delivered pick, physical or capped Escape, and page close all drop
+  the flag and the surface returns to None. Hyprland answers a
+  focused surface's None with unfocus + `refocusLastWindow` — the app
+  gets the keys back. The pick drops its arm BEFORE the helper or the
+  clipboard chord is asked for anything, so the delivery lands in the
+  client focus returned to, not in our own surface. Opening a colour
+  field disarms the search: §5's exception keeps its caps, one
+  exception at a time.
+- **The routing is one pure function, the QML only gates.**
+  `EmojiGrid.searchKeyAction(event)` names "char"/"backspace"/"escape"
+  or nothing (control payloads never type; Enter stays out per the
+  ticket); the zero-sized FocusScope on the page checks `searchArmed`
+  and forwards. A drawn field remains the single visual truth — no
+  TextInput, no pre-edit.
+
+The live measurement of which mode the compositor honours is QUEUED
+(the lab VM is the ticket-35 tenant): armed typing via QMP lands in
+the query, after Escape keys reach the app again, and the honoured
+mode confirmed against this source reading. Until that leg runs, the
+ticket stays open.
