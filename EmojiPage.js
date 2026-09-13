@@ -176,6 +176,17 @@ function nextQuery(query, action, text) {
     return q
 }
 
+// The search field's placeholder word, in the ACTIVE LAYOUT's language
+// (the owner's 2026-09-13 call): ua draws Пошук, ru Поиск, everything
+// else the English Search. Keyed by the xkb layout CODE the panel already
+// knows, so a custom code falls through to English rather than guessing.
+function searchPlaceholder(layoutCode) {
+    var code = String(layoutCode || "").toLowerCase()
+    if (code === "ua") return "Пошук"
+    if (code === "ru") return "Поиск"
+    return "Search"
+}
+
 // Widest column count whose cells fit width: a column's pitch is cell + gap,
 // so n columns need n*pitch - gap. Clamped to [1, maximum] — a narrow output
 // narrows the grid instead of spilling cells past the page edge, and a wide
