@@ -1,4 +1,4 @@
-# Next-iteration tickets — current guide, 2026-09-08
+# [HISTORICAL — snapshot of 2026-09-08; the board in .scratch/next-iteration/issues/ is the truth] # Next-iteration tickets — current guide, 2026-09-08
 
 The local board is `.scratch/next-iteration/issues/`. Historical checklists
 can lag the latest Comments and owner decisions. This guide explains scope;

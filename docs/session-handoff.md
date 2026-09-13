@@ -2,12 +2,14 @@
 
 **START HERE — this section supersedes everything below it.**
 
-The external audit's execution round is COMPLETE: all five tickets
+The external audit's execution round is COMPLETE and the RELEASE
+CANDIDATE has passed its closing fresh adversarial review: **Verdict:
+ship** (at be4b12e; the RC findings — two comment/doc staleness MINORs
+and five NITs — are fixed in the round's last commit). All five tickets
 implemented and committed on `spec/v1.1-fixes` (never pushed — the repo
-has no public remote). Review verdicts: 28, 32, 06, 31 — `ship`; 33 —
-`do not ship` on its first tree, with every finding (the unreconciled
-handoff, the weakened test negative, the ticket's wording) applied
-verbatim in the closing commit — its prescriptions, not new logic:
+has no public remote). Per-ticket verdicts: 28, 32, 06, 31 — `ship`;
+33 — `do not ship` on its first tree, every finding applied verbatim in
+its closing commit:
 
 - **28 (f5bd4d6)** — clipboard emoji delivery is one serialized
   transaction (queue, real completion, compensations). VM wine leg
@@ -22,11 +24,18 @@ verbatim in the closing commit — its prescriptions, not new logic:
   decisions §46.
 - **31 (93bb161)** — the remembered layout group is bounded by the map
   that carries it (panel seam + daemon refusals), decisions §47.
-- **33 (this commit)** — lost tests restored (floatingAnchor,
+- **33 (55a2513)** — lost tests restored (floatingAnchor,
   usesWinePasteChord with the original discriminating negative), Stage E
   preserved with the rerun caveat, external-picker text swept from code
   and spec, docs reconciled (orientation, release-plan banner,
   compatibility matrix in README), board statuses truthful.
+- **be4b12e + the RC close** — the choreography scripts hardened (three
+  set -e/pipefail traps the RC sweep caught live), the full
+  release-candidate evidence run recorded (package phases 39/39,
+  coldboot 4/4, recovery 18/18, nested exit 0 at 92 ≤ 142 —
+  `.scratch/next-iteration/evidence/rc/`), and the RC review's residual
+  findings fixed (stale comments, README's publish-day Status paragraph,
+  status wording for a down helper).
 
 Host: ten JS suites (config 39, modifier-reducer 96, clipboard-paste
 22, keyboard-session 24, layout-devices 18, …) + 45 Rust tests, clippy

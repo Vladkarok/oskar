@@ -10,6 +10,7 @@
 #      (updpkgsums), run makepkg --printsrcinfo > .SRCINFO, commit both
 #      (omarchy-osk.install travels with the PKGBUILD or makepkg fails),
 #      and push to the AUR.
+#   4. revisit README's Status paragraph — it names this gate.
 # A -git VCS package may follow later as a separate optional PKGBUILD;
 # this one never resolves a moving branch.
 

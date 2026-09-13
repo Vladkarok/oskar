@@ -10,17 +10,19 @@ substantive lines are shared, and the licence is a sole copyright.
 
 ## Status
 
-**Work in progress. Not ready to enable on a machine you rely on.**
+The audit round of 2026-09-13 is complete: every ticket implemented,
+independently reviewed `ship`, and proven in the lab VM on the exact
+release candidate (host suites, the packaged-product lifecycle
+choreography, the crash-recovery choreography, the nested integration
+suite; evidence under `.scratch/next-iteration/evidence/rc/`).
 
-The QML panel works and the input helper passes its unit tests, the
-nested-session smoke, and first dogfooding in a disposable Omarchy VM:
-typing precision (screenshot-verified), layout mirroring in both
-directions with zero keymap churn, USB hotplug survival, and cold-boot
-self-recovery. The installer already enables and starts the service for
-the graphical session (see Install). Still ahead of a first public
-release: daily use on a real session, sleep/wake on real hardware, and
-the release gates listed in
-[docs/release-readiness-plan.md](docs/release-readiness-plan.md).
+Before this is enabled on a machine you rely on, two owner gates stand:
+the owner's own mouse/eyes acceptance of the round's behavior changes,
+and daily-use confirmation on a real session (sleep/wake on real
+hardware remains untested — the lab VM cannot suspend). Publishing is
+equally gated: push public, tag, checksum, `.SRCINFO` — the PKGBUILD's
+header lists every step, including the one README paragraph to revisit
+on that day (this one).
 
 ## Layout
 

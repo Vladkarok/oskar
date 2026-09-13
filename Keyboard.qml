@@ -29,9 +29,8 @@ Item {
     // plays the key click sound on it (spec-v1 §10).
     signal keyPressed()
     // The ☺ cap was pressed. The panel answers by toggling its own emoji
-    // page; the external-picker machinery this signal once armed is gone
-    // (ticket 24 step 5) — the configured app, when wanted, is launched
-    // from the page's chip.
+    // page — the only picker there is; the external-picker machinery this
+    // signal once armed is gone (ticket 24 step 5, decisions §24).
     signal emojiCapActivated()
 
     // While the emoji page stands (searchMode, wired from the panel's

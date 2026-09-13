@@ -227,8 +227,7 @@ function parseOverrides(text) {
         // Validation trims colours (#... with stray padding is accepted), so
         // storage trims them too: what the file would round-trip as a valid
         // override must not come back padded from the panel's own reads and
-        // serialization. The emoji app name trims for the same reason — a
-        // padded name is still that name.
+        // serialization.
         if (isColor(value)) value = value.trim()
         // Duplicate semantic names resolve deterministically: the canonical
         // spelling wins regardless of JSON order. An alias never overwrites
