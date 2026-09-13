@@ -48,14 +48,40 @@ summary() {
   ((FAIL == 0))
 }
 
+SOCKET="${XDG_RUNTIME_DIR:-$HOME/.run}/omarchy-osk/control.sock"
+
+hello() {
+  { printf 'hello 5\n' |
+    timeout 2 socat -t1 - UNIX-CONNECT:"$SOCKET" 2>/dev/null | head -n1; } || true
+}
+
+# The socket FILE exists the moment the runtime directory does; the
+# daemon answers a beat later (a setup/upgrade just restarted it). Wait
+# for the ANSWER, never the file.
+hello_until_ready() {
+  local reply="" tries=20
+  while ((tries-- > 0)); do
+    reply="$(hello)"
+    if [[ "$reply" == "hello 5" ]]; then break; fi
+    sleep 0.5
+  done
+  printf '%s' "$reply"
+}
+
 # The live-session environment every phase that talks to the shell needs.
 session_env() {
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
   export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
   export OMARCHY_PATH=/usr/share/omarchy
   local sig
+  # The || true is load-bearing under pipefail: stale nested-session
+  # directories never answer, the loop's exit status is its LAST
+  # iteration's, and a failing socat at the end would make the command
+  # substitution non-zero — which set -e turns into the phase dying
+  # silently right after this assignment (the live socket is usually the
+  # OLDEST directory, not the newest; caught live in the RC sweep).
   sig="$(for d in "$XDG_RUNTIME_DIR"/hypr/*/; do
-    printf 'j/version' | socat - UNIX-CONNECT:"$d.socket.sock" >/dev/null 2>&1 && basename "$d"
+    printf 'j/version' | socat - UNIX-CONNECT:"$d.socket.sock" >/dev/null 2>&1 && basename "$d" || true
   done | tail -1)"
   [[ -n "$sig" ]] && export HYPRLAND_INSTANCE_SIGNATURE="$sig" || true
 }
@@ -156,7 +182,7 @@ phase_chroot_build() {
   # installed, so fetch the exact files by URL into the cache.
   local p url base
   for p in rust cargo libxkbcommon; do
-    ls /var/cache/pacman/pkg/$p-*.pkg.tar.zst >/dev/null 2>&1 && continue
+    if ls /var/cache/pacman/pkg/$p-*.pkg.tar.zst >/dev/null 2>&1; then continue; fi
     url="$(pacman -Sp "$p" 2>/dev/null || true)"
     [[ -n "$url" ]] || continue
     base="$(basename "$url")"
@@ -166,7 +192,7 @@ phase_chroot_build() {
   local f
   for p in rust cargo libxkbcommon; do
     f="$(ls /var/cache/pacman/pkg/$p-*.pkg.tar.zst 2>/dev/null | tail -1 || true)"
-    [[ -n "$f" ]] && args+=(-I "$f")
+    if [[ -n "$f" ]]; then args+=(-I "$f"); fi
   done
   if (cd "$BUILD" && sudo makechrootpkg -c -r "$chroot" "${args[@]}" \
     -- -f --nodeps --nocheck) >"$BUILD/chroot-build.log" 2>&1; then
@@ -224,11 +250,11 @@ phase_protocol() {
   session_env
   local sock="$XDG_RUNTIME_DIR/omarchy-osk/control.sock" reply tries=20
   while ((tries-- > 0)); do
-    [[ -S "$sock" ]] && break
+    if [[ -S "$sock" ]]; then break; fi
     sleep 0.5
   done
   [[ -S "$sock" ]] && ok "socket present" || no "socket missing"
-  reply="$(printf 'hello 5\n' | timeout 2 socat -t1 - UNIX-CONNECT:"$sock" | head -n1)"
+  reply="$(hello_until_ready)"
   [[ "$reply" == "hello 5" ]] && ok "protocol hello ok" || no "hello reply: $reply"
   local rc1=0 rc2=0
   omarchy-shell shell toggle "$PLUGIN_ID" || rc1=$?
@@ -255,8 +281,7 @@ phase_upgrade() {
   omarchy-osk upgrade | tee "$BUILD/upgrade.log"
   systemctl --user --quiet is-active omarchy-osk.service \
     && ok "helper active after upgrade" || no "helper down after upgrade"
-  local sock="$XDG_RUNTIME_DIR/omarchy-osk/control.sock" reply
-  reply="$(printf 'hello 5\n' | timeout 2 socat -t1 - UNIX-CONNECT:"$sock" | head -n1)"
+  reply="$(hello_until_ready)"
   [[ "$reply" == "hello 5" ]] && ok "protocol ok after upgrade" || no "hello reply: $reply"
   summary
 }
@@ -328,8 +353,7 @@ phase_coldboot() {
   sleep 3
   systemctl --user --quiet is-active omarchy-osk.service \
     && ok "helper active after cold boot" || no "helper down after cold boot"
-  local sock="$XDG_RUNTIME_DIR/omarchy-osk/control.sock" reply
-  reply="$(printf 'hello 5\n' | timeout 2 socat -t1 - UNIX-CONNECT:"$sock" | head -n1)"
+  reply="$(hello_until_ready)"
   [[ "$reply" == "hello 5" ]] && ok "protocol ok after cold boot" || no "hello reply: $reply"
   [[ "$(readlink -f "$REG")" == /usr/share/omarchy-osk/plugin ]] \
     && ok "registration intact" || no "registration lost on boot"

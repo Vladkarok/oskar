@@ -48,8 +48,14 @@ session_env() {
   export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
   export OMARCHY_PATH=/usr/share/omarchy
   local sig
+  # The || true is load-bearing under pipefail: stale nested-session
+  # directories never answer, the loop's exit status is its LAST
+  # iteration's, and a failing socat at the end would make the command
+  # substitution non-zero — which set -e turns into the phase dying
+  # silently right after this assignment (the live socket is usually the
+  # OLDEST directory, not the newest; caught live in the RC sweep).
   sig="$(for d in "$XDG_RUNTIME_DIR"/hypr/*/; do
-    printf 'j/version' | socat - UNIX-CONNECT:"$d.socket.sock" >/dev/null 2>&1 && basename "$d"
+    printf 'j/version' | socat - UNIX-CONNECT:"$d.socket.sock" >/dev/null 2>&1 && basename "$d" || true
   done | tail -1)"
   [[ -n "$sig" ]] && export HYPRLAND_INSTANCE_SIGNATURE="$sig" || true
 }
@@ -67,7 +73,7 @@ get_kbfile() {
 # tabs to the record section, 0x1F between a record's fields, and the
 # first level field is a type tag ('t') followed by the glyph.
 cap_for() {
-  printf 'caps 0 %s\n' "$1" | timeout 2 socat -t1 - \
+  { printf 'caps 0 %s\n' "$1" | timeout 2 socat -t1 - \
     UNIX-CONNECT:"$RUNTIME_DIR/control.sock" 2>/dev/null |
     python3 -c '
 import sys
@@ -78,12 +84,12 @@ if len(parts) < 4 or not parts[3]:
 fields = parts[3].split("\x1f")
 first = fields[1] if len(fields) > 1 else ""
 print(first[1:] if first[:1] == "t" else first)
-'
+'; } || true
 }
 
 hello() {
-  printf 'hello 5\n' | timeout 2 socat -t1 - UNIX-CONNECT:"$RUNTIME_DIR/control.sock" 2>/dev/null |
-    head -n1
+  { printf 'hello 5\n' | timeout 2 socat -t1 - UNIX-CONNECT:"$RUNTIME_DIR/control.sock" 2>/dev/null |
+    head -n1; } || true
 }
 
 panel_open() {
@@ -107,7 +113,7 @@ wait_for() {
   local desc="$1" wanted="$2" getter="$3" tries=40 out=""
   while ((tries-- > 0)); do
     out="$("$getter")"
-    [[ "$out" == "$wanted" ]] && break
+    if [[ "$out" == "$wanted" ]]; then break; fi
     sleep 0.5
   done
   printf '%s' "$out"
@@ -120,7 +126,7 @@ phase_run() {
   # assertions otherwise race the service's own start.
   local settle=20
   while ((settle-- > 0)); do
-    [[ "$(hello)" == "hello 5" ]] && break
+    if [[ "$(hello)" == "hello 5" ]]; then break; fi
     sleep 0.5
   done
   command -v xkbcli >/dev/null || { sudo pacman -Sy --noconfirm libxkbcommon >/dev/null; }
