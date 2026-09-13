@@ -50,7 +50,8 @@ Rectangle {
     // ALWAYS an arm — the old toggle handed the keys to the app beneath
     // the owner's pointer the moment he clicked the field to focus it);
     // disarmed when another client takes the pointer's focus (the panel
-    // watches Hyprland) and after a delivered pick.
+    // watches Hyprland), after a delivered pick, and by Escape — the Esc
+    // cap's or, since ticket 42, a physical one.
     property bool searchArmed: true
     // The active xkb layout code, wired from the panel: the placeholder
     // word speaks the language the owner is typing in (Пошук/Поиск/
@@ -85,6 +86,11 @@ Rectangle {
     signal emojiChosen(var entry, bool applyTone)
     signal skinToneChosen(string tone)
     signal dismissed()
+    // Ticket 42: one routed PHYSICAL key event, in the same action
+    // vocabulary Keyboard.searchInput speaks ("char" with event.text,
+    // "backspace", "escape"). The panel applies it with the very rule the
+    // caps' input uses, so Escape's disarm has one definition.
+    signal physicalSearchInput(string action, string text)
 
     // One intercepted keyboard cap, applied to the standing query. The
     // keyboard names the action ("char" with the character it drew,
@@ -114,7 +120,23 @@ Rectangle {
                 ? "__usage__" : Catalog.groups()[0]
             emojiRoot.usageSnapshotRecords = EmojiGrid.usageViewOnOpen(
                 emojiRoot.usageRecords)
+            // Ticket 42: the page opens armed, so the key scope takes the
+            // scene's focus at open — the last assignment wins, and it
+            // must be the scope, not this Rectangle.
+            searchKeyScope.forceActiveFocus()
         }
+    }
+
+    // Ticket 42: the scope holds the scene's focus exactly while the
+    // search is armed. Re-arm (a field click) re-focuses it; every disarm
+    // — the focus watcher, a delivered pick, the Esc caps, physical
+    // Escape — hands it back, and the panel's keyboardFocus binding drops
+    // the surface to None in the same breath.
+    onSearchArmedChanged: {
+        if (searchArmed)
+            searchKeyScope.forceActiveFocus()
+        else
+            searchKeyScope.focus = false
     }
 
     // Ticket 34's second refresh point: re-entry into the usage category
@@ -127,12 +149,44 @@ Rectangle {
             emojiRoot.usageSnapshotRecords)
     }
 
-    // Escape dismisses the page — but the overlay surface takes no keyboard
-    // focus for its whole life (the settings layer's keyboardFocus is None),
-    // so this handler cannot fire today and dismissal is the Esc cap's job,
-    // routed through the panel like any cap action. The handler stands for
-    // the day the surface takes focus; nothing depends on it now.
+    // Escape's two meanings now both live (ticket 42): while the surface
+    // holds keyboard focus and the search is armed, the key scope routes
+    // Escape to the panel — clear + disarm + release, the same rule the
+    // Esc cap runs; disarmed, it dismisses the page, as the Esc cap's
+    // second press does. With no item focused (disarmed, surface already
+    // released) nothing here fires at all.
     Keys.onEscapePressed: emojiRoot.dismissed()
+
+    // The focusable target physical typing lands on while the search is
+    // armed (ticket 42). Nothing visual, nothing clickable: the drawn
+    // field above stays the single visual truth, and no TextInput exists
+    // to grab or pre-edit. The routing itself is EmojiGrid.searchKeyAction
+    // — this handler only gates on the arm and passes the named action
+    // and the event's text through. Disarmed, nothing routes: the surface
+    // may hold compositor focus for a few commits before the panel's
+    // None binding lands, and those keystrokes belong to the app — so
+    // only Escape (dismiss) is honoured, exactly the dead handler's
+    // standing semantics above.
+    FocusScope {
+        id: searchKeyScope
+        width: 0
+        height: 0
+
+        Keys.onPressed: function (event) {
+            var action = EmojiGrid.searchKeyAction(event)
+            if (action === "") return
+            event.accepted = true
+            if (action === "escape") {
+                if (emojiRoot.searchArmed)
+                    emojiRoot.physicalSearchInput("escape", "")
+                else
+                    emojiRoot.dismissed()
+                return
+            }
+            if (!emojiRoot.searchArmed) return
+            emojiRoot.physicalSearchInput(action, event.text)
+        }
+    }
 
     // ---- geometry ----
     //
