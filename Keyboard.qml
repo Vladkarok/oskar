@@ -825,8 +825,10 @@ Item {
     function switchToGroup(next) {
         // The group index is the seat's truth — xkb lists can repeat a code
         // across variants, so a code is not an address. Bounded against the
-        // list as it stands NOW: a configure that shrank it while a chooser
-        // stood open turns the stale pick into a no-op, not a hyprctl error.
+        // list as it stands NOW: a pick a configure shrank out of range
+        // while a chooser stood open becomes a no-op. (A pick still in range
+        // after a REORDER lands on whatever code now owns that index — rare,
+        // and the seat still converges on one group.)
         if (next < 0 || next >= layoutCodes.length) return
         if (switchKeyboards.length === 0) return
         // Hyprland stores the group per device. Move every device with this

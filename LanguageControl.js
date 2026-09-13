@@ -1,3 +1,5 @@
+.pragma library
+
 // The header language control's three shapes, and the chooser menu's
 // entries. Pure data: the panel wires these to the layout facts
 // Keyboard.qml already holds (layoutCodes, layoutTitles, groupCursor,
@@ -16,7 +18,6 @@
 // pullLayoutsFromCompositor caveat about guessed devices keeps its grey
 // signal. The two facts are deliberately separate inputs so the QML never
 // recombines them differently on the fill vs the click path.
-.pragma library
 
 function controlState(layoutCount, switchSetLength) {
     var count = typeof layoutCount === "number" ? layoutCount : 0
