@@ -365,3 +365,23 @@ function textLine(s) {
     if (text.length === 0 || text.indexOf("\n") >= 0) return ""
     return "text " + text
 }
+
+/// Ticket 06: the published keymap's absolute path, built exactly from the
+/// runtime directory the helper publishes into. Trailing separators on the
+/// environment value are normalized so the identity comparison below is
+/// about the path, not the spelling; an empty environment answers empty and
+/// compares equal to nothing.
+function publishedKeymapPath(runtimeDir) {
+    var base = String(runtimeDir || "").replace(/\/+$/, "")
+    if (base === "") return ""
+    return base + "/omarchy-osk/keymap.xkb"
+}
+
+/// Whether a compositor-reported kb_file IS the published keymap — exact
+/// identity, never a substring. A user's own file under a directory that
+/// happens to end in our suffix is the user's: the substring test adopted
+/// it as ours and silently dropped it (audit 06).
+function isPublishedKeymap(kbFile, runtimeDir) {
+    var path = String(kbFile || "")
+    return path !== "" && path === publishedKeymapPath(runtimeDir)
+}

@@ -1388,10 +1388,21 @@ record is helper-owned: every configure's `kb_file` runs through a pure
 three-way decision (a user path is remembered verbatim, empty clears, the
 published path leaves the record untouched) and lands atomically beside the
 published keymap as `user-keymap-source`. The fresh panel seeds itself from
-that file synchronously at creation — before its first layout snapshot could
-configure with an empty file and clear the record it was recovering from.
+that file at the decision point — synchronously, before a snapshot can build
+a configure — but only until a snapshot has OBSERVED the compositor's own
+setting once: after a live observation (a user file, or an explicit empty)
+the seed stays silent forever, so a cleared kb_file cannot be resurrected
+from the record by the panel's own recovery read.
 
-Two rules the record obeys:
+The lifetime is the unit's, held deliberately: `ProtectSystem=strict`
+leaves the helper writable only inside its runtime directory, and
+`RuntimeDirectoryPreserve=yes` keeps that directory across service stops —
+`omarchy-osk upgrade` restarts the helper as a routine step — while systemd
+still removes it when the session ends, which is exactly the record's
+intended lifetime. A stale socket in a preserved directory is the daemon's
+own startup logic (connect to tell a live owner apart, then unlink).
+
+Two more rules the record obeys:
 
 - It holds the panel's INTENT, not the compile outcome: even a refused
   configure is evidence of what the user had configured, and the recovery
@@ -1399,10 +1410,24 @@ Two rules the record obeys:
 - The compositor's `kb_file` is compared to the published keymap by exact
   identity, never by substring — a user's own file under a directory that
   happens to end in the published suffix is the user's, and the substring
-  test adopted it as ours and silently dropped it.
+  test adopted it as ours and silently dropped it. The path the panel SETS
+  and the path it COMPARES come from one normalizing builder, so an
+  environment spelling cannot make the two drift apart.
 
 The protocol is unchanged: `configure` already carried `kb_file`, and the
 sidecar is one writer (the helper) and one reader (the panel).
+
+Two priced exceptions, accepted with the design:
+
+- A transient empty `kb_file` read (a getoption hiccup while the
+  compositor really carries the published map) clears the record for the
+  session. The alternative — distrusting empty reads — would trade the
+  common `hyprctl reload` case for this rare one.
+- A sidecar left stale by an out-of-band clear while no panel lives can
+  restore an outdated map once, on the next shell. Panel-driven clears
+  self-heal; the window needs shell-dead + out-of-band clear + respawn
+  inside one login session, and is bounded by the runtime directory's
+  session lifetime.
 
 ## Dead ends — do not retry
 

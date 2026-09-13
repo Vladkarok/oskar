@@ -2134,6 +2134,63 @@ fn is_published_keymap(path: &str) -> bool {
         }
 }
 
+/// Ticket 06: the recovery record's file name, beside the published keymap
+/// in the runtime directory this helper owns — the one place
+/// `ProtectSystem=strict` leaves writable. The unit preserves that
+/// directory across service stops (`RuntimeDirectoryPreserve=yes`) because
+/// the record must survive helper restarts within the graphical session —
+/// `omarchy-osk upgrade` restarts the helper as a routine step — while
+/// systemd still removes it when the session ends, which is exactly the
+/// record's intended lifetime. The helper survives a shell crash; the
+/// panel does not, and the panel's in-memory `userKeymapFile` was the only
+/// record — a SIGKILLed shell left the compositor still compiling the
+/// published keymap with the source lost, and the custom keymap silently
+/// dropped for the session.
+const SOURCE_SIDECAR: &str = "user-keymap-source";
+
+/// What a configure's `kb_file` says about the user's own keymap source.
+#[derive(Debug, PartialEq)]
+enum SourceDecision {
+    /// The user's own file: remember it verbatim for shell-crash recovery.
+    Remember(String),
+    /// No custom source: the recovery record must not outlive the setting.
+    Clear,
+    /// Our own published path: ambiguous input, refused as an input
+    /// elsewhere; keep whatever is recorded rather than destroy it.
+    Leave,
+}
+
+fn user_source_decision(kb_file: &str) -> SourceDecision {
+    let trimmed = kb_file.trim();
+    if trimmed.is_empty() {
+        return SourceDecision::Clear;
+    }
+    if is_published_keymap(trimmed) {
+        return SourceDecision::Leave;
+    }
+    SourceDecision::Remember(trimmed.to_string())
+}
+
+/// Writes (or removes) the user's own `kb_file` record atomically: a temp
+/// file in the same directory renamed over the target, so a reader sees
+/// the old complete value, the new complete value, or nothing — never a
+/// partial path.
+fn persist_user_source(dir: &Path, source: Option<&str>) -> std::io::Result<()> {
+    let target = dir.join(SOURCE_SIDECAR);
+    let Some(path) = source else {
+        // Removing a missing file is the settled state, not an error: a
+        // fresh runtime directory has nothing to clear.
+        return match std::fs::remove_file(&target) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        };
+    };
+    let tmp = dir.join(format!("{SOURCE_SIDECAR}.tmp-{}", std::process::id()));
+    std::fs::write(&tmp, format!("{path}\n"))?;
+    std::fs::rename(&tmp, &target)
+}
+
 /// Writes the installed keymap where the compositor can be pointed at it.
 ///
 /// Renamed into place rather than written in place: the compositor may be
@@ -2691,6 +2748,26 @@ fn apply_locked(
         return "err shutting down".to_string();
     }
     if let Command::Configure(ref config) = command {
+        // Ticket 06: record the user's own `kb_file` source BEFORE
+        // anything else happens to it. Recorded from what the panel sends
+        // — the intent — and not from whether this compile succeeds: even
+        // a refused configure is evidence of what the user had configured,
+        // and the recovery read happens on a shell that no longer has the
+        // value anywhere else.
+        if let Some(published) = published_keymap_path() {
+            let dir = published
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| Path::new(".").to_path_buf());
+            let outcome = match user_source_decision(&config.kb_file) {
+                SourceDecision::Remember(path) => persist_user_source(&dir, Some(&path)),
+                SourceDecision::Clear => persist_user_source(&dir, None),
+                SourceDecision::Leave => Ok(()),
+            };
+            if let Err(error) = outcome {
+                eprintln!("[osk] could not record the user keymap source: {error}");
+            }
+        }
         let installed = shared.install_config(config);
         let _ = connection.flush();
         // The generation rides on the reply (decisions §23): it is what the
@@ -3455,6 +3532,87 @@ mod tests {
             !is_published_keymap(&format!("{spelling}.backup")),
             "a neighbour of ours is not ours"
         );
+    }
+
+    /// Ticket 06: the recovery record's three-way decision. A user's own
+    /// `kb_file` is remembered verbatim — including a path that merely
+    /// CONTAINS our suffix, which is a user's file by exact identity, not
+    /// ours by substring. An RMLVO configure (no file) clears the record:
+    /// the recovery value must not outlive the user's own setting. Our
+    /// published path is neither remembered nor forgotten — feeding our own
+    /// output back is refused elsewhere, and an ambiguous spelling must not
+    /// destroy the record.
+    #[test]
+    fn a_user_source_is_remembered_ours_is_left_and_empty_clears() {
+        match user_source_decision("/home/u/custom.xkb") {
+            SourceDecision::Remember(path) => {
+                assert_eq!(path, "/home/u/custom.xkb")
+            }
+            other => panic!("a user path is Remember, got {other:?}"),
+        }
+        // The audit's misclassification: an unrelated custom path whose
+        // suffix resembles the published path.
+        let lookalike = "/home/u/backups/omarchy-osk/keymap.xkb";
+        assert!(matches!(
+            user_source_decision(lookalike),
+            SourceDecision::Remember(_)
+        ));
+        assert!(matches!(user_source_decision(""), SourceDecision::Clear));
+        assert!(matches!(user_source_decision("  "), SourceDecision::Clear));
+        if let Some(ours) = published_keymap_path() {
+            let spelling = ours.to_string_lossy().to_string();
+            assert!(matches!(
+                user_source_decision(&spelling),
+                SourceDecision::Leave
+            ));
+        }
+    }
+
+    /// Ticket 06: the sidecar sits BESIDE the published keymap — the one
+    /// directory `ProtectSystem=strict` leaves the helper writable, and
+    /// the one the unit preserves across service stops so a routine
+    /// `omarchy-osk upgrade` cannot wipe the record.
+    #[test]
+    fn the_source_sidecar_lives_beside_the_published_keymap() {
+        let Some(published) = published_keymap_path() else {
+            return;
+        };
+        let dir = published
+            .parent()
+            .expect("the published keymap always has a parent directory");
+        let sidecar = dir.join(SOURCE_SIDECAR);
+        assert!(sidecar.starts_with(dir));
+        assert_ne!(sidecar, published, "the record is not the keymap itself");
+    }
+
+    /// Ticket 06: the sidecar itself. Written atomically (temp + rename),
+    /// re-written in place, and removed on clear — a reader either sees the
+    /// old complete value, the new complete value, or nothing.
+    #[test]
+    fn the_source_sidecar_writes_rewrites_and_clears() {
+        let dir = std::env::temp_dir().join(format!("osk-sidecar-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        persist_user_source(&dir, Some("/home/u/custom.xkb")).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join(SOURCE_SIDECAR))
+                .unwrap()
+                .trim(),
+            "/home/u/custom.xkb"
+        );
+        // An edited custom file at the same path is the same record shape:
+        // the sidecar holds the PATH, content is read fresh each compile.
+        persist_user_source(&dir, Some("/home/u/custom.xkb")).unwrap();
+        persist_user_source(&dir, Some("/home/u/two.xkb")).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join(SOURCE_SIDECAR))
+                .unwrap()
+                .trim(),
+            "/home/u/two.xkb"
+        );
+        persist_user_source(&dir, None).unwrap();
+        assert!(!dir.join(SOURCE_SIDECAR).exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A custom keymap edited at its own path is a different keymap.

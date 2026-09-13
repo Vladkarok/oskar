@@ -479,6 +479,32 @@ QtObject {
             T.equal(Session.textLine("\n"), "")
         })
 
+        // Ticket 06: the compositor's kb_file is compared to the published
+        // keymap by exact identity, never by substring — an unrelated user
+        // path that happens to contain our suffix is the user's file.
+        T.test("the published keymap path is built from the runtime dir", function () {
+            T.equal(Session.publishedKeymapPath("/run/user/1000"),
+                "/run/user/1000/omarchy-osk/keymap.xkb")
+            T.equal(Session.publishedKeymapPath("/run/user/1000/"),
+                "/run/user/1000/omarchy-osk/keymap.xkb")
+            T.equal(Session.publishedKeymapPath("/run/user/1000//"),
+                "/run/user/1000/omarchy-osk/keymap.xkb")
+            T.equal(Session.publishedKeymapPath(""), "")
+        })
+
+        T.test("published-keymap identity is exact, never a substring", function () {
+            var dir = "/run/user/1000"
+            var ours = "/run/user/1000/omarchy-osk/keymap.xkb"
+            T.equal(Session.isPublishedKeymap(ours, dir), true)
+            T.equal(Session.isPublishedKeymap("", dir), false)
+            // The audit's misclassification: a user path whose suffix
+            // resembles the published path is NOT ours.
+            T.equal(Session.isPublishedKeymap(
+                "/home/u/backups/omarchy-osk/keymap.xkb", dir), false)
+            T.equal(Session.isPublishedKeymap("/home/u/my.xkb", dir), false)
+            T.equal(Session.isPublishedKeymap(ours + ".backup", dir), false)
+        })
+
         Qt.exit(T.report("keyboard session"))
     }
 }

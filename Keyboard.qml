@@ -499,6 +499,14 @@ Item {
     // alone — the user's custom keymap silently dropped for the rest of the
     // session.
     property string userKeymapFile: ""
+    // Whether a snapshot has SEEN the compositor carry something other
+    // than the published keymap — the user's own file, or an explicit
+    // empty. Once observed, the panel's knowledge is authoritative for
+    // the session and the recovery seed stays out: without this flag, a
+    // cleared kb_file would be resurrected from the sidecar by the next
+    // published-branch snapshot and the clear would never stick (the
+    // seed's own record fighting the clear).
+    property bool userKeymapObserved: false
     function shareKeymapWithCompositor() {
         if (session.ackedGen === 0 || sharedKeymapGen === session.ackedGen) return
         shareProcess.wanted = session.ackedGen
@@ -524,7 +532,11 @@ Item {
         property int wanted: 0
         property int attempts: 0
         command: ["bash", "-c",
-            "path=\"$XDG_RUNTIME_DIR" + root.publishedKeymap + "\"; "
+            // The path comes from the same normalizing builder the
+            // identity comparison uses (Session.publishedKeymapPath), so
+            // what is SET and what is compared as "ours" can never drift
+            // apart over an environment spelling (audit 06).
+            "path=\"" + Session.publishedKeymapPath(Quickshell.env("XDG_RUNTIME_DIR")) + "\"; "
             + "[[ -s \"$path\" ]] || exit 3; "
             + "hyprctl eval \"hl.config({input = {kb_file = ''}})\" >/dev/null || exit 4; "
             + "hyprctl eval \"hl.config({input = {kb_file = '$path'}})\" >/dev/null || exit 4; "
@@ -562,6 +574,35 @@ Item {
         interval: 400
         repeat: false
         onTriggered: if (!shareProcess.running) shareProcess.running = true
+    }
+
+    // Ticket 06: the recovery read. The helper records the user's own
+    // kb_file as a sibling of its runtime directory, before the panel ever
+    // points the compositor at the published one; a shell that died
+    // without its destruction hook (SIGKILL, crash) has nothing in memory,
+    // so the fresh panel seeds the remembered source from that file. One
+    // writer (the helper), one reader (this); an absent file is nothing to
+    // recover, not an error. The read is taken synchronously AT THE
+    // DECISION POINT (recoverUserKeymapSource below): blockLoading makes
+    // text() block until the local file is loaded, so no snapshot can
+    // build a configure before the seed has landed in memory.
+    FileView {
+        id: userSourceSeed
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "").replace(/\/+$/, "")
+            + "/omarchy-osk/user-keymap-source"
+        blockLoading: true
+        watchChanges: false
+        printErrors: false
+    }
+
+    // Idempotent: only ever fills an empty memory that has never observed
+    // the compositor's own setting, so live knowledge always wins and the
+    // file is only a recovery source for a shell that died before it could
+    // observe anything.
+    function recoverUserKeymapSource() {
+        if (root.userKeymapFile !== "" || root.userKeymapObserved) return
+        var remembered = String(userSourceSeed.text() || "").trim()
+        if (remembered !== "") root.userKeymapFile = remembered
     }
 
     // Whatever the compositor had before this panel pointed it at the
@@ -643,15 +684,27 @@ Item {
         // the result. A kb_file the USER set is a real input and is passed on.
         // Ours or the user's. When the compositor is on the published keymap
         // the helper is fed whatever the user had configured — remembered
-        // above — so `kb_layout` edits and a custom keymap both keep working.
-        // When it is NOT on the published keymap, something dropped it: a
-        // `hyprctl reload` for a theme change resets a runtime `kb_file` to
-        // whatever the config file says, and the configure that follows is
-        // byte-identical, so the helper's generation never moves and the
-        // once-per-generation guard would never fire again. Re-arm instead.
-        if (kbFile.indexOf(publishedKeymap) !== -1) {
+        // above, or recovered from the helper's sidecar after a shell that
+        // died without its destruction hook (ticket 06) — so `kb_layout`
+        // edits and a custom keymap both keep working. When it is NOT on the
+        // published keymap, something dropped it: a `hyprctl reload` for a
+        // theme change resets a runtime `kb_file` to whatever the config
+        // file says, and the configure that follows is byte-identical, so
+        // the helper's generation never moves and the once-per-generation
+        // guard would never fire again. Re-arm instead.
+        //
+        // Exact identity, never a substring: a user's own file under a
+        // directory ending in our suffix is the user's, and the substring
+        // test adopted it as ours (audit 06). The seed read happens HERE,
+        // at the decision point, so no snapshot can build its configure
+        // before the recovered source has landed in memory.
+        recoverUserKeymapSource()
+        if (Session.isPublishedKeymap(kbFile, Quickshell.env("XDG_RUNTIME_DIR"))) {
             xkbFile = userKeymapFile
         } else {
+            // A live observation of the user's own setting — including an
+            // explicit empty: from here the recovery seed stays silent.
+            userKeymapObserved = true
             userKeymapFile = kbFile
             xkbFile = kbFile
             if (sharedKeymapGen !== 0) {
@@ -785,6 +838,10 @@ Item {
     }
 
     Component.onCompleted: {
+        // The ticket-06 recovery seed runs before the first snapshot can
+        // build a configure (and once more at the decision point itself):
+        // blockLoading makes the local read synchronous.
+        recoverUserKeymapSource()
         if (root.rememberedLayoutDevice !== "")
             root.anchorKeyboardName = root.rememberedLayoutDevice
         pullLayoutsFromCompositor()
