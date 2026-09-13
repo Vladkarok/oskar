@@ -40,24 +40,32 @@ for reference; delete it when confident.
 5. Audit round 1 landed (dead code, duplication); audit round 2 is the
    NEXT WORK.
 
-## NEXT WORK — the audit's remaining items, in priority order
+## NEXT WORK — docs/audit-2026-09-13.md is the execution brief
 
-1. **QML smoke-load test** (the headline): no suite instantiates
-   Panel/Keyboard/EmojiPage; qml-check catches only syntax. All three
-   contract bugs above passed every existing check. Build an offscreen
-   test that Loader-loads each component and fails on any
-   runtime/Reference error. This pays for itself daily.
-2. **OverlayCard extraction**: the card frame + scrollbar + clamp logic
-   is near-duplicated between EmojiPage.qml and SettingsPopover.qml.
-3. **Pure seams for QML logic** (each cheap): the hint-state precedence
-   table, typeCap's press plan (twin of tested charUnderModifiers), the
-   search armed/disarmed machine, the paste-chip choreography.
-4. Emoji-page test restates the page geometry by hand — move the formula
-   to EmojiPage.js and bind both.
-5. The tested clamp (SettingsPlacement.fitSizeInLeftover) has no
-   production callers; the live clamps are untested — route or delete.
-6. Minor: capActsOnPress (cap-kind derived 3x in Keyboard.qml), the
-   size-arithmetic consolidation, the hint/chip anchor chain.
+The owner's external audit (2026-09-13, at dd7b0c6) reprioritized the
+plan; its factual claims were verified (the 28 race, the lost classifier
+test, the undeclared libxkbcommon). Work its tickets in order, one board
+ticket at a time:
+
+1. **28 reopened (P1)** — serialize clipboard delivery: the paced wine
+   chord races rapid A→B picks; usage/settle/close only from a real
+   completion. Red tests first.
+2. **32 new (P1)** — the AUR lifecycle: /usr/bin/omarchy-osk
+   setup/upgrade/status/teardown, real dependencies (libxkbcommon,
+   wl-clipboard are hard, undeclared), .SRCINFO, clean-chroot build,
+   the full VM choreography.
+3. **06 reopened (P2)** — a shell SIGKILL loses the custom kb_file;
+   helper-owned runtime sidecar, exact-path identity.
+4. **31 new (P2)** — bound the remembered layout group to the current
+   keymap (panel seam + daemon defence in depth).
+5. **33 new (P2)** — restore the lost tests (usesWinePasteChord verified
+   gone; floatingAnchor survived), sweep stale picker text, reconcile
+   the docs, add the compatibility matrix.
+
+The old audit-round-2 items (QML smoke loading, OverlayCard, pure
+seams) are the audit's **post-release backlog** (#1-#8 there) — do not
+start them before release. The audit also fixes scope: Omarchy-only
+first, direct emoji delivery the default, one coherent package.
 
 ## Standing owner decisions
 
