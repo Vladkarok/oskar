@@ -1575,3 +1575,39 @@ direction, not a feature. Revisit trigger: a measured heavy mouse-typist
 asking for fewer clicks, not a competitor's feature list. Search
 vocabulary, by contrast, is cheap and exact — ticket 36 widens it to
 CLDR ru/uk keywords without touching the input path.
+
+## 51. A held cap offers its keymap column — levels 3-4, typed on release
+
+2026-09-13, ticket 37 (the audit backlog's item 2, the owner's
+request). Hold a character cap ~320 ms and, when its keymap position
+carries extra levels, a small column popover offers them; a pick types
+the level through the same exact modifier chord the &123 glyph caps
+use. Three decisions inside it:
+
+- **The column is levels 3-4, not 2-4.** Level 2 is the cap's own
+  drawn Shift face — offering it would duplicate a character the cap
+  already types and hand every two-level letter cap a menu, when the
+  point is what the cap CANNOT reach directly. Levels 5-8 stay on the
+  &123 page per §33: one route per character, no split authority. The
+  content is the live keymap's own column (`capsFacts`), never a
+  static accent table — the drawn-is-typed promise holds per entry.
+- **Column caps type on RELEASE.** A press-typing hold-menu would
+  strand stray characters before the threshold; deferred caps send no
+  line at press, so a hold types nothing, starts no compositor repeat,
+  and a canceled hold is strictly cleaner than today. Quick clicks
+  send the identical press+release pair, only both at release. Caps
+  without a column (stock two-level letters, Space, BackSpace,
+  modifiers, exact caps, searchMode) keep press-types + the
+  compositor's own repeat (spec-v1 §6) untouched.
+- **The menu is card-local** per §49's lesson (the input mask is the
+  card rect), folds on panel close, facts change and search arming,
+  and its pick spends latches per §2 like any exact cap.
+
+VM-proven in the live lab (the nested polygon cannot host the panel at
+all: its seat exposes only the parent's wl_keyboard and
+LayoutDevices.isSafe refuses it by design): hold typed nothing,
+level-3 pick typed §, quick click typed 3, cancel and dismiss typed
+nothing. Residuals on record in the ticket: a click on the menu's own
+gaps dismisses it (miss target); a standing menu does not fold when
+the settings overlay opens above it (unreachable, never mis-typing);
+the level-4 entry is proven at the seam, not end-to-end.

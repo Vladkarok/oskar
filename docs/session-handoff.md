@@ -41,20 +41,34 @@ Accepted limitation on record: the uk apostrophe split (U+02BC vs
 U+2019, 130 keywords) is not folded — recall-only, AND-safe. Decisions
 §50's sibling call: predictions declined, search vocabulary taken.
 
-**37 (hold-a-cap column menu) — IN FLIGHT**: a background implement
-agent is building the long-press keymap-column chooser (type-on-release
-for deferred caps, no stray characters, levels 2-4 only, card-local
-menu per the §49 lesson, mandatory VM leg proving the chord bytes).
-Its contract: `.scratch/next-iteration/issues/37-hold-column-menu.md`.
-When it lands: orchestrator verification + one independent adversarial
-review (owner demanded review explicitly) before `ship`. One crash
-recovery note: both background agents died with a ZCode crash and were
-relaunched with identical briefs — 36's work was already committed
-(lost nothing), 37 restarted from zero.
+**37 (hold-a-cap column menu) — implemented + reviewed `ship`** (commit
+09ca4c3, decisions §51): hold a character cap ~320 ms and its keymap
+position's levels 3-4 open a card-local column popover; a pick types
+the level through the &123 glyph caps' exact chord. Column caps type on
+RELEASE (a hold types nothing, starts no repeat, cancels clean);
+everything without a column — stock two-level letters, Space,
+BackSpace, modifiers, exact caps, searchMode — keeps press-types +
+compositor repeat untouched. Level 2 deliberately excluded (the cap's
+own Shift face); levels 5-8 stay &123-only (§33). Pure seam
+`HoldColumn.js` (18 tests, red first); battery 343 JS + helper 45 +
+clippy + provenance 0, twice over. VM-proven in the LIVE lab (venue
+finding on record: the nested polygon cannot host the panel — its seat
+exposes only the parent's wl_keyboard and LayoutDevices.isSafe refuses
+it by design): hold typed nothing, level-3 pick typed §, quick click
+typed 3, cancel/dismiss typed nothing. Review verdict ship; LOW
+residuals on record in the ticket (menu-gap clicks dismiss; no fold
+under a later-opened overlay; level-4 proven at the seam). Owner's
+feel pass pending: threshold, digit-row fallback, gap-click.
+
+One crash-recovery note: a ZCode crash killed both background agents
+mid-flight; both were relaunched with identical briefs — 36's work was
+already committed (lost nothing), 37 restarted from zero and landed
+clean.
 
 Owner gates otherwise unchanged from below: mouse/eyes acceptance of
-the round (now including 34's click-through and 35's three-layout
-menu), and the publish decision.
+the round — now including 34's click-through, 35's three-layout menu,
+36's emoji search in ru/uk ("кот"/"кіт"/"яблуко"), and 37's hold feel
+(threshold, digit-row fallback, gap-click) — and the publish decision.
 
 ---
 
