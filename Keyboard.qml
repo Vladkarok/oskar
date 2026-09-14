@@ -11,6 +11,7 @@ import "KeyboardSession.js" as Session
 import "Config.js" as ConfigFile
 import "LayoutDevices.js" as LayoutDevices
 import "SettleGuard.js" as SettleGuard
+import "SocketWatch.js" as SocketWatch
 import "ClipboardPaste.js" as ClipboardPaste
 
 Item {
@@ -1359,9 +1360,34 @@ Item {
     // only a genuinely new connection may reset device-held modifier state,
     // never the repair timer's re-hello of a live one. See the hello handler.
     property bool socketReconnected: false
-    // The helper socket, created by the loader below. Root-scope alias because
-    // the component's own id does not reach the functions out here.
+    // The hello watchdog's ledger (ticket 47): a hello was written and
+    // nothing has arrived from the helper since. `connected` alone cannot
+    // be trusted to say the pipe is alive — a peer-closed quickshell
+    // Socket can keep reporting true (observed live twice: the owner's
+    // original note in the error handler below, and the install-from-zero
+    // stranger's whole session) — so liveness is proved by traffic, and a
+    // hello outstanding past SocketWatch.HELLO_STALE_MS rebuilds the
+    // socket whatever `connected` claims. Cleared by every arriving line,
+    // by a disconnect, and by the rebuild itself (the hello belonged to
+    // the object being torn down).
+    property bool helloInFlight: false
+    property real helloSentAt: 0
+    // Root-scope alias because the component's own id does not reach the
+    // functions out here.
     property QtObject daemonSocket: helperLoader.item
+
+    // The one rebuild of the socket object: destroy and recreate it
+    // through the loader, on the next tick where QML is idle enough to
+    // tear a live object graph down safely. onError's original home, now
+    // shared with the watchdog's "rebuild" answer and the path check —
+    // one place that knows a fresh socket object is the cure.
+    function rebuildSocket() {
+        root.helloInFlight = false
+        Qt.callLater(function () {
+            helperLoader.active = false
+            helperLoader.active = true
+        })
+    }
 
     // The helper may start after the shell: systemd orders the service
     // against graphical-session.target, not against the shell, so the panel's
@@ -1403,6 +1429,9 @@ Item {
                 } else {
                     root.inputReady = false
                     root.pendingTextReplies = []
+                    // The hello this object was owed can no longer arrive;
+                    // the watchdog must not keep waiting on it.
+                    root.helloInFlight = false
                     // The handshake no longer holds on this dead socket; the
                     // queue and facts stay until a new connection's fresh
                     // hello restarts them (a live helper may still answer for
@@ -1421,6 +1450,12 @@ Item {
             parser: SplitParser {
                 onRead: function (line) {
                     var reply = String(line).trim()
+                    // Any line from the helper proves the pipe alive end to
+                    // end (ticket 47's watchdog): the daemon serves each
+                    // connection in order, so whatever this is, a hello
+                    // written before it has been answered or overtaken by
+                    // work that is about to answer.
+                    root.helloInFlight = false
                     if (reply === "hello " + Session.PROTOCOL_VERSION) {
                         root.serviceIncompatible = false
                         root.inputReady = false
@@ -1736,10 +1771,7 @@ Item {
             onError: {
                 if (!connected) return
                 root.inputReady = false
-                Qt.callLater(function () {
-                    helperLoader.active = false
-                    helperLoader.active = true
-                })
+                root.rebuildSocket()
             }
         }
     }
@@ -1759,6 +1791,12 @@ Item {
                 // against a helper this panel is actually compatible with.
                 root.daemonSocket.write("hello " + Session.PROTOCOL_VERSION + "\n")
                 root.daemonSocket.flush()
+                // The watchdog's mark: written and unanswered. The write
+                // itself cannot be trusted to fail on a dead transport
+                // (quickshell may buffer it silently), so the mark is set
+                // unconditionally and only ever cleared by arriving traffic.
+                root.helloInFlight = true
+                root.helloSentAt = Date.now()
             }
         }
     }
@@ -1772,8 +1810,7 @@ Item {
             // Rebuilding a live connection would drop it mid-handshake.
             var item = root.daemonSocket
             if (code === 0 && !root.inputReady && !(item && item.connected)) {
-                helperLoader.active = false
-                helperLoader.active = true
+                root.rebuildSocket()
             }
         }
     }
@@ -1783,7 +1820,7 @@ Item {
         interval: 2000
         repeat: true
         // Also while a configure is outstanding. Readiness alone stopped being
-        // enough once a group-only configure no longer lowers `inputReady`
+        // enough once a group-only configure no longer lowered `inputReady`
         // (ticket 16): a socket that stays `connected` but never answers
         // `configured` would leave the panel ready-looking, drawing the acked
         // group while the helper types the queued one, with no tick to notice.
@@ -1792,17 +1829,39 @@ Item {
         // when this fires is a lost reply, not a slow one.
         running: !root.inputReady || !Session.settled(root.session)
         onTriggered: () => {
-            // An open socket is never torn down, whatever the handshake is
-            // doing: a configure round trip can outlast this tick, and
-            // rebuilding mid-handshake would drop it and restart the dance.
-            // Open-but-unready gets a fresh hello; absent or wedged gets the
-            // rebuild, if the helper's socket file is on disk.
+            // Ticket 47's watchdog: the decision is SocketWatch's pure table,
+            // pinned in tests/socket-watch.qml. The old inline policy — an
+            // open socket is only ever re-helloed — turned a socket that lies
+            // `connected` on a peer-closed transport into a permanent wedge
+            // (the install-from-zero stranger's dead keys: re-hellos written
+            // into a dead object, "Starting omarchy-osk.service…" standing,
+            // every key click a silent no-op, escape only by shell restart).
+            // Now a hello outstanding past its fair window rebuilds the
+            // socket object whatever `connected` claims; a live helper
+            // answers hello in well under a second, so only a socket that
+            // cannot deliver ever sees the window expire. The rebuild path
+            // is also the silent-dial cure: a fresh socket that connects
+            // without ever signalling gets a hello on the next tick, and
+            // the tick after that treats its silence the same way.
             var item = root.daemonSocket
-            if (item && item.connected) {
+            var action = SocketWatch.reconnectAction({
+                connected: !!(item && item.connected),
+                helloInFlight: root.helloInFlight,
+                helloAgeMs: Date.now() - root.helloSentAt
+            })
+            if (action === "hello") {
                 helloTimer.restart()
                 return
             }
-            socketPathCheck.running = true
+            if (action === "rebuild") {
+                root.rebuildSocket()
+                return
+            }
+            if (action === "path-check") {
+                socketPathCheck.running = true
+                return
+            }
+            // "wait": the outstanding hello is still inside its window.
         }
     }
 

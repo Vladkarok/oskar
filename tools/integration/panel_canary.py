@@ -395,6 +395,65 @@ def service_active():
     return out == "active"
 
 
+def band_statistics():
+    """Ticket 47's visibility facts for the open, docked panel band.
+
+    grim writes a binary PPM for the strip's geometry (no imaging
+    dependency in the lab); the counts are the two numbers that separate
+    a drawn keyboard from a flat slab: pixels in the cap-text luminance
+    band, and distinct sampled colours (card background, cap fill, cap
+    border, accent, text antialiasing). Measured live on this lab's
+    1280x800 output: a drawn keyboard reads ~900-1300 text-band pixels
+    (US and Cyrillic groups differ) over ~190 sampled colours. The very
+    bottom screen rows carry a bright compositor edge that would pollute
+    the count, so the capture stops five pixels short of it.
+    """
+    out = subprocess.run(
+        ["hyprctl", "monitors", "-j"], capture_output=True, text=True).stdout
+    try:
+        monitor = json.loads(out)[0]
+        width, height = monitor["width"], monitor["height"]
+    except (ValueError, IndexError, KeyError):
+        raise Failure(f"cannot read the lab output's geometry: {out!r}")
+    path = os.path.join(RUNTIME, "osk-canary-band.ppm")
+    geometry = f"0,{max(0, height - 305)} {width}x295"
+    shot = subprocess.run(["grim", "-t", "ppm", "-g", geometry, path],
+                          capture_output=True, text=True)
+    if shot.returncode != 0:
+        raise Failure(f"grim could not capture the panel band: "
+                      f"{shot.stderr.strip()}")
+    with open(path, "rb") as handle:
+        data = handle.read()
+    if not data.startswith(b"P6"):
+        raise Failure(f"unexpected band capture format: {data[:15]!r}")
+    fields = []
+    cursor = 2
+    while len(fields) < 3:
+        while cursor < len(data) and data[cursor:cursor + 1].isspace():
+            cursor += 1
+        if data[cursor:cursor + 1] == b"#":
+            while cursor < len(data) and data[cursor:cursor + 1] != b"\n":
+                cursor += 1
+            continue
+        start = cursor
+        while cursor < len(data) and not data[cursor:cursor + 1].isspace():
+            cursor += 1
+        fields.append(int(data[start:cursor]))
+    cursor += 1  # the single whitespace byte before the raster
+    px_w, px_h, _ = fields
+    raster = data[cursor:cursor + px_w * px_h * 3]
+    textish = 0
+    colors = set()
+    for index in range(0, len(raster) - 2, 3):
+        r, g, b = raster[index], raster[index + 1], raster[index + 2]
+        lum = (r + g + b) / 3
+        if 140 <= lum <= 230:
+            textish += 1
+        if index % 12 == 0:  # sampled: the spread, not the census
+            colors.add((r // 8, g // 8, b // 8))
+    return {"textish": textish, "colors": len(colors)}
+
+
 def own_socket_or_die():
     """The leg daemon must own the socket it is about to be judged by.
 
@@ -490,6 +549,31 @@ def _run_leg(repo, window_start):
             print(f"ok    keyboard open and ready, codes {state['codes']}, "
                   f"group {state['group']}, facts in hand")
 
+            # ---- ticket 47's visibility tripwire (the H2 canary) ----
+            # The install-from-zero stranger's panel read as
+            # "near-invisible dark-on-dark", and no log line names a panel
+            # that draws nothing at all (transparent tokens, a lost font).
+            # This is the pixels' own assertion: the open band must carry
+            # cap text and a colour spread, whatever the logs say. The
+            # thresholds are calibrated live on this lab's 1280x800
+            # output: a drawn keyboard measures ~900-1300 cap-text pixels
+            # depending on group (US and Cyrillic differ), a flat slab
+            # measures a handful; the typing gate itself is the ready
+            # wait's business, not the pixels'.
+            band = band_statistics()
+            if band["textish"] < 600:
+                raise Failure(f"the open panel band has only "
+                              f"{band['textish']} cap-text pixels (a drawn "
+                              f"keyboard measures 900+ on this output): "
+                              f"the caps are blank or invisible — the "
+                              f"ticket-47 symptom")
+            if band["colors"] < 6:
+                raise Failure(f"the open panel band carries only "
+                              f"{band['colors']} sampled colours — a flat "
+                              f"slab, not card/fill/border/accent")
+            print(f"ok    panel band visible: {band['textish']} cap-text "
+                  f"pixels, {band['colors']} sampled colours")
+
             # Baseline: the open's own warnings are pre-existing from here
             # on; everything after this line must be zero-growth.
             leg_base = our_warnings(panel.warnings())
@@ -570,6 +654,34 @@ def _run_leg(repo, window_start):
                 raise Failure(f"us AD01 unreadable: {us_state}")
             print("ok    us group drawn again: AD01 = "
                   + us_state["factsAD01"])
+
+            # ---- ticket 47's regression net: the daemon-bounce wedge ----
+            # The stranger's BLOCKER, replayed: a GRACEFUL daemon stop under
+            # a connected panel. Quickshell's socket can keep reporting
+            # `connected: true` on the peer-closed transport (observed live
+            # twice; see SocketWatch.js), and the old reconnect policy only
+            # ever re-helloed an open-looking socket — wedging the panel at
+            # "Starting omarchy-osk.service…" with every key click a silent
+            # no-op until a shell restart. The hello watchdog must recover
+            # it on its own; a panel that stays unready here is exactly
+            # this ticket returning.
+            daemon.process.terminate()
+            daemon.process.wait(timeout=10)
+            daemon.log.close()
+            daemon = CanaryDaemon(repo)
+            own_socket_or_die()
+            bounced = time.monotonic()
+            wait_for(lambda: panel.state()["ready"] is True, 45,
+                     "the keyboard to become ready again after the "
+                     "graceful daemon bounce (the ticket-47 wedge)")
+            print(f"ok    recovered from the graceful daemon bounce in "
+                  f"{time.monotonic() - bounced:.1f}s")
+            facts = daemon.caps(0, ["AD01"])
+            if not facts["AD01"] or facts["AD01"][0] != "q":
+                raise Failure(f"the bounced-back helper answers us AD01 = "
+                              f"{facts['AD01']!r}, expected ['q', …]")
+            print("ok    bounced-back helper answers us AD01 = "
+                  + repr(facts["AD01"]))
 
             panel.command("close", "closed")
 
