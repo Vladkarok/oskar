@@ -1476,6 +1476,14 @@ it — the panel configures from RMLVO and re-shares the published map.
 Either way the helper's own three-way decision CLEARS the stale record
 on the empty-`kb_file` configure, so the seat self-heals instead of
 wedging.
+  Priced with the rest (2026-09-15, ticket 57's live arm): a compositor
+  kb_file that NAMES A NONEXISTENT FILE now self-heals — one warn, the
+  RMLVO configure, the re-share. The price: a user's temporarily-missing
+  file (a keymap on unplugged media) is FORGOTTEN after that one warn,
+  not retried — the pre-57 alternative for the same world was a total
+  panel wedge (every configure uncompilable), and a returning file
+  re-adopts at the next observation or fresh panel. Out-of-band by the
+  same rule §46 already prices its other exceptions with.
 
 ## 47. A remembered group is bounded by the map that must carry it
 

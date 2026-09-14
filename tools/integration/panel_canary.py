@@ -384,18 +384,27 @@ class Panel:
 
 
 def assert_no_growth(baseline, final, where):
+    # The baseline is PINNED TO ZERO (ticket 57's review): F1 removed the
+    # notice bar's illegal cross-hierarchy anchors and the canary measured
+    # the pair gone — a dynamic baseline would silently re-grandfather a
+    # future regression that emits anchor warnings from boot. Zero means
+    # zero, in every phase, forever.
     base_grand, base_new = baseline
     final_grand, final_new = final
     if final_new:
         for line in final_new[:8]:
             print("      new warning: " + line)
         raise Failure(f"{where}: {len(final_new)} QML warning(s) naming our "
-                      "files are not the grandfathered anchor warning")
-    if len(final_grand) != len(base_grand):
-        for line in final_grand[len(base_grand):][:8]:
-            print("      grown grandfathered: " + line)
-        raise Failure(f"{where}: grandfathered Panel.qml anchor warnings "
-                      f"grew {len(base_grand)} -> {len(final_grand)}")
+                      "files appeared")
+    if base_grand or base_new:
+        raise Failure(f"{where}: the pinned-zero anchor baseline measured "
+                      f"{len(base_grand)} grandfathered + {len(base_new)} "
+                      "new at start — the anchors regressed")
+    if final_grand:
+        for line in final_grand[:8]:
+            print("      anchor warning: " + line)
+        raise Failure(f"{where}: {len(final_grand)} anchor warning(s) — "
+                      "the baseline is ZERO since ticket 57")
 
 
 def service_active():
