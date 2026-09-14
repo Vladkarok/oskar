@@ -1,6 +1,30 @@
-# Handoff — updated 2026-09-13 (evening, pre model-switch)
+# Handoff — updated 2026-09-14 (autonomous mode)
 
 **START HERE — this section supersedes everything below it.**
+
+STANDING ORDER (owner, 2026-09-14): after 47, continue the vision
+path WITHOUT owner review — create tickets, send agents to implement
+and verify, keep going, do not wait ("не останавливайся, не жди
+меня, я если что сам напишу"). The ONE exception kept owner-gated:
+public publishing (public push, AUR, the release announcement) — the
+vision's recruitment gate hangs off it and the standing rule
+"push only when the user asks" was never lifted.
+
+The autonomous queue (tickets written, sequenced by VM tenancy and
+file overlap): 48 canary-learns-to-see (after 47) → 49 doctor →
+50 dwell-to-type → 51 IME matrix / 52 UI localization (50's file
+overlap resolves first). In flight right now: 47 (fresh-session
+dead-panel BLOCKER, agent diagnosing the live broken lab) carrying
+46's fix + README rewrite + stranger run 2. The vision and its
+council synthesis: docs/vision.md (A+ architecture, niri after the
+gate, install-from-zero first — its run 1 FAILED honestly: F3 is
+47).
+
+---
+
+# Handoff — updated 2026-09-13 (evening, pre model-switch)
+
+**START HERE (previous round) — superseded by the block above.**
 
 The owner is switching the session model; no new agents are to be
 launched until he says so. Both in-flight background agents have since
