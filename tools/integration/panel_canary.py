@@ -815,6 +815,13 @@ def _host_guard():
                        "ConnectTimeout=5", GUEST, "true"],
                       capture_output=True).returncode != 0:
         raise Failure("cannot ssh the guest (omarchy-vm)")
+    # Credential BEFORE any leg touches the lab (round-2 review): the
+    # strace oracle's refusal used to fire only at the real-click leg,
+    # after the mask leg had already stopped the service.
+    if not os.environ.get("OSK_LAB_SUDO_PASSWORD", ""):
+        raise Failure("the QMP legs need OSK_LAB_SUDO_PASSWORD (the lab "
+                      "guest's throwaway password, docs/vm-handoff.md) — "
+                      "refusing before any teardown")
     return True
 
 
