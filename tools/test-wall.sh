@@ -57,7 +57,13 @@ fi
 if [[ "${OSK_WALL_LIVE:-}" != "1" ]]; then
   row "live-legs" SKIP "set OSK_WALL_LIVE=1 for the lab layers"
 elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
-  if ssh "$LAB" 'pgrep -f "integration/(panel_canary|restart_settle|chooser35|emoji_focus|hold_column)" >/dev/null 2>&1'; then
+  # Tenancy: BOTH halves of a standing leg must be visible — the QMP
+  # legs run their host half (virsh monitor + this script's children)
+  # while the guest frame runs in the lab, so a running qmp_guest_frame
+  # means the lab is held even though no guest-side leg process matches
+  # the older pattern (ticket 48 review).
+  if pgrep -f "integration/panel_canary" >/dev/null 2>&1 \
+      || ssh "$LAB" 'pgrep -f "integration/(panel_canary|restart_settle|chooser35|emoji_focus|hold_column|qmp_guest_frame)" >/dev/null 2>&1'; then
     row "live-legs" SKIP "another tenant holds the lab — rerun when free"
   else
     for leg in panel_canary restart_settle chooser35; do
@@ -76,6 +82,23 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
         row "$leg" FAIL "see /tmp/wall-$leg.log"
       fi
     done
+    # The QMP half (ticket 48): the canary's mask and real-click legs run
+    # HOST-side against the lab over the virsh monitor — the one row that
+    # proves compositor-routed clicks reach the daemon. Same tenancy as
+    # the guest legs above; the sudo password for the strace oracle comes
+    # from the environment (never a literal — see panel_canary.py).
+    if [[ -n "${OSK_LAB_SUDO_PASSWORD:-}" ]]; then
+      echo "== live: canary-qmp (host half)"
+      if (cd "$root" && OSK_PANEL_CANARY_LIVE=1 OSK_CANARY_QMP=1 \
+            python3 tools/integration/panel_canary.py) \
+          >/tmp/wall-canary-qmp.log 2>&1; then
+        row "canary-qmp" PASS "$(grep -cE '^ok ' /tmp/wall-canary-qmp.log) assertions"
+      else
+        row "canary-qmp" FAIL "see /tmp/wall-canary-qmp.log"
+      fi
+    else
+      row "canary-qmp" SKIP "set OSK_LAB_SUDO_PASSWORD for the strace oracle"
+    fi
   fi
 else
   row "live-legs" SKIP "lab unreachable — host layers above still stand"

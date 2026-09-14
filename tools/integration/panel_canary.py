@@ -800,7 +800,6 @@ GUEST = "omarchy-vm"
 # 0,499 1280x301 on this layout; both values are re-verified at runtime
 # by the daemon-side press assertion, never trusted blind.
 CAP_Q = (320, 621)
-CLICK_THROUGH = (640, 250)   # inside a full-screen client, not on the band
 
 
 def _host_guard():
@@ -829,11 +828,20 @@ def _guest(command, timeout=30):
 
 
 def _qmp(json_arg):
-    result = subprocess.run(
-        ["virsh", "-c", "qemu:///session", "qemu-monitor-command",
-         QMP_DOMAIN, json_arg], capture_output=True, text=True)
-    if '"error"' in result.stdout:
-        raise Failure(f"QMP rejected {json_arg}: {result.stdout.strip()}")
+    # Loud and bounded (ticket 48 review): virsh reports failure on
+    # stderr with a nonzero rc — a wedged monitor must abort the leg,
+    # not hang the host half forever (the guest frame self-heals at
+    # 600 s; this side had no bound at all).
+    try:
+        result = subprocess.run(
+            ["virsh", "-c", "qemu:///session", "qemu-monitor-command",
+             QMP_DOMAIN, json_arg], capture_output=True, text=True,
+            timeout=30)
+    except subprocess.TimeoutExpired:
+        raise Failure(f"QMP monitor wedged on {json_arg} (30s timeout)")
+    if result.returncode != 0 or '"error"' in result.stdout:
+        raise Failure(f"QMP rejected {json_arg}: rc={result.returncode} "
+                      f"out={result.stdout.strip()} err={result.stderr.strip()}")
 
 
 def _qmp_click(x, y):
@@ -912,7 +920,15 @@ def _oracle_presses(title):
 
 
 def _strace_on(pid):
-    _guest(f"echo z | sudo -S sh -c 'pkill strace 2>/dev/null; "
+    # The lab guest's throwaway password, from the environment — never
+    # a literal in a publishable tree (ticket 48 review); docs/vm-handoff.md
+    # owns the value.
+    pw = os.environ.get("OSK_LAB_SUDO_PASSWORD", "")
+    if not pw:
+        raise Failure("the strace oracle needs OSK_LAB_SUDO_PASSWORD "
+                      "(the lab guest's throwaway password, "
+                      "docs/vm-handoff.md) — refusing to hardcode it")
+    _guest(f"echo '{pw}' | sudo -S sh -c 'pkill strace 2>/dev/null; "
            f"rm -f /run/user/1000/osk-qmp-strace; "
            f"nohup strace -f -e trace=recvfrom -p {pid} "
            f"-o /run/user/1000/osk-qmp-strace >/dev/null 2>&1 &' "
@@ -920,7 +936,11 @@ def _strace_on(pid):
 
 
 def _strace_presses():
-    result = _guest("echo z | sudo -S grep -h 'recvfrom.*\"down ' "
+    pw = os.environ.get("OSK_LAB_SUDO_PASSWORD", "")
+    if not pw:
+        raise Failure("the strace oracle needs OSK_LAB_SUDO_PASSWORD "
+                      "(see _strace_on)")
+    result = _guest(f"echo '{pw}' | sudo -S grep -h 'recvfrom.*\"down ' "
                     "/run/user/1000/osk-qmp-strace 2>/dev/null | wc -l")
     try:
         return int(result.stdout.strip() or 0)
