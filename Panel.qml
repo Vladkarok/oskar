@@ -2088,9 +2088,9 @@ Item {
                         leftMargin: tokens.spacingMd
                         verticalCenter: parent.verticalCenter
                     }
-                    text: depSetup.running
-                        ? "Fetching missing components\u2026"
-                        : "Missing input components"
+                    text: UiStrings.tr(depSetup.running
+                        ? "banner.deps.fetching" : "banner.deps.missing",
+                        root.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBodySmall
@@ -2110,7 +2110,9 @@ Item {
                     Text {
                         id: setupText
                         anchors { centerIn: parent }
-                        text: depSetup.running ? "Busy\u2026" : "Set up"
+                        text: UiStrings.tr(depSetup.running
+                            ? "banner.deps.busy" : "banner.deps.setup",
+                            root.uiLang)
                         color: tokens.background
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall

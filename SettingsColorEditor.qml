@@ -549,7 +549,9 @@ Rectangle {
                     Text {
                         height: tokens.space(26)
                         verticalAlignment: Text.AlignVCenter
-                        text: editor.channelMode === "hsv" ? "Hue" : "Red"
+                        text: UiStrings.tr(editor.channelMode === "hsv"
+                            ? "color.slider.hue" : "color.slider.red",
+                            editor.panel && editor.panel.uiLang)
                         color: tokens.muted
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall
@@ -590,7 +592,9 @@ Rectangle {
                     Text {
                         height: tokens.space(26)
                         verticalAlignment: Text.AlignVCenter
-                        text: editor.channelMode === "hsv" ? "Sat" : "Green"
+                        text: UiStrings.tr(editor.channelMode === "hsv"
+                            ? "color.slider.sat" : "color.slider.green",
+                            editor.panel && editor.panel.uiLang)
                         color: tokens.muted
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall
@@ -631,7 +635,9 @@ Rectangle {
                     Text {
                         height: tokens.space(26)
                         verticalAlignment: Text.AlignVCenter
-                        text: editor.channelMode === "hsv" ? "Val" : "Blue"
+                        text: UiStrings.tr(editor.channelMode === "hsv"
+                            ? "color.slider.val" : "color.slider.blue",
+                            editor.panel && editor.panel.uiLang)
                         color: tokens.muted
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall

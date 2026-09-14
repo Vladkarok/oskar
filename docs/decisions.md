@@ -1805,7 +1805,10 @@ UI now rides.
   user-facing word behind an id — tooltips, accessible names, settings
   labels, section headers, hints, status lines, the emoji page's
   chrome — in EN/RU/UK, and `tr(id, lang[, args])` is the only lookup.
-  The QML files hold no English of their own; substitution is Qt's
+  The QML files hold no English of their own beyond the disclosed
+  residues (the review round caught ten leaked words — the dep
+  banner's four and the colour editor's six slider labels — and
+  they joined the table); substitution is Qt's
   `%1` idiom for the few composited strings ("Switch to %1", colour
   row accessibles). Keymap-derived text — cap glyphs, layout titles,
   the catalogue's emoji names, Config.js's parse diagnostics — is
@@ -1843,7 +1846,10 @@ UI now rides.
   The fixed-width controls were re-audited against their translated
   labels: mode segments widened 150→160 ("Закреплена" measures 72px),
   the language control is 300 (the 72px "Українська" needs 72.5px
-  segments and the row must stay inside the measured control zone in
+  segments and the row must stay inside the CARD in every language
+  (the review's probe: the language row's 330px exceeds the ~321-
+  328px control zone with an override pinned — a wording this
+  section had as 'inside the control zone', corrected) in
   every language), and the emoji picking pair shortened to infinitives
   ("Оставить"/"Закрыть") because "Оставлять открытой" cannot fit a
   70px segment. Free text wraps or elides as it always did, and the

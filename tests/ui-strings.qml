@@ -105,6 +105,28 @@ QtObject {
             }
         })
 
+        T.test("every translation keeps the English arity of its placeholders", function () {
+            // A ru string that lost its %1 stays non-empty and used to pass
+            // the completeness pin while tr() silently skipped a
+            // substitution (ticket 52 review): the placeholder COUNT is
+            // part of the contract, per language.
+            function count(text) {
+                var found = text.match(/%[0-9]+/g) || []
+                return found.length
+            }
+            var ids = Object.keys(UiStrings.STRINGS)
+            T.equal(ids.length > 90, true)
+            for (var i = 0; i < ids.length; i++) {
+                var entry = UiStrings.STRINGS[ids[i]]
+                var arity = count(entry.en)
+                for (var l = 0; l < UiStrings.LANGUAGES.length; l++) {
+                    var lang = UiStrings.LANGUAGES[l]
+                    T.equal(count(entry[lang]), arity,
+                        ids[i] + "/" + lang + " placeholder count drift")
+                }
+            }
+        })
+
         T.test("every skin tone names itself in all three languages", function () {
             var tones = Page.SKIN_TONES
             T.equal(tones.length, 6)

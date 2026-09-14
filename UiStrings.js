@@ -45,6 +45,56 @@ var STRINGS = {
         ru: "Раскладка недоступна — нарисованные клавиши могут не совпадать с тем, что вводится",
         uk: "Розкладка недоступна — намальовані клавіші можуть не збігатися з тим, що вводиться"
     },
+    "banner.deps.fetching": {
+        en: "Fetching missing components\u2026",
+        ru: "Получаю недостающие компоненты\u2026",
+        uk: "Отримую відсутні компоненти\u2026"
+    },
+    "banner.deps.missing": {
+        en: "Missing input components",
+        ru: "Не хватает компонентов ввода",
+        uk: "Бракує компонентів вводу"
+    },
+    "banner.deps.busy": {
+        en: "Busy\u2026",
+        ru: "Занято\u2026",
+        uk: "Зайнято\u2026"
+    },
+    "banner.deps.setup": {
+        en: "Set up",
+        ru: "Настроить",
+        uk: "Налаштувати"
+    },
+    "color.slider.hue": {
+        en: "Hue",
+        ru: "Тон",
+        uk: "Тон"
+    },
+    "color.slider.sat": {
+        en: "Sat",
+        ru: "Нас",
+        uk: "Нас"
+    },
+    "color.slider.val": {
+        en: "Val",
+        ru: "Ярк",
+        uk: "Яскр"
+    },
+    "color.slider.red": {
+        en: "Red",
+        ru: "Красн",
+        uk: "Черв"
+    },
+    "color.slider.green": {
+        en: "Green",
+        ru: "Зел",
+        uk: "Зелен"
+    },
+    "color.slider.blue": {
+        en: "Blue",
+        ru: "Син",
+        uk: "Син"
+    },
     "hint.starting": {
         en: "Starting omarchy-osk.service…",
         ru: "Запуск omarchy-osk.service…",
