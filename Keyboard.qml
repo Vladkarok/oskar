@@ -2134,11 +2134,13 @@ Item {
         if (!cap.key) {
             typeCap(cap)
             releaseKey()
-            // The underline's own contract (§54: it vanishes the instant
-            // the rest ends, typed or not) — the column caps keep theirs
-            // through the menu window; a plain typed cap does not.
-            // (Ticket 50 review L1: the fill used to linger at full
-            // width until the pointer left.)
+            // The underline's uniform rule (§54: progress, never
+            // state — it vanishes the instant the rest ends, typed or
+            // not, on every character cap alike; a pinned-full line
+            // through the menu window would read as state, and the
+            // menu opening is its own signal). Ticket 50 review L1:
+            // the fill used to linger at full width until the pointer
+            // left.
             try { dwellDelegate.stopDwellFill() } catch (error) {}
             return
         }
