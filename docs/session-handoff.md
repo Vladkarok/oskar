@@ -24,11 +24,14 @@ F1 gate-lowering). The regression wall ran LIVE for the first time
 (canary-qmp green inside it) and its own two defects got fixed
 (env-less ssh legs; a phantom chooser35 row).
 
-Open, filed with concrete fix candidates: 56 (kitty's emoji chord
-arrives wine-shaped — target re-derivation at arrival), 57 (the
-wall's two live findings: the notice bar's cross-hierarchy anchor
-re-evaluation; the restart_settle leg's kb_file/sidecar teardown
-wedge). Follow-up named: Dwell.nextArmMs extraction.
+SHIPPED since: 56 (the clipboard chord CARRIES the pick's client
+class — no re-derivation at arrival; kitty's cell green live, §44
+amended), 57 (the notice bar anchors a sibling edge — the anchor
+warnings are GONE and the canary baseline is pinned to zero; the
+dead-remembered-keymap self-heal with §46's exception priced), and
+the nextArmMs extraction (the re-arm math in Dwell.js, pinned).
+The board is CLEAN: every ticket through 57 is shipped with full
+review cycles.
 
 Next per the vision: the publish decision is the OWNER's (checklist
 in docs/omarchy-osk-package-notes.md — URL placeholder, AUR primary,
