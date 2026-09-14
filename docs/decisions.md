@@ -1849,8 +1849,7 @@ UI now rides.
   segments and the row must stay inside the CARD in every language
   (the review's probe: the language row's 330px exceeds the ~321-
   328px control zone with an override pinned — a wording this
-  section had as 'inside the control zone', corrected) in
-  every language), and the emoji picking pair shortened to infinitives
+  section had as 'inside the control zone', corrected)), and the emoji picking pair shortened to infinitives
   ("Оставить"/"Закрыть") because "Оставлять открытой" cannot fit a
   70px segment. Free text wraps or elides as it always did, and the
   label column re-measures per language because its probe draws the
