@@ -270,6 +270,17 @@ Item {
             case "state":
                 state()
                 break
+            case "forceoverlay":
+                // Ticket 48's mask-red lever: the only sanctioned way to
+                // hold the settings layer in its overlay-open state from
+                // outside — the same property the custom colour cap sets.
+                panel.customEditorField = "custom"
+                log("overlay-forced")
+                break
+            case "clearoverlay":
+                panel.customEditorField = ""
+                log("overlay-cleared")
+                break
             }
         }
         onLoadFailed: function (error) {
@@ -763,9 +774,339 @@ def restore_service():
     print("ok    lab restored: omarchy-osk.service active")
 
 
+# --------------------------------------------------------------------------
+# Ticket 48: the QMP legs (mask click-through, real-click). These run on
+# the LAB HOST, not in the guest: the input only exists as virsh QMP
+# events (the guest has no pointer synthesis), so the legs are two-sided
+# by physics. The guest half is tools/integration/qmp_guest_frame.py,
+# which boots this file's own CanaryDaemon + hosted Panel and serves a
+# command file; the host half here drives the QMP pointer, the oracle
+# window and the strace observation through ssh.
+#
+#   OSK_CANARY_QMP=1 [OSK_CANARY_TREE=~/osk-head] \
+#       python3 tools/integration/panel_canary.py
+#
+# OSK_CANARY_TREE is the GUEST-side tree to host (default: the tree the
+# guest frame is launched from). For the red run, point it at a pre-47
+# archive and pass OSK_CANARY_RED=1 to expect the real-click leg to
+# fail after a daemon bounce (the ticket-47 wedge: dead clicks).
+# --------------------------------------------------------------------------
+
+QMP_DOMAIN = "omarchy-osk"
+GUEST = "omarchy-vm"
+# Calibrated live on this lab's 1280x800 output (ticket 46 run 2,
+# evidence/46/run2-11: the cap at (320,621) delivered 'q' four-for-four
+# through the real panel; (272,621) is the TAB cap). The band is
+# 0,499 1280x301 on this layout; both values are re-verified at runtime
+# by the daemon-side press assertion, never trusted blind.
+CAP_Q = (320, 621)
+CLICK_THROUGH = (640, 250)   # inside a full-screen client, not on the band
+
+
+def _host_guard():
+    if os.environ.get("OSK_CANARY_QMP") != "1":
+        return False
+    if subprocess.run(["hostname"], capture_output=True,
+                      text=True).stdout.strip() == LAB_HOSTNAME:
+        raise Failure("QMP legs run on the lab HOST, not the guest")
+    if subprocess.run(["virsh", "-c", "qemu:///session", "domstate",
+                       QMP_DOMAIN], capture_output=True).returncode != 0:
+        raise Failure("the lab domain is not reachable via virsh")
+    if subprocess.run(["ssh", "-o", "BatchMode=yes", "-o",
+                       "ConnectTimeout=5", GUEST, "true"],
+                      capture_output=True).returncode != 0:
+        raise Failure("cannot ssh the guest (omarchy-vm)")
+    return True
+
+
+def _guest(command, timeout=30):
+    return subprocess.run(
+        ["ssh", GUEST,
+         "export XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-1 "
+         "HYPRLAND_INSTANCE_SIGNATURE=$(ls /run/user/1000/hypr | head -1); "
+         + command],
+        capture_output=True, text=True, timeout=timeout)
+
+
+def _qmp(json_arg):
+    result = subprocess.run(
+        ["virsh", "-c", "qemu:///session", "qemu-monitor-command",
+         QMP_DOMAIN, json_arg], capture_output=True, text=True)
+    if '"error"' in result.stdout:
+        raise Failure(f"QMP rejected {json_arg}: {result.stdout.strip()}")
+
+
+def _qmp_click(x, y):
+    ax, ay = x * 32767 // 1280, y * 32767 // 800
+    _qmp('{"execute":"input-send-event","arguments":{"events":['
+         f'{{"type":"abs","data":{{"axis":"x","value":{ax}}}}},'
+         f'{{"type":"abs","data":{{"axis":"y","value":{ay}}}}}]}}}}')
+    time.sleep(0.3)
+    _qmp('{"execute":"input-send-event","arguments":{"events":['
+         '{"type":"btn","data":{"down":true,"button":"left"}}]}}')
+    time.sleep(0.3)
+    _qmp('{"execute":"input-send-event","arguments":{"events":['
+         '{"type":"btn","data":{"down":false,"button":"left"}}]}}')
+    time.sleep(0.7)
+
+
+def _frame_log():
+    result = _guest("cat /run/user/1000/osk-qmp-log 2>/dev/null")
+    return result.stdout.splitlines()
+
+
+def _frame_cmd(word, expect, timeout=90):
+    seq = str(int(time.time() * 1000) % 100000)
+    _guest(f"echo '{word} {seq}' > /run/user/1000/osk-qmp-cmd")
+    started = len(_frame_log())
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        lines = _frame_log()
+        if any(expect in line for line in lines[started:]):
+            return
+        time.sleep(0.3)
+    raise Failure(f"guest frame never answered {word} with {expect}")
+
+
+def _wait_frame(expect, timeout=300):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(expect in line for line in _frame_log()):
+            return
+        time.sleep(1.0)
+    raise Failure(f"guest frame never reached {expect}")
+
+
+def _daemon_pid():
+    for line in _frame_log():
+        if "daemon-pid" in line:
+            return int(line.rsplit(" ", 1)[1])
+    raise Failure("no daemon pid in the frame log")
+
+
+def _activewindow_title():
+    result = _guest("hyprctl activewindow -j 2>/dev/null")
+    try:
+        return json.loads(result.stdout).get("title", "")
+    except json.JSONDecodeError:
+        return ""
+
+
+def _launch_oracle(title, capture=None):
+    _guest("pkill -x kitty 2>/dev/null; sleep 0.5; true")
+    if capture:
+        _guest(f"rm -f {capture} /tmp/{title}.log; nohup kitty --title={title} "
+               f"--debug-input sh -c 'cat > {capture}' "
+               f">/tmp/{title}.log 2>&1 & sleep 2.5; true")
+    else:
+        _guest(f"rm -f /tmp/{title}.log; nohup kitty --title={title} "
+               "sh -c 'sleep 600' >/dev/null 2>&1 & sleep 2.5; true")
+
+
+def _oracle_presses(title):
+    result = _guest(f"grep -c Press /tmp/{title}.log 2>/dev/null")
+    try:
+        return int(result.stdout.strip() or 0)
+    except ValueError:
+        return 0
+
+
+def _strace_on(pid):
+    _guest(f"echo z | sudo -S sh -c 'pkill strace 2>/dev/null; "
+           f"rm -f /run/user/1000/osk-qmp-strace; "
+           f"nohup strace -f -e trace=recvfrom -p {pid} "
+           f"-o /run/user/1000/osk-qmp-strace >/dev/null 2>&1 &' "
+           "&& sleep 1; true", timeout=20)
+
+
+def _strace_presses():
+    result = _guest("echo z | sudo -S grep -h 'recvfrom.*\"down ' "
+                    "/run/user/1000/osk-qmp-strace 2>/dev/null | wc -l")
+    try:
+        return int(result.stdout.strip() or 0)
+    except ValueError:
+        return 0
+
+
+def _flush_oracle():
+    # Enter via the leg daemon's own socket: the capture child's PTY is
+    # line-buffered (venue lesson V-4), so the byte lands on disk only
+    # after a Return. Harness action, not a user simulation.
+    _guest("python3 - <<'EOF'\n"
+           "import socket\n"
+           "s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n"
+           "s.settimeout(3)\n"
+           "s.connect('/run/user/1000/omarchy-osk/control.sock')\n"
+           "s.sendall(b'hello 5\\n'); s.recv(200)\n"
+           "s.sendall(b'down RTRN\\n'); s.recv(100)\n"
+           "s.sendall(b'up RTRN\\n'); s.recv(100)\n"
+           "s.close()\n"
+           "EOF")
+
+
+def _window_rect(title):
+    result = _guest("hyprctl clients -j 2>/dev/null")
+    try:
+        for client in json.loads(result.stdout):
+            if client.get("title") == title:
+                return client["at"], client["size"]
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
+def _interior_point(title, band_top=499):
+    """A point inside the titled window's rect, above the keyboard band
+    and away from edges — recomputed from live geometry, never assumed."""
+    rect = _window_rect(title)
+    if rect is None:
+        raise Failure(f"no window titled {title!r}")
+    (x, y), (w, h) = rect
+    px, py = x + w // 4, y + h // 4
+    if py >= band_top:
+        py = y + min(h // 2, (band_top - y) // 2)
+    return px, py
+
+
+def mask_leg():
+    """Ticket 48 leg 1: with no overlay open, the settings layer carries
+    no input region — a real compositor-level click at coordinates NOT on
+    the panel must reach and focus the client beneath. The red half
+    forces the overlay state (the layer's own mask) and proves the
+    assertion detects a mask-eater: the same click must NOT focus."""
+    print("leg   mask click-through (green)")
+    _guest("pkill -x kitty 2>/dev/null; sleep 1; true")
+    _guest("nohup kitty --title=mtarget sh -c 'sleep 600' >/dev/null "
+           "2>&1 & sleep 2; true")
+    _guest("nohup kitty --title=mother sh -c 'sleep 600' >/dev/null "
+           "2>&1 & sleep 2; true")
+    mother_point = _interior_point("mother")
+    mtarget_point = _interior_point("mtarget")
+    _qmp_click(*mother_point)
+    time.sleep(0.5)
+    before = _activewindow_title()
+    if before != "mother":
+        raise Failure(f"expected focus on mother before the probe, "
+                      f"got {before!r}")
+    _qmp_click(*mtarget_point)
+    after = _activewindow_title()
+    if after != "mtarget":
+        raise Failure(f"click through closed-overlay settings layer did "
+                      f"not reach the client beneath (focus {after!r})")
+    print("ok    closed overlays pass clicks through to the client")
+
+    print("leg   mask click-through (red: forced overlay must eat it)")
+    # Focus mother FIRST while the overlay is closed, then force the
+    # overlay — a click under it now must land on the dismiss area,
+    # not on mtarget.
+    _qmp_click(*mother_point)
+    time.sleep(0.5)
+    _frame_cmd("forceoverlay", "overlay-forced")
+    _qmp_click(*mtarget_point)
+    after = _activewindow_title()
+    if after == "mtarget":
+        raise Failure("forced overlay did NOT eat the click — the mask "
+                      "red assertion cannot detect a mask-eater")
+    print("ok    forced overlay eats the click (detection power proven)")
+    _frame_cmd("clearoverlay", "overlay-cleared")
+
+
+def real_click_leg(red=False):
+    """Ticket 48 leg 2: a real QMP click on a letter cap must (a) reach
+    the DAEMON as a protocol down/up — asserted from the daemon's own
+    syscalls, the only observation the daemon offers — and (b) land in
+    the focused real window as text. Handler-driving cannot catch a
+    mask-eater; this is the compositor's own delivery verdict."""
+    label = "red " if red else ""
+    print(f"leg   {label}real click on a letter cap")
+    pid = _daemon_pid()
+    _strace_on(pid)
+    _launch_oracle("rtarget", capture="/tmp/rtyped.txt")
+    rtarget_point = _interior_point("rtarget")
+    _qmp_click(*rtarget_point)   # keyboard focus onto the oracle window
+    time.sleep(0.5)
+    title = _activewindow_title()
+    if title != "rtarget":
+        raise Failure(f"oracle window not focused before the cap click "
+                      f"({title!r})")
+    presses_before = _oracle_presses("rtarget")
+    downs_before = _strace_presses()
+
+    _qmp_click(*CAP_Q)
+    downs = _strace_presses() - downs_before
+    presses = _oracle_presses("rtarget") - presses_before
+    if red:
+        if downs == 0 and presses == 0:
+            print("ok    RED: the click reached nothing (the wedge ate "
+                  "it) — as the pre-47 run predicts")
+            return
+        raise Failure(f"expected RED (dead click) but observed "
+                      f"downs=+{downs} presses=+{presses}")
+    if downs == 0:
+        raise Failure("the cap click never reached the daemon as a "
+                      "protocol down (dead panel? recalibrate CAP_Q)")
+    if presses == 0:
+        raise Failure(f"daemon saw +{downs} down(s) but the focused "
+                      "window received nothing")
+    _flush_oracle()
+    time.sleep(0.8)
+    result = _guest("cat /tmp/rtyped.txt 2>/dev/null")
+    if "q" not in result.stdout:
+        raise Failure(f"character never landed on disk: {result.stdout!r}")
+    print(f"ok    cap click -> daemon down ({downs}) -> window text "
+          f"({presses} presses) -> byte on disk ('q' in "
+          f"{result.stdout!r})")
+
+
+def _start_frame(tree):
+    _guest("rm -f /run/user/1000/osk-qmp-log /run/user/1000/osk-qmp-cmd")
+    subprocess.Popen(
+        ["ssh", GUEST,
+         "export XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-1 "
+         "HYPRLAND_INSTANCE_SIGNATURE=$(ls /run/user/1000/hypr | head -1); "
+         f"cd {tree} && pwd && python3 tools/integration/qmp_guest_frame.py"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _wait_frame("frame-ready")
+
+
+def _stop_frame():
+    try:
+        _frame_cmd("quit", "frame-done", timeout=30)
+    except Failure:
+        _guest("pkill -f qmp_guest_frame 2>/dev/null; true")
+    _guest("pkill strace 2>/dev/null; true", timeout=15)
+
+
+def run_qmp_legs():
+    """Host-side entry for ticket 48's two legs."""
+    if not _host_guard():
+        return False
+    tree = os.environ.get("OSK_CANARY_TREE", "~/omarchy-osk")
+    red = os.environ.get("OSK_CANARY_RED") == "1"
+    if red:
+        # The wedge needs the daemon to die under the panel once, then
+        # the click lands on a socket the panel believes is alive.
+        print("mode  RED: expecting the real-click leg to fail "
+              "(pre-47 wedge)")
+    _start_frame(tree)
+    try:
+        mask_leg()
+        if red:
+            _frame_cmd("bounce", "bounced", timeout=60)
+            time.sleep(2)
+        real_click_leg(red=red)
+    finally:
+        _stop_frame()
+    print("ok    qmp legs complete")
+    return True
+
+
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        if os.environ.get("OSK_CANARY_QMP") == "1":
+            run_qmp_legs()
+        else:
+            main()
     except Failure as failure:
         print(f"FAIL  canary leg: {failure}")
         sys.exit(1)
