@@ -183,6 +183,27 @@ function tick(state, now) {
     return { action: "none", state: state }
 }
 
+/// Milliseconds from `now` to the live state's NEXT deadline — the type
+/// deadline (t0 + delay) while "armed", the menu deadline (t0 + menuDelay)
+/// once "spent" — restating tick's own two comparisons so the wiring's
+/// re-arm and the machine's crossing cannot drift (the 55 follow-up: the
+/// arithmetic lived twice in dwellTick under two spellings). Floored at
+/// 1 because the answer is a timer interval: a deadline already reached
+/// or passed at the moment of asking — the wiring's one-delivery reality,
+/// where a single late fire can cross a threshold nobody re-armed for —
+/// still owes exactly one more tick to notice, and 1ms is the soonest
+/// rest, never 0 or negative. null when nothing is live to arm: a dead
+/// state or a finished one. The wiring owns delivery timing (restart);
+/// this owns the phase-to-deadline arithmetic.
+function nextArmMs(state, now) {
+    if (!state) return null
+    if (state.phase === "done") return null
+    var deadline = state.phase === "spent"
+        ? state.t0 + state.menuDelay
+        : state.t0 + state.delay
+    return Math.max(1, deadline - now)
+}
+
 /// Motion inside the cap. Deliberately inert: cancellation is on LEAVE,
 /// not on move — a trembling pointer (the exact user dwell is for) must be
 /// able to rest on a key while its hand shakes, and the deadline keeps
