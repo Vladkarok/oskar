@@ -2067,6 +2067,12 @@ Item {
     function dwellEnter(capData, delegate) {
         dwellReset()
         if (!dwellEnabled) return
+        // The pure-dwell user's menu dismissal (ticket 50 review): the
+        // standing hold menu's own dismissal routes are all clicks or
+        // external folds, and a lingering rest is exactly this
+        // audience's cadence — so a dwell arming anywhere else folds
+        // the menu first. Pointer-only, one line, no chrome added.
+        if (holdMenuOpen) closeHoldMenu()
         if (!Dwell.eligible(capData, searchMode, inputReady)) return
         var delay = Dwell.delayFor(dwellDelayMs)
         dwellState = Dwell.enter(Date.now(), delay,
@@ -2128,6 +2134,12 @@ Item {
         if (!cap.key) {
             typeCap(cap)
             releaseKey()
+            // The underline's own contract (§54: it vanishes the instant
+            // the rest ends, typed or not) — the column caps keep theirs
+            // through the menu window; a plain typed cap does not.
+            // (Ticket 50 review L1: the fill used to linger at full
+            // width until the pointer left.)
+            try { dwellDelegate.stopDwellFill() } catch (error) {}
             return
         }
         triggerSpecial(cap, false)
@@ -3035,6 +3047,21 @@ Item {
         // The cap edge's own width, unqualified like the tokens the cap
         // delegates read — and not the upstream sketch's border line.
         border.width: keyBorderWidth
+
+        // The hover shield (ticket 50 review): the menu's padding and
+        // the gaps between entries accept HOVER, not just presses, so a
+        // resting pointer cannot fall through onto the caps hidden
+        // underneath — dwell was the first hover-action and weaponized
+        // that fall-through, typing characters the user could not see.
+        // The entries' own hit areas sit above this shield (declared
+        // later inside the Column).
+        MouseArea {
+            anchors { fill: parent }
+            hoverEnabled: true
+            // Swallow hover; a press on the padding still closes (the
+            // catch area's everywhere-outside contract, kept local).
+            onClicked: root.closeHoldMenu()
+        }
 
         Column {
             id: menuList
