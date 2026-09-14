@@ -166,6 +166,21 @@ unconditionally let a newcomer steal the path from a running daemon.
 
 ## 10. The panel's socket lives in a Loader and is rebuilt, not toggled
 
+**Amended 2026-09-14 (ticket 47):** the rebuild gate is TRAFFIC
+LIVENESS now, not connection state alone. Measured live: after a
+GRACEFUL peer stop (systemctl --user stop), Quickshell 0.3.1's
+`connected` stays true on a dead transport — the clean-EOF path never
+reports the close — so the old policy (rebuild only on
+`connected:false`) wedged the panel permanently after any service
+restart while the panel was loaded: inputReady false, every key a
+silent no-op, recoverable only by a shell restart. `SocketWatch.js`
+owns the decision: a hello outstanding past a 5 s fair window (a live
+helper answers <1 s; a configure compiling ahead of the repair
+re-hello re-stamps the window) rebuilds the socket through §10's own
+Loader mechanism whatever `connected` claims. The dead end below
+stands unchanged — TOGGLING `connected` recovers nothing; rebuilding
+does.
+
 Quickshell 0.3.1 semantics, verified against `src/io/socket.cpp`:
 `connected` flips on the *request*, before the device is open; a failed
 connect emits no state change to retry from; and — the trap — a failed

@@ -237,9 +237,11 @@ cd daemon && cargo test
 
 ## Install
 
-From a source checkout — the primary path today. One flow, three steps:
+From a source checkout — the primary path today. Get the repository
+and run one flow of three steps:
 
 ```sh
+git clone <REPOSITORY-URL> omarchy-osk && cd omarchy-osk
 ./install.sh           # builds the helper, installs it + its unit + the
                        # omarchy-osk command, enables and starts the service
 omarchy-osk setup      # registers the checkout under the stable plugin id,
