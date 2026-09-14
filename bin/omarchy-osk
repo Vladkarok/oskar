@@ -586,7 +586,12 @@ doctor_keycap_fallback() {
     doc_ok "$what" "no 'keycap fallback' lines in the user journal"
     return
   fi
-  first="$(printf '%s\n' "$text" | grep -m1 "keycap fallback")"
+  # The -m1 early exit SIGPIPEs printf under pipefail the moment the
+  # journal text outgrows the pipe buffer past the hit — aborting the
+  # run with 141 exactly when the degradation IS found (the ticket-49
+  # review reproduced it with a 2.4 MB journal). Same guard the
+  # socket probes already use.
+  first="$(printf '%s\n' "$text" | grep -m1 "keycap fallback" || true)"
   doc_fail "$what" "$hits line(s) in the last hour — the caps are silently \
 degraded to the built-in tables (drawn != typed; ticket 39's class). \
 First: ${first:0:120}; try: omarchy-osk upgrade, then rerun doctor"
