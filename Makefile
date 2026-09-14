@@ -22,6 +22,7 @@ PLUGIN_RUNTIME := Panel.qml BarWidget.qml Keyboard.qml KeyboardLayout.js \
 	CursorPolicy.js CursorPolicy.qml LayoutDevices.js SettleGuard.js \
 	EmojiPage.qml EmojiPage.js EmojiCatalog.js \
 	LanguageControl.js HoldColumn.js SocketWatch.js Dwell.js \
+	UiStrings.js \
 	ClipboardPaste.js HoverTooltip.qml KeyClickSound.qml \
 	SettingsPopover.qml SettingsColorRow.qml SettingsColorEditor.qml \
 	SettingsConfirmChip.qml SettingsResetChip.qml \

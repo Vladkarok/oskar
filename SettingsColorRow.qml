@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 import "Config.js" as ConfigFile
+import "UiStrings.js" as UiStrings
 
 // One colour row (spec-v1.1 §5): label, then one control group — the
 // current-colour indicator square, swatches, hex draft, compact confirm,
@@ -178,7 +179,9 @@ Item {
                 }
 
                 Accessible.role: Accessible.Indicator
-                Accessible.name: colorRow.labelText + " is currently " + colorRow.currentHex
+                Accessible.name: UiStrings.tr("color.currently",
+                    colorRow.panel.uiLang,
+                    [colorRow.labelText, colorRow.currentHex])
             }
 
             Repeater {
@@ -195,7 +198,8 @@ Item {
                         : Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
                     border.width: current ? 2 : tokens.normalBorderWidth
                     Accessible.role: Accessible.Button
-                    Accessible.name: "Set " + colorRow.labelText + " to " + hex
+                    Accessible.name: UiStrings.tr("color.setTo",
+                        colorRow.panel.uiLang, [colorRow.labelText, hex])
 
                     MouseArea {
                         id: swatchArea
@@ -211,7 +215,8 @@ Item {
                         }
                     }
                     HoverTooltip {
-                        text: "Set " + colorRow.labelText + " to " + parent.hex
+                        text: UiStrings.tr("color.setTo", colorRow.panel.uiLang,
+                            [colorRow.labelText, parent.hex])
                         hovered: swatchArea.containsMouse
                     }
                 }
@@ -257,7 +262,8 @@ Item {
             SettingsConfirmChip {
                 tokens: colorRow.tokens
                 enabled: panel.configHealthy
-                accessName: "Confirm " + colorRow.labelText + " hex"
+                accessName: UiStrings.tr("color.confirmHex",
+                    colorRow.panel.uiLang, [colorRow.labelText])
                 z: 2
                 onConfirmed: colorRow.applyDraft()
             }
@@ -276,7 +282,7 @@ Item {
                 Text {
                     id: customLabel
                     anchors.centerIn: parent
-                    text: "Custom"
+                    text: UiStrings.tr("common.custom", colorRow.panel.uiLang)
                     color: customArea.pressed ? tokens.background : tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBodySmall
@@ -288,7 +294,8 @@ Item {
                     hoverEnabled: true
                     enabled: panel.configHealthy
                     Accessible.role: Accessible.Button
-                    Accessible.name: "Open the custom colour editor for " + colorRow.labelText
+                    Accessible.name: UiStrings.tr("color.openEditor",
+                        colorRow.panel.uiLang, [colorRow.labelText])
                     onClicked: {
                         panel.endHexEdit()
                         colorRow.customRequested()
@@ -308,7 +315,7 @@ Item {
             visible: colorRow.invalid
             width: parent.width
             wrapMode: Text.Wrap
-            text: "invalid hex — use #RGB or #RRGGBB"
+            text: UiStrings.tr("color.invalidHex", colorRow.panel.uiLang)
             color: tokens.urgent
             font.family: tokens.fontFamily
             font.pixelSize: tokens.fontBodySmall

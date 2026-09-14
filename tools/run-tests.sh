@@ -26,6 +26,10 @@ export QT_QPA_PLATFORM=offscreen
 # Qt routes qml logging to journald when stderr is not a terminal, which
 # silently swallows every assertion message under CI or a pipe.
 export QT_ASSUME_STDERR_HAS_CONSOLE=1
+# tests/ui-strings.qml reads the runtime QML sources to resolve every
+# tr() call site against the table — Qt disables XHR on local files by
+# default, and the suite is the only consumer of the escape hatch.
+export QML_XHR_ALLOW_FILE_READ=1
 
 status=0
 for suite in "$root"/tests/*.qml; do

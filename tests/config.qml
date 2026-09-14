@@ -27,6 +27,9 @@ QtObject {
                 // Ticket 50: dwell-to-type is off until the user opts in.
                 dwellEnabled: false,
                 dwellDelayMs: 800,
+                // Ticket 52: the UI language follows the active layout
+                // until the user pins it.
+                uiLanguage: "auto",
                 capCorner: 8,
                 panelRadius: 12,
                 keyBackground: "#303030",
@@ -162,6 +165,32 @@ QtObject {
                 "Invalid value for dwell_delay_ms")
             T.equal(Config.reloadOverrides({}, '{"dwell_delay_ms":"800"}').error,
                 "Invalid value for dwell_delay_ms")
+        })
+
+        T.test("the UI language is auto by default, one of four words", function () {
+            // Ticket 52: "auto" follows the active layout (the shipped
+            // searchPlaceholder mapping), en/ru/uk pin the UI regardless
+            // of the layout. One list (UI_LANGUAGES) is the value space —
+            // validation, the popover's segments and this pin cannot
+            // disagree, the SUPER_MARKS rule.
+            T.deepEqual(Config.UI_LANGUAGES, ["auto", "en", "ru", "uk"])
+            var parsed = Config.reloadOverrides({}, '{"ui_language":"ru"}')
+            T.equal(parsed.error, "")
+            T.deepEqual(parsed.value, { uiLanguage: "ru" })
+            T.equal(Config.serializeOverrides(parsed.value),
+                '{\n  "ui_language": "ru"\n}\n')
+            var alias = Config.reloadOverrides({}, '{"uiLanguage":"uk"}')
+            T.equal(alias.error, "")
+            T.deepEqual(alias.value, { uiLanguage: "uk" })
+            T.equal(Config.reloadOverrides({}, '{"ui_language":"fr"}').error,
+                "Invalid value for ui_language")
+            T.equal(Config.reloadOverrides({}, '{"ui_language":null}').error,
+                "Invalid value for ui_language")
+            // Sparse: an absent key never reaches the file, and the
+            // maintained default is auto — English unless the layout
+            // says otherwise, exactly what shipped before the setting.
+            T.equal(Config.owns(parsed.value, "mode"), false)
+            T.equal(Config.maintainerDefaults().uiLanguage, "auto")
         })
 
         T.test("emoji skin tone is validated UI state, not an override", function () {

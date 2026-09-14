@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import "UiStrings.js" as UiStrings
 
 // The per-override reset chip (spec-v1.1 §5): ↺ in a bordered square, shown
 // only while the sparse file actually carries this override. Ticket 09's
@@ -41,7 +42,7 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         Accessible.role: Accessible.Button
-        Accessible.name: "Reset this setting"
+        Accessible.name: UiStrings.tr("access.resetSetting", panel.uiLang)
         enabled: panel.configHealthy
         onClicked: {
             panel.clearOverride(resetChip.overrideName)
@@ -49,7 +50,7 @@ Rectangle {
         }
     }
     HoverTooltip {
-        text: "Reset this setting"
+        text: UiStrings.tr("access.resetSetting", panel.uiLang)
         hovered: resetChipArea.containsMouse
     }
 }

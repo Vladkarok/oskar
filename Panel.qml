@@ -11,6 +11,7 @@ import "EmojiCatalog.js" as Catalog
 import "EmojiPage.js" as EmojiGrid
 import "LanguageControl.js" as LanguageControl
 import "SettingsPlacement.js" as SettingsPlacement
+import "UiStrings.js" as UiStrings
 
 Item {
     id: root
@@ -123,6 +124,13 @@ Item {
     // shape as the mode and the Super mark.
     property bool dwellEnabled: maintainedDefaults.dwellEnabled
     property int dwellDelayMs: maintainedDefaults.dwellDelayMs
+    // The UI's language (ticket 52): "auto" follows the active layout,
+    // en/ru/uk pin it. `uiLang` is the resolved two-letter answer every
+    // tr() call site reads — override over layout, English for anything
+    // we do not ship, the searchPlaceholder rule generalised.
+    property string uiLanguage: maintainedDefaults.uiLanguage
+    readonly property string uiLang: UiStrings.languageFor(
+        keyboard.activeLayoutCode, root.uiLanguage)
     // Emoji delivery mode (ticket 28): "direct" types the pick through the
     // helper; "clipboard" publishes the exact sequence and sends the paste
     // chord — the owner's choice for Chromium-family clients (ZCode).
@@ -663,29 +671,29 @@ Item {
     readonly property var hintState: {
         if (root.clipboardContentGone)
             return {
-                text: "Clipboard content is no longer available",
+                text: UiStrings.tr("hint.clipboardGone", root.uiLang),
                 accent: true
             }
         if (keyboard.lifecycleKind === "incompatible")
             return {
-                text: "omarchy-osk.service needs updating",
+                text: UiStrings.tr("hint.needsUpdate", root.uiLang),
                 accent: true,
                 action: "update"
             }
         if (keyboard.lifecycleKind === "stopped")
             return {
-                text: "omarchy-osk.service is not running",
+                text: UiStrings.tr("hint.notRunning", root.uiLang),
                 accent: true,
                 action: "retry"
             }
         if (keyboard.lifecycleKind === "unavailable")
             return {
-                text: "Keymap unavailable — drawn caps may not match what typing produces",
+                text: UiStrings.tr("hint.keymapUnavailable", root.uiLang),
                 accent: true
             }
         if (keyboard.lifecycleKind === "starting" && root.startingNoticeDue)
             return {
-                text: "Starting omarchy-osk.service\u2026",
+                text: UiStrings.tr("hint.starting", root.uiLang),
                 accent: false
             }
         return {
@@ -967,6 +975,7 @@ Item {
         root.emojiPageSize = effective.emojiPageSize
         root.dwellEnabled = effective.dwellEnabled
         root.dwellDelayMs = effective.dwellDelayMs
+        root.uiLanguage = effective.uiLanguage
         // A follow-theme flip while the panel is on screen is immediate:
         // stopping freezes the tokens at the look they then have, and
         // re-enabling releases that snapshot so a later stop freezes the
@@ -1776,7 +1785,7 @@ Item {
                         Text {
                             id: copyLabel
                             anchors { centerIn: parent }
-                            text: "Copy"
+                            text: UiStrings.tr("action.copy", root.uiLang)
                             color: tokens.foreground
                             font.family: tokens.fontFamily
                             font.pixelSize: tokens.fontBodySmall
@@ -1800,7 +1809,7 @@ Item {
                         Text {
                             id: retryLabel
                             anchors { centerIn: parent }
-                            text: "Retry"
+                            text: UiStrings.tr("action.retry", root.uiLang)
                             color: tokens.background
                             font.family: tokens.fontFamily
                             font.pixelSize: tokens.fontBodySmall
@@ -1859,7 +1868,7 @@ Item {
                         anchors { fill: parent }
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
-                        Accessible.name: "Settings"
+                        Accessible.name: UiStrings.tr("tooltip.settings", root.uiLang)
                         onClicked: {
                             // The page and the card are mutually exclusive
                             // leftover-centre surfaces (toggleEmojiPage's
@@ -1875,7 +1884,7 @@ Item {
                         }
                     }
                     HoverTooltip {
-                        text: "Settings"
+                        text: UiStrings.tr("tooltip.settings", root.uiLang)
                         hovered: gearArea.containsMouse
                     }
                 }
@@ -1991,11 +2000,11 @@ Item {
                         anchors { fill: parent }
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
-                        Accessible.name: "Close keyboard"
+                        Accessible.name: UiStrings.tr("tooltip.closeKeyboard", root.uiLang)
                         onClicked: root.close()  // dismiss
                     }
                     HoverTooltip {
-                        text: "Close keyboard"
+                        text: UiStrings.tr("tooltip.closeKeyboard", root.uiLang)
                         hovered: dismissHit.containsMouse
                     }
                 }
@@ -2201,11 +2210,11 @@ Item {
                     hoverEnabled: true
                     enabled: root.pasteEnabled
                     Accessible.role: Accessible.Button
-                    Accessible.name: "Paste"
+                    Accessible.name: UiStrings.tr("access.paste", root.uiLang)
                     onClicked: root.pasteCurrentContent()
                 }
                 HoverTooltip {
-                    text: "Paste clipboard"
+                    text: UiStrings.tr("tooltip.paste", root.uiLang)
                     hovered: pasteArea.containsMouse
                 }
             }
@@ -2288,8 +2297,10 @@ Item {
                                 hoverEnabled: true
                                 Accessible.role: Accessible.Button
                                 Accessible.name: current
-                                    ? entry.title + " (current)"
-                                    : "Switch to " + entry.title
+                                    ? UiStrings.tr("access.currentLayout",
+                                        root.uiLang, [entry.title])
+                                    : UiStrings.tr("access.switchTo",
+                                        root.uiLang, [entry.title])
                                 onClicked: {
                                     languageMenu.close()
                                     if (!current)
@@ -2506,6 +2517,7 @@ Item {
             usageRecords: root.emojiUsage
             skinTone: root.emojiSkinTone
             layoutCode: keyboard.activeLayoutCode
+            uiLang: root.uiLang
             hostWidth: settingsLayer.leftoverBox.w
             hostHeight: settingsLayer.leftoverBox.h
             x: settingsLayer.emojiPlace.x
