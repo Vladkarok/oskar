@@ -1,0 +1,316 @@
+// Ticket 50's pure seam: the dwell state machine. Hover a cap for D
+// milliseconds and it types — press+release as one click — with a second
+// threshold that opens ticket 37's column menu for caps that carry one.
+// Everything timing-shaped is decided here against an INJECTED clock, so the
+// host suite can pin it (tests/dwell.qml, the HoldColumn.js discipline):
+// the QML side only delivers enter/move/leave events, runs the deadline
+// timer, and maps the returned action onto the same press paths a physical
+// click takes. Run with tools/run-tests.sh — no compositor, no display.
+import QtQml
+import "../Dwell.js" as Dwell
+import "../HoldColumn.js" as HoldColumn
+import "harness.js" as T
+
+QtObject {
+    Component.onCompleted: {
+        // ---- the delay pair's bounds ----
+
+        T.test("the delay default sits inside its designed window", function () {
+            // 400 ms is faster than a deliberate pause, 2000 ms slower than
+            // anyone would wait; ~800 reads as "rest", not "brush". Off by
+            // default either way — the setting is the user's opt-in.
+            T.equal(Dwell.DELAY_DEFAULT_MS >= Dwell.DELAY_MIN_MS, true)
+            T.equal(Dwell.DELAY_DEFAULT_MS <= Dwell.DELAY_MAX_MS, true)
+            T.equal(Dwell.DELAY_MIN_MS, 400)
+            T.equal(Dwell.DELAY_MAX_MS, 2000)
+            T.equal(Dwell.DELAY_DEFAULT_MS, 800)
+        })
+
+        T.test("delayFor clamps a stray value into the window", function () {
+            // The QML boundary hands the machine whatever the merged config
+            // produced; validation owns the FILE, this owns the timer.
+            T.equal(Dwell.delayFor(650), 650)
+            T.equal(Dwell.delayFor(10), 400)
+            T.equal(Dwell.delayFor(60000), 2000)
+            T.equal(Dwell.delayFor("not a number"), 800)
+            T.equal(Dwell.delayFor(undefined), 800)
+            T.equal(Dwell.delayFor(812.6), 813)
+        })
+
+        T.test("the menu window rides the hold threshold, never drifts from it", function () {
+            // Dwell-past opens ticket 37's menu; the window between the type
+            // and the menu is 37's own hold window by design (one hold
+            // vocabulary), and it is DERIVED, not copied — the module reads
+            // HoldColumn's constant so the two cannot disagree.
+            T.equal(Dwell.MENU_WINDOW_MS, HoldColumn.HOLD_THRESHOLD_MS)
+            T.equal(Dwell.menuDelayFor(800), 800 + HoldColumn.HOLD_THRESHOLD_MS)
+            // A clamped delay takes its menu deadline with it.
+            T.equal(Dwell.menuDelayFor(10),
+                400 + HoldColumn.HOLD_THRESHOLD_MS)
+        })
+
+        // ---- the machine: two thresholds, one injected clock ----
+        //
+        // Fixtures drive the clock by hand: t0 is whenever the caller says
+        // it is, and every tick names its own now. Nothing in the module
+        // reads Date.now() — that absence is what makes this a seam.
+
+        var DELAY = 800
+        var MENU = DELAY + Dwell.MENU_WINDOW_MS
+
+        T.test("a rest under the delay types nothing", function () {
+            var s = Dwell.enter(5000, DELAY, MENU, false)
+            T.equal(Dwell.tick(s, 5000 + 799).action, "none")
+            T.equal(s.phase, "armed")
+        })
+
+        T.test("the delay fires at exactly its boundary", function () {
+            // >=, not >: the deadline the timer fires on IS the type.
+            var s = Dwell.enter(0, DELAY, MENU, false)
+            var at = Dwell.tick(s, DELAY)
+            T.equal(at.action, "press")
+            T.equal(at.state.phase, "done")
+        })
+
+        T.test("a cap without a column types once and never repeats", function () {
+            // The ticket's own framing: dwell is click-shaped. Repeat
+            // belongs to a key held down at the compositor (spec-v1 §6),
+            // and a dwell press+release is over when it is over — resting
+            // on an ordinary letter must not machine-gun it. The fired
+            // state is the RETURNED one; the machine never mutates in
+            // place.
+            var s = Dwell.enter(0, DELAY, MENU, false)
+            var fired = Dwell.tick(s, DELAY)
+            T.equal(fired.action, "press")
+            var after = Dwell.tick(fired.state, DELAY + 1)
+            T.equal(after.action, "none")
+            T.equal(after.state.phase, "done")
+            T.equal(Dwell.tick(fired.state, DELAY + 60000).action, "none")
+        })
+
+        T.test("a column cap's continued rest opens the menu at the second boundary", function () {
+            // The 37 interplay, the dwell side: dwell-through types,
+            // dwell-PAST opens the column menu rather than typing again.
+            var s = Dwell.enter(0, DELAY, MENU, true)
+            var typed = Dwell.tick(s, DELAY)
+            T.equal(typed.action, "press")
+            T.equal(typed.state.phase, "spent")
+            T.equal(Dwell.tick(typed.state, MENU - 1).action, "none")
+            var opened = Dwell.tick(typed.state, MENU)
+            T.equal(opened.action, "menu")
+            T.equal(opened.state.phase, "done")
+        })
+
+        T.test("the spent phase keeps its own deadline from the enter, not the fire", function () {
+            // menuDelay is elapsed-from-enter (t0), so a tick delivered
+            // late still opens the menu exactly once and never before the
+            // designed window has passed.
+            var s = Dwell.enter(100, DELAY, MENU, true)
+            var typed = Dwell.tick(s, 100 + DELAY)
+            T.equal(typed.action, "press")
+            var late = Dwell.tick(typed.state, 100 + MENU + 250)
+            T.equal(late.action, "menu")
+            T.equal(Dwell.tick(late.state, 100 + MENU + 500).action, "none")
+        })
+
+        // ---- cancellation ----
+
+        T.test("leaving before the delay cancels the rest", function () {
+            var s = Dwell.enter(0, DELAY, MENU, true)
+            var left = Dwell.leave(s)
+            T.equal(left.action, "cancel")
+            // And the cancelled state is inert: a late timer tick — the
+            // QML side's leave stops the timer, but the machine does not
+            // trust that — types nothing. The dead state is the one the
+            // cancel CARRIES.
+            T.equal(left.state, null)
+            T.equal(Dwell.tick(left.state, DELAY).action, "none")
+        })
+
+        T.test("leaving after the type cancels the pending menu arm", function () {
+            // The character is already out (it typed at the delay); what
+            // dies on leave is the menu the continued rest was arming.
+            var s = Dwell.enter(0, DELAY, MENU, true)
+            var typed = Dwell.tick(s, DELAY)
+            var left = Dwell.leave(typed.state)
+            T.equal(left.action, "cancel")
+            T.equal(left.state, null)
+            T.equal(Dwell.tick(left.state, MENU).action, "none")
+        })
+
+        T.test("leaving an idle or finished machine is none", function () {
+            T.equal(Dwell.leave(null).action, "none")
+            var s = Dwell.enter(0, DELAY, MENU, false)
+            var done = Dwell.tick(s, DELAY)
+            T.equal(Dwell.leave(done.state).action, "none")
+        })
+
+        T.test("a move inside the cap neither cancels nor restarts the dwell", function () {
+            // The decision the ticket left to design, pinned: cancel-on-
+            // LEAVE, not cancel-on-move. A trembling pointer — the exact
+            // user dwell is for — must be able to rest on a key while its
+            // hand shakes; only leaving the cap's hit area cancels. The
+            // move event stays in the API so the seam can say so.
+            var s = Dwell.enter(0, DELAY, MENU, false)
+            T.equal(Dwell.move(s, 100).action, "none")
+            T.equal(Dwell.move(s, 400).action, "none")
+            // The move did not restart the clock: the ORIGINAL deadline
+            // still fires, and the fired state is the returned one.
+            var fired = Dwell.tick(s, DELAY)
+            T.equal(fired.action, "press")
+            // Had the clock restarted at a move, a 500 ms move would push
+            // the deadline to 500+DELAY; the true deadline is the enter's,
+            // so the rest fires long before that.
+            var moved = Dwell.enter(0, DELAY, MENU, false)
+            Dwell.move(moved, 500)
+            T.equal(Dwell.tick(moved, DELAY - 1).action, "none")
+            var firedMoved = Dwell.tick(moved, 500 + DELAY - 1)
+            T.equal(firedMoved.action, "press")
+            T.equal(Dwell.tick(firedMoved.state, 500 + DELAY).action, "none")
+        })
+
+        T.test("re-entering after a fired rest arms a fresh dwell", function () {
+            // Dwell typing is rest-after-rest: leave, come back, and the
+            // delay starts over. The machine is one cap's current rest,
+            // not a session.
+            var s = Dwell.enter(0, DELAY, MENU, false)
+            Dwell.tick(s, DELAY)
+            var again = Dwell.enter(4000, DELAY, MENU, false)
+            T.equal(again.phase, "armed")
+            T.equal(Dwell.tick(again, 4000 + DELAY - 1).action, "none")
+            T.equal(Dwell.tick(again, 4000 + DELAY).action, "press")
+        })
+
+        T.test("a null state is inert under every event", function () {
+            T.equal(Dwell.tick(null, 99999).action, "none")
+            T.equal(Dwell.move(null, 5).action, "none")
+        })
+
+        T.test("progress is the affordance's fraction, not a state", function () {
+            // The underline the cap draws is progress toward the type —
+            // never a second "unavailable/dim" reading. The machine states
+            // that as a number: 0 at enter, half at half the delay, full
+            // at the deadline, and full afterwards too (a completed rest
+            // is not an error state).
+            var s = Dwell.enter(0, DELAY, MENU, true)
+            T.equal(Dwell.progress(s, 0), 0)
+            T.equal(Dwell.progress(s, DELAY / 2), 0.5)
+            T.equal(Dwell.progress(s, DELAY), 1)
+            T.equal(Dwell.progress(s, MENU + 5), 1)
+            T.equal(Dwell.progress(null, 100), 0)
+        })
+
+        // ---- eligibility: which caps dwell at all ----
+
+        T.test("a character cap dwells; a gated keyboard dwells nothing", function () {
+            // inputReady is the existing disabled discipline (spec-v1.1
+            // §6): a cap that cannot type has no press path, and a dwell
+            // is a press. Readiness is checked at enter AND the wiring
+            // re-checks at fire — the machine itself only guards entry.
+            T.equal(Dwell.eligible({ chr: "q", xkb: "AD01" }, false, true), true)
+            T.equal(Dwell.eligible({ chr: "q", xkb: "AD01" }, false, false), false)
+            // Space is a character cap (its fixed label is the panel's
+            // own, its chr is a real space): dwell has to type the most
+            // common key on the board.
+            T.equal(Dwell.eligible(
+                { chr: " ", label: "", w: 4.5, xkb: "SPCE" }, false, true), true)
+        })
+
+        T.test("search never dwells: the emoji page is excluded chrome", function () {
+            // The chrome decision, one edge of it: while the emoji page
+            // stands, its search arm is immediate by contract (ticket 37
+            // refused the defer for the same reason) and the page itself
+            // — cells, categories, its pick targets — is a picker
+            // surface, not a typing surface. A dwell user cannot pick an
+            // emoji by dwelling either, so letting the query fill by
+            // rest would promise a journey with no destination.
+            T.equal(Dwell.eligible({ chr: "q", xkb: "AD01" }, true, true), false)
+        })
+
+        T.test("sticky modifiers dwell-press exactly like a click", function () {
+            // The ticket's own rule: a dwell on Shift latches Shift,
+            // precisely what a click does — applyModifierEvent's click
+            // event, lock upgrades included where the reducer allows.
+            var clickable = ["ctrl", "alt", "logo", "altgr", "shift"]
+            for (var i = 0; i < clickable.length; i++) {
+                T.equal(Dwell.eligible(
+                    { key: clickable[i], label: "mod" }, false, true), true)
+            }
+        })
+
+        T.test("keysym caps dwell: they are input, not chrome", function () {
+            // BackSpace, Enter, Tab, the arrows — the nav caps exist
+            // because they are pointer-unreachable (§22); for a dwell
+            // user they are the whole point.
+            var keysyms = ["BackSpace", "Return", "Tab", "Left", "Right",
+                "Up", "Down", "Delete", "Home", "End"]
+            for (var i = 0; i < keysyms.length; i++) {
+                T.equal(Dwell.eligible(
+                    { key: keysyms[i], label: keysyms[i] }, false, true), true)
+            }
+        })
+
+        T.test("the panel's command caps and chrome never dwell", function () {
+            // The chrome decision, pinned: dwell is an INPUT affordance.
+            // The panel's own surfaces — the gear, the language chip, the
+            // paste chip, the emoji page's cells — are not caps and never
+            // route through this rule at all; the grid's own command
+            // caps (close, page, emoji, fn, caps) ARE caps and are named
+            // here so the exclusion is a decision, not an accident.
+            // Resting the pointer while traversing the board must never
+            // close the panel, flip the page, open a picker, or toggle a
+            // semantic layer under the pointer's feet; those actions all
+            // re-render or destroy the surface the pointer is resting
+            // on. The list restates triggerSpecial's fixed cases, the
+            // HoldColumn "restated, not re-derived" discipline.
+            var commands = ["close", "page", "emoji", "fn", "caps"]
+            for (var i = 0; i < commands.length; i++) {
+                T.equal(Dwell.eligible(
+                    { key: commands[i], label: commands[i] }, false, true), false)
+            }
+            T.equal(Dwell.eligible(null, false, true), false)
+            T.equal(Dwell.eligible({ spacer: true, w: 1 }, false, true), false)
+            T.equal(Dwell.eligible(
+                { chr: "\u2603", unavailable: true, xkb: "AB11" }, false, true),
+                false)
+        })
+
+        // ---- the 37 interplay: the defer decision ----
+
+        function deferredCap() {
+            return { chr: "3", chrShift: "\u2116", xkb: "AE03" }
+        }
+        function richColumn() {
+            return [{ level: 3, text: "\u00a7" }, { level: 4, text: "\u20b4" }]
+        }
+
+        T.test("dwell mode suppresses the release-defer: no click is needed at all", function () {
+            // In dwell mode a column cap does not defer its typing to
+            // mouse-release — the dwell itself is the click, so a press
+            // types immediately (repeat stays the compositor's own) and
+            // the menu is reached by dwelling PAST the type, never by
+            // holding a button.
+            T.equal(Dwell.holdDefers(true, deferredCap(), richColumn(),
+                false, true), false)
+        })
+
+        T.test("non-dwell mode keeps ticket 37 exactly as it was", function () {
+            // The regression pin: with dwell off, holdDefers IS
+            // HoldColumn.shouldDefer — the same caps defer, the same
+            // gates gate, nothing about today's press/release/menu
+            // changes because a setting exists.
+            T.equal(Dwell.holdDefers(false, deferredCap(), richColumn(),
+                false, true), true)
+            T.equal(Dwell.holdDefers(false, deferredCap(), richColumn(),
+                true, true), false)
+            T.equal(Dwell.holdDefers(false, deferredCap(), richColumn(),
+                false, false), false)
+            T.equal(Dwell.holdDefers(false, deferredCap(), [],
+                false, true), false)
+            T.equal(Dwell.holdDefers(false, { key: "BackSpace" }, richColumn(),
+                false, true), false)
+        })
+
+        Qt.exit(T.report("dwell"))
+    }
+}

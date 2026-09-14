@@ -117,6 +117,12 @@ Item {
     // otherwise. Override, else the maintained default — the same plain
     // preference shape as the mode and the emoji app.
     property string superMark: maintainedDefaults.superMark
+    // Dwell-to-type (ticket 50): off by default, the delay bounded by
+    // Dwell.js's window and validated to the same bounds at the file.
+    // Override, else the maintained default — the same plain preference
+    // shape as the mode and the Super mark.
+    property bool dwellEnabled: maintainedDefaults.dwellEnabled
+    property int dwellDelayMs: maintainedDefaults.dwellDelayMs
     // Emoji delivery mode (ticket 28): "direct" types the pick through the
     // helper; "clipboard" publishes the exact sequence and sends the paste
     // chord — the owner's choice for Chromium-family clients (ZCode).
@@ -959,6 +965,8 @@ Item {
         root.followTheme = effective.followTheme
         root.emojiCloseAfterPick = effective.emojiCloseAfterPick
         root.emojiPageSize = effective.emojiPageSize
+        root.dwellEnabled = effective.dwellEnabled
+        root.dwellDelayMs = effective.dwellDelayMs
         // A follow-theme flip while the panel is on screen is immediate:
         // stopping freezes the tokens at the look they then have, and
         // re-enabling releases that snapshot so a later stop freezes the
@@ -2003,6 +2011,12 @@ Item {
                 // an absent Omarchy font both land on the word, never a
                 // blank cap.
                 superMark: root.superMark
+                // Dwell-to-type (ticket 50): the caps' rest-to-type
+                // behaviour and its delay, resolved override over default
+                // above and handed down as one voice — the keyboard owns
+                // the machine, the panel owns the setting.
+                dwellEnabled: root.dwellEnabled
+                dwellDelayMs: root.dwellDelayMs
                 // The persisted group feeds LayoutDevices' restart
                 // fallback; every acknowledged configure refreshes it.
                 rememberedLayoutGroup: root.rememberedLayoutGroup

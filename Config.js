@@ -35,6 +35,9 @@ var CONFIG_FIELDS = [
     { file: "emoji_page_size", value: "emojiPageSize" },
     { file: "emoji_delivery", value: "emojiDelivery" },
     { file: "super_mark", value: "superMark" },
+    // Ticket 50: the dwell pair — off by default, a bounded delay when on.
+    { file: "dwell_enabled", value: "dwellEnabled" },
+    { file: "dwell_delay_ms", value: "dwellDelayMs" },
     { file: "key_radius", value: "capCorner" },
     { file: "panel_radius", value: "panelRadius" },
     { file: "key_background", value: "keyBackground" },
@@ -64,6 +67,13 @@ function maintainerDefaults() {
         // Sparse-store semantics mean this key never appears in the file
         // unless the user picked something.
         superMark: "word",
+        // Ticket 50: dwell-to-type is an accessibility opt-in — the caps
+        // never type from a rest until the user turns this on. The delay
+        // mirrors Dwell.js's designed window (the module clamps whatever
+        // reaches the timer; the file holds the same bounds so an
+        // external edit cannot smuggle a rest outside it).
+        dwellEnabled: false,
+        dwellDelayMs: 800,
         capCorner: 8,
         panelRadius: 12,
         keyBackground: "#303030",
@@ -164,6 +174,14 @@ function validFieldValue(field, value) {
     // value that could not reach the file can never blank the cap either.
     if (field.file === "super_mark")
         return SUPER_MARKS.indexOf(value) !== -1
+    if (field.file === "dwell_enabled")
+        return typeof value === "boolean"
+    // Whole milliseconds inside Dwell.js's designed window (400-2000):
+    // the same bounds the module clamps the timer into, held at the file
+    // so a malformed external edit is preserved, never guessed.
+    if (field.file === "dwell_delay_ms")
+        return typeof value === "number" && isFinite(value)
+            && value >= 400 && value <= 2000 && value === Math.floor(value)
     if (field.file === "key_radius" || field.file === "panel_radius")
         return isRadius(value)
     if (field.file === "key_background" || field.file === "panel_background"

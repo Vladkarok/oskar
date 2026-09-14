@@ -1738,3 +1738,56 @@ click's own hyprctl loop last commanded, and the observed reading.
   all three switch-set devices converged on the clicked group, exactly
   one `group ->` line in the helper's log (the bounce was a second one),
   `remembered` on the clicked value after the settle.
+
+## 54. Dwell types through the cap's own click; the chrome never rests into action
+
+2026-09-14, ticket 50 (accessibility slice one — "dwell is the first
+thing onboard refugees ask for"). Hover a cap for the configured delay
+and it types: press+release as ONE click, delivered through the same
+`typeCap`/`triggerSpecial` + `releaseKey` paths a physical press takes,
+so every chord, latch and drawn-is-typed rule is decided by the code
+that already owns it. Four decisions inside it:
+
+- **The machine is pure and the clock is injected.** `Dwell.js` owns
+  enter/move/leave/tick against a caller-supplied `now`
+  (`tests/dwell.qml`, the HoldColumn discipline); the QML side is one
+  deadline timer per threshold crossing and the mapping of the returned
+  action. Cancellation is on LEAVE, never on motion inside the cap —
+  the trembling hand dwell is for must be allowed to rest — and a
+  cancelled state is dead by the machine's own hand, so a stray timer
+  tick after a leave types nothing. A rest types ONCE; repeat belongs
+  to a key the compositor holds down (§51's rule, applied to the dwell
+  side).
+- **Dwell-past opens the 37 menu; dwell mode never defers.** The menu
+  deadline is the delay plus HoldColumn's own hold window, read from
+  the module so the two cannot drift. With dwell ON no cap defers its
+  typing to mouse-release (`Dwell.holdDefers`): the dwell IS the click,
+  a press types immediately, and the column menu is reached by resting
+  past the type, never by holding a button. With dwell OFF the compose
+  is `shouldDefer` exactly — ticket 37's behaviour is regression-pinned
+  by both suites together.
+- **Chrome is excluded, as a decision not an accident.** Dwell is an
+  INPUT affordance. The grid's character caps (Space included), the
+  sticky modifiers (a dwell on Shift latches exactly what a click
+  latches) and the keysym nav caps dwell; the panel's own surfaces —
+  gear, language chip, paste chip, the emoji page's cells — are not
+  caps and never route through `Dwell.eligible`, and the grid's own
+  command caps (close, page, emoji, fn, caps) are named excluded:
+  resting the pointer while traversing the board must never close the
+  panel, flip the page, open a picker or toggle a semantic layer under
+  the pointer's feet, because those actions re-render or destroy the
+  surface being rested on. A gated keyboard dwells nothing (§19's
+  discipline, re-checked at fire), and the emoji search arm stays
+  immediate-by-contract.
+- **The affordance is progress, not state.** A thin underline at the
+  cap's foot grows linearly to the deadline in the corner dot's own
+  register (§45's quiet: textDim ink, a hint of opacity) and vanishes
+  the moment the rest ends — it must never read as a second
+  unavailable/dim treatment, so it never tints the cap or its glyph.
+
+Off by default; `dwell_enabled` + `dwell_delay_ms` (400-2000, default
+800) ride the §18 store with per-row reset, and the same bounds are
+held at the file, the stepper and the machine's clamp. The VM leg is
+owed on the ticket (QMP pointer rest → character in foot; dwell-past →
+menu; leave → nothing), and the owner's feel pass stands pending as it
+does for every behaviour change.

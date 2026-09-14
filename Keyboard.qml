@@ -7,6 +7,7 @@ import qs.Commons
 import "KeyboardLayout.js" as Layout
 import "ModifierReducer.js" as Modifiers
 import "HoldColumn.js" as HoldColumn
+import "Dwell.js" as Dwell
 import "KeyboardSession.js" as Session
 import "Config.js" as ConfigFile
 import "LayoutDevices.js" as LayoutDevices
@@ -53,10 +54,13 @@ Item {
         // The search arm of typeCap is immediate by contract (ticket 37):
         // a hold that began before the page opened must not grow a menu
         // over it, and its release can only lift what its press sent —
-        // which for a deferred hold is nothing.
+        // which for a deferred hold is nothing. A dwell dies with it:
+        // the emoji page is excluded chrome (Dwell.eligible), so a rest
+        // standing when the page opened never fires into the query.
         if (searchMode) {
             clearCapHold()
             closeHoldMenu()
+            dwellReset()
         }
     }
     property var pendingTextReplies: []
@@ -92,6 +96,29 @@ Item {
     property real holdMenuCapX: 0
     property real holdMenuCapTop: 0
     property real holdMenuCapBottom: 0
+
+    // ---- dwell-to-type (ticket 50) ----
+    //
+    // Hover a cap for the configured delay and it types — press+release
+    // as one click, exactly the pair a physical press and release of that
+    // cap send — and resting PAST the type on a cap whose position
+    // carries a hold column opens ticket 37's menu: the menu deadline is
+    // the delay plus 37's own hold window, one vocabulary. The pure
+    // machine (thresholds, cancellation, which caps dwell at all — the
+    // chrome exclusions) is Dwell.js with tests/dwell.qml; this is the
+    // state and the chrome: hover events in, one deadline timer, the
+    // returned action mapped onto the press paths that already exist.
+    //
+    // Off by default; the panel resolves the setting pair over the
+    // maintained defaults and hands both down. A rest in progress dies
+    // when either changes — the next hover re-arms with the new value.
+    property bool dwellEnabled: false
+    property int dwellDelayMs: 800
+    onDwellEnabledChanged: if (!dwellEnabled) dwellReset()
+    onDwellDelayMsChanged: dwellReset()
+    property var dwellState: null
+    property var dwellCap: null
+    property Item dwellDelegate: null
 
     // The size preset's multiplier on top of the theme's own scaling
     // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
@@ -398,6 +425,11 @@ Item {
     // tables exist to avoid. One loud line per offending row at rebuild
     // time, in the same spirit as reportMisses in KeyboardLayout.js.
     onRowModelChanged: {
+        // A rebuild destroys every cap delegate (page switch, language
+        // change, facts refresh): a dwell pointing at one of them dies
+        // with it — its underline died with the delegate — and never
+        // fires into a cap that no longer exists.
+        dwellReset()
         for (var i = 0; i < rowModel.length; i++) {
             var sum = 0
             for (var j = 0; j < rowModel[i].length; j++) {
@@ -456,8 +488,11 @@ Item {
         // were baked at open). Fold it rather than let a pick type a
         // column the acknowledged keymap no longer carries. A hold still
         // pending needs nothing: the threshold re-derives its column, and
-        // a release before then types the cap the user pressed.
+        // a release before then types the cap the user pressed. A dwell
+        // armed its menu window against the old facts' column and dies
+        // with them (the rebuild below would kill its delegate anyway).
         closeHoldMenu()
+        dwellReset()
     }
 
     /// The one key in and the same key out. The reducer is told, so that what
@@ -1272,8 +1307,11 @@ Item {
         // pending hold can never reach its release and a standing menu
         // has no panel left to stand on — both fold here, before the
         // releaseAll, so the close leaves nothing of ticket 37 behind.
+        // A dwell dies with the panel for the same reason: its timer
+        // must not type into whatever the user opens next.
         clearCapHold()
         closeHoldMenu()
+        dwellReset()
         applyModifierEvent({ type: "releaseAll" })
     }
 
@@ -1890,8 +1928,13 @@ Item {
     }
 
     function capDefersHold(capData) {
-        return HoldColumn.shouldDefer(capData, capHoldColumn(capData),
-            searchMode, inputReady)
+        // Ticket 50's interplay, composed at the seam so it is pinned
+        // (tests/dwell.qml): in dwell mode no cap defers — the dwell is
+        // the click and the menu is reached by dwelling past the type;
+        // with dwell off this is HoldColumn.shouldDefer exactly, and
+        // nothing about ticket 37's press behaviour changes.
+        return Dwell.holdDefers(dwellEnabled, capData,
+            capHoldColumn(capData), searchMode, inputReady)
     }
 
     function beginCapHold(capData, delegate) {
@@ -2004,6 +2047,130 @@ Item {
             configureStamp: session.sends
         })
         applyModifierEvent({ type: "release" })
+    }
+
+    // ---- the dwell event path (ticket 50) ----
+    //
+    // The chrome around Dwell.js's machine: enter/leave ride the cap's
+    // hit area (the same bounds hover lights), one timer per threshold
+    // crossing, and the returned action maps onto the press paths a
+    // physical click takes — typeCap/triggerSpecial plus releaseKey, so
+    // every chord, latch and search rule is decided by the code that
+    // already owns it and a dwell press is indistinguishable from a
+    // click at the socket.
+
+    /// The pointer entered a cap's hit area. A previous rest dies here
+    /// (a new enter always supersedes), then eligibility is Dwell's and
+    /// the machine arms with the live facts' column — the same
+    /// capHoldColumn the press-based hold reads, so the dwell menu and
+    /// the hold menu cannot disagree about what a position offers.
+    function dwellEnter(capData, delegate) {
+        dwellReset()
+        if (!dwellEnabled) return
+        if (!Dwell.eligible(capData, searchMode, inputReady)) return
+        var delay = Dwell.delayFor(dwellDelayMs)
+        dwellState = Dwell.enter(Date.now(), delay,
+            Dwell.menuDelayFor(delay), capHoldColumn(capData).length > 0)
+        dwellCap = capData
+        dwellDelegate = delegate
+        dwellTimer.interval = delay
+        dwellTimer.restart()
+        dwellStartFill(delegate, delay)
+    }
+
+    /// The pointer left the cap's hit area: the rest and its pending menu
+    /// arm die (the machine's leave owns that decision; the wiring only
+    /// clears). A leave from a delegate that is no longer the dwelled one
+    /// is a rebuild's stray signal and changes nothing.
+    function dwellLeave(delegate) {
+        if (dwellDelegate !== delegate) return
+        dwellReset()
+    }
+
+    /// The deadline timer fired: hand the machine the clock and map the
+    /// crossing. A column cap's press re-arms the timer for the menu
+    /// deadline (elapsed-from-enter, so a late delivery still waits the
+    /// designed window); nothing ever re-arms for a repeat — a rest types
+    /// once (Dwell.tick's own rule).
+    function dwellTick() {
+        if (!dwellState) return
+        var now = Date.now()
+        var result = Dwell.tick(dwellState, now)
+        dwellState = result.state
+        if (result.action === "press") {
+            if (dwellState && dwellState.phase === "spent") {
+                dwellTimer.interval = Math.max(1,
+                    dwellState.menuDelay - (now - dwellState.t0))
+                dwellTimer.restart()
+            }
+            dwellFire()
+        } else if (result.action === "menu") {
+            dwellOpenMenu()
+        }
+    }
+
+    /// The delay fired: the cap types. Readiness, search and availability
+    /// are re-checked because they can drop while the pointer rests —
+    /// endCapHold's rule: a press that cannot type sends nothing and
+    /// sounds nothing. The release half goes to exactly the caps whose
+    /// physical release sends it (capRect.types' rule, restated): a
+    /// character cap's key lifts, a modifier's click is self-contained.
+    function dwellFire() {
+        var cap = dwellCap
+        if (!cap) {
+            dwellReset()
+            return
+        }
+        if (!inputReady || searchMode || cap.unavailable === true) {
+            dwellReset()
+            return
+        }
+        if (!cap.key) {
+            typeCap(cap)
+            releaseKey()
+            return
+        }
+        triggerSpecial(cap, false)
+        if (Layout.positionForKeysym(cap.key)) releaseKey()
+    }
+
+    /// The second threshold: the continued rest opens ticket 37's menu,
+    /// reusing openHoldMenu whole — geometry, catch area, the pick's
+    /// chord. The entries are re-read from the live facts: a keymap that
+    /// stopped carrying a column mid-rest ends the dwell quietly, never
+    /// leaving the phantom hold a press-based open would (whose release
+    /// would type on this cap's next click).
+    function dwellOpenMenu() {
+        var cap = dwellCap
+        var delegate = dwellDelegate
+        dwellReset()
+        if (!cap || !delegate) return
+        if (capHoldColumn(cap).length === 0) return
+        holdCap = cap
+        holdDelegate = delegate
+        openHoldMenu()
+    }
+
+    /// One place clears a dwell: leave, a physical press superseding the
+    /// rest, search arming, facts or rows rebuilding under the pointer,
+    /// the panel closing, the setting turning off. The underline stops
+    /// with it — the affordance IS the rest, and the rest is over.
+    function dwellReset() {
+        dwellState = null
+        dwellCap = null
+        var delegate = dwellDelegate
+        dwellDelegate = null
+        dwellTimer.stop()
+        if (delegate) {
+            // A delegate the row rebuild already destroyed is a wrapper
+            // whose methods are gone; clearing must survive it.
+            try { delegate.stopDwellFill() } catch (error) {}
+        }
+    }
+
+    function dwellStartFill(delegate, delay) {
+        if (!delegate) return
+        try { delegate.startDwellFill(delay) } catch (error) {}
     }
 
     // Shift is applied as a real Shift press rather than by picking the shifted
@@ -2187,6 +2354,24 @@ Item {
                             ? root.edgeOutset : root.halfGap
                         readonly property real hitRight: index === rowItem.rowModel.length - 1
                             ? root.edgeOutset : root.halfGap
+
+                        // The dwell affordance's two handles, called only
+                        // by the keyboard's dwell path (ticket 50): start
+                        // grows the foot underline over the rest's delay,
+                        // stop snaps it away. Methods rather than
+                        // bindings because the animation must restart on
+                        // every arm and die instantly on every cancel — a
+                        // binding could only ever drain.
+                        function startDwellFill(delay) {
+                            dwellUnderline.visible = true
+                            dwellFillAnim.duration = Math.max(1, delay)
+                            dwellFillAnim.restart()
+                        }
+                        function stopDwellFill() {
+                            dwellFillAnim.stop()
+                            dwellUnderline.width = 0
+                            dwellUnderline.visible = false
+                        }
 
                         Rectangle {
                             id: capRect
@@ -2536,6 +2721,42 @@ Item {
                                 opacity: capRect.disabled ? 0.3 : 0.8
                             }
 
+                            // The dwell progress affordance (ticket 50):
+                            // a thin underline growing along the cap's
+                            // foot while the rest counts toward the type.
+                            // The corner dot's own register (ticket 45) —
+                            // textDim ink, a hint of opacity, never an
+                            // accent fill and never a dimmed glyph: this
+                            // is PROGRESS, not state, so it exists only
+                            // while a rest is live, grows linearly to the
+                            // deadline, and vanishes the moment the rest
+                            // ends by typing, cancelling or leaving. A
+                            // second "unavailable/dim" reading is exactly
+                            // what it must never become.
+                            Rectangle {
+                                id: dwellUnderline
+                                visible: false
+                                width: 0
+                                height: Math.max(2,
+                                    Math.round(root.cellGap * 0.45))
+                                radius: height / 2
+                                anchors {
+                                    horizontalCenter: parent.horizontalCenter
+                                    bottom: parent.bottom
+                                    bottomMargin: Math.round(root.cellGap * 0.35)
+                                }
+                                color: root.textDim
+                                opacity: 0.8
+                            }
+                            NumberAnimation {
+                                id: dwellFillAnim
+                                target: dwellUnderline
+                                property: "width"
+                                from: 0
+                                to: capRect.width - root.cellGap
+                                easing.type: Easing.Linear
+                            }
+
                             MouseArea {
                                 id: capHit
                                 // Deliberately larger than the cap it belongs
@@ -2611,6 +2832,12 @@ Item {
                                 // The bound is what is claimed here, and it is
                                 // the residual the by-hand retest looks for.
                                 onPressed: {
+                                    // A physical press supersedes any rest:
+                                    // dwell and click never double-type, and
+                                    // the press keeps exactly the semantics
+                                    // it has today (in dwell mode no cap
+                                    // defers — Dwell.holdDefers).
+                                    root.dwellReset()
                                     // Not-ready gating (spec-v1.1 §6) and the
                                     // unavailable mark (§3) are properties of
                                     // the cap, so the whole press path —
@@ -2666,6 +2893,14 @@ Item {
                                 onReleased: {
                                     if (root.endCapHold(capDelegate)) return
                                     if (capRect.types) root.releaseKey()
+                                    // A release with the pointer still on
+                                    // the cap re-arms the dwell (ticket 50):
+                                    // a click-and-rest user — or a click
+                                    // that ends where it began, as they all
+                                    // do — must not need to leave the key
+                                    // and come back before resting works.
+                                    if (root.dwellEnabled && capHit.containsMouse)
+                                        root.dwellEnter(capData, capDelegate)
                                 }
                                 // A deferred hold that loses its grab types
                                 // NOTHING — no press line was ever sent, so
@@ -2673,9 +2908,19 @@ Item {
                                 // lift, strictly better than today. A hold
                                 // that had opened its menu folds it here too.
                                 onCanceled: {
+                                    root.dwellReset()
                                     if (root.cancelCapHold(capDelegate)) return
                                     if (capRect.types) root.releaseKey()
                                 }
+
+                                // The dwell path's enter/leave (ticket 50):
+                                // the hit area's own bounds — the same ones
+                                // hover lights — decide when a rest begins
+                                // and ends; cancellation is on leave, never
+                                // on motion inside the cap (Dwell.move's
+                                // rule, for the trembling hand dwell is for).
+                                onEntered: root.dwellEnter(capData, capDelegate)
+                                onExited: root.dwellLeave(capDelegate)
 
                                 // What is left on the click is only the
                                 // command cap that would tear something out
@@ -2731,6 +2976,19 @@ Item {
         interval: HoldColumn.HOLD_THRESHOLD_MS
         repeat: false
         onTriggered: root.openHoldMenu()
+    }
+
+    Timer {
+        id: dwellTimer
+        // The dwell path's one timer (ticket 50), and like ticket 37's it
+        // repeats nothing: it is deadline-driven, one interval per
+        // threshold crossing — the delay, then the menu window for a
+        // column cap — and Dwell.tick decides what a crossing means. A
+        // cleared dwell never fires: the machine's dead state answers
+        // "none" whatever a stray trigger delivers.
+        interval: 800
+        repeat: false
+        onTriggered: root.dwellTick()
     }
 
     // ---- the hold column's menu (ticket 37) ----

@@ -73,7 +73,7 @@ else about the protocol lives in `parse()`/`apply_locked()` in
   `omarchy-osk` package lifecycle, full VM choreography), 06 (the custom
   kb_file survives shell crashes and helper restarts), 31 (the remembered
   group bounded by the map). 33 (this reconciliation) closes the round.
-- Host suites: ten QML/JS files + Rust unit tests, all green; provenance
+- Host suites: fifteen QML/JS files + Rust unit tests, all green; provenance
   gate zero against the upstream sketch.
 - The VM lab runs the PACKAGED product (`omarchy-osk` installed +
   `setup` active); the nested integration suite and the phase-driven
