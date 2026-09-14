@@ -7,6 +7,8 @@
 #   omarchy-osk upgrade                    reload helper + shell after a
 #                                          package/source update
 #   omarchy-osk status                     report; changes nothing
+#   omarchy-osk doctor                     diagnose; read-only, exits 1
+#                                          when something is wrong
 #   omarchy-osk teardown                   deactivate, keep config/state
 #
 # The same script serves both worlds and tells them apart by its own
@@ -340,10 +342,457 @@ cmd_teardown() {
   say "teardown complete; config and state preserved"
 }
 
+# --- doctor (ticket 49) ------------------------------------------------------
+#
+# One read-only diagnosis against the live session: every check names a
+# failure this project has actually shipped or hit, prints
+#   ok <what> — <evidence>
+#   FAIL <what>: <diagnosis>; try: <the one fix>
+#   unknown <what>: <why it cannot be checked>
+# and the command exits 0 only when nothing failed and nothing is
+# unknown (an uncheckable health claim is not a healthy verdict).
+#
+# The OMARCHY_OSK_DOCTOR_* environment variables are TEST SEAMS, not
+# configuration: each points one check at a fixture (a bogus socket, a
+# dangling symlink, a journal file) so a negative case can be proven on
+# a healthy host without breaking the real thing. Unset = the real path.
+
+DOCTOR_FAILS=0
+DOCTOR_UNKNOWNS=0
+
+doc_ok()      { printf 'ok      %s — %s\n' "$1" "$2"; }
+doc_fail()    { printf 'FAIL    %s: %s\n' "$1" "$2"; DOCTOR_FAILS=$((DOCTOR_FAILS + 1)); }
+doc_unknown() { printf 'unknown %s: %s\n' "$1" "$2"; DOCTOR_UNKNOWNS=$((DOCTOR_UNKNOWNS + 1)); }
+
+doctor_hello() {
+  # First reply line to this script's expected hello. Sentinels for the
+  # honest cannot-answer cases; anything else is the helper's own reply.
+  # socat's failure (a stale socket file) must not abort the run.
+  command -v socat >/dev/null 2>&1 || { printf 'no socat\n'; return; }
+  [[ -S "$DOCTOR_SOCKET" ]] || { printf 'no socket\n'; return; }
+  local reply
+  reply="$(printf 'hello %s\n' "$PROTOCOL_VERSION" |
+    timeout 2 socat -t1 - UNIX-CONNECT:"$DOCTOR_SOCKET" 2>/dev/null |
+    head -n1 || true)"
+  [[ -n "$reply" ]] || reply="silent"
+  printf '%s\n' "$reply"
+}
+
+doctor_query() {
+  # One command line in, first reply line out; empty = no answer. The
+  # queries doctor sends (caps, keyboards) are read-only against the
+  # helper's installed state.
+  command -v socat >/dev/null 2>&1 || return 0
+  [[ -S "$DOCTOR_SOCKET" ]] || return 0
+  printf '%s\n' "$1" |
+    timeout 2 socat -t1 - UNIX-CONNECT:"$DOCTOR_SOCKET" 2>/dev/null |
+    head -n1 || true
+}
+
+doctor_unit() {
+  local what="service unit" state
+  state="$(systemctl --user is-enabled "$DOCTOR_UNIT_D" 2>/dev/null || true)"
+  if [[ "$state" == "not-found" || -z "$state" ]]; then
+    doc_fail "$what" "no user unit named $DOCTOR_UNIT_D is installed, so \
+nothing starts the helper; try: omarchy-osk setup (a source checkout needs \
+./install.sh first)"
+    return
+  fi
+  if ! systemctl --user --quiet is-active "$DOCTOR_UNIT_D" 2>/dev/null; then
+    doc_fail "$what" "$DOCTOR_UNIT_D is $state but NOT active — the helper \
+is not running; try: systemctl --user status $DOCTOR_UNIT_D, then \
+omarchy-osk setup"
+    return
+  fi
+  if [[ "$state" != "enabled" ]]; then
+    doc_fail "$what" "$DOCTOR_UNIT_D is running but $state (it will not \
+survive the next login); try: omarchy-osk setup"
+    return
+  fi
+  doc_ok "$what" "$DOCTOR_UNIT_D enabled and active"
+}
+
+doctor_socket() {
+  local what="control socket"
+  case "$HELLO_REPLY" in
+    "hello $PROTOCOL_VERSION")
+      doc_ok "$what" "$DOCTOR_SOCKET answers hello $PROTOCOL_VERSION \
+(ready: device and keymap live)"
+      ;;
+    "no socat")
+      doc_unknown "$what" "cannot ask the helper — socat is not installed \
+(pacman: socat)"
+      ;;
+    "no socket")
+      doc_fail "$what" "$DOCTOR_SOCKET does not exist — no helper is \
+serving it; try: omarchy-osk setup"
+      ;;
+    "err not ready")
+      doc_fail "$what" "the helper is up but NOT ready — no keymap has \
+been forwarded (the panel never completed a configure); try: \
+omarchy restart shell"
+      ;;
+    silent)
+      doc_fail "$what" "$DOCTOR_SOCKET exists but the helper did not \
+answer in 2s; try: systemctl --user status $DOCTOR_UNIT_D, then \
+omarchy-osk setup"
+      ;;
+    "err protocol"*)
+      # The drift check owns the version comparison; this is its evidence.
+      doc_fail "$what" "the helper refused protocol $PROTOCOL_VERSION \
+(reply: $HELLO_REPLY) — the installed helper and this $MODE tree disagree; \
+try: omarchy-osk upgrade"
+      ;;
+    *)
+      doc_fail "$what" "unexpected reply '$HELLO_REPLY'; try: \
+systemctl --user status $DOCTOR_UNIT_D"
+      ;;
+  esac
+}
+
+doctor_mode() {
+  local what="install mode" target text points
+  if [[ ! -d "$PAYLOAD" ]]; then
+    doc_fail "$what" "the $MODE payload $PAYLOAD is MISSING (removed under \
+a live install?); try: reinstall the $MODE payload, then omarchy-osk setup"
+  fi
+  if [[ -e "$DOCTOR_REG" && ! -L "$DOCTOR_REG" ]]; then
+    doc_fail "$what" "$DOCTOR_REG is a real directory (a git clone or a \
+checkout), so the shell loads THAT, not the $MODE payload $PAYLOAD; try: \
+remove or rename the directory, then omarchy-osk setup"
+  elif [[ ! -L "$DOCTOR_REG" ]]; then
+    doc_fail "$what" "no registration at $DOCTOR_REG — the shell has no \
+plugin to load; try: omarchy-osk setup"
+  else
+    # realpath happily resolves a dangling link's text, so existence is
+    # decided by following the link, not by realpath's output.
+    text="$(readlink "$DOCTOR_REG")"
+    if [[ ! -e "$DOCTOR_REG" ]]; then
+      doc_fail "$what" "the registration $DOCTOR_REG is DANGLING (link \
+text: $text — its payload was removed); try: omarchy-osk setup"
+    else
+      target="$(realpath "$DOCTOR_REG" 2>/dev/null || true)"
+      if [[ "$target" == "$PAYLOAD" ]]; then
+        doc_ok "$what" "$MODE (self: $SELF); registration -> $target"
+      else
+        doc_fail "$what" "the registration points at $target, not the \
+$MODE payload $PAYLOAD — the shell loads a different install than this \
+command manages; try: omarchy-osk setup"
+      fi
+    fi
+  fi
+
+  # ~/.local/bin shadows /usr/bin on default PATHs: a stale shadow is how
+  # a bare `omarchy-osk setup` silently re-creates a migrated-away source
+  # world (the §45 lesson). A DANGLING shadow is skipped by PATH lookup
+  # and is harmless, so existence follows the link (-e, not -L).
+  local shadow="PATH shadow"
+  points="$(realpath "$DOCTOR_SHADOW" 2>/dev/null || true)"
+  if [[ "$MODE" == "packaged" && -e "$DOCTOR_SHADOW" ]]; then
+    doc_fail "$shadow" "$DOCTOR_SHADOW shadows /usr/bin/omarchy-osk, so a \
+bare omarchy-osk manages the source world instead of the package; try: \
+omarchy-osk setup --migrate-source (it removes the shadow)"
+  elif [[ "$MODE" == "packaged" ]]; then
+    doc_ok "$shadow" "none ($DOCTOR_SHADOW absent; /usr/bin/omarchy-osk answers)"
+  elif [[ -e "$DOCTOR_SHADOW" && "$points" != "$PAYLOAD/bin/omarchy-osk" ]]; then
+    doc_fail "$shadow" "$DOCTOR_SHADOW resolves to ${points:-<unresolved>}, \
+not this checkout's bin/omarchy-osk — a bare omarchy-osk runs a DIFFERENT \
+install; try: omarchy-osk setup (install.sh re-points it)"
+  elif [[ -e "$DOCTOR_SHADOW" ]]; then
+    doc_ok "$shadow" "$DOCTOR_SHADOW -> this checkout's bin/omarchy-osk"
+  else
+    doc_ok "$shadow" "none ($DOCTOR_SHADOW absent)"
+  fi
+
+  # A source install's user unit OVERRIDES the packaged one while it
+  # exists — the packaged helper can be enabled but never runs.
+  if [[ "$MODE" == "packaged" ]]; then
+    local override="legacy source override"
+    if [[ -f "$USER_UNIT" || -f "$SOURCE_HELPER" ]]; then
+      doc_fail "$override" "a source install still stands \
+($USER_UNIT and/or $SOURCE_HELPER) and OVERRIDES the packaged unit; try: \
+omarchy-osk setup --migrate-source"
+    else
+      doc_ok "$override" "none; the packaged unit is the one systemd runs"
+    fi
+  elif [[ -x /usr/bin/omarchy-osk ]]; then
+    doc_fail "two installs" "this checkout is the registered payload but \
+/usr/bin/omarchy-osk also exists — PATH order decides which world a bare \
+omarchy-osk manages; try: pick one (omarchy-osk setup --migrate-source \
+from /usr/bin/omarchy-osk, or remove the package)"
+  fi
+}
+
+doctor_keymap_share() {
+  # §35: the compositor must compile the helper's published keymap for
+  # every physical keyboard, or two keymaps swap on every focus change
+  # and each swap resets clients' group (the Telegram-typing-the-wrong-
+  # alphabet defect). §46: a kb_file the USER set is legitimate input —
+  # name the divergence, do not erase the distinction.
+  local what="keymap share (input:kb_file)" raw kb
+  local published="${DOCTOR_SOCKET%/*}/keymap.xkb"
+  if command -v hyprctl >/dev/null 2>&1; then
+    raw="$(hyprctl getoption input:kb_file -j 2>/dev/null || true)"
+  fi
+  if [[ -z "$raw" ]]; then
+    doc_unknown "$what" "cannot read the compositor setting (hyprctl \
+failed — run doctor inside the graphical session)"
+    return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    doc_unknown "$what" "cannot parse the compositor answer — jq is not \
+installed (pacman: jq)"
+    return
+  fi
+  kb="$(printf '%s' "$raw" | jq -r '.str // ""' 2>/dev/null)" || {
+    doc_unknown "$what" "cannot parse the compositor answer ('${raw:0:60}')"
+    return
+  }
+  if [[ "$kb" == "$published" ]]; then
+    if [[ -f "$published" ]]; then
+      doc_ok "$what" "input:kb_file == the helper's published $published"
+    else
+      doc_fail "$what" "input:kb_file points at $published but the file \
+does not exist — the helper never published it (an old helper?); try: \
+omarchy-osk upgrade"
+    fi
+  elif [[ -z "$kb" ]]; then
+    doc_fail "$what" "the compositor carries NO kb_file, so the helper's \
+keymap and the compositor's swap on every focus change and clients' group \
+resets (§35's defect class — chats typing the previous alphabet); try: \
+omarchy restart shell (the panel re-establishes the share)"
+  else
+    doc_fail "$what" "input:kb_file is '$kb', not the helper's published \
+'$published' — two keymaps on one seat. If you set kb_file yourself the \
+panel adopts it on its next configure; otherwise try: omarchy restart shell"
+  fi
+}
+
+doctor_keycap_fallback() {
+  # Ticket 39's silent degradation: the caps fall back to built-in tables
+  # (drawn != typed on non-US layouts) and the only trace is a journal
+  # line. The panel logs it once per layout through the shell's journal.
+  local what="keycap fallback (last hour)" text hits first
+  if [[ -n "$DOCTOR_JOURNAL_FILE" ]]; then
+    text="$(cat "$DOCTOR_JOURNAL_FILE" 2>/dev/null || true)"
+  elif command -v journalctl >/dev/null 2>&1; then
+    text="$(journalctl --user --since "1 hour ago" --no-pager 2>/dev/null || true)"
+  else
+    doc_unknown "$what" "journalctl is not available"
+    return
+  fi
+  hits="$(printf '%s\n' "$text" | grep -c "keycap fallback" || true)"
+  if [[ "$hits" -eq 0 ]]; then
+    doc_ok "$what" "no 'keycap fallback' lines in the user journal"
+    return
+  fi
+  first="$(printf '%s\n' "$text" | grep -m1 "keycap fallback")"
+  doc_fail "$what" "$hits line(s) in the last hour — the caps are silently \
+degraded to the built-in tables (drawn != typed; ticket 39's class). \
+First: ${first:0:120}; try: omarchy-osk upgrade, then rerun doctor"
+}
+
+doctor_layouts_groups() {
+  # Sanity between the two authorities: the daemon's installed keymap
+  # (how many groups it can type) and the compositor's layout list (what
+  # the seat advertises). XKB holds at most four groups.
+  local what="layouts vs installed groups" reply g daemon_groups=0 gen=""
+  local devices lists count
+  for g in 0 1 2 3; do
+    reply="$(doctor_query "caps $g")"
+    if [[ "$reply" == caps$'\t'* ]]; then
+      daemon_groups=$((g + 1))
+      [[ -z "$gen" ]] && gen="$(printf '%s' "$reply" | cut -f2)"
+    else
+      break
+    fi
+  done
+  if ! command -v hyprctl >/dev/null 2>&1; then
+    doc_unknown "$what" "hyprctl is not available — cannot read the \
+compositor's layout list"
+    return
+  fi
+  devices="$(hyprctl devices -j 2>/dev/null || true)"
+  if [[ -z "$devices" ]]; then
+    doc_unknown "$what" "hyprctl did not answer — run doctor inside the \
+graphical session"
+    return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    doc_unknown "$what" "jq is not installed — cannot parse the device \
+list (pacman: jq)"
+    return
+  fi
+  lists="$(printf '%s' "$devices" |
+    jq -r '[.keyboards[].layout // "" | select(. != "")] | unique | join(" ; ")' \
+    2>/dev/null || true)"
+  if [[ -z "$lists" ]]; then
+    doc_unknown "$what" "no keyboard reports a layout list"
+    return
+  fi
+  if [[ "$lists" == *" ; "* ]]; then
+    doc_fail "$what" "keyboards carry DIFFERENT layout lists ($lists) — the \
+seat is split (per-device kb_layout config or a half-finished switch; \
+§34's works-one-time-in-ten class); try: switch once from the panel's \
+language button, and check per-device kb_layout in hyprland.conf"
+    return
+  fi
+  count="$(printf '%s' "$lists" | awk -F',' '{print NF}')"
+  if [[ "$HELLO_REPLY" != "hello $PROTOCOL_VERSION" ]]; then
+    doc_unknown "$what" "compositor lists '$lists' ($count) but the helper \
+cannot be asked (see the control socket check)"
+    return
+  fi
+  if [[ "$daemon_groups" -eq 0 ]]; then
+    doc_fail "$what" "the helper holds NO keymap groups — no panel \
+configure has landed on it; try: omarchy restart shell"
+  elif [[ "$daemon_groups" -eq "$count" ]]; then
+    doc_ok "$what" "compositor '$lists' ($count) == daemon groups \
+($daemon_groups, generation ${gen:-?})"
+  elif [[ "$daemon_groups" -lt "$count" ]]; then
+    doc_fail "$what" "the helper's keymap carries $daemon_groups group(s) \
+but the compositor lists $count ('$lists') — the panel's configure is \
+stale (a shrunken list leaves the remembered group out of range, \
+ticket 31's class); try: omarchy restart shell"
+  else
+    doc_fail "$what" "the helper's keymap carries $daemon_groups groups \
+but the compositor lists $count ('$lists'); a custom kb_file may carry \
+more groups than the list names — if you did not set one, try: \
+omarchy restart shell"
+  fi
+}
+
+doctor_theme_deps() {
+  # The panel imports qs.Commons / qs.Ui from the Omarchy shell's own
+  # tree — a shell without them (or no quickshell at all) is the
+  # fresh-user invisible-panel class of ticket 47.
+  local what="theme dependencies" missing=()
+  if ! command -v quickshell >/dev/null 2>&1; then
+    doc_fail "$what" "quickshell is not installed — nothing can load the \
+panel; try: pacman -S quickshell"
+    return
+  fi
+  [[ -d "$DOCTOR_SHELL_ROOT/Commons" ]] ||
+    missing+=("qs.Commons ($DOCTOR_SHELL_ROOT/Commons)")
+  [[ -d "$DOCTOR_SHELL_ROOT/Ui" ]] ||
+    missing+=("qs.Ui ($DOCTOR_SHELL_ROOT/Ui)")
+  if ((${#missing[@]})); then
+    doc_fail "$what" "the Omarchy shell's theme singletons are missing: \
+${missing[*]} — the panel imports them and will not load (the fresh-user \
+invisible-panel class, ticket 47); try: reinstall the omarchy shell package"
+  else
+    doc_ok "$what" "quickshell present; $DOCTOR_SHELL_ROOT/{Commons,Ui} exist"
+  fi
+}
+
+doctor_drift() {
+  # The protocol gate is the designed drift detector (§8): a panel
+  # updated without its helper fails hello instead of typing nothing.
+  # Version comparisons beyond that are evidence, not verdicts — a same-
+  # version source edit leaves mtimes behind while the pair still agrees.
+  local what="version drift" ver strays owned newest
+  case "$HELLO_REPLY" in
+    "no socat"|"no socket"|silent)
+      doc_unknown "$what" "the helper was not asked ($HELLO_REPLY) — see \
+the control socket check"
+      return
+      ;;
+    "err not ready")
+      # Not a version question: the socket check owns readiness.
+      doc_unknown "$what" "the helper answered '$HELLO_REPLY' — see the \
+control socket check"
+      return
+      ;;
+    "hello $PROTOCOL_VERSION") : ;;
+    *)
+      # The socket check already named the raw reply; here it is drift.
+      doc_fail "$what" "the helper did not negotiate protocol \
+$PROTOCOL_VERSION (reply: $HELLO_REPLY) — the installed helper and this \
+$MODE tree are from different versions; try: omarchy-osk upgrade"
+      return
+      ;;
+  esac
+  if [[ "$MODE" == "packaged" ]]; then
+    ver="$(pacman -Q omarchy-osk 2>/dev/null || true)"
+    if [[ -z "$ver" ]]; then
+      doc_unknown "$what" "pacman does not know an omarchy-osk package, so \
+the packaged payload at $PAYLOAD is unowned; try: reinstall the package"
+      return
+    fi
+    owned="$(pacman -Qlq omarchy-osk 2>/dev/null | sort -u || true)"
+    strays="$(find "$PAYLOAD" -type f 2>/dev/null | sort |
+      comm -23 - <(printf '%s\n' "$owned") || true)"
+    if [[ -n "$strays" ]]; then
+      doc_fail "$what" "files no package owns sit in the payload (F7 \
+class — they survive pacman -R and shadow a fresh install): \
+$(printf '%s' "$strays" | head -n 3 | tr '\n' ' ')…; try: remove them and \
+reinstall the package"
+    else
+      doc_ok "$what" "protocol $PROTOCOL_VERSION; $ver; every payload \
+file owned by the package"
+    fi
+    return
+  fi
+  if [[ ! -f "$HELPER" ]]; then
+    doc_fail "$what" "the helper binary $HELPER is MISSING; try: \
+omarchy-osk setup (install.sh builds it)"
+    return
+  fi
+  newest="$(find "$PAYLOAD/daemon/src" -name '*.rs' -newer "$HELPER" \
+    -print -quit 2>/dev/null || true)"
+  if [[ -n "$newest" ]]; then
+    doc_ok "$what" "protocol $PROTOCOL_VERSION agrees; NOTE: $HELPER \
+predates daemon/src edits ($newest is newer) — omarchy-osk upgrade \
+rebuilds it"
+  else
+    doc_ok "$what" "protocol $PROTOCOL_VERSION; $HELPER is not older \
+than daemon/src"
+  fi
+}
+
+DOCTOR_CHECKS=(
+  unit
+  socket
+  mode
+  keymap-share
+  keycap-fallback
+  layouts-groups
+  theme-deps
+  drift
+)
+
+cmd_doctor() {
+  detect_mode
+  # Test seams (see the doctor comment block above); real paths default.
+  DOCTOR_SOCKET="${OMARCHY_OSK_DOCTOR_SOCKET:-$SOCKET}"
+  DOCTOR_UNIT_D="${OMARCHY_OSK_DOCTOR_UNIT:-$UNIT}"
+  DOCTOR_REG="${OMARCHY_OSK_DOCTOR_REGISTRATION:-$REGISTRATION}"
+  DOCTOR_SHADOW="${OMARCHY_OSK_DOCTOR_SHADOW:-$HOME/.local/bin/omarchy-osk}"
+  DOCTOR_SHELL_ROOT="${OMARCHY_OSK_DOCTOR_SHELL_ROOT:-/usr/share/omarchy/shell}"
+  DOCTOR_JOURNAL_FILE="${OMARCHY_OSK_DOCTOR_JOURNAL_FILE:-}"
+  PAYLOAD="${OMARCHY_OSK_DOCTOR_PAYLOAD:-$PAYLOAD}"
+  HELPER="${OMARCHY_OSK_DOCTOR_HELPER:-$HELPER}"
+
+  say "doctor: $MODE install, payload $PAYLOAD"
+  HELLO_REPLY="$(doctor_hello)"
+  local check
+  for check in "${DOCTOR_CHECKS[@]}"; do
+    "doctor_${check//-/_}"
+  done
+  if ((DOCTOR_FAILS + DOCTOR_UNKNOWNS)); then
+    say "doctor: $DOCTOR_FAILS failure(s), $DOCTOR_UNKNOWNS uncheckable — \
+see the FAIL/unknown lines above"
+    exit 1
+  fi
+  say "doctor: healthy"
+  exit 0
+}
+
 case "${1:-}" in
 setup) shift; cmd_setup "$@" ;;
 upgrade) [[ $# -eq 1 ]] || die "upgrade takes no arguments"; cmd_upgrade ;;
 status) [[ $# -eq 1 ]] || die "status takes no arguments"; cmd_status ;;
+doctor) [[ $# -eq 1 ]] || die "doctor takes no arguments"; cmd_doctor ;;
 teardown) [[ $# -eq 1 ]] || die "teardown takes no arguments"; cmd_teardown ;;
 -h|--help|help)
   cat <<'EOF'
@@ -358,6 +807,10 @@ Usage: omarchy-osk <command>
                              shell so the kept-loaded panel reloads.
   status                    Report payload, registration, plugin state,
                              unit state, socket and protocol. Read-only.
+  doctor                    Diagnose a broken install: service, socket,
+                             protocol, registration, keymap share, keycap
+                             fallback, layouts, theme deps, versions.
+                             Read-only; exits 1 when something is wrong.
   teardown                  Disable the plugin and unit, unlink the
                              registration if it is ours. Keeps config,
                              state and foreign directories.
@@ -365,7 +818,7 @@ EOF
   ;;
 *)
   cat <<'EOF' >&2
-Usage: omarchy-osk {setup|upgrade|status|teardown}
+Usage: omarchy-osk {setup|upgrade|status|doctor|teardown}
 Run: omarchy-osk help
 EOF
   exit 1

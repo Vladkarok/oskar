@@ -76,7 +76,8 @@ run is recorded on ticket 32.
       remain under /usr/share/omarchy-osk (the 0.1.0-2 pkgrel once
       left LanguageControl.js/HoldColumn.js behind — file-list drift
       between pkgrels; verify with `pacman -Ql` vs the tree before
-      tagging).
+      tagging — `omarchy-osk doctor` names any strays in its
+      version-drift check).
 - [ ] Fresh-lab-boot emoji legs re-run (ticket 44's lab anomaly: the
       churned lab's Hyprland drops post-first keymap uploads; the host
       is exonerated by live evidence).

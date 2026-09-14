@@ -199,6 +199,13 @@ Notes from the survey:
    hold, and a disconnect releases only that connection's claims (smoke
    covered, including two clients sharing one hold).
 
+## Troubleshooting
+
+Run `omarchy-osk doctor` — it checks the service, socket and protocol,
+registration, the keymap share, keycap-fallback journal lines, layouts
+and theme dependencies, and names the one fix to try for each failure
+(exit 0 is healthy).
+
 ## Testing
 
 Never exercise the helper against the session you are working in. A keymap
