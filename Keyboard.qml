@@ -1426,6 +1426,13 @@ Item {
     // one place that knows a fresh socket object is the cure.
     function rebuildSocket() {
         root.helloInFlight = false
+        // The disconnect arm's first act, carried here for the same
+        // reason (ticket 54 review F1): the watchdog can order a rebuild
+        // while inputReady still reads true (readiness moves only on
+        // traffic outcomes, and 5 s of silence proves none), and a click
+        // in the teardown window would otherwise queue onto a drained
+        // FIFO and write into the dying socket.
+        root.inputReady = false
         // Ticket 54: a lying socket never runs the disconnect arm, so the
         // rebuild carries that arm's two residual resets itself — the
         // text-reply FIFO (a stale head would be settled by a post-
