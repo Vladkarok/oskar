@@ -83,12 +83,23 @@ function readTimedOut(state, seq, target) {
 // sequence-tagged (a killed run's late answer carries an old sequence and
 // counts for nothing), five attempts then a loud drop with no chord, and a
 // drop or cancellation hands the machine to the next queued pick.
+//
+// Ticket 56: a pick carries the CLIENT CLASS it was clicked for, from the
+// click to its chord. The class is derived once, at the pick — the click's
+// own moment, the same derivation the direct route already uses — and the
+// arrival dispatches with the carried value. The old shape re-derived the
+// class when the verify landed, and that second opinion could disagree
+// with the click's (the IME matrix's kitty cell: the chord arrived
+// wine-shaped). Queued picks queue `{emoji, clientClass}` pairs, so
+// promotion is not a re-derivation either; terminal outcomes carry nothing.
 function txnInitial() {
-    return { seq: 0, phase: "idle", pending: "", attempts: 0, queue: [] }
+    return { seq: 0, phase: "idle", pending: "", clientClass: "",
+        attempts: 0, queue: [] }
 }
 
-function txnPick(state, emoji) {
+function txnPick(state, emoji, clientClass) {
     var payload = String(emoji || "")
+    var cls = String(clientClass || "")
     // An empty payload is refused rather than queued: nothing could ever
     // verify against it, and a transaction that can neither serve nor
     // drop would wedge every pick behind it (review finding).
@@ -98,14 +109,15 @@ function txnPick(state, emoji) {
         return {
             state: {
                 seq: state.seq, phase: state.phase, pending: state.pending,
-                attempts: state.attempts, queue: state.queue.concat([payload])
+                clientClass: state.clientClass, attempts: state.attempts,
+                queue: state.queue.concat([{ emoji: payload, clientClass: cls }])
             },
             action: "queued"
         }
     return {
         state: {
             seq: state.seq + 1, phase: "publishing", pending: payload,
-            attempts: 0, queue: state.queue
+            clientClass: cls, attempts: 0, queue: state.queue
         },
         action: "publish"
     }
@@ -118,7 +130,8 @@ function txnServed(state, seq, served) {
         return {
             state: {
                 seq: state.seq, phase: "pasting", pending: state.pending,
-                attempts: state.attempts, queue: state.queue
+                clientClass: state.clientClass, attempts: state.attempts,
+                queue: state.queue
             },
             action: "chord"
         }
@@ -126,8 +139,8 @@ function txnServed(state, seq, served) {
     if (attempts >= 5)
         return {
             state: {
-                seq: state.seq, phase: "idle", pending: "", attempts: 0,
-                queue: state.queue
+                seq: state.seq, phase: "idle", pending: "", clientClass: "",
+                attempts: 0, queue: state.queue
             },
             action: "drop"
         }
@@ -136,7 +149,8 @@ function txnServed(state, seq, served) {
     return {
         state: {
             seq: state.seq + 1, phase: "publishing", pending: state.pending,
-            attempts: attempts, queue: state.queue
+            clientClass: state.clientClass, attempts: attempts,
+            queue: state.queue
         },
         action: "retry"
     }
@@ -149,8 +163,8 @@ function txnChordDone(state, success) {
     if (state.phase !== "pasting")
         return { state: state, action: "ignore" }
     var idle = {
-        seq: state.seq, phase: "idle", pending: "", attempts: 0,
-        queue: state.queue
+        seq: state.seq, phase: "idle", pending: "", clientClass: "",
+        attempts: 0, queue: state.queue
     }
     return success === true
         ? { state: idle, action: "completed", emoji: state.pending }
@@ -161,15 +175,19 @@ function txnChordDone(state, success) {
 // glue once per ending; returns "publish" with the emoji to publish, or
 // "none" when the machine is empty. The sequence keeps counting up, so a
 // verify answer from any earlier transaction stays stale forever, and the
-// rest of the queue keeps its order behind the promoted pick.
+// rest of the queue keeps its order behind the promoted pick. The promoted
+// pick brings its OWN click-time class: promotion is the queue handing
+// over, never a fresh derivation.
 function txnNext(state) {
     if (state.phase !== "idle" || state.queue.length === 0)
         return { state: state, action: "none" }
+    var pick = state.queue[0]
     var next = {
-        seq: state.seq + 1, phase: "publishing", pending: state.queue[0],
-        attempts: 0, queue: state.queue.slice(1)
+        seq: state.seq + 1, phase: "publishing", pending: pick.emoji,
+        clientClass: pick.clientClass, attempts: 0,
+        queue: state.queue.slice(1)
     }
-    return { state: next, action: "publish", emoji: state.queue[0] }
+    return { state: next, action: "publish", emoji: pick.emoji }
 }
 
 // A mode flip or teardown: the running pick and everything queued die.
@@ -179,7 +197,8 @@ function txnCancel(state) {
     if (state.phase === "idle" && state.queue.length === 0)
         return { state: state, action: "ignore" }
     return {
-        state: { seq: state.seq, phase: "idle", pending: "", attempts: 0, queue: [] },
+        state: { seq: state.seq, phase: "idle", pending: "", clientClass: "",
+            attempts: 0, queue: [] },
         action: "dropped"
     }
 }
