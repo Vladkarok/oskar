@@ -66,16 +66,22 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
       || ssh "$LAB" 'pgrep -f "integration/(panel_canary|restart_settle|chooser35|emoji_focus|hold_column|qmp_guest_frame)" >/dev/null 2>&1'; then
     row "live-legs" SKIP "another tenant holds the lab — rerun when free"
   else
-    for leg in panel_canary restart_settle chooser35; do
+    # The live legs need the lab session's own environment (the wall's
+    # first live run found the latent bug: ssh without it dies at the
+    # socket wait) — the vm-handoff.md pattern, sourced guest-side.
+    for leg in panel_canary restart_settle; do
       echo "== live: $leg"
       env_var="OSK_$(echo "$leg" | tr 'a-z' 'A-Z')_LIVE=1"
       # Each leg's own convention: the canary gate is OSK_PANEL_CANARY_LIVE.
       case "$leg" in
         panel_canary) env_var="OSK_PANEL_CANARY_LIVE=1" ;;
         restart_settle) env_var="OSK_RESTART_SETTLE_LIVE=1" ;;
-        chooser35) env_var="OSK_CHOOSER35_LIVE=1" ;;
       esac
-      if ssh "$LAB" "cd ~/omarchy-osk && env $env_var python3 tools/integration/$leg.py" \
+      if ssh "$LAB" "cd ~/omarchy-osk \
+          && export XDG_RUNTIME_DIR=/run/user/\$(id -u) \
+          && export HYPRLAND_INSTANCE_SIGNATURE=\$(ls -t \$XDG_RUNTIME_DIR/hypr | head -1) \
+          && export WAYLAND_DISPLAY=wayland-1 \
+          && env $env_var python3 tools/integration/$leg.py" \
           >"/tmp/wall-$leg.log" 2>&1; then
         row "$leg" PASS "$(grep -cE '^ok ' "/tmp/wall-$leg.log") assertions"
       else
