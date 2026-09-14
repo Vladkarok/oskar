@@ -672,14 +672,56 @@ Item {
         printErrors: false
     }
 
+    // Ticket 57: the existence half of the recovery. What the sidecar
+    // remembers may be GONE — the restart-settle leg's private runtime
+    // dies with its keymap while the record survives, and adopting the
+    // dead pointer wedged every later panel with the same two-second
+    // "cannot compile" loop the wall's first run measured. The probe is
+    // pointed at the remembered path and read once (blockLoading makes
+    // text() a synchronous loadSync, so the decision point stays atomic);
+    // the present idiom is omarchyIconFontFile's.
+    FileView {
+        id: rememberedKeymapProbe
+        blockLoading: true
+        watchChanges: false
+        printErrors: false
+        property bool present: false
+        onLoaded: present = true
+        onLoadFailed: function (error) {
+            present = error !== FileViewError.FileNotFound
+        }
+    }
+
     // Idempotent: only ever fills an empty memory that has never observed
     // the compositor's own setting, so live knowledge always wins and the
     // file is only a recovery source for a shell that died before it could
-    // observe anything.
+    // observe anything. A remembered path that no longer exists is not a
+    // user keymap (ticket 57): refusing it lets this configure compile
+    // from the compositor's RMLVO, and the helper clears the stale record
+    // on the next empty-kb_file configure — the seat heals itself instead
+    // of wedging on a file nothing can compile.
     function recoverUserKeymapSource() {
         if (root.userKeymapFile !== "" || root.userKeymapObserved) return
         var remembered = String(userSourceSeed.text() || "").trim()
-        if (remembered !== "") root.userKeymapFile = remembered
+        if (remembered === "") return
+        if (keymapSourceExists(remembered))
+            root.userKeymapFile = remembered
+    }
+
+    // The one existence rule both keymap-source readers obey (ticket 57):
+    // a path that names no file is not a keymap source, wherever it was
+    // remembered from — the sidecar's record, or the compositor's own
+    // setting observed live. The probe loads synchronously (blockLoading
+    // makes text() a loadSync), so every caller stays atomic.
+    function keymapSourceExists(path) {
+        var target = String(path || "")
+        if (target === "") return false
+        rememberedKeymapProbe.present = false
+        rememberedKeymapProbe.path = target
+        // The blocking read: loads or fails synchronously, so `present`
+        // already answers for this path when the next line runs.
+        rememberedKeymapProbe.text()
+        return rememberedKeymapProbe.present
     }
 
     // Whatever the compositor had before this panel pointed it at the
@@ -809,6 +851,19 @@ Item {
             // A live observation of the user's own setting — including an
             // explicit empty: from here the recovery seed stays silent.
             userKeymapObserved = true
+            // The live arm of ticket 57's rule: a compositor setting that
+            // names a file which does not exist — a foreign runtime's
+            // published map, deleted with it while this panel watched —
+            // is not a user keymap either, and adopting it wedges every
+            // later configure exactly like the seed's dead path. Emptied,
+            // this snapshot compiles from RMLVO and the share below
+            // points the compositor back at the published keymap.
+            if (kbFile !== "" && !keymapSourceExists(kbFile)) {
+                console.warn("[osk] the compositor's kb_file names a"
+                    + " keymap that no longer exists; configuring from"
+                    + " RMLVO instead:", kbFile)
+                kbFile = ""
+            }
             userKeymapFile = kbFile
             xkbFile = kbFile
             if (sharedKeymapGen !== 0) {

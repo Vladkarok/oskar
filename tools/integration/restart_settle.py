@@ -163,6 +163,56 @@ def kb_file_option(env=None):
         return out.strip()
 
 
+def sane_restore_target(pre_leg):
+    """What the teardown may point the compositor back at (ticket 57).
+
+    Empty unless the pre-leg value is a file this leg has no business
+    undoing: a path under THIS leg's private runtime (a previous run's
+    residue — restoring it would re-point the compositor at a file that
+    is about to die) and a path that no longer exists are refused, and
+    so is the lab's own PUBLISHED keymap path — a running panel that
+    live-adopted the leg's private map during the run keeps feeding its
+    dead memory on every snapshot while the compositor sits on the
+    published path (that panel's published branch is sticky; measured
+    live, the two-second compile-spam loop). Empty lets every panel
+    re-observe the seat from RMLVO on its next snapshot — the packaged
+    panel's reconnect pull or the next event — and re-share from a
+    clean ack, which is the state a compositor that never met this leg
+    converges to anyway."""
+    if not pre_leg:
+        return ""
+    if pre_leg.startswith(PRIVATE):
+        return ""
+    if pre_leg == os.path.join(RUNTIME, "omarchy-osk", "keymap.xkb"):
+        return ""
+    if not os.path.exists(pre_leg):
+        return ""
+    return pre_leg
+
+
+def restore_compositor_kb_file(target, where):
+    """Leave the compositor compiling something that exists (ticket 57).
+
+    The leg's panel points input:kb_file at the private runtime's
+    published keymap; tearing that runtime down without restoring left
+    every later panel feeding the compositor's dead setting to the
+    daemon — the wall's §47 wedge, the two-second compile-spam loop.
+    Cleared and set (assigning the same path again is a no-op, and the
+    compositor must re-read whatever file it keeps), then verified by
+    read-back: an unchecked failure here is exactly the wedge this
+    exists to prevent, so it fails the leg loudly."""
+    for attempt in range(3):
+        hyprctl("eval", "hl.config({input = {kb_file = ''}})")
+        if target:
+            hyprctl("eval",
+                    f"hl.config({{input = {{kb_file = '{target}'}}}})")
+        if kb_file_option() == target:
+            return
+    raise Failure(f"{where}: the compositor's kb_file would not settle "
+                  f"on {target!r} (now {kb_file_option()!r}) — refusing "
+                  "to leave the lab a deleted keymap to compile")
+
+
 def group_names_in_keymap(path):
     """The group display names compiled into one xkb keymap file."""
     try:
@@ -587,34 +637,78 @@ def race_cycle(panel, daemon, repo, env, clicked, group_count, label):
         raise
 
 
-def control_cold_start(repo, env, switch_set, holder, anchor):
-    """Decisions §47, unchanged: a genuinely diverged seat, no safe device
-    holding main, no named typist — a FRESH panel's establishing configure
-    must follow the remembered group, and the settle guard must never
-    engage on that path.
+def seeded_anchor_name(socket_path):
+    """The device a FRESH panel will name as its anchor: the helper's
+    `keyboards` reply is the daemon's sorted physical inventory, and the
+    panel seeds `anchorKeyboardName` from its FIRST name at hello — before
+    the first snapshot can run. The §47 control's diverged seat is only
+    deterministic when the sleeper IS that device (ticket 57's rerun: the
+    race left the holder's anchor elsewhere, the fresh panel's seeded
+    anchor sat in the majority, and the control answered 0)."""
+    import socket as socket_mod
+    try:
+        client = socket_mod.socket(socket_mod.AF_UNIX,
+                                   socket_mod.SOCK_STREAM)
+        client.settimeout(3)
+        client.connect(socket_path)
+        client.sendall(b"keyboards\n")
+        reply = client.recv(4096).decode("utf-8", "replace")
+        client.close()
+    except OSError:
+        return ""
+    names = [name for name in reply.strip().split("\t")[1:] if name]
+    return names[0] if names else ""
+
+
+def control_cold_start(repo, env, switch_set, holder, anchor,
+                       daemon_socket):
+    """Decisions §47, unchanged in its claim: a genuinely diverged seat
+    (majority 0, one sleeper 1), no safe device holding `main` — a FRESH
+    panel's establishing configure must land on group 1 (the remembered
+    group agrees with the sleeper), and the settle guard must never
+    engage on that path: zero hold lines.
 
     `holder` is the race phase's panel, holding one OSK key DOWN so the
     seat's `main` stays on the leg daemon's (pseudo) virtual keyboard
     across the fresh panel's establishing snapshot; it is closed once the
-    assertion is home. The sleeper put on group 1 is the holder's own
-    anchor when possible, so the holder's own §47-era configures also
-    answer 1 and cannot clobber the state file's remembered group."""
+    assertion is home. The sleeper is the device a fresh panel SEEDS as
+    its anchor (the daemon's first `keyboards` name) when the switch set
+    has it — every fresh panel names that device at hello, so the seat
+    must diverge around IT or the control measures the majority's answer
+    instead of the remembered one (ticket 57's rerun)."""
     if len(switch_set) < 3:
         raise Failure(f"the panel's switch set is {switch_set}; the control "
                       "needs at least three devices to diverge")
-    sleeper = anchor if anchor in switch_set else switch_set[0]
+    # The sleeper must be the device the FRESH panel will seed as its
+    # anchor (the daemon's first `keyboards` name) when the switch set
+    # has it — the holder's own anchor only keeps the HOLDER's configures
+    # at 1, and a fresh panel that seeds a majority device answers the
+    # majority (ticket 57's rerun measured exactly that).
+    seeded = seeded_anchor_name(daemon_socket)
+    if seeded in switch_set:
+        sleeper = seeded
+    elif anchor in switch_set:
+        sleeper = anchor
+    else:
+        sleeper = switch_set[0]
     majority = [n for n in switch_set if n != sleeper]
     # Majority at 0, one sleeper at 1, remembered 1: the sleepers' majority
     # must NOT outvote the remembered group (the 2026-09-12 desync).
     for name in majority:
         hyprctl("switchxkblayout", name, "0")
     hyprctl("switchxkblayout", sleeper, "1")
-    # No named typist and no live evidence: the persisted device cleared,
-    # and `main` held on the leg daemon's virtual keyboard by the holder's
+    # Let the holder's split-triggered churn drain BEFORE the state is
+    # written: the split is an uncommanded flip from the holder's side,
+    # its settle guard holds the follow, and every held re-configure's
+    # ACK persists the held group back into the state file (measured
+    # live, ticket 57) — clobbering any remembered value written too
+    # early. SettleGuard's window is 10 s; a wait past it plus a
+    # stability check makes the write the last word.
+    time.sleep(12)
+    # `main` held on the leg daemon's virtual keyboard by the holder's
     # key — a device every safe set refuses. The key goes down AFTER the
     # split: `switchxkblayout` takes `main` for its own target (measured
     # live), so an earlier hold would be stolen right back.
-    write_state({"layout_group": 1, "layout_device": ""})
     holder.command("tap down", "down ")
     wait_for(vkb_holds_main, 10,
              "the held OSK key to take main onto the leg vkb")
@@ -622,6 +716,20 @@ def control_cold_start(repo, env, switch_set, holder, anchor):
     if mains:
         raise Failure(f"safe keyboard(s) {mains} hold main; the §47 branch "
                       "needs no live evidence — rerun the control")
+    # The remembered world, written LAST and verified stable: the
+    # persisted device cleared (the named tier must not answer for the
+    # fresh panel), the remembered group 1.
+    for attempt in range(4):
+        write_state({"layout_group": 1, "layout_device": ""})
+        time.sleep(1.5)
+        state_now = read_state() or {}
+        if state_now.get("layout_group") == 1 \
+                and state_now.get("layout_device") == "":
+            break
+    else:
+        raise Failure("the state file would not hold the §47 control's "
+                      f"remembered world (now {read_state()}) — the holder's "
+                      "acks keep clobbering it; rerun the control")
 
     panel = Panel(repo, env, tag="control")
     try:
@@ -643,9 +751,9 @@ def control_cold_start(repo, env, switch_set, holder, anchor):
                           f"path: {holds[:3]} — the establishing configure "
                           "and the remembered answer must never be held")
         print(f"ok    §47 cold-start control: diverged seat "
-              f"(0: {sorted(majority)}, 1: ['{sleeper}']), main on the leg "
-              "vkb, no named typist — fresh panel followed remembered 1, "
-              "guard silent")
+              f"(0: {sorted(majority)}, 1: ['{sleeper}' — the fresh "
+              "panel's seeded anchor]), main on the leg vkb — fresh panel "
+              "landed on group 1, guard silent")
         panel.command("close", "closed")
     finally:
         panel.close()
@@ -788,7 +896,8 @@ def main():
             # keyboard within the moment (measured live).
             switch_set = panel.state()["switchSet"]
             anchor = panel.state()["anchor"]
-            control_cold_start(repo, rt.env, switch_set, panel, anchor)
+            control_cold_start(repo, rt.env, switch_set, panel, anchor,
+                               daemon.socket_path)
             panel = None
 
             print("ok    SETTLE LEG GREEN: restart+click converged on the "
@@ -803,17 +912,25 @@ def main():
             # the packaged panel's published file, the compositor's
             # kb_file, the service, the per-device groups (LabSession's
             # exit). The kb_file restore runs before the service restart
-            # so the republished packaged keymap cannot race it.
+            # so the republished packaged keymap cannot race it — and it
+            # ALWAYS runs now (ticket 57): the old guard skipped an empty
+            # pre-leg value and never verified the eval landed, so the
+            # compositor could keep compiling the leg's private keymap
+            # after the private runtime died — the §47 wedge. The helper's
+            # sidecar under the private runtime dies with it (made
+            # explicit here: the record must not outlive what it names).
             if state_backup is not None:
                 with open(STATE_FILE, "w", encoding="utf-8") as handle:
                     json.dump(state_backup, handle, indent=2)
             if packaged_backup is not None:
                 with open(packaged_keymap, "wb") as handle:
                     handle.write(packaged_backup)
-            if kb_file_was and kb_file_was != kb_file_option():
-                hyprctl("eval",
-                        f"hl.config({{input = {{kb_file = "
-                        f"'{kb_file_was}'}}}})")
+            sidecar = os.path.join(PRIVATE, "omarchy-osk",
+                                   "user-keymap-source")
+            if os.path.exists(sidecar):
+                os.unlink(sidecar)
+            restore_compositor_kb_file(sane_restore_target(kb_file_was),
+                                       "the settle leg's teardown")
     restore_service()
     return 0
 

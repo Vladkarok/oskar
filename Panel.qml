@@ -1763,16 +1763,40 @@ Item {
                 // centred.
                 // Current-content paste sits on the card (pasteButton below)
                 // so its z can outrank the settings/editor dismiss layers.
-                // Hint and service chips still anchor to it.
+                // The notice group's RIGHT boundary is noticeEdge below —
+                // never an anchor to pasteButton itself, which lives one
+                // hierarchy up and cannot be anchored to legally (ticket
+                // 57: every re-evaluation of those ternary anchors emitted
+                // the cross-hierarchy warning the canary had grandfathered).
+
+                // The notice group's right boundary, placed by a plain x
+                // binding at the left edge of the rightmost chip that is
+                // visible — the paste chip when it stands, else the dismiss
+                // button — minus the gap. pasteButton.x is in CARD
+                // coordinates (its parent), so dragBar.x converts it into
+                // this space; dismissBtn is a sibling and needs no
+                // conversion. An Item placed by x, not an anchor line: the
+                // hint and the chips anchor to THIS sibling unconditionally,
+                // no visibility flip can retarget them, and moving the
+                // boundary re-evaluates only this binding.
+                Item {
+                    id: noticeEdge
+                    width: 0
+                    height: 0
+                    x: (pasteButton.visible ? pasteButton.x - dragBar.x
+                        : dismissBtn.x) - keyboard.cellGap * 2
+                }
 
                 Text {
                     id: hintText
                     anchors {
                         left: langCtl.right
                         leftMargin: keyboard.cellGap * 2
-                        right: serviceActions.visible ? serviceActions.left
-                            : pasteButton.visible ? pasteButton.left : dismissBtn.left
-                        rightMargin: keyboard.cellGap * 2
+                        right: noticeEdge.left
+                        // The chips' width plus their gap when they stand;
+                        // JS margins, never an anchor retarget.
+                        rightMargin: serviceActions.visible
+                            ? serviceActions.width + keyboard.cellGap * 2 : 0
                         verticalCenter: langCtl.verticalCenter
                     }
                     visible: hintState.text !== ""
@@ -1786,21 +1810,20 @@ Item {
                 }
 
                 // The lifecycle affordances, drawn beside the state they
-                // belong to. Anchored to the paste control so appearing and
-                // leaving moves the hint, not the reserved centre place: no
-                // height change, no docked reservation churn. Retry is the
-                // solid chip — the one action that fixes "not running" —
-                // and starts the user unit detached; the socket client's
-                // existing repair path reconnects from there. Copy is the
-                // outlined chip and exists only on a protocol mismatch,
-                // where starting cannot help until the helper is
-                // reinstalled; it hands the install command to the
-                // clipboard and never runs anything. The chip is
-                // deliberately terse: text plus chips must fit the bar at the
+                // belong to. Anchored to the notice boundary so appearing
+                // and leaving moves the hint, not the reserved centre
+                // place: no height change, no docked reservation churn.
+                // Retry is the solid chip — the one action that fixes
+                // "not running" — and starts the user unit detached; the
+                // socket client's existing repair path reconnects from
+                // there. Copy is the outlined chip and exists only on a
+                // protocol mismatch, where starting cannot help until the
+                // helper is reinstalled; it hands the install command to
+                // the clipboard and never runs anything. The chip is
+                // deliberately terse: text plus chips must fit the bar at
                 Row {
                     id: serviceActions
-                    anchors.right: pasteButton.visible ? pasteButton.left : dismissBtn.left
-                    anchors.rightMargin: keyboard.cellGap * 2
+                    anchors.right: noticeEdge.left
                     anchors.verticalCenter: hintText.verticalCenter
                     spacing: keyboard.cellGap
                     visible: hintState.action !== undefined

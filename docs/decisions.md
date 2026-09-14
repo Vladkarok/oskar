@@ -1464,6 +1464,19 @@ Two priced exceptions, accepted with the design:
   inside one login session, and is bounded by the runtime directory's
   session lifetime.
 
+Amended 2026-09-15 (ticket 57, the wall's first live run): a keymap
+path that no longer EXISTS is not a keymap source, wherever it was
+remembered from. The record outlived what it named when a leg's private
+runtime died with its keymap while the sidecar (and the compositor's
+`input:kb_file`) kept the pointer — every later panel adopted the dead
+path and fed it to a configure that could never compile. The rule holds
+at both readers: the recovery read refuses a dead remembered path, and
+a live observation of a compositor setting that names no file empties
+it — the panel configures from RMLVO and re-shares the published map.
+Either way the helper's own three-way decision CLEARS the stale record
+on the empty-`kb_file` configure, so the seat self-heals instead of
+wedging.
+
 ## 47. A remembered group is bounded by the map that must carry it
 
 Audit 2026-09-13 §31. The panel's remembered layout group is a
