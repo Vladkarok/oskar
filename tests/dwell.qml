@@ -200,6 +200,82 @@ QtObject {
             T.equal(Dwell.progress(null, 100), 0)
         })
 
+        // ---- the re-arm interval: one function for the remaining time ----
+        //
+        // Ticket 55's fix taught the wiring to re-arm the deadline timer
+        // for the REMAINING time against the absolute deadline — and the
+        // press branch already re-armed for the menu window, so the same
+        // arithmetic lived twice in dwellTick under two spellings. It
+        // lives here once: which deadline a phase waits for is the
+        // machine's own fact (nextArmMs restates tick's two comparisons),
+        // and the wiring only delivers. The fixtures use the leg's own
+        // shape: an 800 delay, an 1120 menu window.
+
+        T.test("nextArmMs answers the ms to the phase's own deadline, from the enter", function () {
+            // Armed waits for the type deadline, spent for the menu
+            // deadline — both anchored on the ENTER (t0), never on the
+            // fire: a late delivery still waits exactly the designed
+            // window. 750ms into an 800ms delay leaves 50; 1050 into the
+            // 1120 menu leaves 70.
+            var s = Dwell.enter(0, DELAY, MENU, true)
+            T.equal(Dwell.nextArmMs(s, 750), 50)
+            var typed = Dwell.tick(s, DELAY)
+            T.equal(typed.action, "press")
+            T.equal(Dwell.nextArmMs(typed.state, 1050), 70)
+            // A nonzero enter keeps the same arithmetic — elapsed is
+            // always measured from t0, not from zero.
+            var late = Dwell.enter(1000, DELAY, MENU, true)
+            T.equal(Dwell.nextArmMs(late, 1000 + 750), 50)
+        })
+
+        T.test("nextArmMs is floored at 1: a crossed deadline still owes one delivery", function () {
+            // The answer is a timer interval, so it is never 0 and never
+            // negative. A deadline already reached at the moment of asking
+            // (remaining 0) or already passed (remaining negative — the
+            // double-crossing case below) still owes exactly one more
+            // tick to notice the crossing, and 1ms is the soonest rest.
+            var s = Dwell.enter(0, DELAY, MENU, true)
+            T.equal(Dwell.nextArmMs(s, DELAY), 1)
+            T.equal(Dwell.nextArmMs(s, DELAY + 400), 1)
+            var spent = Dwell.tick(s, DELAY).state
+            T.equal(Dwell.nextArmMs(spent, MENU), 1)
+            T.equal(Dwell.nextArmMs(spent, MENU + 500), 1)
+        })
+
+        T.test("dead and finished states answer null: no next arm exists", function () {
+            // The wiring drops the state on leave; a stray call on the
+            // dead state (or a finished one — both crossings consumed)
+            // must not look like a timing value. null says "nothing to
+            // arm" and cannot be confused with an interval.
+            T.equal(Dwell.nextArmMs(null, 99999), null)
+            var done = Dwell.tick(Dwell.enter(0, DELAY, MENU, false), DELAY)
+            T.equal(done.state.phase, "done")
+            T.equal(Dwell.nextArmMs(done.state, DELAY + 5), null)
+            var fired = Dwell.tick(Dwell.enter(0, DELAY, MENU, true), DELAY)
+            var opened = Dwell.tick(fired.state, MENU)
+            T.equal(opened.state.phase, "done")
+            T.equal(Dwell.nextArmMs(opened.state, MENU + 1), null)
+        })
+
+        T.test("a double-crossing delivery still converges: press then 1ms then menu", function () {
+            // The wiring's one-delivery reality (`repeat: false`): a
+            // single very late fire can cross the type deadline AND the
+            // whole menu window before the machine has been told
+            // anything. tick answers the FIRST crossing (press, spent);
+            // nextArmMs answers 1 — the floor, not a negative wait — and
+            // that soonest re-arm hands over the second crossing. No rest
+            // is lost and none is invented.
+            var s = Dwell.enter(0, DELAY, MENU, true)
+            var first = Dwell.tick(s, MENU + 80)
+            T.equal(first.action, "press")
+            T.equal(first.state.phase, "spent")
+            T.equal(Dwell.nextArmMs(first.state, MENU + 80), 1)
+            var second = Dwell.tick(first.state, MENU + 81)
+            T.equal(second.action, "menu")
+            T.equal(second.state.phase, "done")
+            T.equal(Dwell.nextArmMs(second.state, MENU + 81), null)
+        })
+
         // ---- eligibility: which caps dwell at all ----
 
         T.test("a character cap dwells; a gated keyboard dwells nothing", function () {

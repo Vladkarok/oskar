@@ -2156,8 +2156,7 @@ Item {
         dwellState = result.state
         if (result.action === "press") {
             if (dwellState && dwellState.phase === "spent") {
-                dwellTimer.interval = Math.max(1,
-                    dwellState.menuDelay - (now - dwellState.t0))
+                dwellTimer.interval = Dwell.nextArmMs(dwellState, now)
                 dwellTimer.restart()
             }
             dwellFire()
@@ -2175,10 +2174,9 @@ Item {
             // against the absolute deadline (t0-anchored, so repeated
             // early deliveries converge on the crossing), covering both
             // crossings — the type deadline and the menu window alike.
-            dwellTimer.interval = Math.max(1,
-                (dwellState.phase === "armed"
-                    ? dwellState.t0 + dwellState.delay
-                    : dwellState.t0 + dwellState.menuDelay) - now)
+            // nextArmMs owns that arithmetic (55 follow-up): it was
+            // spelled twice here and in the press branch above.
+            dwellTimer.interval = Dwell.nextArmMs(dwellState, now)
             dwellTimer.restart()
         }
     }
