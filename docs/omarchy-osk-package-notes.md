@@ -65,3 +65,18 @@ protocol → upgrade → teardown ×2 → reinstall → legacy source migration 
 cold boot, plus a clean-chroot build and namcap/ldd inspection) runs
 green in the lab VM via `tools/package-test.sh <phase>`; the 2026-09-13
 run is recorded on ticket 32.
+
+## Publish-day checklist (owner-gated)
+
+- [ ] README's `<REPOSITORY-URL>` placeholder in the Install section
+      replaced with the public clone URL (added by the ticket-47
+      review; a stranger could not acquire the tree without it).
+- [ ] The AUR path promoted to primary in README's Install section.
+- [ ] F7 hygiene: after `pacman -R omarchy-osk`, no unowned files may
+      remain under /usr/share/omarchy-osk (the 0.1.0-2 pkgrel once
+      left LanguageControl.js/HoldColumn.js behind — file-list drift
+      between pkgrels; verify with `pacman -Ql` vs the tree before
+      tagging).
+- [ ] Fresh-lab-boot emoji legs re-run (ticket 44's lab anomaly: the
+      churned lab's Hyprland drops post-first keymap uploads; the host
+      is exonerated by live evidence).
