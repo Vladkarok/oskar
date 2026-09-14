@@ -225,6 +225,23 @@ function searchPlaceholder(layoutCode) {
     return "Search"
 }
 
+// The tone picker's names, localized (ticket 52): SKIN_TONES keeps its
+// English label as the data fallback (the field contract is pinned to
+// value/label/hand), and this maps each tone VALUE to its UiStrings id —
+// the picker draws tr(toneNameId(value), lang). An unknown value answers
+// "" and the picker falls back to the table's own label rather than
+// asking the string module for an id it never had.
+function toneNameId(value) {
+    var tone = String(value || "")
+    if (tone === "") return "emoji.tone.default"
+    if (tone === "🏻") return "emoji.tone.light"
+    if (tone === "🏼") return "emoji.tone.mediumLight"
+    if (tone === "🏽") return "emoji.tone.medium"
+    if (tone === "🏾") return "emoji.tone.mediumDark"
+    if (tone === "🏿") return "emoji.tone.dark"
+    return ""
+}
+
 // Widest column count whose cells fit width: a column's pitch is cell + gap,
 // so n columns need n*pitch - gap. Clamped to [1, maximum] — a narrow output
 // narrows the grid instead of spilling cells past the page edge, and a wide

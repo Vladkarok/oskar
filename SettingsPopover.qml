@@ -3,6 +3,7 @@ import QtQuick.Controls
 import qs.Commons
 import "Config.js" as ConfigFile
 import "Dwell.js" as Dwell
+import "UiStrings.js" as UiStrings
 
 // The settings popover (spec-v1.1 §5). Lives on its own overlay window,
 // not on the key grid: leftover-centre placement is the panel's, exclusive
@@ -117,12 +118,28 @@ Rectangle {
             }
         }
     }
+    // The row labels in the UI's language (ticket 52): this array feeds
+    // the width probe below, so the column sizes itself to the WIDEST
+    // TRANSLATION while the language stands — a Cyrillic label must not
+    // clip against a column measured in English.
     readonly property var settingsRowLabels:
-        ["Mode", "Size", "Emoji picking", "Emoji page size", "Super mark",
-         "Key click sound", "Follow Omarchy theme",
-         "Dwell typing", "Dwell delay",
-         "Key radius", "Panel radius", "Key background",
-         "Panel background", "Text colour", "Accent colour", "Border colour"]
+        [UiStrings.tr("settings.row.mode", panel.uiLang),
+         UiStrings.tr("settings.row.size", panel.uiLang),
+         UiStrings.tr("settings.row.language", panel.uiLang),
+         UiStrings.tr("settings.row.emojiPicking", panel.uiLang),
+         UiStrings.tr("settings.row.emojiPageSize", panel.uiLang),
+         UiStrings.tr("settings.row.superMark", panel.uiLang),
+         UiStrings.tr("settings.row.sound", panel.uiLang),
+         UiStrings.tr("settings.row.followTheme", panel.uiLang),
+         UiStrings.tr("settings.row.dwellTyping", panel.uiLang),
+         UiStrings.tr("settings.row.dwellDelay", panel.uiLang),
+         UiStrings.tr("settings.row.keyRadius", panel.uiLang),
+         UiStrings.tr("settings.row.panelRadius", panel.uiLang),
+         UiStrings.tr("settings.row.keyBackground", panel.uiLang),
+         UiStrings.tr("settings.row.panelBackground", panel.uiLang),
+         UiStrings.tr("settings.row.textColor", panel.uiLang),
+         UiStrings.tr("settings.row.accentColor", panel.uiLang),
+         UiStrings.tr("settings.row.borderColor", panel.uiLang)]
     readonly property real labelColumnWidth: {
         var widest = 0
         for (var i = 0; i < labelProbe.children.length; i++) {
@@ -169,7 +186,7 @@ Rectangle {
             height: 1
             Text {
                 id: customProbeLabel
-                text: "Custom"
+                text: UiStrings.tr("common.custom", panel.uiLang)
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
             }
@@ -296,12 +313,12 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     Accessible.role: Accessible.Button
-                    Accessible.name: "Decrease value"
+                    Accessible.name: UiStrings.tr("access.decreaseValue", panel.uiLang)
                     enabled: panel.configHealthy
                     onClicked: stepper.bump(-1)
                 }
                 HoverTooltip {
-                    text: "Decrease"
+                    text: UiStrings.tr("settings.decrease", panel.uiLang)
                     hovered: stepDownArea.containsMouse
                 }
             }
@@ -347,12 +364,12 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     Accessible.role: Accessible.Button
-                    Accessible.name: "Increase value"
+                    Accessible.name: UiStrings.tr("access.increaseValue", panel.uiLang)
                     enabled: panel.configHealthy
                     onClicked: stepper.bump(1)
                 }
                 HoverTooltip {
-                    text: "Increase"
+                    text: UiStrings.tr("settings.increase", panel.uiLang)
                     hovered: stepUpArea.containsMouse
                 }
             }
@@ -462,7 +479,7 @@ Rectangle {
 
             Text {
                 width: parent.width
-                text: "Settings"
+                text: UiStrings.tr("settings.title", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -474,7 +491,7 @@ Rectangle {
             // names the action.
             Text {
                 width: parent.width
-                text: "MODE"
+                text: UiStrings.tr("settings.section.mode", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -490,7 +507,7 @@ Rectangle {
                         left: parent.left
                         verticalCenter: parent.verticalCenter
                     }
-                    text: "Mode"
+                    text: UiStrings.tr("settings.row.mode", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -502,9 +519,15 @@ Rectangle {
                     anchors {
                         verticalCenter: parent.verticalCenter
                     }
+                    // Ticket 52: 160 (not the 150 default) — the
+                    // localized state words ("Закреплена" measures 72px
+                    // at fontBody) need the 75px segments this gives.
+                    width: tokens.space(160)
                     segments: [
-                        { value: ConfigFile.MODE_DOCKED, label: "Docked" },
-                        { value: ConfigFile.MODE_FLOATING, label: "Floating" }
+                        { value: ConfigFile.MODE_DOCKED,
+                          label: UiStrings.tr("settings.mode.docked", panel.uiLang) },
+                        { value: ConfigFile.MODE_FLOATING,
+                          label: UiStrings.tr("settings.mode.floating", panel.uiLang) }
                     ]
                     current: panel.mode
                     onPicked: function (value) { panel.setMode(value) }
@@ -529,7 +552,7 @@ Rectangle {
             // once, through chooseSizePreset.
             Text {
                 width: parent.width
-                text: "SIZE"
+                text: UiStrings.tr("settings.section.size", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -545,7 +568,7 @@ Rectangle {
                         left: parent.left
                         verticalCenter: parent.verticalCenter
                     }
-                    text: "Size"
+                    text: UiStrings.tr("settings.row.size", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -578,9 +601,85 @@ Rectangle {
 
             SettingsHairline {}
 
+            // ---- LANGUAGE (ticket 52) ----
+            //
+            // The override every word on this card hangs off: "auto"
+            // follows the active layout (ua -> Ukrainian, ru -> Russian,
+            // anything else English — the shipped searchPlaceholder
+            // mapping), en/ru/uk pin the UI regardless of the layout.
+            // The three pinned choices are endonyms — a chooser's
+            // entries name themselves in their own language, whatever
+            // the rest of the card is speaking — so only "Auto"
+            // translates. Four labels need the wider control the Super
+            // mark row already uses.
             Text {
                 width: parent.width
-                text: "EMOJI PAGE"
+                text: UiStrings.tr("settings.section.language", panel.uiLang)
+                color: tokens.muted
+                font.family: tokens.fontFamily
+                font.pixelSize: tokens.fontBodySmall
+            }
+
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+
+                Text {
+                    anchors {
+                        left: parent.left
+                        verticalCenter: parent.verticalCenter
+                    }
+                    text: UiStrings.tr("settings.row.language", panel.uiLang)
+                    color: tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBody
+                }
+
+                SettingsSegmented {
+                    id: languageControl
+                    x: popoverRoot.controlColumnX
+                    anchors {
+                        verticalCenter: parent.verticalCenter
+                    }
+                    // Four labels incl. the 72px "Українська" (measured
+                    // at fontBody in the mono face, ticket 52): 300 space
+                    // units slice 72.5px segments, and control+reset chip
+                    // stay inside the measured control zone even when the
+                    // UI language narrows the "Custom" probe that sizes
+                    // it — the superMark row's own arithmetic.
+                    width: tokens.space(300)
+                    readonly property var languageLabels: ({
+                        auto: UiStrings.tr("settings.lang.auto", panel.uiLang),
+                        en: "English", ru: "Русский", uk: "Українська"
+                    })
+                    segments: ConfigFile.UI_LANGUAGES.map(function (code) {
+                        return { value: code,
+                            label: languageControl.languageLabels[code] }
+                    })
+                    current: panel.uiLanguage
+                    onPicked: function (value) {
+                        panel.setOverride("uiLanguage", value)
+                    }
+                }
+
+                SettingsResetChip {
+                    anchors {
+                        left: languageControl.right
+                        leftMargin: tokens.space(6)
+                        verticalCenter: parent.verticalCenter
+                    }
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "uiLanguage"
+                }
+            }
+
+            SettingsHairline {}
+
+            Text {
+                width: parent.width
+                text: UiStrings.tr("settings.section.emoji", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -593,7 +692,7 @@ Rectangle {
                 Text {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "Emoji picking"
+                    text: UiStrings.tr("settings.row.emojiPicking", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -603,8 +702,10 @@ Rectangle {
                     x: popoverRoot.controlColumnX
                     anchors.verticalCenter: parent.verticalCenter
                     segments: [
-                        { value: false, label: "Keep open" },
-                        { value: true, label: "Close" }
+                        { value: false,
+                          label: UiStrings.tr("settings.emoji.keepOpen", panel.uiLang) },
+                        { value: true,
+                          label: UiStrings.tr("settings.emoji.close", panel.uiLang) }
                     ]
                     current: panel.emojiCloseAfterPick
                     onPicked: function (value) {
@@ -628,7 +729,7 @@ Rectangle {
                 Text {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "Emoji page size"
+                    text: UiStrings.tr("settings.row.emojiPageSize", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -671,7 +772,7 @@ Rectangle {
             // preset.
             Text {
                 width: parent.width
-                text: "SUPER MARK"
+                text: UiStrings.tr("settings.section.superMark", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -687,7 +788,7 @@ Rectangle {
                         left: parent.left
                         verticalCenter: parent.verticalCenter
                     }
-                    text: "Super mark"
+                    text: UiStrings.tr("settings.row.superMark", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -700,9 +801,13 @@ Rectangle {
                         verticalCenter: parent.verticalCenter
                     }
                     width: tokens.space(290)
+                    // Omarchy, Windows and macOS are names and stay; the
+                    // word and the penguin translate (ticket 52).
                     readonly property var superMarkLabels:
-                        ({ word: "Word", omarchy: "Omarchy", windows: "Windows",
-                           macos: "macOS", penguin: "Penguin" })
+                        ({ word: UiStrings.tr("settings.superMark.word", panel.uiLang),
+                           omarchy: "Omarchy", windows: "Windows",
+                           macos: "macOS",
+                           penguin: UiStrings.tr("settings.superMark.penguin", panel.uiLang) })
                     segments: ConfigFile.SUPER_MARKS.map(function (mark) {
                         return { value: mark, label: superMarkControl.superMarkLabels[mark] }
                     })
@@ -728,7 +833,7 @@ Rectangle {
             // the same immediate setOverride path every other control uses.
             Text {
                 width: parent.width
-                text: "SOUND"
+                text: UiStrings.tr("settings.section.sound", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -752,7 +857,7 @@ Rectangle {
                             panel.sound && panel.soundUnavailable
                                 ? -tokens.space(7) : 0
                     }
-                    text: "Key click sound"
+                    text: UiStrings.tr("settings.row.sound", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -765,7 +870,7 @@ Rectangle {
                         topMargin: 1
                     }
                     visible: panel.sound && panel.soundUnavailable
-                    text: "unavailable"
+                    text: UiStrings.tr("settings.sound.unavailable", panel.uiLang)
                     color: tokens.urgent
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBodySmall
@@ -797,7 +902,7 @@ Rectangle {
 
             Text {
                 width: parent.width
-                text: "THEME"
+                text: UiStrings.tr("settings.section.theme", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -813,7 +918,7 @@ Rectangle {
                         left: parent.left
                         verticalCenter: parent.verticalCenter
                     }
-                    text: "Follow Omarchy theme"
+                    text: UiStrings.tr("settings.row.followTheme", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -853,7 +958,7 @@ Rectangle {
             // keyboard would refuse.
             Text {
                 width: parent.width
-                text: "DWELL"
+                text: UiStrings.tr("settings.section.dwell", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -869,7 +974,7 @@ Rectangle {
                         left: parent.left
                         verticalCenter: parent.verticalCenter
                     }
-                    text: "Dwell typing"
+                    text: UiStrings.tr("settings.row.dwellTyping", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -908,7 +1013,7 @@ Rectangle {
                         left: parent.left
                         verticalCenter: parent.verticalCenter
                     }
-                    text: "Dwell delay"
+                    text: UiStrings.tr("settings.row.dwellDelay", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -943,7 +1048,7 @@ Rectangle {
 
             Text {
                 width: parent.width
-                text: "Rest a key this long to type it; resting past the type opens its hold-column menu"
+                text: UiStrings.tr("settings.hint.dwellDelay", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -962,7 +1067,7 @@ Rectangle {
             // and an override pins exactly its own field.
             Text {
                 width: parent.width
-                text: "APPEARANCE"
+                text: UiStrings.tr("settings.section.appearance", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -971,8 +1076,8 @@ Rectangle {
             Text {
                 width: parent.width
                 text: panel.followTheme
-                    ? "Following the Omarchy theme — an override pins its own field"
-                    : "Theme following is off — appearance holds the look it had"
+                    ? UiStrings.tr("settings.hint.followingOn", panel.uiLang)
+                    : UiStrings.tr("settings.hint.followingOff", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -989,7 +1094,7 @@ Rectangle {
                         left: parent.left
                         verticalCenter: parent.verticalCenter
                     }
-                    text: "Key radius"
+                    text: UiStrings.tr("settings.row.keyRadius", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -1023,7 +1128,7 @@ Rectangle {
 
             Text {
                 width: parent.width
-                text: "0–24 relative to M; 24 stays a circle at L and XL"
+                text: UiStrings.tr("settings.hint.keyRadius", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -1040,7 +1145,7 @@ Rectangle {
                         left: parent.left
                         verticalCenter: parent.verticalCenter
                     }
-                    text: "Panel radius"
+                    text: UiStrings.tr("settings.row.panelRadius", panel.uiLang)
                     color: tokens.foreground
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -1080,7 +1185,7 @@ Rectangle {
                 panel: popoverRoot.panel
                 controlX: popoverRoot.controlColumnX
                 fieldName: "keyBackground"
-                labelText: "Key background"
+                labelText: UiStrings.tr("settings.row.keyBackground", panel.uiLang)
                 effectiveColor: panel.effectiveKeyBackground
                 onCustomRequested: popoverRoot.customColourRequested(
                     keyBackgroundRow.fieldName, keyBackgroundRow.labelText)
@@ -1092,7 +1197,7 @@ Rectangle {
                 panel: popoverRoot.panel
                 controlX: popoverRoot.controlColumnX
                 fieldName: "panelBackground"
-                labelText: "Panel background"
+                labelText: UiStrings.tr("settings.row.panelBackground", panel.uiLang)
                 effectiveColor: panel.effectivePanelBackground
                 onCustomRequested: popoverRoot.customColourRequested(
                     panelBackgroundRow.fieldName, panelBackgroundRow.labelText)
@@ -1104,7 +1209,7 @@ Rectangle {
                 panel: popoverRoot.panel
                 controlX: popoverRoot.controlColumnX
                 fieldName: "textColor"
-                labelText: "Text colour"
+                labelText: UiStrings.tr("settings.row.textColor", panel.uiLang)
                 effectiveColor: panel.effectiveTextColor
                 onCustomRequested: popoverRoot.customColourRequested(
                     textColorRow.fieldName, textColorRow.labelText)
@@ -1116,7 +1221,7 @@ Rectangle {
                 panel: popoverRoot.panel
                 controlX: popoverRoot.controlColumnX
                 fieldName: "accentColor"
-                labelText: "Accent colour"
+                labelText: UiStrings.tr("settings.row.accentColor", panel.uiLang)
                 effectiveColor: panel.effectiveAccentColor
                 onCustomRequested: popoverRoot.customColourRequested(
                     accentColorRow.fieldName, accentColorRow.labelText)
@@ -1128,7 +1233,7 @@ Rectangle {
                 panel: popoverRoot.panel
                 controlX: popoverRoot.controlColumnX
                 fieldName: "borderColor"
-                labelText: "Border colour"
+                labelText: UiStrings.tr("settings.row.borderColor", panel.uiLang)
                 effectiveColor: panel.effectiveBorderColor
                 onCustomRequested: popoverRoot.customColourRequested(
                     borderColorRow.fieldName, borderColorRow.labelText)
@@ -1136,7 +1241,7 @@ Rectangle {
 
             Text {
                 width: parent.width
-                text: "Hex fields accept #RGB / #RRGGBB (an alpha form too); the check commits the draft. Type with the keyboard."
+                text: UiStrings.tr("settings.hint.hex", panel.uiLang)
                 color: tokens.muted
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall
@@ -1153,13 +1258,13 @@ Rectangle {
                 visible: panel.configurationError !== ""
                     || panel.stateError !== ""
                 text: (panel.configurationError
-                    ? "config.json: " + panel.configurationError
-                      + " \u2014 showing the last valid settings; fix the file to change them"
+                    ? UiStrings.tr("settings.hint.configError", panel.uiLang,
+                        [panel.configurationError])
                     : "")
                     + (panel.configurationError && panel.stateError ? "\n" : "")
                     + (panel.stateError
-                    ? "state.json: " + panel.stateError
-                      + " \u2014 showing the last valid state; fix the file to change it"
+                    ? UiStrings.tr("settings.hint.stateError", panel.uiLang,
+                        [panel.stateError])
                     : "")
                 color: tokens.urgent
                 font.family: tokens.fontFamily
@@ -1197,7 +1302,7 @@ Rectangle {
                     Text {
                         id: resetAllLabel
                         anchors.centerIn: parent
-                        text: "Reset all"
+                        text: UiStrings.tr("settings.resetAll", panel.uiLang)
                         color: tokens.foreground
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall
@@ -1230,7 +1335,7 @@ Rectangle {
                         Text {
                             id: confirmPrompt
                             anchors.centerIn: parent
-                            text: "Reset every override?"
+                            text: UiStrings.tr("settings.resetAllConfirm", panel.uiLang)
                             color: tokens.foreground
                             font.family: tokens.fontFamily
                             font.pixelSize: tokens.fontBodySmall
@@ -1248,7 +1353,7 @@ Rectangle {
                         Text {
                             id: confirmResetLabel
                             anchors.centerIn: parent
-                            text: "Reset"
+                            text: UiStrings.tr("settings.reset", panel.uiLang)
                             color: tokens.background
                             font.family: tokens.fontFamily
                             font.pixelSize: tokens.fontBodySmall
@@ -1277,7 +1382,7 @@ Rectangle {
                         Text {
                             id: cancelResetLabel
                             anchors.centerIn: parent
-                            text: "Keep"
+                            text: UiStrings.tr("settings.keep", panel.uiLang)
                             color: tokens.foreground
                             font.family: tokens.fontFamily
                             font.pixelSize: tokens.fontBodySmall

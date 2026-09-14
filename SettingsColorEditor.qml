@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import qs.Commons
 import "Config.js" as ConfigFile
+import "UiStrings.js" as UiStrings
 
 // WinUI-style custom colour editor (spec-v1.1 §5, live-host ticket 07):
 // large hue×saturation square, thin value slider, hex + RGB/HSV fields.
@@ -218,7 +219,7 @@ Rectangle {
             spacing: tokens.space(8)
 
         Text {
-            text: "Edit colors"
+            text: UiStrings.tr("color.editor.title", editor.panel && editor.panel.uiLang)
             color: tokens.foreground
             font.family: tokens.fontFamily
             font.pixelSize: tokens.fontBody
@@ -645,7 +646,8 @@ Rectangle {
             SettingsConfirmChip {
                 tokens: editor.tokens
                 enabled: editor.panel && editor.panel.configHealthy
-                accessName: "Confirm the custom " + editor.labelText + " colour"
+                accessName: UiStrings.tr("color.editor.confirm",
+                    editor.panel && editor.panel.uiLang, [editor.labelText])
                 onConfirmed: editor.applyDraft()
             }
 
@@ -672,14 +674,14 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     Accessible.role: Accessible.Button
-                    Accessible.name: "Cancel the custom colour draft"
+                    Accessible.name: UiStrings.tr("color.editor.cancelDraft", editor.panel && editor.panel.uiLang)
                     onClicked: {
                         editor.panel.endHexEdit()
                         editor.dismissed()
                     }
                 }
                 HoverTooltip {
-                    text: "Cancel colour edit"
+                    text: UiStrings.tr("color.editor.cancelEdit", editor.panel && editor.panel.uiLang)
                     hovered: cancelArea.containsMouse
                 }
             }
@@ -688,7 +690,7 @@ Rectangle {
                 visible: editor.invalid
                 height: tokens.space(24)
                 verticalAlignment: Text.AlignVCenter
-                text: "invalid"
+                text: UiStrings.tr("color.editor.invalid", editor.panel && editor.panel.uiLang)
                 color: tokens.urgent
                 font.family: tokens.fontFamily
                 font.pixelSize: tokens.fontBodySmall

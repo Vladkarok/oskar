@@ -3,6 +3,7 @@ import QtQuick.Controls
 import qs.Commons
 import "EmojiCatalog.js" as Catalog
 import "EmojiPage.js" as EmojiGrid
+import "UiStrings.js" as UiStrings
 
 // The panel's own emoji page (ticket 24). Lives on the settings overlay
 // window beside the settings card and rides the same mechanism
@@ -57,6 +58,10 @@ Rectangle {
     // word speaks the language the owner is typing in (Пошук/Поиск/
     // Search — EmojiGrid.searchPlaceholder).
     property string layoutCode: ""
+    // The panel's resolved UI language (ticket 52: override over layout):
+    // every word of the page's chrome — placeholder included — follows
+    // it, so a pinned choice moves the placeholder with the rest.
+    property string uiLang: "en"
     // Panel-local tab state, never persisted; defaults to the first group.
     property string activeGroup: "__usage__"
     // Ticket 34: the usage category renders this snapshot of the records,
@@ -299,7 +304,8 @@ Rectangle {
                     // the active layout's language.
                     text: emojiRoot.query !== "" ? emojiRoot.query
                         : (emojiRoot.searchArmed ? ""
-                            : EmojiGrid.searchPlaceholder(emojiRoot.layoutCode))
+                            : UiStrings.tr("emoji.searchPlaceholder",
+                                emojiRoot.uiLang))
                     color: emojiRoot.query !== "" ? tokens.foreground : tokens.muted
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody
@@ -371,11 +377,11 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
-                        Accessible.name: "Clear search"
+                        Accessible.name: UiStrings.tr("emoji.clearSearch", emojiRoot.uiLang)
                         onClicked: emojiRoot.query = ""
                     }
                     HoverTooltip {
-                        text: "Clear search"
+                        text: UiStrings.tr("emoji.clearSearch", emojiRoot.uiLang)
                         hovered: clearArea.containsMouse
                     }
                 }
@@ -417,16 +423,16 @@ Rectangle {
                     hoverEnabled: true
                     Accessible.role: Accessible.Button
                     Accessible.name: emojiRoot.deliveryMode === "clipboard"
-                        ? "Delivery: clipboard compatibility"
-                        : "Delivery: typing"
+                        ? UiStrings.tr("emoji.delivery.clipboardAccess", emojiRoot.uiLang)
+                        : UiStrings.tr("emoji.delivery.typing", emojiRoot.uiLang)
                     onClicked: emojiRoot.deliveryModeRequested(
                         emojiRoot.deliveryMode === "clipboard"
                             ? "direct" : "clipboard")
                 }
                 HoverTooltip {
                     text: emojiRoot.deliveryMode === "clipboard"
-                        ? "Delivery: clipboard (replaces the clipboard)"
-                        : "Delivery: typing"
+                        ? UiStrings.tr("emoji.delivery.clipboardTip", emojiRoot.uiLang)
+                        : UiStrings.tr("emoji.delivery.typing", emojiRoot.uiLang)
                     hovered: deliveryArea.containsMouse
                 }
             }
@@ -459,11 +465,11 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     Accessible.role: Accessible.Button
-                    Accessible.name: "Choose skin tone"
+                    Accessible.name: UiStrings.tr("emoji.chooseTone", emojiRoot.uiLang)
                     onClicked: emojiRoot.tonePickerOpen = !emojiRoot.tonePickerOpen
                 }
                 HoverTooltip {
-                    text: "Choose skin tone"
+                    text: UiStrings.tr("emoji.chooseTone", emojiRoot.uiLang)
                     hovered: toneArea.containsMouse
                 }
             }
@@ -521,7 +527,8 @@ Rectangle {
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
                         Accessible.name: parent.groupValue === "__usage__"
-                            ? "Recent" : parent.groupValue
+                            ? UiStrings.tr("emoji.recent", emojiRoot.uiLang)
+                            : parent.groupValue
                         onClicked: {
                             // A tab pick answers as "show me this group": a
                             // standing search yields, or the pick would look
@@ -533,7 +540,8 @@ Rectangle {
                     }
                     HoverTooltip {
                         text: parent.groupValue === "__usage__"
-                            ? "Recent" : parent.groupValue
+                            ? UiStrings.tr("emoji.recent", emojiRoot.uiLang)
+                            : parent.groupValue
                         hovered: tabArea.containsMouse
                     }
                 }
@@ -599,7 +607,7 @@ Rectangle {
                     Text {
                         height: tokens.space(18)
                         verticalAlignment: Text.AlignVCenter
-                        text: "Most Frequent"
+                        text: UiStrings.tr("emoji.mostFrequent", emojiRoot.uiLang)
                         color: tokens.muted
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall
@@ -631,7 +639,8 @@ Rectangle {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     Accessible.role: Accessible.Button
-                                    Accessible.name: "Insert " + modelData.name
+                                    Accessible.name: UiStrings.tr("access.insert",
+                                        emojiRoot.uiLang, [modelData.name])
                                     onClicked: emojiRoot.emojiChosen(modelData, false)
                                 }
                                 HoverTooltip {
@@ -647,7 +656,7 @@ Rectangle {
                         visible: emojiRoot.usageSections.recent.length > 0
                         height: visible ? tokens.space(18) : 0
                         verticalAlignment: Text.AlignVCenter
-                        text: "Recent"
+                        text: UiStrings.tr("emoji.recent", emojiRoot.uiLang)
                         color: tokens.muted
                         font.family: tokens.fontFamily
                         font.pixelSize: tokens.fontBodySmall
@@ -675,7 +684,8 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
-                        Accessible.name: "Insert " + modelData.name
+                        Accessible.name: UiStrings.tr("access.insert",
+                            emojiRoot.uiLang, [modelData.name])
                         // The tile's origin — catalogue tile or usage
                         // history — decides the tone flag, with exactly the
                         // two facts that chose this grid's model (R1):
@@ -697,7 +707,8 @@ Rectangle {
                 Text {
                     anchors.centerIn: parent
                     visible: grid.count === 0
-                    text: emojiRoot.searching ? "No matches" : ""
+                    text: emojiRoot.searching
+                        ? UiStrings.tr("emoji.noMatches", emojiRoot.uiLang) : ""
                     color: tokens.muted
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBodySmall
@@ -750,14 +761,20 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
-                        Accessible.name: modelData.label
+                        Accessible.name: EmojiGrid.toneNameId(modelData.value) !== ""
+                            ? UiStrings.tr(EmojiGrid.toneNameId(modelData.value),
+                                emojiRoot.uiLang)
+                            : modelData.label
                         onClicked: {
                             emojiRoot.skinToneChosen(modelData.value)
                             emojiRoot.tonePickerOpen = false
                         }
                     }
                     HoverTooltip {
-                        text: modelData.label
+                        text: EmojiGrid.toneNameId(modelData.value) !== ""
+                            ? UiStrings.tr(EmojiGrid.toneNameId(modelData.value),
+                                emojiRoot.uiLang)
+                            : modelData.label
                         hovered: toneChoiceArea.containsMouse
                     }
                 }

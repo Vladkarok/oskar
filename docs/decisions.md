@@ -1791,3 +1791,70 @@ held at the file, the stepper and the machine's clamp. The VM leg is
 owed on the ticket (QMP pointer rest → character in foot; dwell-past →
 menu; leave → nothing), and the owner's feel pass stands pending as it
 does for every behaviour change.
+
+## 55. Every chrome word is table data; the layout picks the language
+
+2026-09-14, ticket 52 (council gap #4 — "the multilingual niche is our
+audience and the UI is English-only"). The panel's whole surface spoke
+one language except for one word: the emoji search placeholder (§36's
+neighbour, ticket 36) already drew Пошук/Поиск/Search by the ACTIVE
+LAYOUT's code. That mechanism, not Qt's translation stack, is what the
+UI now rides.
+
+- **One id-keyed table, pure JS.** `UiStrings.js` holds every
+  user-facing word behind an id — tooltips, accessible names, settings
+  labels, section headers, hints, status lines, the emoji page's
+  chrome — in EN/RU/UK, and `tr(id, lang[, args])` is the only lookup.
+  The QML files hold no English of their own; substitution is Qt's
+  `%1` idiom for the few composited strings ("Switch to %1", colour
+  row accessibles). Keymap-derived text — cap glyphs, layout titles,
+  the catalogue's emoji names, Config.js's parse diagnostics — is
+  DATA, not chrome, and never passes through the table; the settings
+  error line translates the SENTENCE around a diagnostic that stays
+  English by contract (it names a file and a key; near-technical
+  register, pinned by the config suite).
+
+- **The language is the active layout, with an override on top.**
+  `languageFor(layoutCode, override)`: `ui_language` in the §18 store
+  (`auto` default, en/ru/uk pin; validated to the four words, junk
+  preserved by §5 semantics) resolves over the mapping the placeholder
+  shipped — ua speaks Ukrainian, ru Russian, every other code English,
+  never a guess. The panel resolves once (`uiLang`) and every call
+  site reads it, so a pinned choice moves the placeholder with the
+  rest. The chooser's pinned choices are ENDONYMS (English, Русский,
+  Українська) — a chooser's entries name themselves in their own
+  language whatever the card is speaking — so only "Auto" translates.
+
+- **The table fails loudly, and the suite hears it.** An unknown id or
+  an empty translation THROWS from `tr`, and `tests/ui-strings.qml`
+  pins both directions: the table is complete data (every id present
+  in exactly en/ru/uk, none empty — 91 ids at landing) and every
+  `UiStrings.tr("…")` literal in the runtime QML resolves, read by
+  the suite itself through XMLHttpRequest (`QML_XHR_ALLOW_FILE_READ=1`
+  in the runner — the one consumer of that escape hatch). A typo'd id
+  dies in the offscreen suite, not as a blank at first hover. Both
+  gates were mutation-tested: a broken call site and an emptied
+  translation each fail the suite by name.
+
+- **Cyrillic fits because it was measured, not assumed.** The mono
+  face (JetBrainsMono Nerd Font, the shell's `monospace`) covers
+  Cyrillic at both sizes we draw (fontBody 12, fontBodySmall 11 —
+  `fc-list :charset=0430` and offscreen `Text.implicitWidth` probes).
+  The fixed-width controls were re-audited against their translated
+  labels: mode segments widened 150→160 ("Закреплена" measures 72px),
+  the language control is 300 (the 72px "Українська" needs 72.5px
+  segments and the row must stay inside the measured control zone in
+  every language), and the emoji picking pair shortened to infinitives
+  ("Оставить"/"Закрыть") because "Оставлять открытой" cannot fit a
+  70px segment. Free text wraps or elides as it always did, and the
+  label column re-measures per language because its probe draws the
+  translated labels.
+
+Not translated, recorded as deliberate: the bar widget's tooltip
+(BarWidget.qml lives in the shell process, knows no layout, and
+plumbing the override there is file-reading machinery this ticket does
+not buy), SettingsConfirmChip's never-shown default accessName (every
+instantiation overrides it), M/L/XL and RGB/HSV (notations, not words),
+and brand names (Omarchy, Windows, macOS). The VM leg is owed nothing
+— strings render offscreen-checkable — but the owner's eye on a live
+ru/uk shell stands as the acceptance it always is.

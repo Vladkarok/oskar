@@ -21,6 +21,11 @@ var MODE_FLOATING = "floating"
 // disagree about the value space.
 var SUPER_MARKS = ["word", "omarchy", "windows", "macos", "penguin"]
 var EMOJI_SKIN_TONES = ["", "🏻", "🏼", "🏽", "🏾", "🏿"]
+// Ticket 52: the UI's language. "auto" follows the active layout (the
+// shipped searchPlaceholder mapping); en/ru/uk pin it. One list here so
+// validation, the popover's segments and the tests cannot disagree —
+// the SUPER_MARKS rule.
+var UI_LANGUAGES = ["auto", "en", "ru", "uk"]
 // Ticket 28: "direct" types the pick (decisions §39/§40); "clipboard"
 // publishes the exact sequence and sends the paste chord — the mode the
 // owner chose for Chromium-family clients such as ZCode.
@@ -38,6 +43,9 @@ var CONFIG_FIELDS = [
     // Ticket 50: the dwell pair — off by default, a bounded delay when on.
     { file: "dwell_enabled", value: "dwellEnabled" },
     { file: "dwell_delay_ms", value: "dwellDelayMs" },
+    // Ticket 52: the UI language override — auto (follow the active
+    // layout) by default.
+    { file: "ui_language", value: "uiLanguage" },
     { file: "key_radius", value: "capCorner" },
     { file: "panel_radius", value: "panelRadius" },
     { file: "key_background", value: "keyBackground" },
@@ -74,6 +82,10 @@ function maintainerDefaults() {
         // external edit cannot smuggle a rest outside it).
         dwellEnabled: false,
         dwellDelayMs: 800,
+        // Ticket 52: the UI follows the active layout's language until
+        // the user pins one — the shipped searchPlaceholder behaviour,
+        // generalised to every word the panel draws.
+        uiLanguage: "auto",
         capCorner: 8,
         panelRadius: 12,
         keyBackground: "#303030",
@@ -182,6 +194,12 @@ function validFieldValue(field, value) {
     if (field.file === "dwell_delay_ms")
         return typeof value === "number" && isFinite(value)
             && value >= 400 && value <= 2000 && value === Math.floor(value)
+    // Exactly the four words the popover offers; anything else is a
+    // malformed edit with the §5 preservation semantics — the runtime's
+    // languageFor degrades junk to the layout answer, so a value that
+    // could not reach the file can never blank the UI either.
+    if (field.file === "ui_language")
+        return UI_LANGUAGES.indexOf(value) !== -1
     if (field.file === "key_radius" || field.file === "panel_radius")
         return isRadius(value)
     if (field.file === "key_background" || field.file === "panel_background"
