@@ -2163,6 +2163,23 @@ Item {
             dwellFire()
         } else if (result.action === "menu") {
             dwellOpenMenu()
+        } else if (dwellState && dwellState.phase !== "done") {
+            // Ticket 55: a delivery can land BEFORE the deadline — Qt's
+            // timers carry coarse-timer slack and may fire a few percent
+            // EARLY (measured live: 782ms into an 800ms rest). The
+            // machine correctly answers "none" below the deadline, and
+            // `repeat: false` means that early fire was the timer's one
+            // delivery — without this re-arm the rest stays armed
+            // forever with no error, exactly the all-of-dwell-inert
+            // defect the VM leg caught. Re-arm for the REMAINING time
+            // against the absolute deadline (t0-anchored, so repeated
+            // early deliveries converge on the crossing), covering both
+            // crossings — the type deadline and the menu window alike.
+            dwellTimer.interval = Math.max(1,
+                (dwellState.phase === "armed"
+                    ? dwellState.t0 + dwellState.delay
+                    : dwellState.t0 + dwellState.menuDelay) - now)
+            dwellTimer.restart()
         }
     }
 
