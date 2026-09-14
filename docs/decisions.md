@@ -1359,6 +1359,18 @@ both counted. The fix makes publication plus paste one owned transaction
 - A socket loss or mode flip cancels the queue; a completion arriving for
   a cancelled transaction lands as `ignore` and records nothing.
 
+Amended 2026-09-15 (ticket 56, the IME matrix's kitty cell): a pick
+carries the client class it was CLICKED for, pick to chord. The class
+is derived once, at the pick — the same `focusedClientClass()` the
+direct route's unicode-entry decision uses — and the arrival dispatches
+with the carried value; the old arrival-time re-derivation was a second
+opinion that could disagree with the click's (kitty's chord landed
+wine-shaped). Queue entries are `{emoji, clientClass}` pairs, so a
+promotion hands over rather than re-deriving, and the focus memory
+`focusedClientClass()` falls back to is fed by the compositor's own
+`activewindow` event stream — trustworthy while a panel overlay holds
+the keyboard and `activeToplevel` is null.
+
 ## 45. One lifecycle command owns activation: the package installs files only
 
 Audit 2026-09-13 §32, ticket 32. The product is one coherent package —

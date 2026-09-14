@@ -232,10 +232,21 @@ Item {
         target: Hyprland
         function onRawEvent(event) {
             if (!event || !event.name) return
-            if (String(event.name) !== "activewindow" || !root.emojiOpen) return
+            var eventName = String(event.name)
+            if (eventName === "activewindow") {
+                // The class half of the compositor's own focus stream
+                // (ticket 56): `activewindow>>CLASS,TITLE`, and an empty
+                // one (focus moved to a layer surface) must not erase
+                // the memory — activeToplevel is already null there, and
+                // the memory is exactly what carries the pick's target
+                // through an armed search.
+                var focusClass = String(event.data || "").split(",")[0]
+                if (focusClass) root.lastClientClass = focusClass
+            }
+            if (eventName !== "activewindow" || !root.emojiOpen) return
             // Deferred out of the event dispatch: a quickshell SIGSEGV
-            // once landed inside a bound-signal frame on this path, and
-            // the state change has no reason to run inside it.
+            // once landed inside a bound-signal frame on this path, and the
+            // state change has no reason to run inside it.
             Qt.callLater(function () {
                 if (root.emojiOpen && emojiPage.searchArmed) {
                     emojiPage.searchArmed = false
@@ -523,6 +534,14 @@ Item {
     property var clipboardReadState: ClipboardPaste.readInitial()
     // Last non-empty focused class: a layer click can briefly clear
     // activeToplevel, and terminals vs GTK pick different CLIPBOARD chords.
+    // Refreshed from the compositor's own `activewindow` event stream
+    // (ticket 56): while a panel overlay holds the keyboard (the armed
+    // emoji search), activeToplevel is null and this memory is the only
+    // witness of the chat the keys — and an emoji pick — must return to.
+    // Fed by the event, it is the compositor's focus history, not a
+    // snapshot of whenever a caller last asked; the class half of the
+    // event's data is the toplevel's class, exactly what the routing
+    // table keys on.
     property string lastClientClass: ""
 
     function focusedClientClass() {
@@ -1299,7 +1318,18 @@ Item {
     }
 
     function pickViaClipboard(emoji) {
-        var picked = ClipboardPaste.txnPick(root.emojiTxnState, emoji)
+        // Ticket 56: the client class is derived ONCE, here at the pick —
+        // the click's own moment, the same derivation the direct route
+        // uses for its unicode-entry decision — and rides the payload
+        // through publish, verify and chord. The old shape re-derived it
+        // when the verify landed, and that second opinion could disagree
+        // with the click's (the IME matrix's kitty cell: the chord landed
+        // wine-shaped, no Shift, no "paste chord for kitty" line) because
+        // focus and the lastClientClass fallback both move under a
+        // transaction that spans hundreds of milliseconds. One derivation,
+        // one table — the arrival dispatches for the class stored here.
+        var picked = ClipboardPaste.txnPick(root.emojiTxnState, emoji,
+            root.focusedClientClass())
         root.emojiTxnState = picked.state
         if (picked.action === "queued") {
             console.log("[osk] emoji pick queued behind an unfinished paste")
@@ -1351,7 +1381,11 @@ Item {
         // socket that died mid-chord) is reported to the callback instead
         // of passing unnoticed. The emoji stays published; if the chord
         // never completes, manual Ctrl+V remains possible.
-        keyboard.pasteCurrent(root.focusedClientClass(), function (success) {
+        //
+        // Ticket 56: the chord is derived for the class the PICK carried
+        // (result.state.clientClass) — never re-derived from whoever holds
+        // focus by the time the clipboard transaction landed.
+        keyboard.pasteCurrent(result.state.clientClass, function (success) {
             finishEmojiChord(success)
         })
     }

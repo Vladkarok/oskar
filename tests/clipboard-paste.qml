@@ -1,5 +1,6 @@
 import QtQml
 import "../ClipboardPaste.js" as ClipboardPaste
+import "../ModifierReducer.js" as Modifiers
 import "harness.js" as T
 
 QtObject {
@@ -103,10 +104,13 @@ QtObject {
             T.equal(first.state.pending, "😀")
             var second = ClipboardPaste.txnPick(first.state, "🔥")
             T.equal(second.action, "queued")
-            // The running pick keeps the clipboard and the sequence.
+            // The running pick keeps the clipboard, the sequence and its
+            // own click-time class (ticket 56); the queued pick is a
+            // {emoji, clientClass} pair awaiting promotion.
             T.equal(second.state.pending, "😀")
             T.equal(second.state.seq, first.state.seq)
-            T.deepEqual(second.state.queue, ["🔥"])
+            T.deepEqual(second.state.queue,
+                [{ emoji: "🔥", clientClass: "" }])
         })
 
         T.test("an empty payload is refused, never wedging the queue", function () {
@@ -196,13 +200,14 @@ QtObject {
             var state = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(), "😀").state
             state = ClipboardPaste.txnPick(state, "🔥").state
             state = ClipboardPaste.txnPick(state, "🎉").state
-            T.deepEqual(state.queue, ["🔥", "🎉"])
+            T.deepEqual(state.queue,
+                [{ emoji: "🔥", clientClass: "" }, { emoji: "🎉", clientClass: "" }])
             state = ClipboardPaste.txnServed(state, state.seq, "😀").state
             state = ClipboardPaste.txnChordDone(state, true).state
             var b = ClipboardPaste.txnNext(state)
             T.equal(b.action, "publish")
             T.equal(b.emoji, "🔥")
-            T.deepEqual(b.state.queue, ["🎉"])
+            T.deepEqual(b.state.queue, [{ emoji: "🎉", clientClass: "" }])
             // The promoted pick's sequence is new, so answers from the
             // finished transaction cannot masquerade for it.
             T.equal(b.state.seq > state.seq, true)
@@ -347,6 +352,102 @@ QtObject {
             T.deepEqual(ClipboardPaste.compensatingReleases(lifted, 0), [])
             // Fully sent, the restore pairs with the lift: nothing owed.
             T.deepEqual(ClipboardPaste.compensatingReleases(lifted, lifted.length), [])
+        })
+
+        // Ticket 56 (the IME matrix's kitty cell): the pick's target class
+        // is derived ONCE, at the click, and travels with the payload
+        // through publish, verify and chord. The old shape re-derived the
+        // class at the chord's arrival, and the second derivation could
+        // disagree with the first — the matrix measured a kitty pick
+        // landing wine-shaped (bare Ctrl+V, no Shift, no "paste chord for
+        // kitty" line). One derivation, one table (§44): whatever the
+        // ambient focus read says by the time the clipboard transaction
+        // lands, the chord answers for the class the pick was clicked for.
+
+        T.test("a pick remembers the client class it was clicked for, through verify to the chord", function () {
+            var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(),
+                "😀", "kitty")
+            T.equal(started.action, "publish")
+            T.equal(started.state.clientClass, "kitty")
+            // Verify rounds and retries never lose it.
+            var retried = ClipboardPaste.txnServed(started.state,
+                started.state.seq, "")
+            T.equal(retried.action, "retry")
+            T.equal(retried.state.clientClass, "kitty")
+            var served = ClipboardPaste.txnServed(retried.state,
+                retried.state.seq, "😀")
+            T.equal(served.action, "chord")
+            T.equal(served.state.clientClass, "kitty")
+        })
+
+        T.test("the chord answers for the pick's own class — a kitty pick never turns wine at arrival", function () {
+            // The disagreement the old arrival-time re-derivation allowed:
+            // between the click and the chord, focus and the fallback
+            // memory both move. With the class carried, the routing table
+            // sees exactly what the pick saw, so the shapes cannot diverge.
+            var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(),
+                "😀", "kitty")
+            var served = ClipboardPaste.txnServed(started.state,
+                started.state.seq, "😀")
+            var chord = Modifiers.pasteChordForClass(served.state.clientClass)
+            T.equal(chord.ctrl, true)
+            T.equal(chord.shift, true)
+            T.equal(chord.position, "AB04")
+            // ...and the wine shape the matrix measured is what a wine
+            // class pick still earns — the table itself was never wrong.
+            var winePick = ClipboardPaste.txnPick(
+                ClipboardPaste.txnInitial(), "😀", "steam_proton")
+            var wineChord = Modifiers.pasteChordForClass(
+                winePick.state.clientClass)
+            T.equal(wineChord.ctrl, true)
+            T.equal(wineChord.shift, false)
+        })
+
+        T.test("queued picks keep their own click-time classes through promotion", function () {
+            // Two rapid picks can be for different clients (the first
+            // click's chat, then the user switched and clicked again): the
+            // queue entry is the pick, class and all — promotion is not a
+            // re-derivation.
+            var a = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(),
+                "😀", "kitty")
+            var b = ClipboardPaste.txnPick(a.state, "🔥", "steam_proton")
+            T.equal(b.action, "queued")
+            var done = ClipboardPaste.txnChordDone(
+                ClipboardPaste.txnServed(b.state, b.state.seq, "😀").state,
+                true)
+            T.equal(done.action, "completed")
+            var next = ClipboardPaste.txnNext(done.state)
+            T.equal(next.action, "publish")
+            T.equal(next.emoji, "🔥")
+            T.equal(next.state.clientClass, "steam_proton")
+        })
+
+        T.test("a pick whose class did not resolve carries the empty class, never a guess", function () {
+            // focusedClientClass() could not name the client: the empty
+            // class rides the transaction so the routing table applies its
+            // own empty rule (the terminal-safe chord), rather than an
+            // arrival-time read inventing a different answer.
+            var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(),
+                "😀", "")
+            T.equal(started.state.clientClass, "")
+            var chord = Modifiers.pasteChordForClass(
+                ClipboardPaste.txnServed(started.state, started.state.seq,
+                    "😀").state.clientClass)
+            T.equal(chord.shift, true)
+            T.equal(chord.position, "AB04")
+        })
+
+        T.test("terminal outcomes leave the machine with no carried class", function () {
+            var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(),
+                "😀", "kitty")
+            var cancelled = ClipboardPaste.txnChordDone(
+                ClipboardPaste.txnServed(started.state, started.state.seq,
+                    "😀").state, false)
+            T.equal(cancelled.state.clientClass, "")
+            var dropped = ClipboardPaste.txnPick(
+                ClipboardPaste.txnInitial(), "😀", "kitty")
+            var dead = ClipboardPaste.txnCancel(dropped.state)
+            T.equal(dead.state.clientClass, "")
         })
 
         Qt.exit(T.report("clipboard-paste"))
