@@ -179,7 +179,15 @@ helper answers <1 s; a configure compiling ahead of the repair
 re-hello re-stamps the window) rebuilds the socket through §10's own
 Loader mechanism whatever `connected` claims. The dead end below
 stands unchanged — TOGGLING `connected` recovers nothing; rebuilding
-does.
+does. **Amended 2026-09-15 (ticket 54):** because the lying socket
+never runs the disconnect arm, the rebuild path carries that arm's two
+residual resets itself, as a ledger beside the verdict:
+`SocketWatch.rebuildResets` drains `pendingTextReplies` (the
+disconnect semantics — cleared, callbacks dropped) so a stale FIFO
+head cannot be settled by a post-recovery `text-ok`, and zeroes
+`sharedKeymapGen` so a restarted daemon repeating the stale install
+generation cannot make the once-per-generation share guard skip a
+re-share. Pinned in `tests/socket-watch.qml`.
 
 Quickshell 0.3.1 semantics, verified against `src/io/socket.cpp`:
 `connected` flips on the *request*, before the device is open; a failed

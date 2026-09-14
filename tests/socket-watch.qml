@@ -85,6 +85,49 @@ QtObject {
             T.equal(SocketWatch.HELLO_STALE_MS, 5000)
         })
 
+        // ---- ticket 54: the rebuild's own residuals ----
+        //
+        // The whole point of "rebuild" is that the disconnect arm never
+        // runs — the socket lies `connected`, which is why the object is
+        // torn down instead of waiting for a state change. Two of that
+        // arm's resets therefore cannot be left to it (both named by 47's
+        // review), and the ledger of what a rebuild resets belongs beside
+        // the verdict that orders it, here, where the suite can pin it.
+
+        T.test("a rebuild drains the pending text-reply FIFO", function () {
+            // Residual one, the pre-fix shape: the rebuild cleared only
+            // the hello mark and left the FIFO standing, so its stale
+            // head was settled by the first `text-ok` after recovery —
+            // the wrong reply matched to the wrong request. The drain is
+            // the disconnect arm's semantics exactly: cleared, the
+            // callbacks dropped rather than invoked, because the socket
+            // that owed them answers on no connection this panel holds.
+            var resets = SocketWatch.rebuildResets({
+                pendingTextReplies: [function () {}, null, function () {}],
+                sharedKeymapGen: 3
+            })
+            T.deepEqual(resets.pendingTextReplies, [])
+            // Absent fields reset the same way: the early-boot path
+            // check rebuilds a socket that never handed anything over.
+            T.deepEqual(SocketWatch.rebuildResets(null).pendingTextReplies, [])
+        })
+
+        T.test("a rebuild zeroes the compositor share generation", function () {
+            // Residual two, the pre-fix shape: sharedKeymapGen survived
+            // the rebuild, and a restarted daemon counts its installs
+            // from one again — the fresh hello's ack can repeat the
+            // stale value, the once-per-generation share guard compares
+            // equal and skips a re-share of a file the compositor never
+            // compiled from this daemon (and nothing else re-reads an
+            // unchanged path): two keymaps on the seat, silently.
+            var resets = SocketWatch.rebuildResets({
+                pendingTextReplies: [],
+                sharedKeymapGen: 7
+            })
+            T.equal(resets.sharedKeymapGen, 0)
+            T.equal(SocketWatch.rebuildResets(null).sharedKeymapGen, 0)
+        })
+
         Qt.exit(T.report("socket watch"))
     }
 }

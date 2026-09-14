@@ -59,3 +59,28 @@ function reconnectAction(state) {
         return "wait"
     return age >= HELLO_STALE_MS ? "rebuild" : "wait"
 }
+
+/// Ticket 54: what the rebuild path resets beyond the socket object
+/// itself. The whole point of a rebuild is that the disconnect arm never
+/// runs — a socket that lies `connected` is why "rebuild" exists — so two
+/// of that arm's resets cannot be left to it (both named by 47's review):
+///
+///   - the pending text-reply FIFO. A stale head left standing is settled
+///     by the first `text-ok` after recovery: the wrong reply matched to
+///     the wrong request. The rebuild drains it with the disconnect arm's
+///     semantics — cleared, the callbacks dropped rather than invoked,
+///     because the socket that owed them answers on no connection this
+///     panel holds.
+///   - the compositor share generation. A restarted daemon counts its
+///     installs from one again, so the fresh connection's ack can repeat
+///     the generation the panel last shared; the once-per-generation guard
+///     would compare equal and skip a re-share of a file the compositor
+///     never saw from this daemon — and nothing else re-reads an unchanged
+///     path: two keymaps on the seat, silently.
+///
+/// The ledger lives beside the verdict that orders it so the decision and
+/// its resets cannot drift apart; the caller packs its properties in and
+/// assigns the returned fields back, the reconnectAction discipline.
+function rebuildResets(state) {
+    return { pendingTextReplies: [], sharedKeymapGen: 0 }
+}
