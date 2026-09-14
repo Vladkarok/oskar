@@ -119,6 +119,11 @@ Item {
     property var dwellState: null
     property var dwellCap: null
     property Item dwellDelegate: null
+    // Slice two: the hold menu's entry the rest is deciding on. An
+    // entry rest and a cap rest share the machine, the timer and the
+    // delegate bookkeeping; this field is the discriminator the fire
+    // path reads — null for a cap rest, the entry for an entry rest.
+    property var dwellEntry: null
 
     // The size preset's multiplier on top of the theme's own scaling
     // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
@@ -2106,6 +2111,32 @@ Item {
         dwellReset()
     }
 
+    /// The entry arm (ticket 50, slice two): the hold menu's ENTRIES are
+    /// dwell targets — a pure-dwell user opened the column menu by
+    /// resting PAST the type, and needing one click to PICK breaks the
+    /// click-free promise. Same machine, same delay, same quiet
+    /// underline the caps draw; the fire is the entry's own click
+    /// semantics (pickHoldEntry). The menu itself is never folded here —
+    /// the fold-on-dwell-arm is the CAP arm's pointer-only dismissal,
+    /// and this arm lives ON the menu. A rest on the padding or a gap
+    /// never reaches this function at all: the hover shield (0105888)
+    /// swallows it, so only the entry hit areas gained dwell. A previous
+    /// rest dies first, so moving between entries re-targets — the new
+    /// enter supersedes, exactly the caps' rule.
+    function dwellEnterEntry(entry, delegate) {
+        dwellReset()
+        var delay = Dwell.delayFor(dwellDelayMs)
+        var state = Dwell.enterEntry(entry, Date.now(), delay,
+            dwellEnabled, searchMode, inputReady)
+        if (!state) return
+        dwellState = state
+        dwellEntry = entry
+        dwellDelegate = delegate
+        dwellTimer.interval = delay
+        dwellTimer.restart()
+        dwellStartFill(delegate, delay)
+    }
+
     /// The deadline timer fired: hand the machine the clock and map the
     /// crossing. A column cap's press re-arms the timer for the menu
     /// deadline (elapsed-from-enter, so a late delivery still waits the
@@ -2135,6 +2166,19 @@ Item {
     /// physical release sends it (capRect.types' rule, restated): a
     /// character cap's key lifts, a modifier's click is self-contained.
     function dwellFire() {
+        // The entry arm first (slice two): an entry rest fires the
+        // entry's own click semantics — pickHoldEntry — with the pick's
+        // gate restated because readiness can drop while the pointer
+        // rests. A gated entry's click returns before the pick and so
+        // does its dwell: nothing is picked, nothing sounds, and the
+        // menu keeps standing for the pointer's next move.
+        if (dwellEntry) {
+            var entry = dwellEntry
+            dwellReset()
+            if (!inputReady || searchMode) return
+            pickHoldEntry(entry)
+            return
+        }
         var cap = dwellCap
         if (!cap) {
             dwellReset()
@@ -2185,6 +2229,7 @@ Item {
     function dwellReset() {
         dwellState = null
         dwellCap = null
+        dwellEntry = null
         var delegate = dwellDelegate
         dwellDelegate = null
         dwellTimer.stop()
@@ -3091,6 +3136,7 @@ Item {
                 model: root.holdMenuEntries
 
                 Rectangle {
+                    id: entryCard
                     property var entry: modelData
                     // The same disabled treatment the caps keep: an entry
                     // that could not type draws dim and refuses its click,
@@ -3102,6 +3148,23 @@ Item {
                     color: entryHit.containsMouse && !gated
                         ? root.hoverFill : "transparent"
 
+                    // The dwell affordance's two handles, the caps' own
+                    // (ticket 50, slice two): start grows the foot
+                    // underline over the rest's delay, stop snaps it
+                    // away — methods rather than bindings for the same
+                    // reason the caps' are (restart on every arm, die
+                    // instantly on every cancel).
+                    function startDwellFill(delay) {
+                        entryDwellUnderline.visible = true
+                        entryDwellFillAnim.duration = Math.max(1, delay)
+                        entryDwellFillAnim.restart()
+                    }
+                    function stopDwellFill() {
+                        entryDwellFillAnim.stop()
+                        entryDwellUnderline.width = 0
+                        entryDwellUnderline.visible = false
+                    }
+
                     Text {
                         anchors.centerIn: parent
                         text: entry.text
@@ -3110,12 +3173,57 @@ Item {
                         font.pixelSize: root.capGlyphSize
                     }
 
+                    // The dwell progress affordance (ticket 50, slice
+                    // two): the caps' own underline in the caps' own
+                    // register — textDim ink, a hint of opacity, never
+                    // an accent fill — because it is the same PROGRESS
+                    // the caps promise: it exists only while a rest is
+                    // live and vanishes the instant the rest ends,
+                    // picked, cancelled or left.
+                    Rectangle {
+                        id: entryDwellUnderline
+                        visible: false
+                        width: 0
+                        height: Math.max(2,
+                            Math.round(root.cellGap * 0.45))
+                        radius: height / 2
+                        anchors {
+                            horizontalCenter: parent.horizontalCenter
+                            bottom: parent.bottom
+                            bottomMargin: Math.round(root.cellGap * 0.35)
+                        }
+                        color: root.textDim
+                        opacity: 0.8
+                    }
+                    NumberAnimation {
+                        id: entryDwellFillAnim
+                        target: entryDwellUnderline
+                        property: "width"
+                        from: 0
+                        to: entryCard.width - root.cellGap
+                        easing.type: Easing.Linear
+                    }
+
                     MouseArea {
                         id: entryHit
                         anchors { fill: parent }
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
                         Accessible.name: entry.text
+                        // A physical press supersedes the rest (the caps'
+                        // own rule): dwell and click never double-pick.
+                        // The click path itself is unchanged — a click
+                        // still picks instantly, gate first.
+                        onPressed: root.dwellReset()
+                        onCanceled: root.dwellReset()
+                        // The dwell path's entry arm (ticket 50, slice
+                        // two): the hit area's own bounds decide the
+                        // rest; moving between entries re-targets (the
+                        // enter supersedes), the gap crossing is the
+                        // shield's, and a leave cancels — the machine's
+                        // rules, entry edition.
+                        onEntered: root.dwellEnterEntry(entry, entryCard)
+                        onExited: root.dwellLeave(entryCard)
                         onClicked: {
                             if (gated) return
                             root.pickHoldEntry(entry)

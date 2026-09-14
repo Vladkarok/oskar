@@ -41,6 +41,12 @@
 //   the menu window — the span between the type and the menu is DERIVED
 //     from HoldColumn.HOLD_THRESHOLD_MS, not copied: one hold vocabulary,
 //     and the two numbers cannot drift.
+//
+//   the menu's own entries (slice two) — a pure-dwell user opened the
+//     column menu by resting past the type; the entries are dwell targets
+//     too, or one click is still owed to PICK. An entry is not a cap, so
+//     eligibility is its own rule, and the rest has no second threshold:
+//     the pick is the destination.
 
 /// The delay's designed window, in milliseconds: 400 is faster than a
 /// deliberate pause, 2000 slower than anyone would wait, ~800 reads as
@@ -98,6 +104,38 @@ function eligible(capData, searchMode, inputReady) {
 function holdDefers(dwellEnabled, capData, entries, searchMode, inputReady) {
     if (dwellEnabled === true) return false
     return HoldColumn.shouldDefer(capData, entries, searchMode, inputReady)
+}
+
+/// Whether a hold-menu ENTRY is a dwell target (ticket 50, slice two):
+/// a pure-dwell user OPENED the column menu by resting past the type,
+/// and needing one click to PICK breaks the click-free promise. An
+/// entry is not a cap — no xkb position, no key, no chrome exclusion —
+/// so this is its own rule, not `eligible`'s: dwell must be on, and the
+/// pick's own gate applies (pickHoldEntry's guard, restated — a gated
+/// entry draws dim and refuses its click, and its dwell refuses
+/// identically). The menu's padding and the gaps between entries are
+/// not entries: the hover shield (0105888) swallows a rest there whole,
+/// and only the entry hit areas ever carry an entry here.
+function entryEligible(entry, dwellEnabled, searchMode, inputReady) {
+    if (!entry) return false
+    if (dwellEnabled !== true) return false
+    if (searchMode === true) return false
+    if (inputReady !== true) return false
+    return true
+}
+
+/// The entry arm, composed the holdDefers way — the interplay pinned in
+/// the module, not the QML: eligibility plus the machine's enter, with
+/// no column by construction (an entry's rest has no second threshold;
+/// the pick IS the destination, so the state is spent-proof and the
+/// menu window is never consulted). Answers null when nothing armed,
+/// which is the wiring's cue to leave the previous rest dead and arm
+/// nothing.
+function enterEntry(entry, now, delay, dwellEnabled, searchMode, inputReady) {
+    if (!entryEligible(entry, dwellEnabled, searchMode, inputReady))
+        return null
+    var d = delayFor(delay)
+    return enter(now, d, menuDelayFor(d), false)
 }
 
 /// Arm a rest. `now` is the caller's clock; `delay`/`menuDelay` come from

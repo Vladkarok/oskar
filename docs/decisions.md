@@ -1800,6 +1800,29 @@ owed on the ticket (QMP pointer rest → character in foot; dwell-past →
 menu; leave → nothing), and the owner's feel pass stands pending as it
 does for every behaviour change.
 
+**Amended 2026-09-15 (ticket 50, slice two): the menu's own entries
+dwell too.** The residual the review weighed and deferred is closed: a
+pure-dwell user who OPENED the column menu by resting past the type no
+longer owes one click to PICK — resting on an ENTRY for the delay
+picks it through `pickHoldEntry`, the entry's own click semantics
+(readiness gate, click sound, exact-level chord all the pick's). Three
+edges, pinned in `tests/dwell.qml`: eligibility is its OWN rule
+(`Dwell.entryEligible`) because an entry is not a cap — no position,
+no key, no chrome exclusion — and it restates the pick's own gate
+rather than trusting the fold that usually stands behind it; an entry
+rest has NO second threshold (`Dwell.enterEntry` enters the shared
+machine column-less — the pick is the destination, there is no menu
+behind the menu); and the hover shield's contract survives whole
+(0105888) — the padding and the gaps between entries never carry an
+entry, so a rest there is still a pure swallow and only the entry hit
+areas gained dwell. The same quiet underline the caps draw rides the
+entry's foot; moving between entries re-targets (the enter
+supersedes, the gap crossing arms nothing); a leave cancels; a
+physical press supersedes the rest; the CLICK path is byte-for-byte
+unchanged — a click still picks instantly. Shipped pending the owner's
+feel pass with dwell generally, and the VM leg rides the timer-wiring
+ticket the first leg filed.
+
 ## 55. Every chrome word is table data; the layout picks the language
 
 2026-09-14, ticket 52 (council gap #4 — "the multilingual niche is our
