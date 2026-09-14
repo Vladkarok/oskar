@@ -237,28 +237,38 @@ cd daemon && cargo test
 
 ## Install
 
-From an AUR package (`omarchy-osk`): install it, then activate with the
-one lifecycle command — it registers the packaged payload under the
-stable plugin id, enables the plugin through Omarchy, and enables/starts
-the helper service:
+From a source checkout — the primary path today. One flow, three steps:
 
 ```sh
-omarchy-osk setup      # idempotent; also: upgrade / status / teardown
+./install.sh           # builds the helper, installs it + its unit + the
+                       # omarchy-osk command, enables and starts the service
+omarchy-osk setup      # registers the checkout under the stable plugin id,
+                       # enables the plugin in Omarchy, re-checks the service
+omarchy restart shell  # the running shell only picks up a newly registered
+                       # plugin at restart (or log out and back in)
 ```
 
-From a source checkout, the same command manages the checkout (the
-installer links it into `~/.local/bin`):
+`install.sh` needs `cargo` to build the helper — on Omarchy,
+`omarchy pkg add rust` provides it (the script says so and stops if it is
+missing). After updating the checkout, rerun both commands: the QML side
+and the helper share a protocol version, and a plugin updated without its
+helper reports that it needs reinstalling rather than typing nothing
+(`omarchy-osk upgrade` is the same rerun under one name). The keyboard's
+icon appears in the bar; clicking it (or the toggle below) shows the
+panel:
 
 ```sh
-./install.sh           # helper + unit + the omarchy-osk command
-omarchy-osk setup      # registration, plugin enable, service
+omarchy-shell shell toggle io.github.vladkarok.osk
 ```
 
-The installer builds the helper, installs it and its user unit, and
-enables and starts the service for the graphical session (spec-v1.1 §6:
-an installed but disabled unit is indistinguishable from a broken
-keyboard). Run `omarchy-osk upgrade` after updating the plugin. Manually,
-the same steps are:
+An AUR package (`omarchy-osk`) will become the primary path on publish —
+it does not exist yet. Until then there is no packaged channel: the
+source checkout above is the only install, and it has to come from the
+project's repository directly.
+
+`omarchy-osk setup` is idempotent and also owns `status` and `teardown`
+(full removal: registration, plugin enable, unit, state). For reference,
+the manual equivalent of `install.sh`:
 
 ```sh
 cd daemon && cargo build --release
