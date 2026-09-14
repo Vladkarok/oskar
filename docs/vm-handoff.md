@@ -38,7 +38,10 @@ this is the operating manual.
 - Guest: Omarchy 4.0.2, user `vladkarok`, hostname `testprod`.
   `ssh omarchy-vm` (host port 2222 → guest 22, key `~/.ssh/id_ed25519`,
   already authorised). Networking is SLIRP: only the forwarded port
-  reaches the guest.
+  reaches the guest. The guest's throwaway sudo password (a venue
+  repair set it to `z`; change it and this note together) feeds the
+  QMP legs' strace oracle via `OSK_LAB_SUDO_PASSWORD` on the host —
+  never a literal in the tree.
 - **Every SSH command that touches the session needs the environment**,
   or hyprctl/journalctl will not find it:
 
