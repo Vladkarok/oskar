@@ -24,6 +24,9 @@ QtObject {
                 emojiDelivery: "direct",
                 // The Super cap says what the key is (ticket 22).
                 superMark: "word",
+                // Ticket 50: dwell-to-type is off until the user opts in.
+                dwellEnabled: false,
+                dwellDelayMs: 800,
                 capCorner: 8,
                 panelRadius: 12,
                 keyBackground: "#303030",
@@ -127,6 +130,38 @@ QtObject {
                 '{"emojiDelivery":"emote"}')
             T.equal(aliasBad.value, previous)
             T.equal(aliasBad.error, "Invalid value for emojiDelivery")
+        })
+
+        T.test("dwell preferences validate, stay sparse, and default off", function () {
+            // Ticket 50: the accessibility pair — an off-by-default switch
+            // and a bounded delay (Dwell.js owns the window the timer
+            // clamps into; the FILE holds the same bounds so an external
+            // edit cannot smuggle a 10-second or zero rest past the
+            // popover). Canonical and camelCase alias validate
+            // identically, exactly like every other field (R5).
+            var parsed = Config.reloadOverrides({},
+                '{"dwell_enabled":true,"dwell_delay_ms":1200}')
+            T.deepEqual(parsed.value,
+                { dwellEnabled: true, dwellDelayMs: 1200 })
+            T.equal(Config.serializeOverrides(parsed.value),
+                '{\n  "dwell_enabled": true,\n  "dwell_delay_ms": 1200\n}\n')
+            var alias = Config.reloadOverrides({},
+                '{"dwellEnabled":false,"dwellDelayMs":400}')
+            T.equal(alias.error, "")
+            T.deepEqual(alias.value,
+                { dwellEnabled: false, dwellDelayMs: 400 })
+            // Booleans for the switch, whole milliseconds inside the
+            // window for the delay.
+            T.equal(Config.reloadOverrides({}, '{"dwell_enabled":1}').error,
+                "Invalid value for dwell_enabled")
+            T.equal(Config.reloadOverrides({}, '{"dwell_delay_ms":399}').error,
+                "Invalid value for dwell_delay_ms")
+            T.equal(Config.reloadOverrides({}, '{"dwell_delay_ms":2001}').error,
+                "Invalid value for dwell_delay_ms")
+            T.equal(Config.reloadOverrides({}, '{"dwell_delay_ms":800.5}').error,
+                "Invalid value for dwell_delay_ms")
+            T.equal(Config.reloadOverrides({}, '{"dwell_delay_ms":"800"}').error,
+                "Invalid value for dwell_delay_ms")
         })
 
         T.test("emoji skin tone is validated UI state, not an override", function () {

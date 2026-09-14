@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import qs.Commons
 import "Config.js" as ConfigFile
+import "Dwell.js" as Dwell
 
 // The settings popover (spec-v1.1 §5). Lives on its own overlay window,
 // not on the key grid: leftover-centre placement is the panel's, exclusive
@@ -119,6 +120,7 @@ Rectangle {
     readonly property var settingsRowLabels:
         ["Mode", "Size", "Emoji picking", "Emoji page size", "Super mark",
          "Key click sound", "Follow Omarchy theme",
+         "Dwell typing", "Dwell delay",
          "Key radius", "Panel radius", "Key background",
          "Panel background", "Text colour", "Accent colour", "Border colour"]
     readonly property real labelColumnWidth: {
@@ -248,18 +250,20 @@ Rectangle {
     }
 
     // Radius rows: a compact integer stepper. The ends refuse to step past
-    // themselves. One click, one override, one atomic write.
+    // themselves. One click, one override, one atomic write. `step` is the
+    // increment (radii step by one; the dwell delay steps by 100 ms).
     component SettingsStepper: Item {
         id: stepper
         property int value: 0
         property int minimum: 0
         property int maximum: 24
+        property int step: 1
         signal stepped(int value)
         width: stepRow.width
         height: tokens.space(24)
 
         function bump(delta) {
-            var next = stepper.value + delta
+            var next = stepper.value + delta * stepper.step
             if (next < stepper.minimum || next > stepper.maximum) return
             stepper.stepped(next)
         }
@@ -303,10 +307,14 @@ Rectangle {
             }
 
             Item {
-                width: tokens.space(28)
+                // Wide enough for the biggest value any row shows — the
+                // dwell delay reaches four digits, and a clipped number
+                // in a stepper is a wrong number.
+                width: Math.max(tokens.space(28), valueText.implicitWidth)
                 height: tokens.space(24)
 
                 Text {
+                    id: valueText
                     anchors.centerIn: parent
                     text: stepper.value
                     color: tokens.foreground
@@ -831,6 +839,115 @@ Rectangle {
                     panel: popoverRoot.panel
                     overrideName: "followTheme"
                 }
+            }
+
+            SettingsHairline {}
+
+            // ---- DWELL (ticket 50) ----
+            //
+            // The accessibility pair: rest-to-type, off until it is
+            // turned on, and how long a rest must hold before the cap
+            // types. The bounds are Dwell.js's own window — the module
+            // clamps the timer into exactly this range, and the file
+            // validates to it, so the stepper cannot offer a value the
+            // keyboard would refuse.
+            Text {
+                width: parent.width
+                text: "DWELL"
+                color: tokens.muted
+                font.family: tokens.fontFamily
+                font.pixelSize: tokens.fontBodySmall
+            }
+
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+
+                Text {
+                    anchors {
+                        left: parent.left
+                        verticalCenter: parent.verticalCenter
+                    }
+                    text: "Dwell typing"
+                    color: tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBody
+                }
+
+                SettingsSwitch {
+                    id: dwellSwitch
+                    x: popoverRoot.controlColumnX
+                    anchors {
+                        verticalCenter: parent.verticalCenter
+                    }
+                    checked: panel.dwellEnabled
+                    onToggled: panel.setOverride("dwellEnabled",
+                        !panel.dwellEnabled)
+                }
+
+                SettingsResetChip {
+                    anchors {
+                        left: dwellSwitch.right
+                        leftMargin: tokens.space(6)
+                        verticalCenter: parent.verticalCenter
+                    }
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "dwellEnabled"
+                }
+            }
+
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+
+                Text {
+                    anchors {
+                        left: parent.left
+                        verticalCenter: parent.verticalCenter
+                    }
+                    text: "Dwell delay"
+                    color: tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBody
+                }
+
+                SettingsStepper {
+                    id: dwellDelayStepper
+                    x: popoverRoot.controlColumnX
+                    anchors {
+                        verticalCenter: parent.verticalCenter
+                    }
+                    value: panel.dwellDelayMs
+                    minimum: Dwell.DELAY_MIN_MS
+                    maximum: Dwell.DELAY_MAX_MS
+                    step: 100
+                    onStepped: function (value) {
+                        panel.setOverride("dwellDelayMs", value)
+                    }
+                }
+
+                SettingsResetChip {
+                    anchors {
+                        left: dwellDelayStepper.right
+                        leftMargin: tokens.space(6)
+                        verticalCenter: parent.verticalCenter
+                    }
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "dwellDelayMs"
+                }
+            }
+
+            Text {
+                width: parent.width
+                text: "Rest a key this long to type it; resting past the type opens its hold-column menu"
+                color: tokens.muted
+                font.family: tokens.fontFamily
+                font.pixelSize: tokens.fontBodySmall
+                wrapMode: Text.Wrap
             }
 
             SettingsHairline {}
