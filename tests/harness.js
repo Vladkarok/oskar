@@ -28,9 +28,13 @@ function fail(detail) {
     failures.push(current + ": " + detail)
 }
 
-function equal(actual, expected) {
+function equal(actual, expected, detail) {
     if (actual !== expected) {
-        fail("expected " + show(expected) + ", got " + show(actual))
+        // The optional third argument names WHAT drifted (the ticket-52
+        // arity pin passes id/language); the two-arg call sites are
+        // unchanged and stay terse.
+        fail((detail ? detail + ": " : "")
+            + "expected " + show(expected) + ", got " + show(actual))
     }
 }
 
