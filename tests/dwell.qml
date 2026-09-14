@@ -311,6 +311,89 @@ QtObject {
                 false, true), false)
         })
 
+        // ---- slice two: the hold menu's entries as dwell targets ----
+        //
+        // The residual 50's review left standing on purpose: a
+        // pure-dwell user can OPEN ticket 37's column menu by resting
+        // PAST the type, but the entries were clicks — one click still
+        // owed to PICK. Slice two routes entry hover through the same
+        // machine; the fire is the entry's own click semantics
+        // (pickHoldEntry in the wiring), and the click path is
+        // unchanged — a click still picks instantly.
+
+        function menuEntry() {
+            return { level: 3, text: "\u00a7" }
+        }
+
+        T.test("menu entries are dwell targets in dwell mode; the padding is not", function () {
+            // An entry is not a cap — no position, no key, no chrome
+            // exclusion — so eligibility is its own rule, not
+            // `eligible`'s. The menu's padding and the gaps between
+            // entries never carry an entry: the hover shield (0105888)
+            // swallows a rest there whole, so only the entry hit areas
+            // route into the machine.
+            T.equal(Dwell.entryEligible(menuEntry(), true, false, true), true)
+            // Dwell off: the click stays the only route, as before.
+            T.equal(Dwell.entryEligible(menuEntry(), false, false, true), false)
+            // A gated entry draws dim and refuses its click; its dwell
+            // refuses identically — the rule restates pickHoldEntry's
+            // own guard rather than trusting the fold that usually
+            // stands behind it.
+            T.equal(Dwell.entryEligible(menuEntry(), true, false, false), false)
+            // Search never sees a standing menu (the page folds it),
+            // but the guard is restated, not trusted to the fold.
+            T.equal(Dwell.entryEligible(menuEntry(), true, true, true), false)
+            // The padding and the gaps: not entries, never targets.
+            T.equal(Dwell.entryEligible(null, true, false, true), false)
+        })
+
+        T.test("an entry rest rides the same machine: the delay picks it once", function () {
+            // No second threshold — an entry has no column; the pick IS
+            // the destination, so the rest is done at the fire and no
+            // menu arm follows. enterEntry composes eligibility and the
+            // arm (the holdDefers discipline: the interplay is pinned
+            // in the module, not the QML) and answers null when
+            // nothing armed.
+            var s = Dwell.enterEntry(menuEntry(), 0, DELAY, true, false, true)
+            T.equal(s.phase, "armed")
+            T.equal(Dwell.tick(s, DELAY - 1).action, "none")
+            var fired = Dwell.tick(s, DELAY)
+            T.equal(fired.action, "press")
+            T.equal(fired.state.phase, "done")
+            T.equal(Dwell.tick(fired.state, DELAY + 60000).action, "none")
+            // An ineligible enter arms nothing at all.
+            T.equal(Dwell.enterEntry(menuEntry(), 0, DELAY, false, false, true),
+                null)
+        })
+
+        T.test("moving between entries re-targets: the new enter supersedes", function () {
+            // Entry A's rest dies the moment the pointer leaves it — or
+            // the moment entry B's hit area is entered, which the wiring
+            // orders as reset-then-enter — and B's rest counts from ITS
+            // OWN enter. The gap crossing itself is the shield's:
+            // nothing arms there, so a slow crossing cannot bank A's
+            // progress onto B.
+            var a = Dwell.enterEntry(menuEntry(), 0, DELAY, true, false, true)
+            T.equal(Dwell.leave(a).action, "cancel")
+            var b = Dwell.enterEntry({ level: 4, text: "\u20b4" }, 350,
+                DELAY, true, false, true)
+            T.equal(b.phase, "armed")
+            T.equal(Dwell.tick(b, 350 + DELAY - 1).action, "none")
+            T.equal(Dwell.tick(b, 350 + DELAY).action, "press")
+        })
+
+        T.test("leaving an entry before the delay cancels the pick", function () {
+            // The trembling-hand rule, the entries' case: cancellation
+            // is on LEAVE, and the cancel carries a dead state — a
+            // stray late timer tick picks nothing after the pointer is
+            // gone.
+            var s = Dwell.enterEntry(menuEntry(), 0, DELAY, true, false, true)
+            var left = Dwell.leave(s)
+            T.equal(left.action, "cancel")
+            T.equal(left.state, null)
+            T.equal(Dwell.tick(left.state, DELAY).action, "none")
+        })
+
         Qt.exit(T.report("dwell"))
     }
 }
