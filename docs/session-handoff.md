@@ -2,23 +2,40 @@
 
 **START HERE — this section supersedes everything below it.**
 
-STANDING ORDER (owner, 2026-09-14): after 47, continue the vision
-path WITHOUT owner review — create tickets, send agents to implement
-and verify, keep going, do not wait ("не останавливайся, не жди
-меня, я если что сам напишу"). The ONE exception kept owner-gated:
-public publishing (public push, AUR, the release announcement) — the
-vision's recruitment gate hangs off it and the standing rule
-"push only when the user asks" was never lifted.
+STANDING ORDER (owner, 2026-09-14): continue the vision path WITHOUT
+owner review — tickets, agents, verification, no waiting. The ONE
+exception stays owner-gated: public publishing.
 
-The autonomous queue (tickets written, sequenced by VM tenancy and
-file overlap): 48 canary-learns-to-see (after 47) → 49 doctor →
-50 dwell-to-type → 51 IME matrix / 52 UI localization (50's file
-overlap resolves first). In flight right now: 47 (fresh-session
-dead-panel BLOCKER, agent diagnosing the live broken lab) carrying
-46's fix + README rewrite + stranger run 2. The vision and its
-council synthesis: docs/vision.md (A+ architecture, niri after the
-gate, install-from-zero first — its run 1 FAILED honestly: F3 is
-47).
+**The autonomous round is COMPLETE (2026-09-14/15).** Shipped with
+full block→fix→ship review cycles: 46 (install-from-zero: run 2
+product-clean, 21s of commands, first character typed and proven
+three ways), 47 (the Quickshell graceful-stop socket lie — SocketWatch
+traffic-liveness rebuild; §10 amended), 48 (the canary sees: bounce,
+pixels, mask, REAL QMP clicks — wired into the wall's canary-qmp
+row), 49 (omarchy-osk doctor — 9 checks, 13 lab negatives named,
+SIGPIPE block fixed), 50 + slice two (dwell-to-type, chrome excluded,
+hover shield + fold-on-dwell + entry dwell; VM legs green) and 55
+(the premise-retiring fix: Qt coarse slack fired early, tick answered
+none, nobody re-armed — deadline-anchored re-arm), 51 (the IME
+coexistence matrix — fcitx5 measured, our vkb never starved,
+docs/ime-coexistence.md), 52 (UI localization EN/RU/UK — 101 ids,
+arity pinned), 54 (the rebuild's FIFO drain + share-gen zero + the
+F1 gate-lowering). The regression wall ran LIVE for the first time
+(canary-qmp green inside it) and its own two defects got fixed
+(env-less ssh legs; a phantom chooser35 row).
+
+Open, filed with concrete fix candidates: 56 (kitty's emoji chord
+arrives wine-shaped — target re-derivation at arrival), 57 (the
+wall's two live findings: the notice bar's cross-hierarchy anchor
+re-evaluation; the restart_settle leg's kb_file/sidecar teardown
+wedge). Follow-up named: Dwell.nextArmMs extraction.
+
+Next per the vision: the publish decision is the OWNER's (checklist
+in docs/omarchy-osk-package-notes.md — URL placeholder, AUR primary,
+pacman -Ql hygiene, fresh-lab emoji re-gate); after the gate: the
+recruitment window, then niri (the seat-backend seam design already
+lives in the vision + 41's parked accent-layer design waits in
+.scratch).
 
 ---
 
