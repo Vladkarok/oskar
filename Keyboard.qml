@@ -3077,11 +3077,15 @@ Item {
     Timer {
         id: dwellTimer
         // The dwell path's one timer (ticket 50), and like ticket 37's it
-        // repeats nothing: it is deadline-driven, one interval per
-        // threshold crossing — the delay, then the menu window for a
-        // column cap — and Dwell.tick decides what a crossing means. A
-        // cleared dwell never fires: the machine's dead state answers
-        // "none" whatever a stray trigger delivers.
+        // repeats nothing by itself: it is deadline-driven — the delay,
+        // then the menu window for a column cap — and Dwell.tick decides
+        // what a crossing means. A crossing may take several fires: Qt's
+        // coarse slack fires ~2% early and dwellTick re-arms for the
+        // remaining time against the absolute deadline (ticket 55 — the
+        // first cut assumed one interval per crossing and deadlocked
+        // armed forever on the early fire). A cleared dwell never fires:
+        // the machine's dead state answers "none" whatever a stray
+        // trigger delivers.
         interval: 800
         repeat: false
         onTriggered: root.dwellTick()
