@@ -162,6 +162,11 @@ var STRINGS = {
         ru: "Режим",
         uk: "Режим"
     },
+    "mode.chip.tooltip": {
+        en: "Toggle docked / floating",
+        ru: "Закреплённая / плавающая",
+        uk: "Закріплена / плаваюча"
+    },
     "settings.mode.docked": {
         en: "Docked",
         ru: "Закреплена",
