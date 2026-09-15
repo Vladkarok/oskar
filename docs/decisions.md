@@ -1927,3 +1927,17 @@ instantiation overrides it), M/L/XL and RGB/HSV (notations, not words),
 and brand names (Omarchy, Windows, macOS). The VM leg is owed nothing
 — strings render offscreen-checkable — but the owner's eye on a live
 ru/uk shell stands as the acceptance it always is.
+
+## 56. The mode chip returns to the header
+
+2026-09-15, the owner's call — reversing his own 2026-09-08 one (which
+itself followed his 2026-09-05 "no size button"): after real use he
+switches docked/floating more than expected, and opening Settings each
+time is friction. The header now reads gear, language, [notice], paste,
+MODE, close: a text chip in the language chip's idiom showing the
+CURRENT mode (Docked/Floating, localized — a label that states where
+you are, not a mystery icon), one click toggling through the same
+setMode the Settings row uses (config-health guard and the
+floating-position restore included). The Settings row stays for
+discoverability; the notice group's right boundary moved to the chip
+(noticeEdge's fallback, ticket 57's anchor discipline preserved).

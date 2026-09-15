@@ -1771,20 +1771,21 @@ Item {
 
                 // The notice group's right boundary, placed by a plain x
                 // binding at the left edge of the rightmost chip that is
-                // visible — the paste chip when it stands, else the dismiss
-                // button — minus the gap. pasteButton.x is in CARD
-                // coordinates (its parent), so dragBar.x converts it into
-                // this space; dismissBtn is a sibling and needs no
-                // conversion. An Item placed by x, not an anchor line: the
-                // hint and the chips anchor to THIS sibling unconditionally,
-                // no visibility flip can retarget them, and moving the
-                // boundary re-evaluates only this binding.
+                // visible — the paste chip when it stands, else the MODE
+                // chip (permanent since 2026-09-15, left of dismiss) —
+                // minus the gap. pasteButton.x is in CARD coordinates (its
+                // parent), so dragBar.x converts it into this space;
+                // modeChip is a sibling and needs no conversion. An Item
+                // placed by x, not an anchor line: the hint and the chips
+                // anchor to THIS sibling unconditionally, no visibility
+                // flip can retarget them, and moving the boundary
+                // re-evaluates only this binding.
                 Item {
                     id: noticeEdge
                     width: 0
                     height: 0
                     x: (pasteButton.visible ? pasteButton.x - dragBar.x
-                        : dismissBtn.x) - keyboard.cellGap * 2
+                        : modeChip.x) - keyboard.cellGap * 2
                 }
 
                 Text {
@@ -2018,12 +2019,61 @@ Item {
                     }
                 }
 
-                // The owner's 2026-09-05 call, agreed: no size button in the
-                // header. Dock/Float followed it out on 2026-09-08: mode
-                // lives only in Settings, so the header reads gear,
-                // language, hint, paste, close.
-                // (The popover's per-row reset and §4's no-movement guarantee
-                // are unchanged by the removal.)
+                // The owner's 2026-09-05 call, agreed: no size button in
+                // the header. Dock/Float followed it out on 2026-09-08 —
+                // and came BACK on 2026-09-15 by the same owner's call:
+                // he found himself switching more than expected and opening
+                // Settings each time was friction. The chip shows the
+                // CURRENT mode (the language chip's idiom — a label that
+                // states where you are, not a mystery icon), one click
+                // toggles through the same setMode the Settings row uses
+                // (health guard and floating-position restore included),
+                // and the Settings row stays for discoverability.
+                Rectangle {
+                    id: modeChip
+                    anchors {
+                        right: dismissBtn.left
+                        rightMargin: keyboard.cellGap
+                        bottom: parent.bottom
+                        bottomMargin: keyboard.cellGap
+                    }
+                    width: modeChipLabel.implicitWidth + keyboard.cellGap * 3
+                    height: tokens.space(30)
+                    radius: tokens.cornerRadius
+                    color: modeChipHit.pressed ? tokens.accent
+                        : modeChipHit.containsMouse
+                            ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
+                            : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                    border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                    border.width: tokens.normalBorderWidth
+
+                    Text {
+                        id: modeChipLabel
+                        anchors { centerIn: parent }
+                        text: UiStrings.tr(root.mode === "docked"
+                            ? "settings.mode.docked" : "settings.mode.floating",
+                            root.uiLang)
+                        color: tokens.foreground
+                        font.family: tokens.fontFamily
+                        font.pixelSize: tokens.fontBodySmall
+                        font.bold: true  // hint
+                    }
+
+                    MouseArea {
+                        id: modeChipHit
+                        anchors { fill: parent }
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        Accessible.role: Accessible.Button
+                        Accessible.name: UiStrings.tr("mode.chip.tooltip", root.uiLang)
+                        onClicked: root.setMode(
+                            root.mode === "docked" ? "floating" : "docked")
+                    }
+                    HoverTooltip {
+                        text: UiStrings.tr("mode.chip.tooltip", root.uiLang)
+                        hovered: modeChipHit.containsMouse
+                    }
+                }
 
                 Rectangle {
                     id: dismissBtn
