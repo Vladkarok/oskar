@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
-# Removes the input helper and its service. Leaves the plugin itself alone —
-# use `omarchy plugin remove io.github.vladkarok.osk` for that.
+# Uninstalls the SOURCE install's files: the helper binary, the user unit
+# and the ~/.local/bin lifecycle symlink. Deactivation (plugin disable,
+# unit stop, registration unlink) is the lifecycle command's job and runs
+# FIRST, but only when this checkout's registration is the live one — a
+# packaged install (or another checkout) must not be switched off by
+# uninstalling this. Best-effort: in a mixed state (registration at this
+# checkout while the packaged unit is the active one) the unit the
+# teardown disables may be the packaged one — recoverable with
+# `omarchy-osk setup`. Config and state are never touched. Package files
+# belong to pacman; run `omarchy-osk teardown` there instead.
 set -euo pipefail
 
-systemctl --user disable --now omarchy-osk.service 2>/dev/null || true
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+reg="$HOME/.config/omarchy/plugins/io.github.vladkarok.osk"
+
+if [[ "$(readlink -f "$reg" 2>/dev/null || true)" == "$here" ]]; then
+  bash "$here/bin/omarchy-osk" teardown
+else
+  echo "uninstall.sh: registration does not point at this checkout; leaving the live install alone" >&2
+fi
+
 rm -f "$HOME/.config/systemd/user/omarchy-osk.service"
 rm -f "$HOME/.local/libexec/omarchy-osk-daemon"
+rm -f "$HOME/.local/bin/omarchy-osk"
 systemctl --user daemon-reload
 
-echo "Helper removed."
+echo "Source install removed. Config and state preserved."

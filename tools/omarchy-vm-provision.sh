@@ -1,67 +1,158 @@
 #!/usr/bin/env bash
 #
-# Runs INSIDE the Omarchy VM (not on the host):
+# Runs INSIDE the Omarchy VM (not on the host), from whichever copy of the
+# repo the guest has. Two ways to get one:
+#
+#   git clone https://github.com/vladkarok/omarchy-osk   # simplest
+#   bash omarchy-osk/tools/omarchy-vm-provision.sh
+#
+# and the 9p share the VM exports, which is the host's working tree — the
+# only way to test edits that are not pushed yet:
 #
 #   bash /mnt/osk-src/tools/omarchy-vm-provision.sh
 #
-# Idempotent. Installs the build toolchain, syncs the host repo from the 9p
-# share to a guest-local copy (9p is far too slow for a cargo target dir),
-# builds the daemon, installs the plugin and the systemd service, and turns
-# on sshd so the host can drive the VM afterwards. Re-run it any time the
-# host repo changed.
+# A freshly installed guest has neither the share mounted nor sshd running,
+# and this script is what fixes both, so with no clone the first run is typed
+# at the console with the mount in front of it:
+#
+#   sudo mkdir -p /mnt/osk-src
+#   sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 osk-src /mnt/osk-src
+#   bash /mnt/osk-src/tools/omarchy-vm-provision.sh
+#
+# That run writes the fstab entry, so from the next boot the mount is simply
+# there. Once sshd is up the host can also pipe the script in, which needs
+# nothing on the guest and so repairs one that lost its share:
+#
+#   ssh -tt omarchy-vm 'bash -s' < tools/omarchy-vm-provision.sh
+#
+# -tt because the sudo calls need a terminal to prompt on: stdin is the
+# script itself.
+#
+# Idempotent. Installs the build toolchain, builds the daemon, installs the
+# plugin and the systemd service, enables and starts the service for the
+# graphical session (spec-v1.1 §6; opt out with OSK_NO_AUTOSTART=1, which
+# disables it), and turns on sshd so the host can drive the VM afterwards.
+# Re-run it any time the source changed.
 #
 # First run wants one sudo password (packages). Every later run is silent
 # unless packages are missing again.
 
 set -euo pipefail
 
-SRC=/mnt/osk-src
+SHARE=/mnt/osk-src
 PLUGIN_ID=io.github.vladkarok.osk
-HOME_SRC="$HOME/osk-src"
+MOUNT_OPTS=trans=virtio,version=9p2000.L,msize=104857600
 
-if [[ ! -d "$SRC/tools" ]]; then
-    echo "mounting host repo share" >&2
-    sudo mkdir -p "$SRC"
-    sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 osk-src "$SRC" || true
+# Where this script is speaks for which copy of the repo it belongs to. Piped
+# in over ssh it has no path at all, and then the share is the only source
+# there is.
+self="${BASH_SOURCE[0]}"
+if [[ -f "$self" ]]; then
+    SRC=$(cd "$(dirname "$self")/.." && pwd)
+else
+    SRC="$SHARE"
 fi
-if [[ ! -d "$SRC/tools" ]]; then
-    echo "ERROR: host repo share not reachable at $SRC" >&2
-    exit 1
+
+if [[ "$SRC" == "$SHARE" ]]; then
+    if [[ ! -d "$SRC/tools" ]]; then
+        echo "mounting host repo share" >&2
+        sudo mkdir -p "$SRC"
+        sudo mount -t 9p -o "$MOUNT_OPTS" osk-src "$SRC" || true
+    fi
+    if [[ ! -d "$SRC/tools" ]]; then
+        echo "ERROR: host repo share not reachable at $SRC" >&2
+        exit 1
+    fi
+    # A mount that dies at reboot makes the documented invocation a lie every
+    # cold boot. nofail so a guest booted without the share still reaches a
+    # login prompt; the export is read-only on the host side either way.
+    if ! grep -q "[[:space:]]$SHARE[[:space:]]" /etc/fstab; then
+        echo "osk-src $SHARE 9p $MOUNT_OPTS,ro,nofail 0 0" | sudo tee -a /etc/fstab >/dev/null
+        sudo systemctl daemon-reload
+    fi
+fi
+
+# Building on 9p is possible but painfully slow, so the share gets copied to a
+# guest-local tree first. A clone is already guest-local and writable: build
+# where it stands, and let git rather than rsync be what updates it.
+if [[ "$SRC" == "$SHARE" ]]; then
+    BUILD_SRC="$HOME/osk-src"
+else
+    BUILD_SRC="$SRC"
 fi
 
 # rust builds the daemon; pkg-config + libxkbcommon link the xkbcommon crate;
-# rsync syncs; openssh lets the host drive this machine afterwards. The gate
-# checks every dependency individually — a rerun with only some of them
-# present must still install the rest. -Syu rather than -Sy: a partial
-# upgrade is how Arch systems get broken.
+# rsync syncs; openssh lets the host drive this machine afterwards; python
+# runs the integration suite. The gate checks every dependency individually —
+# a rerun with only some of them present must still install the rest. -Syu
+# rather than -Sy: a partial upgrade is how Arch systems get broken.
 if ! command -v cargo >/dev/null || ! command -v pkg-config >/dev/null \
         || ! command -v rsync >/dev/null || ! command -v jq >/dev/null \
-        || ! command -v sshd >/dev/null || ! pacman -Q libxkbcommon >/dev/null 2>&1; then
-    sudo pacman -Syu --needed --noconfirm rust pkg-config rsync openssh jq libxkbcommon
+        || ! command -v sshd >/dev/null || ! command -v python3 >/dev/null \
+        || ! pacman -Q libxkbcommon >/dev/null 2>&1; then
+    sudo pacman -Syu --needed --noconfirm rust pkg-config rsync openssh jq libxkbcommon python
 fi
 
-# Guest-local copy: building on 9p is possible but painfully slow, and the
-# daemon target dir is excluded from the sync anyway.
-mkdir -p "$HOME_SRC"
-rsync -a --delete \
-    --exclude .git --exclude 'daemon/target' --exclude tools --exclude 'core.*' \
-    "$SRC/" "$HOME_SRC/"
+if [[ "$BUILD_SRC" != "$SRC" ]]; then
+    # tools/ comes along because the integration suite runs in the guest,
+    # against the daemon built below — and it has to run from this copy, since
+    # its paths are relative to the repo root and the share has no build
+    # output. The daemon target dir stays out: it is the reason for the copy.
+    mkdir -p "$BUILD_SRC"
+    rsync -a --delete \
+        --exclude .git --exclude 'daemon/target' --exclude 'core.*' \
+        "$SRC/" "$BUILD_SRC/"
+fi
 
-echo "--- building daemon"
-cargo build --release --manifest-path "$HOME_SRC/daemon/Cargo.toml"
+echo "--- building daemon from $BUILD_SRC"
+cargo build --release --manifest-path "$BUILD_SRC/daemon/Cargo.toml"
 
 echo "--- installing plugin and service"
 mkdir -p "$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 rsync -a --delete \
     --exclude .git --exclude daemon --exclude tools --exclude 'core.*' \
-    "$HOME_SRC/" "$HOME/.config/omarchy/plugins/$PLUGIN_ID/"
-install -Dm755 "$HOME_SRC/daemon/target/release/omarchy-osk-daemon" "$HOME/.local/libexec/omarchy-osk-daemon"
-install -Dm644 "$HOME_SRC/systemd/omarchy-osk.service" "$HOME/.config/systemd/user/omarchy-osk.service"
+    "$BUILD_SRC/" "$HOME/.config/omarchy/plugins/$PLUGIN_ID/"
+install -Dm755 "$BUILD_SRC/daemon/target/release/omarchy-osk-daemon" "$HOME/.local/libexec/omarchy-osk-daemon"
+install -Dm644 "$BUILD_SRC/systemd/omarchy-osk.service" "$HOME/.config/systemd/user/omarchy-osk.service"
 systemctl --user daemon-reload
-# A rerun after host edits installs a new binary; a running service would
-# keep serving the old one without this.
-if systemctl --user is-active --quiet omarchy-osk; then
-    systemctl --user try-restart omarchy-osk
+
+# Spec-v1.1 §6 (decisions §19): provisioning enables and starts the helper
+# for the graphical session — an installed-but-disabled unit is
+# indistinguishable from a broken keyboard, and systemd's restart policy
+# owns it from here. OSK_NO_AUTOSTART=1 is the development opt-out: it
+# leaves (or puts) the unit disabled, which was the default before §6.
+# Both branches warn on systemd failure rather than dying (a helper that
+# cannot start must not block provisioning) and rather than passing
+# silently (a §11 silent failure).
+if [[ "${OSK_NO_AUTOSTART:-}" == "1" ]]; then
+    systemctl --user disable --now omarchy-osk 2>/dev/null \
+        || echo "WARNING: could not disable omarchy-osk.service; see 'systemctl --user status omarchy-osk'" >&2
+    unit_state="off (OSK_NO_AUTOSTART — unit left disabled)"
+else
+    # Enable and start each warn on failure rather than dying (a helper
+    # that cannot start must not block provisioning) and rather than
+    # passing silently (a §11 silent failure): what actually happened is
+    # warned on stderr here and reported truthfully in the summary below,
+    # never papered over with a default success.
+    if systemctl --user enable omarchy-osk 2>/dev/null; then
+        unit_state="enabled"
+    else
+        echo "WARNING: could not enable omarchy-osk.service; see 'systemctl --user status omarchy-osk'" >&2
+        unit_state="NOT enabled (systemctl enable failed — run it by hand)"
+    fi
+    if systemctl --user --quiet is-active graphical-session.target; then
+        # restart, not start: a rerun after host edits has just installed a
+        # new binary, and an already-running service would keep serving the
+        # old one. Without a live session the unit's ConditionEnvironment
+        # refuses an earlier start — WantedBy starts it at the next login.
+        if systemctl --user restart omarchy-osk 2>/dev/null; then
+            unit_state+=" and started"
+        else
+            echo "WARNING: omarchy-osk.service did not start; see 'journalctl --user -u omarchy-osk'" >&2
+        fi
+    else
+        unit_state+=" (no graphical session — starts at the next login)"
+    fi
 fi
 
 # Same layouts the real machine runs, so the layout zoo looks familiar.
@@ -85,19 +176,29 @@ fi
 
 sudo systemctl enable --now sshd
 
-# The service is left enabled or not exactly as omarchy plugin enable leaves
-# it; the banner below only reports what happened.
+# The plugin itself is enabled through omarchy below; the helper unit is
+# enabled and started here unless OSK_NO_AUTOSTART is set (see §6 above).
 if omarchy plugin enable "$PLUGIN_ID"; then
     plugin_state="enabled"
 else
     plugin_state="NOT enabled (omarchy plugin enable failed — run it by hand)"
+    # The summary says so too, but success must never be the only voice:
+    # the failure warns on stderr here, where a provision log keeps it.
+    echo "WARNING: 'omarchy plugin enable $PLUGIN_ID' failed; enable it by hand" >&2
 fi
+
+# The unit branch above records what actually happened — enabled, started,
+# waiting for a login, or failed with a warning — so the summary never
+# reports a success it did not earn.
+autostart_state="$unit_state"
 
 cat <<NEXT
 
 Provisioning done.
-  - plugin installed ($plugin_state), daemon built and installed
-  - enable typing:   systemctl --user enable --now omarchy-osk
+  - plugin installed ($plugin_state), helper built and installed
+  - helper autostart: $autostart_state
   - host access:     ssh -p 2222 into this machine works
-  - re-sync + rebuild after host edits: rerun this script
+  - integration suite:
+      cd $BUILD_SRC && tools/nested-session.sh tools/smoke-daemon.sh
+  - after source changes: git pull (or rerun from the share), then rerun this
 NEXT

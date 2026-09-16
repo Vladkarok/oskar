@@ -21,6 +21,13 @@ cargo build --locked --release --manifest-path "$here/daemon/Cargo.toml"
 install -Dm755 "$here/daemon/target/release/omarchy-osk-daemon" "$binary"
 install -Dm644 "$here/systemd/omarchy-osk.service" "$unit"
 
+# The lifecycle command (ticket 32): same script the package installs as
+# /usr/bin/omarchy-osk, exposed under the user's path. A symlink, so a
+# checkout stays its own source of truth while it is the registered
+# payload.
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$here/bin/omarchy-osk" "$HOME/.local/bin/omarchy-osk"
+
 systemctl --user daemon-reload
 systemctl --user enable omarchy-osk.service
 

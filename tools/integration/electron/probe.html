@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>OSK-ELECTRON|boot</title>
+<p>Native Wayland keyboard integration target.</p>
+<input id="target" autofocus>
+<script>
+document.title = "OSK-ELECTRON|ready";
+addEventListener("keydown", event => {
+  const key = event.key == null ? "null" : event.key;
+  document.title += key + "\u00b7" + (event.code || "-") + " ";
+});
+let valueTimer;
+document.querySelector("#target").addEventListener("input", event => {
+  clearTimeout(valueTimer);
+  valueTimer = setTimeout(() => {
+    document.title += "V" + Array.from(event.target.value, ch =>
+      ch.codePointAt(0).toString(16)).join(",") + ";";
+  }, 50);
+});
+</script>
