@@ -1,3 +1,16 @@
+# Handoff — updated 2026-09-15 (master merge)
+
+**START HERE — the branch IS master now.** The audited round merged
+--no-ff as 852c005 (80 commits, every ticket review-shipped); the
+repo-hygiene pass landed with it: the /board skill ships at its
+canonical .agents path (the .claude mirror is local-only), CI runs
+the wall's host layers on every push/PR, vision.md marks its local
+board paths. The wall is exit-0 on master. Nothing is pushed beyond
+the private origin's stale master — pushing master is part of the
+owner-gated publish.
+
+---
+
 # Handoff — updated 2026-09-14 (autonomous mode)
 
 **START HERE — this section supersedes everything below it.**
