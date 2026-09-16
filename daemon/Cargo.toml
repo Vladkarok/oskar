@@ -6,6 +6,10 @@ description = "Persistent Wayland virtual keyboard driven over a unix socket"
 license = "MIT"
 
 [dependencies]
+# Only for the shutdown signal wait: blocking SIGTERM/SIGINT/SIGHUP and
+# sigwait'ing them on a dedicated thread, so the keys the device holds can be
+# lifted with ordinary Wayland writes instead of from signal-handler context.
+libc = "0.2"
 tempfile = "3.27.0"
 wayland-client = "0.31"
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
