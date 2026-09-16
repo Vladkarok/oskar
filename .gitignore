@@ -2,7 +2,11 @@ daemon/target/
 core.*
 .scratch/
 __pycache__/
-.agents/
+.agents/*
+!.agents/skills/
+!.agents/skills/board/
 /pkg/
 /src/
 *.pkg.tar.zst
+.claude/
+*.bak.*

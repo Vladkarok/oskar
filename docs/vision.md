@@ -9,6 +9,8 @@
 > клавиатуру владкарока, и будет вам счастье».
 
 This document is the goal and the strategy conversation around it.
+(Paths under `.scratch/` name the maintainers' local board and
+evidence — deliberately not part of the shipped tree.)
 It is not a spec; specs and decisions live where they live
 (docs/spec-v1.1.md, docs/decisions.md).
 
