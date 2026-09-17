@@ -164,7 +164,7 @@ QtObject {
 
         T.test("a caps mismatch is unavailable, never the starting notice", function () {
             // decisions §23 / spec-v1.1 §6: connected + failed facts is
-            // keymap-unavailable, not "Starting omarchy-osk.service…".
+            // keymap-unavailable, not "Starting oskar.service…".
             T.equal(Session.lifecycleKind({
                 inputReady: false, serviceConnected: true,
                 serviceIncompatible: false, keycapsFailed: false,
@@ -484,23 +484,23 @@ QtObject {
         // path that happens to contain our suffix is the user's file.
         T.test("the published keymap path is built from the runtime dir", function () {
             T.equal(Session.publishedKeymapPath("/run/user/1000"),
-                "/run/user/1000/omarchy-osk/keymap.xkb")
+                "/run/user/1000/oskar/keymap.xkb")
             T.equal(Session.publishedKeymapPath("/run/user/1000/"),
-                "/run/user/1000/omarchy-osk/keymap.xkb")
+                "/run/user/1000/oskar/keymap.xkb")
             T.equal(Session.publishedKeymapPath("/run/user/1000//"),
-                "/run/user/1000/omarchy-osk/keymap.xkb")
+                "/run/user/1000/oskar/keymap.xkb")
             T.equal(Session.publishedKeymapPath(""), "")
         })
 
         T.test("published-keymap identity is exact, never a substring", function () {
             var dir = "/run/user/1000"
-            var ours = "/run/user/1000/omarchy-osk/keymap.xkb"
+            var ours = "/run/user/1000/oskar/keymap.xkb"
             T.equal(Session.isPublishedKeymap(ours, dir), true)
             T.equal(Session.isPublishedKeymap("", dir), false)
             // The audit's misclassification: a user path whose suffix
             // resembles the published path is NOT ours.
             T.equal(Session.isPublishedKeymap(
-                "/home/u/backups/omarchy-osk/keymap.xkb", dir), false)
+                "/home/u/backups/oskar/keymap.xkb", dir), false)
             T.equal(Session.isPublishedKeymap("/home/u/my.xkb", dir), false)
             T.equal(Session.isPublishedKeymap(ours + ".backup", dir), false)
         })

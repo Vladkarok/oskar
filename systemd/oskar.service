@@ -1,6 +1,6 @@
 [Unit]
 Description=Omarchy on-screen keyboard input service
-Documentation=https://github.com/Vladkarok/omarchy-osk
+Documentation=https://github.com/Vladkarok/oskar
 
 # Tied to the compositor, not to the shell. omarchy-shell restarts often; the
 # daemon's Wayland connection only dies with the session, and PartOf= stops it
@@ -16,7 +16,7 @@ StartLimitBurst=5
 
 [Service]
 Type=exec
-ExecStart=%h/.local/libexec/omarchy-osk-daemon
+ExecStart=%h/.local/libexec/oskar-daemon
 
 # Any exit while the graphical session is still up is abnormal: the daemon
 # leaves on compositor loss and expects to be rebuilt from scratch rather than
@@ -28,12 +28,12 @@ RestartPreventExitStatus=78
 
 # Owns the socket directory. Preserved across service stops: the user
 # keymap-source record (ticket 06) must survive helper restarts within the
-# graphical session — `omarchy-osk upgrade` restarts the helper as a
+# graphical session — `oskar upgrade` restarts the helper as a
 # routine step. systemd still removes runtime directories when the SESSION
 # ends, which is exactly the record's intended lifetime. A stale socket
 # after a crash is the daemon's own startup logic: it connects to tell a
 # live owner apart before unlinking.
-RuntimeDirectory=omarchy-osk
+RuntimeDirectory=oskar
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
 UMask=0077

@@ -34,7 +34,7 @@ QtObject {
                 { name: "at-translated-set-2-keyboard", idx: realGroup },
                 { name: "razer-razer-deathadder-v3-keyboard", idx: 1 },
                 { name: "razer-razer-deathadder-v3", idx: 1 },
-                { name: "hl-virtual-keyboard-omarchy-osk-daemon", idx: 0 }
+                { name: "hl-virtual-keyboard-oskar-daemon", idx: 0 }
             ]
             return devices.map(function (device) {
                 return {
@@ -80,7 +80,7 @@ QtObject {
 
             // With no `main` inside the safe set, the device the last layout
             // event named decides.
-            var named = Devices.select(zoo(0, "hl-virtual-keyboard-omarchy-osk-daemon"),
+            var named = Devices.select(zoo(0, "hl-virtual-keyboard-oskar-daemon"),
                 "ite-tech.-inc.-ite-device(8176)-keyboard", safeNames)
             T.equal(named.reading.name, "ite-tech.-inc.-ite-device(8176)-keyboard")
         })
@@ -90,11 +90,11 @@ QtObject {
             // group the panel put it on — reading from it would be the panel
             // reading its own answer back and calling it evidence. In steady
             // state the anchor names a real keyboard, and that outranks it.
-            var picked = Devices.select(zoo(1, "hl-virtual-keyboard-omarchy-osk-daemon"),
+            var picked = Devices.select(zoo(1, "hl-virtual-keyboard-oskar-daemon"),
                 "ite-tech.-inc.-ite-device(8176)-keyboard", safeNames)
             T.equal(picked.reading.name, "ite-tech.-inc.-ite-device(8176)-keyboard")
             T.equal(picked.reading.active_layout_index, 1)
-            T.equal(picked.switchSet.indexOf("hl-virtual-keyboard-omarchy-osk-daemon"), -1)
+            T.equal(picked.switchSet.indexOf("hl-virtual-keyboard-oskar-daemon"), -1)
         })
 
         T.test("after a restart the remembered group beats a majority of sleepers", function () {
@@ -117,7 +117,7 @@ QtObject {
             T.equal(Devices.activeLayoutForGroup(picked.reading, picked.group), "ua")
             T.equal(picked.reading.name.indexOf("hl-virtual-keyboard"), -1)
             T.equal(picked.switchSet.length, 3)
-            T.equal(picked.switchSet.indexOf("hl-virtual-keyboard-omarchy-osk-daemon"), -1)
+            T.equal(picked.switchSet.indexOf("hl-virtual-keyboard-oskar-daemon"), -1)
         })
 
         T.test("the remembered group is ignored when live evidence exists", function () {
@@ -176,7 +176,7 @@ QtObject {
                 "at-translated-set-2-keyboard")
             // The helper's own virtual keyboard holds the flag right after the
             // panel types. That is not evidence about the user's hands.
-            T.equal(Devices.select(zoo(0, "hl-virtual-keyboard-omarchy-osk-daemon"), "", safeNames).typing, "")
+            T.equal(Devices.select(zoo(0, "hl-virtual-keyboard-oskar-daemon"), "", safeNames).typing, "")
             // Neither is a pseudo-device holding it.
             T.equal(Devices.select(zoo(0, "ideapad-extra-buttons"), "", safeNames).typing, "")
             // With no flag the caller's remembered anchor still decides the
@@ -244,8 +244,8 @@ QtObject {
             T.equal(Devices.isTyped("video-bus"), false)
             T.equal(Devices.isTyped("lid-switch"), false)
             T.equal(Devices.isTyped("sleep-button"), false)
-            T.equal(Devices.isTyped("hl-virtual-keyboard-omarchy-osk-daemon"), false)
-            T.equal(Devices.isTyped("some-omarchy-osk-thing"), false)
+            T.equal(Devices.isTyped("hl-virtual-keyboard-oskar-daemon"), false)
+            T.equal(Devices.isTyped("some-oskar-thing"), false)
             T.equal(Devices.isTyped(""), false)
             T.equal(Devices.isTyped("at-translated-set-2-keyboard"), true)
             // A name that merely CONTAINS one of them is a real device: the

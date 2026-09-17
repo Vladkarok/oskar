@@ -28,7 +28,7 @@ same properties and functions the omarchy shell's IPC uses — `opened`,
 `close()`, `switchToGroup` — with the real items found by walking the
 scene. Run inside the VM's lab session:
 
-  cd ~/omarchy-osk && python3 tools/integration/panel_canary.py
+  cd ~/oskar && python3 tools/integration/panel_canary.py
 """
 
 import json
@@ -44,14 +44,14 @@ from hold_column import ANSI, Daemon, Failure, LiveSession, wait_for
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "")
 
 # Our files, for the warning sweep: a warning naming our tree carries the
-# tree's path (the leg loads file:~/omarchy-osk/…, the packaged panel
-# /usr/share/omarchy-osk/…) and one of our basenames. Both halves are
+# tree's path (the leg loads file:~/oskar/…, the packaged panel
+# /usr/share/oskar/…) and one of our basenames. Both halves are
 # required, so the omarchy shell's own Commons/Ui files cannot collide.
 OURS = re.compile(
     r"(Panel|Keyboard|BarWidget|Theme|HoverTooltip|KeyClickSound|CursorPolicy"
     r"|Settings\w*|EmojiPage|EmojiCatalog|LanguageControl|HoldColumn"
     r"|LayoutDevices|ModifierReducer|KeyboardSession|ClipboardPaste|Config)\.(qml|js)")
-OURS_LINE = re.compile(r"omarchy-osk")
+OURS_LINE = re.compile(r"oskar")
 GRANDFATHERED = "Cannot anchor to an item that isn't a parent or sibling"
 FALLBACK = "keycap fallback"
 
@@ -297,10 +297,10 @@ class CanaryDaemon(Daemon):
     """hold_column's private-runtime helper, with the canary's log names."""
 
     def __init__(self, repo):
-        self.socket_path = os.path.join(RUNTIME, "omarchy-osk/control.sock")
+        self.socket_path = os.path.join(RUNTIME, "oskar/control.sock")
         self.log = open(os.path.join(RUNTIME, "osk-canary-daemon.log"), "w+")
         self.process = subprocess.Popen(
-            [os.path.join(repo, "daemon/target/release/omarchy-osk-daemon")],
+            [os.path.join(repo, "daemon/target/release/oskar-daemon")],
             stdout=self.log, stderr=subprocess.STDOUT,
         )
 
@@ -409,7 +409,7 @@ def assert_no_growth(baseline, final, where):
 
 def service_active():
     out = subprocess.run(
-        ["systemctl", "--user", "is-active", "omarchy-osk.service"],
+        ["systemctl", "--user", "is-active", "oskar.service"],
         capture_output=True, text=True,
     ).stdout.strip()
     return out == "active"
@@ -482,7 +482,7 @@ def own_socket_or_die():
     quietly interview the packaged daemon instead of the synced tree's own
     helper (measured live). Prove ownership the direct way: say hello.
     """
-    path = os.path.join(RUNTIME, "omarchy-osk/control.sock")
+    path = os.path.join(RUNTIME, "oskar/control.sock")
     wait_for(lambda: os.path.exists(path), 10, "the helper socket to appear")
     import socket as socket_mod
 
@@ -522,7 +522,7 @@ def _run_leg(repo, window_start):
         # verify and retry rather than trust the exit code.
         for attempt in range(4):
             subprocess.run(
-                ["systemctl", "--user", "stop", "omarchy-osk.service"],
+                ["systemctl", "--user", "stop", "oskar.service"],
                 capture_output=True, timeout=15,
             )
             try:
@@ -532,7 +532,7 @@ def _run_leg(repo, window_start):
             except Failure:
                 if attempt == 3:
                     state = subprocess.run(
-                        ["systemctl", "--user", "show", "omarchy-osk.service",
+                        ["systemctl", "--user", "show", "oskar.service",
                          "-p", "ActiveState,SubState,MainPID,NRestarts"],
                         capture_output=True, text=True).stdout
                     raise Failure("the packaged service would not stop: "
@@ -541,7 +541,7 @@ def _run_leg(repo, window_start):
         # A stale socket file from the dying daemon reads as 'another
         # daemon owns the socket' to the fresh one. With the service
         # confirmed down, the path is ours to clear.
-        socket_path = os.path.join(RUNTIME, "omarchy-osk/control.sock")
+        socket_path = os.path.join(RUNTIME, "oskar/control.sock")
         if os.path.exists(socket_path):
             os.unlink(socket_path)
         daemon = CanaryDaemon(repo)
@@ -612,7 +612,7 @@ def _run_leg(repo, window_start):
             # meaningful once that share has landed — before it, the seat
             # may still compile a stale map whose group count cannot carry
             # the switch (measured live: `layout idx out of range`).
-            published = os.path.join(RUNTIME, "omarchy-osk/keymap.xkb")
+            published = os.path.join(RUNTIME, "oskar/keymap.xkb")
             wait_compositor_on_published(published, len(codes))
             print(f"ok    compositor kb_file on the published keymap "
                   f"({len(group_names_in_keymap(published))} groups)")
@@ -681,7 +681,7 @@ def _run_leg(repo, window_start):
             # `connected: true` on the peer-closed transport (observed live
             # twice; see SocketWatch.js), and the old reconnect policy only
             # ever re-helloed an open-looking socket — wedging the panel at
-            # "Starting omarchy-osk.service…" with every key click a silent
+            # "Starting oskar.service…" with every key click a silent
             # no-op until a shell restart. The hello watchdog must recover
             # it on its own; a panel that stays unready here is exactly
             # this ticket returning.
@@ -770,7 +770,7 @@ def restore_service():
     for attempt in range(3):
         if not service_active():
             subprocess.run(
-                ["systemctl", "--user", "start", "omarchy-osk.service"],
+                ["systemctl", "--user", "start", "oskar.service"],
                 capture_output=True, timeout=15,
             )
         try:
@@ -780,7 +780,7 @@ def restore_service():
         except Failure:
             if attempt == 2:
                 raise
-    print("ok    lab restored: omarchy-osk.service active")
+    print("ok    lab restored: oskar.service active")
 
 
 # --------------------------------------------------------------------------
@@ -801,7 +801,7 @@ def restore_service():
 # fail after a daemon bounce (the ticket-47 wedge: dead clicks).
 # --------------------------------------------------------------------------
 
-QMP_DOMAIN = "omarchy-osk"
+QMP_DOMAIN = "oskar"
 GUEST = "omarchy-vm"
 # Calibrated live on this lab's 1280x800 output (ticket 46 run 2,
 # evidence/46/run2-11: the cap at (320,621) delivered 'q' four-for-four
@@ -972,7 +972,7 @@ def _flush_oracle():
            "import socket\n"
            "s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n"
            "s.settimeout(3)\n"
-           "s.connect('/run/user/1000/omarchy-osk/control.sock')\n"
+           "s.connect('/run/user/1000/oskar/control.sock')\n"
            "s.sendall(b'hello 5\\n'); s.recv(200)\n"
            "s.sendall(b'down RTRN\\n'); s.recv(100)\n"
            "s.sendall(b'up RTRN\\n'); s.recv(100)\n"
@@ -1117,7 +1117,7 @@ def run_qmp_legs():
     """Host-side entry for ticket 48's two legs."""
     if not _host_guard():
         return False
-    tree = os.environ.get("OSK_CANARY_TREE", "~/omarchy-osk")
+    tree = os.environ.get("OSK_CANARY_TREE", "~/oskar")
     red = os.environ.get("OSK_CANARY_RED") == "1"
     if red:
         # The wedge needs the daemon to die under the panel once, then

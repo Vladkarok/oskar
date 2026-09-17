@@ -5,7 +5,7 @@ Research baseline: 2026-09-09. The installed `omarchy-dev`
 plugin-management file cited below, to official Omarchy commit
 [`5ead870507df`](https://github.com/basecamp/omarchy/tree/5ead870507dfb68db696b3ddb948cc3d178e8d62).
 This report distinguishes the published contract, observed behavior of that
-implementation, and recommendations for `omarchy-osk`.
+implementation, and recommendations for `oskar`.
 
 ## Official contract
 
@@ -37,8 +37,8 @@ injection, and capability-scoped third-party facades. There is no second
 Quickshell package metadata file to install. See
 [`shell/README.md`, “Plugin manifest”](https://github.com/basecamp/omarchy/blob/5ead870507dfb68db696b3ddb948cc3d178e8d62/shell/README.md#plugin-manifest).
 
-The current `omarchy-osk` [`manifest.json`](../manifest.json) satisfies the
-field-level rules: ID `io.github.vladkarok.osk`, schema 1, `panel` and
+The current `oskar` [`manifest.json`](../manifest.json) satisfies the
+field-level rules: ID `io.github.vladkarok.oskar`, schema 1, `panel` and
 `bar-widget` kinds, both entry points, and a valid right-side default.
 However, the repository as a whole currently fails `omarchy plugin validate
 .` because tracked `CLAUDE.md` is a symlink to `AGENTS.md`; a release installed
@@ -54,9 +54,9 @@ install or supervise an external helper.
 Canonical installation is:
 
 ```bash
-omarchy plugin add https://github.com/Vladkarok/omarchy-osk.git
+omarchy plugin add https://github.com/Vladkarok/oskar.git
 # review the unsandboxed QML, then:
-omarchy plugin enable io.github.vladkarok.osk --section right
+omarchy plugin enable io.github.vladkarok.oskar --section right
 ```
 
 Interactive `add` warns that QML executes unsandboxed in the long-lived shell,
@@ -162,8 +162,8 @@ preferably for system-distributed artifacts, an Arch package.
 
 The current [`install.sh`](../install.sh) is a separate user-level helper
 installer. It requires Cargo, builds locked release sources, overwrites
-`~/.local/libexec/omarchy-osk-daemon` and
-`~/.config/systemd/user/omarchy-osk.service`, reloads the user manager, enables
+`~/.local/libexec/oskar-daemon` and
+`~/.config/systemd/user/oskar.service`, reloads the user manager, enables
 the service, and restarts it only when `graphical-session.target` is active.
 Re-running it is operationally idempotent and intentionally synchronizes the
 QML/helper protocol. It does not install the plugin or enable its bar entry.
@@ -176,8 +176,8 @@ helper/unit behind. Therefore the two commands are complementary and order is
 currently significant.
 
 OSK settings and UI state live outside the checkout under
-`${XDG_CONFIG_HOME:-~/.config}/omarchy-osk/config.json` and
-`${XDG_STATE_HOME:-~/.local/state}/omarchy-osk/state.json`
+`${XDG_CONFIG_HOME:-~/.config}/oskar/config.json` and
+`${XDG_STATE_HOME:-~/.local/state}/oskar/state.json`
 ([`Panel.qml`](../Panel.qml)). They correctly survive both helper and plugin
 removal. The `shell.json` bar entry does not survive disable/remove, so its
 placement or inline fields would need an explicit backup if restoration is a
@@ -197,7 +197,7 @@ upgrade.
    QML into `/usr/share/omarchy`.
 2. Document the helper as a distinct explicit prerequisite. Near term, after
    `plugin add` run
-   `~/.config/omarchy/plugins/io.github.vladkarok.osk/install.sh`; after every
+   `~/.config/omarchy/plugins/io.github.vladkarok.oskar/install.sh`; after every
    `plugin update` rerun it before Retry. Preserve the current protocol gate.
 3. Prefer a separately versioned Arch/AUR helper package for release. It should
    own the daemon and unit in package locations, use package upgrade/removal
@@ -212,8 +212,8 @@ upgrade.
    checkout:
 
    ```bash
-   ~/.config/omarchy/plugins/io.github.vladkarok.osk/uninstall.sh
-   omarchy plugin remove io.github.vladkarok.osk
+   ~/.config/omarchy/plugins/io.github.vladkarok.oskar/uninstall.sh
+   omarchy plugin remove io.github.vladkarok.oskar
    ```
 
    The first command removes only OSK-owned helper artifacts; the second owns

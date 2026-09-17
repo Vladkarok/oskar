@@ -52,7 +52,7 @@ the existing QML or compositor interfaces.
 ## Current installation and removal gap
 
 Our [install.sh](../install.sh) requires Cargo, builds the helper and installs
-`~/.local/libexec/omarchy-osk-daemon` and a systemd user unit. Our
+`~/.local/libexec/oskar-daemon` and a systemd user unit. Our
 [uninstall.sh](../uninstall.sh) stops/disables and removes those artifacts; it
 does not remove the Omarchy plugin itself. The inspected Omarchy plugin
 add/remove path handles plugin files and shell IPC, without invoking these

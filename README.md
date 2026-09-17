@@ -1,8 +1,10 @@
-# On-Screen Keyboard for Omarchy
+# OSKar — on-screen keyboard for Omarchy
 
-A mouse-driven on-screen keyboard for Omarchy Quattro. The key caps follow the
-active keyboard layout, so what is drawn is what gets typed, and the panel takes
-its colours and geometry from the Omarchy theme.
+OSKar (say it "OS-car", Оскар in Cyrillic) is a mouse-driven on-screen
+keyboard for Omarchy Quattro. OSKar is not Oscar — no statuettes; it's
+the OSK, ar. The key caps follow the active keyboard layout, so what is
+drawn is what gets typed, and the panel takes its colours and geometry
+from the Omarchy theme.
 
 ## Status
 
@@ -25,7 +27,7 @@ on that day (this one).
 
 | path | what it is |
 |---|---|
-| `manifest.json` | plugin manifest (`io.github.vladkarok.osk`) |
+| `manifest.json` | plugin manifest (`io.github.vladkarok.oskar`) |
 | `Panel.qml` | the keyboard window: a docked full-width strip or a floating overlay |
 | `Keyboard.qml` | key grid, layout tracking, socket client |
 | `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
@@ -54,8 +56,8 @@ fullscreen window ignores exclusive zones and is overlaid instead. **Floating**
 reserves nothing and is dragged by its bar. Mode is chosen in Settings.
 
 Maintained defaults ship in `Config.js`. Deliberate user choices are sparse in
-`$XDG_CONFIG_HOME/omarchy-osk/config.json`; floating geometry is separate in
-`$XDG_STATE_HOME/omarchy-osk/state.json`. Both files reload on change without
+`$XDG_CONFIG_HOME/oskar/config.json`; floating geometry is separate in
+`$XDG_STATE_HOME/oskar/state.json`. Both files reload on change without
 polling and GUI writes replace them atomically. Invalid external text stays
 untouched while the panel keeps the last valid runtime value.
 
@@ -103,6 +105,47 @@ default, while every unpinned field keeps following or staying frozen as
 `follow_theme` says. Overrides are the whole of the v1.1 appearance surface, not
 an independent colour schema — that remains v2.
 
+## Input profile (mouse and touch)
+
+**Touch is beta.** OSKar's design centre is the mouse; the touch
+profile is new and usable but not yet polished — expect small targets
+in the emoji and settings chrome, and set Input profile to Mouse in
+Settings if
+a stray touch switches behaviour you did not want. Mouse behaviour is
+unchanged in every particular.
+
+One setting, three values (**Auto** by default, or pinned to
+Mouse/Touch):
+
+- **Mouse** (the design centre): hover tooltips everywhere,
+  dwell-to-type (rest on a cap and it types — the accessibility
+  slice), hold-a-key column menus, press-typing with the compositor's
+  own key repeat.
+- **Touch** re-answers what a finger cannot do: a touch cannot hover,
+  so dwell never arms and tooltips show on touch-and-hold
+  (gear/close/paste) or stay hidden where a label already states the
+  thing; fingers drift, so character caps **type on release** and
+  sliding off cancels; long-press opens the same hold-column menus
+  (the mobile idiom); chrome hit areas grow toward comfortable size
+  where the geometry allows; Space/BackSpace keep press semantics, so
+  holding BackSpace repeats exactly as on a hardware keyboard, and
+  the close cap answers a release like every character cap.
+- **Auto** observes the pointer's source: the first touch-drawn event
+  switches to the touch affordances **for that summon** (a hidden
+  panel forgets), and the settings row says `Auto (touch)` while it
+  stands — the manual Mouse pin is the deliberate escape. One guard
+  is absolute: with **dwell enabled, auto never flips** — a chosen
+  access method is not disarmed by a stray touch.
+
+Known rough edges, named: the emoji group tabs and settings segments
+remain small targets; pen input is untested (a pen receives the touch
+affordances); the observation is panel-wide — a touch on one monitor
+switches the caps on all of them until the panel hides. Touch is
+proven against an emulated multitouch device end to end (evdev →
+libinput → the compositor's wl_touch) and Qt's own touch synthesis on
+the shipping Qt version; real-finger hardware has not been in our
+hands yet.
+
 ## Why there is a helper at all
 
 QML cannot drive `zwp_virtual_keyboard`, so typing has to go through a separate
@@ -119,7 +162,7 @@ layout; most ship their own layout lists that only their own key switches.
 
 | | This keyboard | GNOME OSK | plasma-keyboard (6.6) | squeekboard / Stevia | wvkbd | onboard |
 |---|---|---|---|---|---|---|
-| Mouse-driven desktop use | yes — the design centre | touch activation only | touch-first (mouse use still a known gap) | touch-first | touch-first | yes (its niche) |
+| Mouse-driven desktop use | yes — the design centre (a touch profile ships; see below) | touch activation only | touch-first (mouse use still a known gap) | touch-first | touch-first | yes (its niche) |
 | Caps follow the system layout | both directions — switch with the physical shortcut and the caps follow; switch from the panel and the physical keyboard follows | partial, one-way, ibus-coupled | Qt Virtual Keyboard's own layout lists | its own layout files | static keycap sets | own definitions |
 | What is drawn is what is typed | yes, including non-Latin and per-group variants, proven byte-exact | within GNOME's input stack | within Qt's stack | within Phosh | — | X11 only |
 | XWayland / wine-Proton | proven (paced paste chord) | — | — | — | types, no layout coupling | X11 only |
@@ -160,10 +203,12 @@ Notes from the survey:
   untested.
 - **Language coupling**: any number of configured XKB layouts; typing
   and the caps follow the compositor's layout state in both directions.
-  The UI and the emoji search are English-only for now.
-- **Not tested**: real-hardware sleep/wake (the lab VM cannot suspend).
-  The on-screen keyboard is mouse/touchpad-driven; touch gestures
-  (long-press, multi-touch) are not implemented.
+  The UI ships in English, Russian and Ukrainian, following the active
+  layout (a settings override pins one); the emoji search understands
+  English, Russian and Ukrainian keywords.
+- **Not tested**: real-hardware sleep/wake (the lab VM cannot suspend);
+  real touchscreen hardware (the touch profile is emulator- and
+  Qt-synthesis-proven; see Input profile below).
 
 ## Known problems
 
@@ -202,7 +247,7 @@ Notes from the survey:
 
 ## Troubleshooting
 
-Run `omarchy-osk doctor` — it checks the service, socket and protocol,
+Run `oskar doctor` — it checks the service, socket and protocol,
 registration, the keymap share, keycap-fallback journal lines, layouts
 and theme dependencies, and names the one fix to try for each failure
 (exit 0 is healthy).
@@ -214,7 +259,7 @@ feedback loop in an earlier version drove xkbcomp 56,547 times in five minutes
 and froze the desktop hard enough to require a TTY switch.
 
 ```sh
-tools/nested-session.sh ./daemon/target/release/omarchy-osk-daemon
+tools/nested-session.sh ./daemon/target/release/oskar-daemon
 tools/nested-session.sh tools/smoke-daemon.sh
 ```
 
@@ -249,10 +294,10 @@ From a source checkout — the primary path today. Get the repository
 and run one flow of three steps:
 
 ```sh
-git clone <REPOSITORY-URL> omarchy-osk && cd omarchy-osk
+git clone <REPOSITORY-URL> oskar && cd oskar
 ./install.sh           # builds the helper, installs it + its unit + the
-                       # omarchy-osk command, enables and starts the service
-omarchy-osk setup      # registers the checkout under the stable plugin id,
+                       # oskar command, enables and starts the service
+oskar setup            # registers the checkout under the stable plugin id,
                        # enables the plugin in Omarchy, re-checks the service
 omarchy restart shell  # the running shell only picks up a newly registered
                        # plugin at restart (or log out and back in)
@@ -263,31 +308,31 @@ omarchy restart shell  # the running shell only picks up a newly registered
 missing). After updating the checkout, rerun both commands: the QML side
 and the helper share a protocol version, and a plugin updated without its
 helper reports that it needs reinstalling rather than typing nothing
-(`omarchy-osk upgrade` is the same rerun under one name). The keyboard's
+(`oskar upgrade` is the same rerun under one name). The keyboard's
 icon appears in the bar; clicking it (or the toggle below) shows the
 panel:
 
 ```sh
-omarchy-shell shell toggle io.github.vladkarok.osk
+omarchy-shell shell toggle io.github.vladkarok.oskar
 ```
 
-An AUR package (`omarchy-osk`) will become the primary path on publish —
+An AUR package (`oskar`) will become the primary path on publish —
 it does not exist yet. Until then there is no packaged channel: the
 source checkout above is the only install, and it has to come from the
 project's repository directly.
 
-`omarchy-osk setup` is idempotent and also owns `status` and `teardown`
+`oskar setup` is idempotent and also owns `status` and `teardown`
 (full removal: registration, plugin enable, unit, state). For reference,
 the manual equivalent of `install.sh`:
 
 ```sh
 cd daemon && cargo build --release
-install -Dm755 target/release/omarchy-osk-daemon ~/.local/libexec/omarchy-osk-daemon
-install -Dm644 ../systemd/omarchy-osk.service ~/.config/systemd/user/omarchy-osk.service
+install -Dm755 target/release/oskar-daemon ~/.local/libexec/oskar-daemon
+install -Dm644 ../systemd/oskar.service ~/.config/systemd/user/oskar.service
 systemctl --user daemon-reload
-systemctl --user enable omarchy-osk.service
+systemctl --user enable oskar.service
 systemctl --user --quiet is-active graphical-session.target \
-  && systemctl --user restart omarchy-osk.service
+  && systemctl --user restart oskar.service
 ```
 
-The panel alone can be enabled with `omarchy plugin enable io.github.vladkarok.osk`.
+The panel alone can be enabled with `omarchy plugin enable io.github.vladkarok.oskar`.

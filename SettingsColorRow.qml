@@ -217,7 +217,10 @@ Item {
                     HoverTooltip {
                         text: UiStrings.tr("color.setTo", colorRow.panel.uiLang,
                             [colorRow.labelText, parent.hex])
-                        hovered: swatchArea.containsMouse
+                        hovered: panel && panel.inputAfford
+                            ? swatchArea.containsMouse
+                                && panel.inputAfford.tooltipHoverShows
+                            : swatchArea.containsMouse
                     }
                 }
             }
@@ -261,6 +264,7 @@ Item {
 
             SettingsConfirmChip {
                 tokens: colorRow.tokens
+                panel: colorRow.panel
                 enabled: panel.configHealthy
                 accessName: UiStrings.tr("color.confirmHex",
                     colorRow.panel.uiLang, [colorRow.labelText])

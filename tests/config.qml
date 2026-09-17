@@ -30,6 +30,9 @@ QtObject {
                 // Ticket 52: the UI language follows the active layout
                 // until the user pins it.
                 uiLanguage: "auto",
+                // Ticket 58: the panel answers as a mouse until a finger
+                // (or the user) says otherwise.
+                inputProfile: "auto",
                 capCorner: 8,
                 panelRadius: 12,
                 keyBackground: "#303030",
@@ -191,6 +194,33 @@ QtObject {
             // says otherwise, exactly what shipped before the setting.
             T.equal(Config.owns(parsed.value, "mode"), false)
             T.equal(Config.maintainerDefaults().uiLanguage, "auto")
+        })
+
+        T.test("the input profile is auto by default, one of three words", function () {
+            // Ticket 58: "auto" activates the touch affordances when the
+            // panel observes touch events; mouse/touch pin the world. One
+            // list (INPUT_PROFILES) is the value space — the SUPER_MARKS
+            // rule. Junk is a malformed edit with the §5 preservation
+            // semantics; InputProfile.resolve owns the degrade-to-auto at
+            // the seam.
+            T.deepEqual(Config.INPUT_PROFILES, ["auto", "mouse", "touch"])
+            var parsed = Config.reloadOverrides({}, '{"input_profile":"touch"}')
+            T.equal(parsed.error, "")
+            T.deepEqual(parsed.value, { inputProfile: "touch" })
+            T.equal(Config.serializeOverrides(parsed.value),
+                '{\n  "input_profile": "touch"\n}\n')
+            var alias = Config.reloadOverrides({}, '{"inputProfile":"mouse"}')
+            T.equal(alias.error, "")
+            T.deepEqual(alias.value, { inputProfile: "mouse" })
+            T.equal(Config.reloadOverrides({}, '{"input_profile":"stylus"}').error,
+                "Invalid value for input_profile")
+            T.equal(Config.reloadOverrides({}, '{"input_profile":1}').error,
+                "Invalid value for input_profile")
+            // Sparse: an absent key never reaches the file, and the
+            // maintained default is auto — the mouse world until a touch
+            // is observed, exactly what shipped before the setting.
+            T.equal(Config.owns(parsed.value, "mode"), false)
+            T.equal(Config.maintainerDefaults().inputProfile, "auto")
         })
 
         T.test("emoji skin tone is validated UI state, not an override", function () {

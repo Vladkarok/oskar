@@ -58,6 +58,10 @@ Rectangle {
     // word speaks the language the owner is typing in (Пошук/Поиск/
     // Search — EmojiGrid.searchPlaceholder).
     property string layoutCode: ""
+    // The effective profile's hover-tooltip rule (ticket 62), wired from
+    // the panel: in touch, possibly-synthesized hover never names
+    // anything — the chrome rule, mirrored for the page's tooltips.
+    property bool tooltipHoverShows: true
     // The panel's resolved UI language (ticket 52: override over layout):
     // every word of the page's chrome — placeholder included — follows
     // it, so a pinned choice moves the placeholder with the rest.
@@ -96,6 +100,10 @@ Rectangle {
     // "backspace", "escape"). The panel applies it with the very rule the
     // caps' input uses, so Escape's disarm has one definition.
     signal physicalSearchInput(string action, string text)
+    // Ticket 58: the page's presses report their pointer source to the
+    // panel's input-profile observation — a touch on the emoji page teaches
+    // auto exactly a touch on the caps does.
+    signal pointerSourceObserved(var source)
 
     // One intercepted keyboard cap, applied to the standing query. The
     // keyboard names the action ("char" with the character it drew,
@@ -342,10 +350,11 @@ Rectangle {
                     Accessible.name: emojiRoot.searchArmed
                         ? "Search field — typing goes here"
                         : "Search field — click to type here"
-                    onClicked: {
+                    onClicked: function (mouse) {
+                        emojiRoot.pointerSourceObserved(mouse.source)
                         if (emojiRoot.searchArmed) return
                         emojiRoot.searchArmed = true
-                        console.log("[osk] emoji search armed by field click")
+                        console.log("[oskar] emoji search armed by field click")
                     }
                 }
 
@@ -378,11 +387,15 @@ Rectangle {
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
                         Accessible.name: UiStrings.tr("emoji.clearSearch", emojiRoot.uiLang)
-                        onClicked: emojiRoot.query = ""
+                        onClicked: function (mouse) {
+                            emojiRoot.pointerSourceObserved(mouse.source)
+                            emojiRoot.query = ""
+                        }
                     }
                     HoverTooltip {
                         text: UiStrings.tr("emoji.clearSearch", emojiRoot.uiLang)
                         hovered: clearArea.containsMouse
+                        && emojiRoot.tooltipHoverShows
                     }
                 }
             }
@@ -434,6 +447,7 @@ Rectangle {
                         ? UiStrings.tr("emoji.delivery.clipboardTip", emojiRoot.uiLang)
                         : UiStrings.tr("emoji.delivery.typing", emojiRoot.uiLang)
                     hovered: deliveryArea.containsMouse
+                        && emojiRoot.tooltipHoverShows
                 }
             }
 
@@ -471,6 +485,7 @@ Rectangle {
                 HoverTooltip {
                     text: UiStrings.tr("emoji.chooseTone", emojiRoot.uiLang)
                     hovered: toneArea.containsMouse
+                        && emojiRoot.tooltipHoverShows
                 }
             }
 
@@ -543,6 +558,7 @@ Rectangle {
                             ? UiStrings.tr("emoji.recent", emojiRoot.uiLang)
                             : parent.groupValue
                         hovered: tabArea.containsMouse
+                            && emojiRoot.tooltipHoverShows
                     }
                 }
             }
@@ -641,11 +657,15 @@ Rectangle {
                                     Accessible.role: Accessible.Button
                                     Accessible.name: UiStrings.tr("access.insert",
                                         emojiRoot.uiLang, [modelData.name])
-                                    onClicked: emojiRoot.emojiChosen(modelData, false)
+                                    onClicked: function (mouse) {
+                                        emojiRoot.pointerSourceObserved(mouse.source)
+                                        emojiRoot.emojiChosen(modelData, false)
+                                    }
                                 }
                                 HoverTooltip {
                                     text: modelData.name
                                     hovered: frequentArea.containsMouse
+                                        && emojiRoot.tooltipHoverShows
                                 }
                             }
                         }
@@ -690,13 +710,17 @@ Rectangle {
                         // history — decides the tone flag, with exactly the
                         // two facts that chose this grid's model (R1):
                         // history repeats its exact stored sequence.
-                        onClicked: emojiRoot.emojiChosen(modelData,
-                            EmojiGrid.appliesTone(emojiRoot.searching,
-                                emojiRoot.activeGroup))
+                        onClicked: function (mouse) {
+                            emojiRoot.pointerSourceObserved(mouse.source)
+                            emojiRoot.emojiChosen(modelData,
+                                EmojiGrid.appliesTone(emojiRoot.searching,
+                                    emojiRoot.activeGroup))
+                        }
                     }
                     HoverTooltip {
                         text: modelData.name
                         hovered: cellArea.containsMouse
+                            && emojiRoot.tooltipHoverShows
                     }
                 }
 
@@ -776,6 +800,7 @@ Rectangle {
                                 emojiRoot.uiLang)
                             : modelData.label
                         hovered: toneChoiceArea.containsMouse
+                            && emojiRoot.tooltipHoverShows
                     }
                 }
             }
