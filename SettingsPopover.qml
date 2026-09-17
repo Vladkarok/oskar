@@ -654,11 +654,16 @@ Rectangle {
                         auto: UiStrings.tr("settings.lang.auto", panel.uiLang),
                         en: "English", ru: "Русский", uk: "Українська"
                     })
-                    segments: ConfigFile.UI_LANGUAGES.map(function (code) {
-                        return { value: code,
-                            label: languageControl.languageLabels[code] }
-                    })
-                    current: panel.uiLanguage
+                    // The offered languages mirror the seat's layouts
+                    // (ticket 61): Auto and English always, plus each
+                    // translation whose layout is installed — a us,ua
+                    // seat never sees a Русский segment it cannot type.
+                    segments: UiStrings.languageChoices(panel.seatLayoutCodes)
+                        .map(function (code) {
+                            return { value: code,
+                                label: languageControl.languageLabels[code] }
+                        })
+                    current: panel.uiLanguageDisplay
                     onPicked: function (value) {
                         panel.setOverride("uiLanguage", value)
                     }
