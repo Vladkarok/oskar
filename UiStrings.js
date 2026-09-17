@@ -611,13 +611,38 @@ function ids() {
 // runtime's own last word) follows the ACTIVE LAYOUT's code: ua speaks
 // Ukrainian, ru Russian, every other code English. Lowercased before
 // comparing, the placeholder's own rule.
-function languageFor(layoutCode, override) {
+function languageFor(layoutCode, override, layoutCodes) {
+    // The owner's 2026-09-17 rule: an override pins the UI only when
+    // its language is offered — see languageChoices; anything else is
+    // inert (stale file, hand edit, layouts shrank) and the layout
+    // answers. Nothing is ever shoved into a seat that cannot type it.
     var choice = String(override || "").toLowerCase()
-    if (LANGUAGES.indexOf(choice) !== -1) return choice
+    // "auto" rides the offered list so the ROW can show it selected —
+    // but for resolution it means "no override": the layout answers.
+    var offered = languageChoices(layoutCodes)
+    if (choice !== "auto" && offered.indexOf(choice) !== -1) return choice
     var code = String(layoutCode || "").toLowerCase()
     if (code === "ua") return "uk"
     if (code === "ru") return "ru"
     return "en"
+}
+
+/// The languages the LANGUAGE row may offer: Auto and English always
+/// (English is the product's fallback), plus each translation whose
+/// layout code the seat carries. `layoutCodes` is the seat's installed
+/// xkb list (Keyboard.layoutCodes); junk, case and duplicates cost
+/// nothing. The owner's call: a us,ua seat sees Auto/English/
+/// Україїнська — no Русский segment for a language it cannot type;
+/// a seat with ru gains it.
+function languageChoices(layoutCodes) {
+    var codes = Array.isArray(layoutCodes) ? layoutCodes : []
+    var lower = []
+    for (var i = 0; i < codes.length; i++)
+        lower.push(String(codes[i] || "").toLowerCase())
+    var out = ["auto", "en"]
+    if (lower.indexOf("ru") !== -1) out.push("ru")
+    if (lower.indexOf("ua") !== -1) out.push("uk")
+    return out
 }
 
 // The one lookup. Throws on an unknown id or an empty translation —

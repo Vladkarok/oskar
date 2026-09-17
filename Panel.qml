@@ -130,8 +130,19 @@ Item {
     // tr() call site reads — override over layout, English for anything
     // we do not ship, the searchPlaceholder rule generalised.
     property string uiLanguage: maintainedDefaults.uiLanguage
+    // The seat's installed layout list, exposed for the popover's row
+    // (the offered languages mirror it — the owner's 2026-09-17 rule).
+    readonly property var seatLayoutCodes: keyboard.layoutCodes
     readonly property string uiLang: UiStrings.languageFor(
-        keyboard.activeLayoutCode, root.uiLanguage)
+        keyboard.activeLayoutCode, root.uiLanguage, keyboard.layoutCodes)
+    // What the LANGUAGE row shows selected: the override when it is
+    // representable on this seat, else Auto (a stale hand-edited value
+    // or a shrunk layout list leaves it inert, not lying).
+    readonly property string uiLanguageDisplay: {
+        var offered = UiStrings.languageChoices(keyboard.layoutCodes)
+        return offered.indexOf(root.uiLanguage) !== -1
+            ? root.uiLanguage : "auto"
+    }
     // The input profile (ticket 58): which pointer world the panel answers
     // as. The setting is auto/mouse/touch; the OBSERVATION is monotonic —
     // the first synthesized (touch/pen) mouse event any panel surface sees
