@@ -61,6 +61,10 @@ session_env() {
 }
 
 set_kbfile() {
+  # The path must be injection-free for the Lua literal (the audit's
+  # pattern; dev-only, but the discipline is the point): quotes,
+  # backslashes and newlines refuse loudly instead of splicing.
+  case "$1" in *[\'\"\n]*) echo "refusing unsafe keymap path" >&2; exit 1;; esac
   hyprctl eval "hl.config({input = {kb_file = '${1:-}'}})" >/dev/null
 }
 

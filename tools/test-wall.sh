@@ -19,6 +19,7 @@ set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WALL_TMP="$(mktemp -d /tmp/oskar-wall.XXXXXX)" || exit 1
+trap 'rm -rf "$WALL_TMP"' EXIT
 LAB=omarchy-vm
 declare -a ROWS
 wall=0
@@ -83,10 +84,10 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
           && export HYPRLAND_INSTANCE_SIGNATURE=\$(ls -t \$XDG_RUNTIME_DIR/hypr | head -1) \
           && export WAYLAND_DISPLAY=wayland-1 \
           && env $env_var python3 tools/integration/$leg.py" \
-          >""$WALL_TMP"/$leg.log" 2>&1; then
-        row "$leg" PASS "$(grep -cE '^ok ' ""$WALL_TMP"/$leg.log") assertions"
+          >"$WALL_TMP/$leg.log" 2>&1; then
+        row "$leg" PASS "$(grep -cE '^ok ' "$WALL_TMP/$leg.log") assertions"
       else
-        row "$leg" FAIL "see "$WALL_TMP"/$leg.log"
+        row "$leg" FAIL "see $WALL_TMP/$leg.log"
       fi
     done
     # The QMP half (ticket 48): the canary's mask and real-click legs run
@@ -98,10 +99,10 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
       echo "== live: canary-qmp (host half)"
       if (cd "$root" && OSK_PANEL_CANARY_LIVE=1 OSK_CANARY_QMP=1 \
             python3 tools/integration/panel_canary.py) \
-          >"$WALL_TMP"/canary-qmp.log 2>&1; then
-        row "canary-qmp" PASS "$(grep -cE '^ok ' "$WALL_TMP"/canary-qmp.log) assertions"
+          >"$WALL_TMP/canary-qmp.log" 2>&1; then
+        row "canary-qmp" PASS "$(grep -cE '^ok ' "$WALL_TMP/canary-qmp.log") assertions"
       else
-        row "canary-qmp" FAIL "see "$WALL_TMP"/canary-qmp.log"
+        row "canary-qmp" FAIL "see $WALL_TMP/canary-qmp.log"
       fi
     else
       row "canary-qmp" SKIP "set OSK_LAB_SUDO_PASSWORD for the strace oracle"

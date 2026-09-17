@@ -611,6 +611,23 @@ QtObject {
             T.equal(Session.luaQuote("plain.xkb"), "'plain.xkb'")
             // The bash layer: a double quote in the path must arrive
             // escaped, or it closes the hyprctl eval argument.
+            // Non-ASCII must round-trip: 'влад' and 'é' ride as their
+            // UTF-8 bytes, each a padded \ddd — never a misread \dddD.
+            var cyr = Session.luaQuote("влад")
+            var cyrInner = cyr.slice(1, -1)
+            var cyrBack = ""
+            for (var c = 0; c < cyrInner.length; c += 4) {
+                T.equal(cyrInner.charAt(c), "\\")
+                cyrBack += String.fromCharCode(
+                    parseInt(cyrInner.slice(c + 1, c + 4), 10))
+            }
+            // UTF-8 bytes decode back to the original string:
+            T.equal(decodeURIComponent(
+                cyrBack.split("").map(function (ch) {
+                    return "%" + ("0" + ch.charCodeAt(0).toString(16)).slice(-2)
+                }).join("")), "влад")
+            // And a low byte pads: U+0001 rides as \001, never \1.
+            T.equal(Session.luaQuote("\u0001x"), "'\\001x'")
             var dq = Session.luaQuote('a"b')
             // Expected exactly: 'a\"b' — quote, a, backslash, dquote, b, quote.
             T.equal(dq, "'a" + String.fromCharCode(92) + '"' + "b'")

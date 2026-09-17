@@ -643,7 +643,7 @@ Item {
             // Session.luaQuote — the security audit's finding: an env
             // spelling must not be able to break out of the bash or the
             // Lua string. The read-back comparison stays against $1.
-            "path=$1; "
+            "path=$1; lua=$2; "
             + "[[ -s \"$path\" ]] || exit 3; "
             + "hyprctl eval \"hl.config({input = {kb_file = ''}})\" >/dev/null || exit 4; "
             // $lua arrives pre-quoted by Session.luaQuote (single-quoted
@@ -773,8 +773,10 @@ Item {
         // kb_file, or the sidecar any same-user client can set) into a
         // single-quoted Lua literal — a quote in the path closed the
         // string and executed config-side Lua (both auditors; one proved
-        // it in a stub). Session.luaQuote escapes every unsafe byte, so
-        // the path can only ever be data.
+        // it in a stub). Session.luaQuote escapes every unsafe byte as
+        // data for the Lua layer; bash never re-parses expansion results
+        // (the cross-round's correction to an earlier note here), so the
+        // positional argument is safe by construction at both layers.
         Quickshell.execDetached(["bash", "-c",
             "hyprctl eval \"hl.config({input = {kb_file = $1}})\" >/dev/null 2>&1",
             "onscreen-keyboard-restore", Session.luaQuote(userKeymapFile)])

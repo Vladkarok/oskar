@@ -72,7 +72,7 @@
 //! logged, because the only way that happens is a panel that is alive but
 //! wedged. Modifier codes are exempt; locked Shift is deliberately held.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -2520,12 +2520,18 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
     static CONNECTION: AtomicU64 = AtomicU64::new(1);
     let conn_id = CONNECTION.fetch_add(1, Ordering::Relaxed);
 
-    let mut reader = BufReader::new(match stream.try_clone() {
+    let mut reader = BufReader::with_capacity(8 * 1024, match stream.try_clone() {
         Ok(handle) => handle,
         Err(_) => return,
     });
-    let mut pending = String::new();
+    // Bytes of the line in flight. A raw byte buffer, not a String: the
+    // manual chunk loop below enforces the frame cap per read (the
+    // cross-round's finding — read_line accumulates without bound
+    // inside ONE call while an active sender streams newline-free
+    // bytes, so every post-hoc length check arrived too late).
+    let mut pending: Vec<u8> = Vec::new();
     let mut handshaked = false;
+    let connected_at = Instant::now();
     loop {
         // The only thing this connection ever waits on is its own next line.
         // Arming that wait with the cap's deadline is what enforces the cap
@@ -2539,10 +2545,25 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         // client could not get in. Until this connection has completed
         // a `hello`, its read deadline is 5 s out; a hold's deadline
         // still wins when it is sooner.
+        // The pre-handshake window is ABSOLUTE (the cross-round: a
+        // renewed timeout evicted nobody — an idle connection woke
+        // every 5 s and held its slot forever). 5 s from CONNECT to a
+        // completed `hello`, then the window is gone. A hold's deadline
+        // still wins when it is sooner; post-handshake with no holds
+        // the read blocks the way it always did.
         let handshake = if handshaked {
             None
         } else {
-            Some(Duration::from_secs(5))
+            Some(
+                connected_at
+                    .checked_add(Duration::from_secs(5))
+                    .map(|deadline| {
+                        deadline
+                            .saturating_duration_since(Instant::now())
+                            .max(Duration::from_millis(1))
+                    })
+                    .unwrap_or(Duration::from_millis(1)),
+            )
         };
         let hold = hold_deadline(&shared, conn_id).map(|deadline| {
             deadline
@@ -2557,86 +2578,97 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         if stream.set_read_timeout(timeout).is_err() {
             break;
         }
-        // The dribble half of the cap: a sender that never sends a
-        // newline still grows `pending` across timed-out partial reads
-        // (BufReader appends before returning WouldBlock) — the loop-top
-        // check bounds that path exactly like the completed-line one.
-        if pending.len() > MAX_LINE {
-            let _ = writeln!(out, "err line too long");
-            break;
-        }
-        // A frame cap (the security audit's HIGH realization of known
-        // item 7): an unbounded line plus MemoryMax plus StartLimitBurst
-        // meant five writes from any same-user client OOM-killed the
-        // unit into `failed` — a keyboard user cannot type their way
-        // out of that lockout. 4 KiB is generous (a maximal 16-scalar
-        // `text` is tens of bytes); overflow answers once and closes,
-        // and `pending` never grows past the cap + one read chunk.
+        // The frame cap, enforced per CHUNK (the cross-round's core
+        // finding: the audits' HIGH realization of known item 7 — an
+        // active newline-free stream grew `pending` without bound inside
+        // a single read_line call, and MemoryMax plus StartLimitBurst
+        // turned that into a permanent lockout a keyboard user cannot
+        // type their way out of). 4 KiB is generous (a maximal
+        // 16-scalar `text` is tens of bytes); one chunk is one buffer
+        // fill, so `pending` is bounded by cap + 8 KiB whatever the
+        // sender's pace. Overflow answers once and closes.
         const MAX_LINE: usize = 4096;
-        match reader.read_line(&mut pending) {
+        let mut chunk = [0u8; 8192];
+        let read = match reader.read(&mut chunk) {
             Ok(0) => break,
-            Ok(_) if pending.len() > MAX_LINE => {
-                let _ = writeln!(out, "err line too long");
-                break;
-            }
-            Ok(_) => {}
+            Ok(n) => n,
             Err(error)
                 if matches!(
                     error.kind(),
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
             {
-                // The deadline came due with nothing to read, which is the
-                // wedged panel this cap exists for. `pending` keeps whatever
-                // part of a line did arrive; the next read appends to it.
+                // The deadline came due. Pre-handshake past the window:
+                // this connection never said hello — drop it, freeing
+                // the slot (the audits' starvation finding). Otherwise
+                // this is the hold cap's wakeup: lift what is due and
+                // keep waiting for the rest of the line.
+                if !handshaked && connected_at.elapsed() >= Duration::from_secs(5) {
+                    break;
+                }
                 for code in expire_stuck_keys(&shared, &connection) {
                     held.retain(|entry| *entry != code);
                 }
                 continue;
             }
             Err(_) => break,
+        };
+        pending.extend_from_slice(&chunk[..read]);
+        if pending.len() > MAX_LINE {
+            let _ = writeln!(out, "err line too long");
+            break;
         }
-        let line = std::mem::take(&mut pending);
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        // `hello` reports more than "the process is up": a keyboard without a
-        // keymap accepts commands and drops every key, so the client must not
-        // enable keys until one is loaded. `ping` stays a plain liveness check.
-        // The grammar is exactly `hello <u32>` (F6): the handshake is a
-        // version gate, not a default, so an old or broken client fails
-        // closed instead of negotiating the current version by omission.
-        if let Some(hello) = parse_hello(line) {
-            let reply = match hello {
-                Ok(wanted) if wanted == PROTOCOL_VERSION => {
-                    if shared.lock().unwrap().is_ready() {
-                        format!("hello {PROTOCOL_VERSION}")
-                    } else {
-                        "err not ready".to_string()
+        // Dispatch every COMPLETE line the buffer now holds; the tail
+        // without its newline stays for the next chunk.
+        while let Some(nl) = pending.iter().position(|byte| *byte == b'\n') {
+            let mut line_bytes = pending.drain(..=nl).collect::<Vec<u8>>();
+            line_bytes.pop(); // the newline itself
+            let Ok(line_str) = String::from_utf8(line_bytes) else {
+                // Same contract the old reader kept: invalid UTF-8
+                // disconnects rather than guesses.
+                return;
+            };
+            let line = line_str.trim();
+            if line.is_empty() {
+                continue;
+            }
+            // `hello` reports more than "the process is up": a keyboard without a
+            // keymap accepts commands and drops every key, so the client must not
+            // enable keys until one is loaded. `ping` stays a plain liveness check.
+            // The grammar is exactly `hello <u32>` (F6): the handshake is a
+            // version gate, not a default, so an old or broken client fails
+            // closed instead of negotiating the current version by omission.
+            if let Some(hello) = parse_hello(line) {
+                let reply = match hello {
+                    Ok(wanted) if wanted == PROTOCOL_VERSION => {
+                        if shared.lock().unwrap().is_ready() {
+                            format!("hello {PROTOCOL_VERSION}")
+                        } else {
+                            "err not ready".to_string()
+                        }
                     }
-                }
-                _ => {
-                    format!("err protocol {PROTOCOL_VERSION} required, helper needs reinstall")
-                }
+                    _ => {
+                        format!("err protocol {PROTOCOL_VERSION} required, helper needs reinstall")
+                    }
+                };
+                let _ = writeln!(out, "{reply}");
+                handshaked = matches!(hello, Ok(wanted) if wanted == PROTOCOL_VERSION);
+                continue;
+            }
+            if line == "ping" {
+                let _ = writeln!(out, "pong");
+                continue;
+            }
+            if line == "keyboards" {
+                let _ = writeln!(out, "{}", startup_keyboard_reply());
+                continue;
+            }
+            let reply = match parse(line) {
+                Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
+                None => "err unknown command".to_string(),
             };
             let _ = writeln!(out, "{reply}");
-            handshaked = matches!(hello, Ok(wanted) if wanted == PROTOCOL_VERSION);
-            continue;
         }
-        if line == "ping" {
-            let _ = writeln!(out, "pong");
-            continue;
-        }
-        if line == "keyboards" {
-            let _ = writeln!(out, "{}", startup_keyboard_reply());
-            continue;
-        }
-        let reply = match parse(line) {
-            Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
-            None => "err unknown command".to_string(),
-        };
-        let _ = writeln!(out, "{reply}");
     }
 
     release_all(&shared, &connection, held, conn_id);

@@ -1259,7 +1259,10 @@ Item {
         property int seq: 0
         property bool didStart: false
         property bool retiring: false
-        command: ["wl-paste", "--no-newline"]
+        // head caps the stream (the security audit): a malicious clipboard
+        // owner cannot balloon the shell's memory through the collector —
+        // SIGPIPE closes wl-paste past the bound.
+        command: ["bash", "-c", "wl-paste --no-newline | head -c 65536"]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.finishLocalClipboardRead(
@@ -1310,7 +1313,7 @@ Item {
     Process {
         id: clipboardTypes
         property int seq: 0
-        command: ["wl-paste", "--list-types"]
+        command: ["bash", "-c", "wl-paste --list-types | head -c 4096"]
         stdout: StdioCollector {
             id: clipboardTypesOut
             waitForEnd: true
@@ -1323,7 +1326,10 @@ Item {
     Process {
         id: clipboardText
         property int seq: 0
-        command: ["wl-paste", "--no-newline"]
+        // head caps the stream (the security audit): a malicious clipboard
+        // owner cannot balloon the shell's memory through the collector —
+        // SIGPIPE closes wl-paste past the bound.
+        command: ["bash", "-c", "wl-paste --no-newline | head -c 65536"]
         stdout: StdioCollector {
             id: clipboardTextOut
             waitForEnd: true
@@ -1364,7 +1370,10 @@ Item {
     Process {
         id: emojiClipboardVerify
         property int seq: 0
-        command: ["wl-paste", "--no-newline"]
+        // head caps the stream (the security audit): a malicious clipboard
+        // owner cannot balloon the shell's memory through the collector —
+        // SIGPIPE closes wl-paste past the bound.
+        command: ["bash", "-c", "wl-paste --no-newline | head -c 65536"]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.finishEmojiPublishVerify(

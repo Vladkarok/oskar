@@ -400,12 +400,31 @@ function luaQuote(value) {
     for (var i = 0; i < text.length; i++) {
         var code = text.charCodeAt(i)
         var ch = text.charAt(i)
-        // Backslash, single quote (the Lua layer) AND double quote (the
-        // bash layer the literal travels through) ride as escapes; the
-        // audit's bash-side catch.
         if (ch === "\\" || ch === "'" || ch === '"') out += "\\" + ch
-        else if (code < 32 || code > 126) out += "\\" + code
-        else out += ch
+        else if (code >= 32 && code <= 126) out += ch
+        else {
+            // Every non-ASCII/non-printable codepoint rides as its UTF-8
+            // bytes, each as a \\ddd decimal escape — valid in every Lua
+            // version (\\u{} needs 5.3+), correct for Cyrillic and
+            // accented paths (the cross-round caught \\1103 misreading
+            // as \\110 + '3'), and inert in the bash double-quote layer.
+            var bytes = []
+            if (code < 0x80) bytes.push(code)
+            else if (code < 0x800) {
+                bytes.push(0xC0 | (code >> 6), 0x80 | (code & 0x3F))
+            } else {
+                // Includes surrogate halves (exotic filenames): encoded
+                // as-is, safe if garbled — the contract is sealing, not
+                // transliteration.
+                bytes.push(0xE0 | (code >> 12),
+                    0x80 | ((code >> 6) & 0x3F), 0x80 | (code & 0x3F))
+            }
+            // Padded to three digits: Lua reads exactly three, so an
+            // unpadded \3 followed by the path's next '4' would corrupt
+            // (the cross-round's catch).
+            for (var b = 0; b < bytes.length; b++)
+                out += "\\" + ("00" + bytes[b]).slice(-3)
+        }
     }
     return out + "'"
 }
