@@ -58,6 +58,10 @@ Rectangle {
     // word speaks the language the owner is typing in (Пошук/Поиск/
     // Search — EmojiGrid.searchPlaceholder).
     property string layoutCode: ""
+    // The effective profile's hover-tooltip rule (ticket 62), wired from
+    // the panel: in touch, possibly-synthesized hover never names
+    // anything — the chrome rule, mirrored for the page's tooltips.
+    property bool tooltipHoverShows: true
     // The panel's resolved UI language (ticket 52: override over layout):
     // every word of the page's chrome — placeholder included — follows
     // it, so a pinned choice moves the placeholder with the rest.
@@ -391,6 +395,7 @@ Rectangle {
                     HoverTooltip {
                         text: UiStrings.tr("emoji.clearSearch", emojiRoot.uiLang)
                         hovered: clearArea.containsMouse
+                        && emojiRoot.tooltipHoverShows
                     }
                 }
             }
@@ -442,6 +447,7 @@ Rectangle {
                         ? UiStrings.tr("emoji.delivery.clipboardTip", emojiRoot.uiLang)
                         : UiStrings.tr("emoji.delivery.typing", emojiRoot.uiLang)
                     hovered: deliveryArea.containsMouse
+                        && emojiRoot.tooltipHoverShows
                 }
             }
 
@@ -479,6 +485,7 @@ Rectangle {
                 HoverTooltip {
                     text: UiStrings.tr("emoji.chooseTone", emojiRoot.uiLang)
                     hovered: toneArea.containsMouse
+                        && emojiRoot.tooltipHoverShows
                 }
             }
 
@@ -551,6 +558,7 @@ Rectangle {
                             ? UiStrings.tr("emoji.recent", emojiRoot.uiLang)
                             : parent.groupValue
                         hovered: tabArea.containsMouse
+                            && emojiRoot.tooltipHoverShows
                     }
                 }
             }
