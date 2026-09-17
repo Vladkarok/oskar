@@ -2211,10 +2211,12 @@ Item {
                         }
                     }
                     // The seam's pinned per-control decision for TEXT
-                    // chrome: the tooltip is hidden on touch (its label
-                    // already states the mode; touch synthesizes no hover,
-                    // so this stays silent by absence — no hold arm, the
-                    // hold vocabulary belongs to input, not chrome help).
+                    // chrome: the tooltip is hidden on touch — its label
+                    // already states the mode, and the hide is ENFORCED by
+                    // the tooltipHoverShows gate below (ticket 62: a
+                    // synthesized hover may follow a finger; nothing is
+                    // silent "by absence"). No hold arm: the hold
+                    // vocabulary belongs to input, not chrome help.
                     HoverTooltip {
                         text: UiStrings.tr("mode.chip.tooltip", root.uiLang)
                         // Text chrome: hidden under touch (the table's
