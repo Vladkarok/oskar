@@ -173,14 +173,21 @@ migrate_source() {
 old_world_found() {
   # Any live trace of the old name: registration (either kind), unit
   # (source-install's user unit, the packaged unit file, enabled or
-  # active state), old helper, PATH shadow, or the old package's unit
-  # on disk. Mere data dirs do not count — see migrate_old_world.
+  # active state), old helper, PATH shadow, the old package's unit on
+  # disk — and, since ticket 60, the DATA dirs too. A machine whose
+  # enabled traces are all gone (the old uninstall ran first, or old
+  # teardown + package removal) still deserves the config/state MOVE
+  # on rename day; before 60 those settings stranded silently under
+  # the old names (never destroyed, hand-recoverable, but stranded).
+  # Every step of the walk guards its own inputs, so a data-only find
+  # walks a migration that moves the dirs and no-ops the rest.
   [[ -e "$OLD_REGISTRATION" || -L "$OLD_REGISTRATION" ]] && return 0
   [[ -f "$OLD_USER_UNIT" || -f "$OLD_SOURCE_HELPER" ]] && return 0
   [[ -e "$OLD_SHADOW" || -L "$OLD_SHADOW" ]] && return 0
   [[ -f "$OLD_PACKAGED_UNIT" ]] && return 0
   systemctl --user --quiet is-active "$OLD_UNIT" 2>/dev/null && return 0
   systemctl --user --quiet is-enabled "$OLD_UNIT" 2>/dev/null && return 0
+  [[ -d "$OLD_CONFIG_DIR" || -d "$OLD_STATE_DIR" ]] && return 0
   return 1
 }
 
