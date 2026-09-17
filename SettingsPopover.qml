@@ -730,7 +730,9 @@ Rectangle {
                     // "Auto+touch" notice (72px) and the row widens to give
                     // it a slice — both budgets pinned offscreen in
                     // tests/input-profile.qml, the ticket-52 discipline.
-                    width: panel.effectiveInputProfile === "touch"
+                    // The wide row rides the SAME observation fact the
+                    // label keys on — notice and width cannot disagree.
+                    width: panel.touchObserved
                         && panel.inputProfile === "auto"
                         ? tokens.space(240) : tokens.space(150)
                     readonly property var profileLabels: ({
@@ -741,11 +743,19 @@ Rectangle {
                     segments: ConfigFile.INPUT_PROFILES.map(function (value) {
                         var label = inputProfileControl.profileLabels[value]
                         // The flip made visible (the touch council's
-                        // cheapest high-value ask, ticket 62): when auto
-                        // has flipped to touch, the AUTO segment says so —
-                        // typing semantics changed and the user deserves
-                        // the one-word notice where the escape lives.
-                        if (value === "auto" && panel.effectiveInputProfile === "touch")
+                        // cheapest high-value ask, ticket 62): when the
+                        // OBSERVATION flipped auto to touch, the AUTO
+                        // segment says so — typing semantics changed and
+                        // the user deserves the one-word notice where the
+                        // escape lives. The fact is the OBSERVATION (a
+                        // synthesized press arrived), not the effective
+                        // profile: a hand-pinned Touch has no news to
+                        // announce, and the previous condition here lit
+                        // the notice in that case too — overflowing its
+                        // un-widened row (the owner's screenshot).
+                        if (value === "auto"
+                                && panel.touchObserved
+                                && panel.inputProfile === "auto")
                             label = UiStrings.tr("settings.profile.autoTouch",
                                 panel.uiLang)
                         return { value: value, label: label }
