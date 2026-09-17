@@ -93,3 +93,19 @@ run is recorded on ticket 32.
 - [ ] Fresh-lab-boot emoji legs re-run (ticket 44's lab anomaly: the
       churned lab's Hyprland drops post-first keymap uploads; the host
       is exonerated by live evidence).
+
+## Branch archaeology (for the public repo)
+
+The pre-publish history carried working branches; they are retired as
+archive tags so the public repo shows one clean line:
+
+- `archive/pre-v1.1-squash` — the v1-era tree before its squash
+  (247 commits; kept deliberately, see the squash's own commit).
+- `archive/spec-v1-keyboard` — the v1 spec era branch (61 commits,
+  pre-oskar naming).
+- `archive/spec-v1.1-fixes` — the audited round at its final
+  pre-merge state (master contains it; the tag marks the tip).
+
+The old-name working branches (`spec/v1.1-fixes`, `spec/v1-keyboard`
+on the old origin) can be deleted on the AUR/publish day; the tags
+keep every commit reachable.
