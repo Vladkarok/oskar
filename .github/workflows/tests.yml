@@ -17,8 +17,11 @@ jobs:
     container:
       image: archlinux:base-devel
     steps:
+      # Arch package names, verified the hard way (the first public run
+      # died on a nonexistent 'xkbcommon'): libxkbcommon is the lib,
+      # cargo rides the rust package.
       - run: pacman -Syu --noconfirm git qt6-declarative qt6-tools
-             xkbcommon cargo python coreutils grep
+             libxkbcommon rust python coreutils grep
       - uses: actions/checkout@v4
       - name: Host battery (16 suites + qml gates)
         run: ./tools/run-tests.sh
