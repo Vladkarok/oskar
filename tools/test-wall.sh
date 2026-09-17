@@ -18,6 +18,7 @@
 set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+WALL_TMP="$(mktemp -d /tmp/oskar-wall.XXXXXX)" || exit 1
 LAB=omarchy-vm
 declare -a ROWS
 wall=0
@@ -28,25 +29,25 @@ row() { # <name> <status> <detail>
 }
 
 echo "== host battery"
-if (cd "$root" && ./tools/run-tests.sh >/tmp/wall-host.log 2>&1); then
-  row "host-battery" PASS "$(grep -cE 'passed, 0 failed' /tmp/wall-host.log) suites + qml gates"
+if (cd "$root" && ./tools/run-tests.sh >"$WALL_TMP"/host.log 2>&1); then
+  row "host-battery" PASS "$(grep -cE 'passed, 0 failed' "$WALL_TMP"/host.log) suites + qml gates"
 else
-  row "host-battery" FAIL "tail: $(tail -n 3 /tmp/wall-host.log | tr '\n' ' ')"
+  row "host-battery" FAIL "tail: $(tail -n 3 "$WALL_TMP"/host.log | tr '\n' ' ')"
 fi
 
 echo "== provenance"
-if (cd "$root" && ./tools/provenance.py >/tmp/wall-prov.log 2>&1); then
-  row "provenance" PASS "$(grep -oE 'total +0 / [0-9]+' /tmp/wall-prov.log | tail -1)"
+if (cd "$root" && ./tools/provenance.py >"$WALL_TMP"/prov.log 2>&1); then
+  row "provenance" PASS "$(grep -oE 'total +0 / [0-9]+' "$WALL_TMP"/prov.log | tail -1)"
 else
-  row "provenance" FAIL "see /tmp/wall-prov.log"
+  row "provenance" FAIL "see $WALL_TMP/prov.log"
 fi
 
 echo "== clippy"
 if (cd "$root" && cargo clippy --manifest-path daemon/Cargo.toml \
-      --all-targets --quiet -- -D warnings >/tmp/wall-clippy.log 2>&1); then
+      --all-targets --quiet -- -D warnings >"$WALL_TMP"/clippy.log 2>&1); then
   row "clippy" PASS "daemon clean under -D warnings"
 else
-  row "clippy" FAIL "see /tmp/wall-clippy.log"
+  row "clippy" FAIL "see $WALL_TMP/clippy.log"
 fi
 
 # The lab layers: deliberate (OSK_WALL_LIVE=1), and only when the lab is
@@ -82,10 +83,10 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
           && export HYPRLAND_INSTANCE_SIGNATURE=\$(ls -t \$XDG_RUNTIME_DIR/hypr | head -1) \
           && export WAYLAND_DISPLAY=wayland-1 \
           && env $env_var python3 tools/integration/$leg.py" \
-          >"/tmp/wall-$leg.log" 2>&1; then
-        row "$leg" PASS "$(grep -cE '^ok ' "/tmp/wall-$leg.log") assertions"
+          >""$WALL_TMP"/$leg.log" 2>&1; then
+        row "$leg" PASS "$(grep -cE '^ok ' ""$WALL_TMP"/$leg.log") assertions"
       else
-        row "$leg" FAIL "see /tmp/wall-$leg.log"
+        row "$leg" FAIL "see "$WALL_TMP"/$leg.log"
       fi
     done
     # The QMP half (ticket 48): the canary's mask and real-click legs run
@@ -97,10 +98,10 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
       echo "== live: canary-qmp (host half)"
       if (cd "$root" && OSK_PANEL_CANARY_LIVE=1 OSK_CANARY_QMP=1 \
             python3 tools/integration/panel_canary.py) \
-          >/tmp/wall-canary-qmp.log 2>&1; then
-        row "canary-qmp" PASS "$(grep -cE '^ok ' /tmp/wall-canary-qmp.log) assertions"
+          >"$WALL_TMP"/canary-qmp.log 2>&1; then
+        row "canary-qmp" PASS "$(grep -cE '^ok ' "$WALL_TMP"/canary-qmp.log) assertions"
       else
-        row "canary-qmp" FAIL "see /tmp/wall-canary-qmp.log"
+        row "canary-qmp" FAIL "see "$WALL_TMP"/canary-qmp.log"
       fi
     else
       row "canary-qmp" SKIP "set OSK_LAB_SUDO_PASSWORD for the strace oracle"

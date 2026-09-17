@@ -638,14 +638,27 @@ Item {
             // identity comparison uses (Session.publishedKeymapPath), so
             // what is SET and what is compared as "ours" can never drift
             // apart over an environment spelling (audit 06).
-            "path=\"" + Session.publishedKeymapPath(Quickshell.env("XDG_RUNTIME_DIR")) + "\"; "
+            // The published path rides as $1 (data, never spliced into
+            // either quoting layer) and enters its Lua literal through
+            // Session.luaQuote — the security audit's finding: an env
+            // spelling must not be able to break out of the bash or the
+            // Lua string. The read-back comparison stays against $1.
+            "path=$1; "
             + "[[ -s \"$path\" ]] || exit 3; "
             + "hyprctl eval \"hl.config({input = {kb_file = ''}})\" >/dev/null || exit 4; "
-            + "hyprctl eval \"hl.config({input = {kb_file = '$path'}})\" >/dev/null || exit 4; "
+            // $lua arrives pre-quoted by Session.luaQuote (single-quoted
+            // Lua literal; its contents are data in BOTH the bash and the
+            // Lua layer — a double quote would otherwise close the bash
+            // string, so luaQuote escapes that byte too).
+            + "hyprctl eval \"hl.config({input = {kb_file = $lua}})\" >/dev/null || exit 4; "
             // Read back rather than trust: `eval` answers `ok` for a config
             // call the parser accepted, which is not the same as the value
             // being in place.
-            + "[[ \"$(hyprctl getoption input:kb_file -j | jq -r .str)\" == \"$path\" ]]"]
+            + "[[ \"$(hyprctl getoption input:kb_file -j | jq -r .str)\" == \"$path\" ]]",
+            "oskar-share",
+            Session.publishedKeymapPath(Quickshell.env("XDG_RUNTIME_DIR")),
+            Session.luaQuote(Session.publishedKeymapPath(
+                Quickshell.env("XDG_RUNTIME_DIR")))]
         onExited: (code, status) => {
             if (code === 0 && status === 0) {
                 root.sharedKeymapGen = wanted
@@ -756,9 +769,15 @@ Item {
     // set it is only true if something puts it back.
     Component.onDestruction: {
         if (sharedKeymapGen === 0) return
+        // The restore interpolates a USER-side path (the compositor's
+        // kb_file, or the sidecar any same-user client can set) into a
+        // single-quoted Lua literal — a quote in the path closed the
+        // string and executed config-side Lua (both auditors; one proved
+        // it in a stub). Session.luaQuote escapes every unsafe byte, so
+        // the path can only ever be data.
         Quickshell.execDetached(["bash", "-c",
-            "hyprctl eval \"hl.config({input = {kb_file = '$1'}})\" >/dev/null 2>&1",
-            "onscreen-keyboard-restore", userKeymapFile])
+            "hyprctl eval \"hl.config({input = {kb_file = $1}})\" >/dev/null 2>&1",
+            "onscreen-keyboard-restore", Session.luaQuote(userKeymapFile)])
     }
 
     function ingestLayoutSnapshot(text) {

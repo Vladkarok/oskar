@@ -33,11 +33,15 @@ fi
 
 # Short path on purpose: Hyprland refuses its IPC socket when the directory
 # name is long ("Socket2 path is too long"), and mktemp's default is already
-# too long once the instance signature is appended.
-workdir="/tmp/osk-nest.$$"
+# too long once the instance signature is appended. EXCLUSIVE create (the
+# security audit's HIGH dev finding): a predictable /tmp/osk-nest.$$ let
+# another local user pre-plant a writable directory and swap the Lua the
+# harness loads; mktemp -d refuses to reuse, and a short suffix keeps the
+# socket path under the limit.
+workdir="$(mktemp -d /tmp/osk-n.XXXXXX)" || exit 1
 runtime="$workdir/rt"
-mkdir -p "$runtime"
-chmod 700 "$runtime"
+mkdir "$runtime" || exit 1
+chmod 700 "$runtime" "$workdir"
 
 cleanup() {
     local pids status=$?

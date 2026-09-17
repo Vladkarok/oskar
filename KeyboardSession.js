@@ -385,3 +385,27 @@ function isPublishedKeymap(kbFile, runtimeDir) {
     var path = String(kbFile || "")
     return path !== "" && path === publishedKeymapPath(runtimeDir)
 }
+
+/// Quote a path for interpolation into a single-quoted Lua string literal
+/// (hyprctl eval's config values). The security audit's finding 3: a
+/// filename carrying ' or a closing brace sequence escaped the literal
+/// and executed as config-side Lua — verified in a stub by the auditor.
+/// Lua single-quoted literals escape \\ and \'; every other unsafe byte
+/// (quotes, braces, control characters — filenames may legally carry
+/// newlines) becomes a \\ddd decimal escape, which no filename spelling
+/// can close. The empty string still quotes as ''.
+function luaQuote(value) {
+    var text = String(value === undefined || value === null ? "" : value)
+    var out = "'"
+    for (var i = 0; i < text.length; i++) {
+        var code = text.charCodeAt(i)
+        var ch = text.charAt(i)
+        // Backslash, single quote (the Lua layer) AND double quote (the
+        // bash layer the literal travels through) ride as escapes; the
+        // audit's bash-side catch.
+        if (ch === "\\" || ch === "'" || ch === '"') out += "\\" + ch
+        else if (code < 32 || code > 126) out += "\\" + code
+        else out += ch
+    }
+    return out + "'"
+}

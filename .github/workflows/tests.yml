@@ -11,6 +11,9 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   wall-host:
     runs-on: ubuntu-latest
@@ -22,7 +25,10 @@ jobs:
       # cargo rides the rust package.
       - run: pacman -Syu --noconfirm git qt6-declarative qt6-tools
              libxkbcommon rust python coreutils grep ttf-jetbrains-mono-nerd
-      - uses: actions/checkout@v4
+      # Pinned by commit (the audit's supply-chain nit): v4.2.2.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
       - name: Host battery (16 suites + qml gates)
         run: ./tools/run-tests.sh
       - name: Provenance gate
