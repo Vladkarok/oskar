@@ -8,20 +8,20 @@ from the Omarchy theme.
 
 ## Status
 
-The audit round of 2026-09-13 is complete: every ticket implemented,
-independently reviewed `ship`, and proven in the lab VM on the exact
-release candidate (host suites, the packaged-product lifecycle
-choreography, the crash-recovery choreography, the nested integration
-suite; the maintainers' local evidence board is not part of this
-repository).
+**v0.1.0 — publicly released 2026-09-17.** The audit round and the
+polish round behind it are complete: every ticket implemented,
+independently reviewed (`ship` verdicts), and proven in the lab VM on
+the exact release artifacts — host suites, the packaged-product
+lifecycle choreography, the crash-recovery choreography, the nested
+integration suite, and a live regression wall that drives the real
+panel with real pointer events. The owner daily-drives it on his own
+machine (that is how most of it was found). An AUR package (`oskar`)
+follows as soon as AUR registration reopens; until then the source
+install below is the way.
 
-Before this is enabled on a machine you rely on, two owner gates stand:
-the owner's own mouse/eyes acceptance of the round's behavior changes,
-and daily-use confirmation on a real session (sleep/wake on real
-hardware remains untested — the lab VM cannot suspend). Publishing is
-equally gated: push public, tag, checksum, `.SRCINFO` — the PKGBUILD's
-header lists every step, including the one README paragraph to revisit
-on that day (this one).
+Known-untested, honestly: real-hardware sleep/wake, and real-finger
+touchscreens (the touch profile is emulator- and Qt-synthesis-proven
+— see Input profile).
 
 ## Layout
 
