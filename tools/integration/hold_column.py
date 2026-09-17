@@ -91,7 +91,7 @@ class LiveSession:
     def __enter__(self):
         if self.active:
             subprocess.run(
-                ["systemctl", "--user", "stop", "omarchy-osk.service"],
+                ["systemctl", "--user", "stop", "oskar.service"],
                 capture_output=True, timeout=15, check=True,
             )
             # Remember the seat's per-keyboard groups so the leg can put
@@ -113,7 +113,7 @@ class LiveSession:
         for name, group in self.group_was.items():
             hyprctl("switchxkblayout", name, str(group))
         subprocess.run(
-            ["systemctl", "--user", "start", "omarchy-osk.service"],
+            ["systemctl", "--user", "start", "oskar.service"],
             capture_output=True, timeout=15,
         )
         return False
@@ -133,10 +133,10 @@ class Daemon:
     """The private-runtime helper: started here, used by the hosted panel."""
 
     def __init__(self, repo):
-        self.socket_path = os.path.join(RUNTIME, "omarchy-osk/control.sock")
+        self.socket_path = os.path.join(RUNTIME, "oskar/control.sock")
         self.log = open(os.path.join(RUNTIME, "osk-hold-leg-daemon.log"), "w+")
         self.process = subprocess.Popen(
-            [os.path.join(repo, "daemon/target/release/omarchy-osk-daemon")],
+            [os.path.join(repo, "daemon/target/release/oskar-daemon")],
             stdout=self.log, stderr=subprocess.STDOUT,
         )
 
@@ -209,7 +209,7 @@ PanelWindow {
     id: window
     anchors { top: true; left: true; right: true }
     exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.namespace: "io.github.vladkarok.osk.holdLeg"
+    WlrLayershell.namespace: "io.github.vladkarok.oskar.holdLeg"
     WlrLayershell.layer: WlrLayer.Overlay
     // The panel never takes keyboard focus (Panel.qml's own rule): the
     // focused client keeps receiving what the helper types.

@@ -28,9 +28,9 @@ Item {
     // defaults in Config.js, sparse choices in config.json, and geometry in
     // state.json. Both writable files are watched below; no polling is used.
     readonly property string configDir: (Quickshell.env("XDG_CONFIG_HOME")
-        || ((Quickshell.env("HOME") || "") + "/.config")) + "/omarchy-osk"
+        || ((Quickshell.env("HOME") || "") + "/.config")) + "/oskar"
     readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME")
-        || ((Quickshell.env("HOME") || "") + "/.local/state")) + "/omarchy-osk"
+        || ((Quickshell.env("HOME") || "") + "/.local/state")) + "/oskar"
     readonly property string configPath: configDir + "/config.json"
     readonly property string statePath: stateDir + "/state.json"
     readonly property var maintainedDefaults: ConfigFile.maintainerDefaults()
@@ -174,7 +174,7 @@ Item {
         if (touchObserved) return
         if (!InputProfile.isTouchSource(source)) return
         touchObserved = true
-        console.log("[osk] input profile: touch events observed "
+        console.log("[oskar] input profile: touch events observed "
             + "(auto resolves to touch for this panel's life)")
     }
     // Emoji delivery mode (ticket 28): "direct" types the pick through the
@@ -296,7 +296,7 @@ Item {
             Qt.callLater(function () {
                 if (root.emojiOpen && emojiPage.searchArmed) {
                     emojiPage.searchArmed = false
-                    console.log("[osk] emoji search disarmed: focus moved to",
+                    console.log("[oskar] emoji search disarmed: focus moved to",
                         root.focusedClientClass() || "an unnamed client")
                 }
             })
@@ -326,7 +326,7 @@ Item {
             if (emojiPage.searchArmed) {
                 emojiPage.searchArmed = false
                 emojiPage.query = ""
-                console.log("[osk] emoji search disarmed by Esc")
+                console.log("[oskar] emoji search disarmed by Esc")
                 return
             }
             root.emojiOpen = false
@@ -540,19 +540,19 @@ Item {
     // panel itself.
     //
     // The copied command is the lifecycle command (ticket 32): one
-    // `omarchy-osk setup` converges registration, plugin enable and the
+    // `oskar setup` converges registration, plugin enable and the
     // unit — and exists both for the package (/usr/bin) and after any
     // source install.sh run (~/.local/bin). Only a never-installed source
     // checkout lacks it, and exactly there the checkout's own install.sh
     // is the honest command; the probe picks once at startup.
     property bool lifecycleCommandAvailable: false
     readonly property string installCommand: root.lifecycleCommandAvailable
-        ? "omarchy-osk setup"
+        ? "oskar setup"
         : "bash " + (Quickshell.env("HOME") || "")
-            + "/.config/omarchy/plugins/io.github.vladkarok.osk/install.sh"
+            + "/.config/omarchy/plugins/io.github.vladkarok.oskar/install.sh"
 
     function retryService() {
-        Quickshell.execDetached(["systemctl", "--user", "start", "omarchy-osk.service"])
+        Quickshell.execDetached(["systemctl", "--user", "start", "oskar.service"])
     }
 
     function copyInstallCommand() {
@@ -838,7 +838,7 @@ Item {
                     relayoutProbe.value = JSON.parse(this.text).int || 0
                 } catch (error) {
                     root.relayoutBusy = false
-                    console.warn("[osk] cannot read gaps_out; no relayout nudge")
+                    console.warn("[oskar] cannot read gaps_out; no relayout nudge")
                     return
                 }
                 // A fresh cycle: this write is the +1 nudge, the next is
@@ -1379,11 +1379,11 @@ Item {
             root.focusedClientClass())
         root.emojiTxnState = picked.state
         if (picked.action === "queued") {
-            console.log("[osk] emoji pick queued behind an unfinished paste")
+            console.log("[oskar] emoji pick queued behind an unfinished paste")
             return
         }
         if (picked.action === "refused") {
-            console.warn("[osk] emoji pick refused: empty payload")
+            console.warn("[oskar] emoji pick refused: empty payload")
             return
         }
         beginEmojiPublish(emoji)
@@ -1403,7 +1403,7 @@ Item {
     function cancelEmojiPublish(reason) {
         var cancelled = ClipboardPaste.txnCancel(root.emojiTxnState)
         if (cancelled.action === "dropped")
-            console.warn("[osk] emoji paste transaction cancelled:", reason)
+            console.warn("[oskar] emoji paste transaction cancelled:", reason)
         root.emojiTxnState = cancelled.state
     }
 
@@ -1416,7 +1416,7 @@ Item {
             return
         }
         if (result.action === "drop") {
-            console.warn("[osk] emoji clipboard publication not confirmed;"
+            console.warn("[oskar] emoji clipboard publication not confirmed;"
                 + " pick dropped, no chord sent")
             startNextEmojiTxn()
             return
@@ -1452,7 +1452,7 @@ Item {
             emojiPickSettled()
             if (root.emojiCloseAfterPick) root.emojiOpen = false
         } else if (done.action === "cancelled") {
-            console.warn("[osk] emoji paste chord refused or aborted;"
+            console.warn("[oskar] emoji paste chord refused or aborted;"
                 + " no usage recorded (the clipboard keeps the pick)")
         }
         startNextEmojiTxn()
@@ -1539,7 +1539,7 @@ Item {
         onExited: (exitCode, exitStatus) => {
             if (root.configurationError) return
             if (exitCode !== 0 || exitStatus !== 0) {
-                console.warn("[osk] could not create", root.configDir, "- configuration not saved")
+                console.warn("[oskar] could not create", root.configDir, "- configuration not saved")
                 return
             }
             configFile.setText(ConfigFile.serializeOverrides(root.userOverrides))
@@ -1552,7 +1552,7 @@ Item {
         onExited: (exitCode, exitStatus) => {
             if (root.stateError) return
             if (exitCode !== 0 || exitStatus !== 0) {
-                console.warn("[osk] could not create", root.stateDir, "- state not saved")
+                console.warn("[oskar] could not create", root.stateDir, "- state not saved")
                 return
             }
             stateFile.setText(ConfigFile.serializeState(root.geometryState))
@@ -1577,12 +1577,12 @@ Item {
             "for base in ${2//:/ } ${3//:/ }; do "
             + "file=$base/sounds/freedesktop/stereo/$1.oga; "
             + "if [ -f \"$file\" ]; then "
-            + "out=$4/omarchy-osk-keyclick.wav; "
+            + "out=$4/oskar-keyclick.wav; "
             + "ffmpeg -nostdin -v error -y -i \"$file\" \"$out\" || exit 3; "
             + "printf '%s' \"$out\"; exit 0; "
             + "fi; "
             + "done; exit 1",
-            "omarchy-osk-sound", soundResolve.eventId,
+            "oskar-sound", soundResolve.eventId,
             Quickshell.env("XDG_DATA_HOME") || ((Quickshell.env("HOME") || "") + "/.local/share"),
             Quickshell.env("XDG_DATA_DIRS") || "/usr/local/share:/usr/share",
             Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"]
@@ -1596,17 +1596,17 @@ Item {
         onExited: (exitCode, exitStatus) => {
             if (exitCode === 1) {
                 root.soundUnavailable = true
-                console.warn("[osk] no '" + soundResolve.eventId
+                console.warn("[oskar] no '" + soundResolve.eventId
                     + "' event found in the freedesktop sound theme; the key click stays silent")
                 return
             }
             if (exitCode !== 0 || exitStatus !== 0) {
                 root.soundUnavailable = true
-                console.warn("[osk] could not decode the '" + soundResolve.eventId
+                console.warn("[oskar] could not decode the '" + soundResolve.eventId
                     + "' event sound; the key click stays silent")
                 return
             }
-            console.log("[osk] key click sound:", root.soundFile)
+            console.log("[oskar] key click sound:", root.soundFile)
         }
     }
 
@@ -1621,7 +1621,7 @@ Item {
         onStatusChanged: {
             if (status === Loader.Error) {
                 root.soundUnavailable = true
-                console.warn("[osk] QtMultimedia is not available; the key click sound stays off")
+                console.warn("[oskar] QtMultimedia is not available; the key click sound stays off")
             }
         }
     }
@@ -1644,11 +1644,11 @@ Item {
     Process {
         id: lifecycleProbe
         // One startup check for the installed lifecycle command (ticket
-        // 32): present as /usr/bin/omarchy-osk from the package and as
-        // ~/.local/bin/omarchy-osk after any source install.sh. Reruns are
+        // 32): present as /usr/bin/oskar from the package and as
+        // ~/.local/bin/oskar after any source install.sh. Reruns are
         // pointless — installation paths do not appear mid-session.
         command: ["bash", "-c",
-            "test -x /usr/bin/omarchy-osk || test -x \"$HOME/.local/bin/omarchy-osk\""]
+            "test -x /usr/bin/oskar || test -x \"$HOME/.local/bin/oskar\""]
         onExited: (exitCode, exitStatus) => {
             root.lifecycleCommandAvailable = exitCode === 0 && exitStatus === 0
         }
@@ -1659,7 +1659,7 @@ Item {
         // The app-id is omitted: xdg-terminal-exec resolves the
         // preferred terminal on its own and the title is enough context.
         command: ["xdg-terminal-exec",
-            "--title=Fetch omarchy-osk components",
+            "--title=Fetch OSKar components",
             "omarchy", "pkg", "add", "hyprland", "jq"]
         onExited: (exitCode, exitStatus) => {
             root.depsOk = false
@@ -1708,7 +1708,7 @@ Item {
         // armed emoji search are the exceptions, and both live on the
         // settings overlay, not here.
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-        WlrLayershell.namespace: "io.github.vladkarok.osk"
+        WlrLayershell.namespace: "io.github.vladkarok.oskar"
         WlrLayershell.layer: WlrLayer.Overlay
         // Docked reserves its height along the bottom edge — windows move up
         // rather than being covered, and closing the panel hands the space
@@ -2603,7 +2603,7 @@ Item {
         color: "#00000000"
         anchors { top: true; bottom: true; left: true; right: true }
         exclusionMode: ExclusionMode.Ignore
-        WlrLayershell.namespace: "io.github.vladkarok.osk.settings"
+        WlrLayershell.namespace: "io.github.vladkarok.oskar.settings"
         WlrLayershell.layer: WlrLayer.Overlay
         // Two sanctioned exceptions, never at once: a colour field being
         // typed (spec-v1.1 §5) and the armed emoji search (ticket 42).

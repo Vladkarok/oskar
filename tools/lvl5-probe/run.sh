@@ -3,7 +3,7 @@
 # Levels 5-8 probe entry point (ticket 20, first task). Run ONLY through the
 # nested session, inside omarchy-vm:
 #
-#   cd ~/omarchy-osk && tools/nested-session.sh bash ~/lvl5-probe/run.sh
+#   cd ~/oskar && tools/nested-session.sh bash ~/lvl5-probe/run.sh
 #
 # Owns the helper process and the three probe legs (Chromium Wayland,
 # Chromium X11, foot); the assertions and verdicts live in drive.py.
@@ -17,7 +17,7 @@ if [[ "${OSK_NESTED_SESSION:-}" != "1" || -z "$runtime" ]]; then
     echo "Run this through: tools/nested-session.sh bash ~/lvl5-probe/run.sh" >&2
     exit 1
 fi
-if [[ ! -f "$probe_dir/make_keymap.py" || ! -x "$HOME/omarchy-osk/daemon/target/release/omarchy-osk-daemon" ]]; then
+if [[ ! -f "$probe_dir/make_keymap.py" || ! -x "$HOME/oskar/daemon/target/release/oskar-daemon" ]]; then
     echo "missing $probe_dir/make_keymap.py or the guest-built daemon" >&2
     exit 1
 fi
@@ -39,7 +39,7 @@ if [[ -n "$display" ]]; then
 fi
 hyprctl dispatch closewindow class:hyprland-welcome >/dev/null 2>&1 || true
 
-daemon="$HOME/omarchy-osk/daemon/target/release/omarchy-osk-daemon"
+daemon="$HOME/oskar/daemon/target/release/oskar-daemon"
 "$daemon" > "$runtime/osk-lvl5-probe.log" 2>&1 &
 daemon_pid=$!
 cleanup() {
@@ -48,7 +48,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-socket="$runtime/omarchy-osk/control.sock"
+socket="$runtime/oskar/control.sock"
 for _ in $(seq 1 60); do
     [[ -S "$socket" ]] && break
     sleep 0.05

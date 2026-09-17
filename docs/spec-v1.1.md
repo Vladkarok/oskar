@@ -272,8 +272,8 @@ inserts locally from CLIPBOARD.
 Configuration has three roles:
 
 1. Complete maintainer defaults shipped with the plugin.
-2. Sparse user overrides at `$XDG_CONFIG_HOME/omarchy-osk/config.json`.
-3. Geometry/state at `$XDG_STATE_HOME/omarchy-osk/state.json`.
+2. Sparse user overrides at `$XDG_CONFIG_HOME/oskar/config.json`.
+3. Geometry/state at `$XDG_STATE_HOME/oskar/state.json`.
 
 Effective appearance is user override, then a live Omarchy theme token, then
 the shipped fallback. GUI writes are atomic. Valid external file changes
@@ -298,18 +298,18 @@ field's authority. (2026-09-06, review finding R5.)
 ## 6. Helper lifecycle and panel status
 
 Normal installation and development provisioning enable and start
-`omarchy-osk.service` for the graphical user session. Its existing one-second
+`oskar.service` for the graphical user session. Its existing one-second
 systemd crash restart policy remains authoritative.
 
 The panel distinguishes starting/configuring, unavailable, incompatible and
 ready states without adding a heartbeat or status poll. While not ready,
 input-producing caps are disabled; Close, Settings, mode, size, Caps and Fn
 remain usable. A compact friendly header notice names
-`omarchy-osk.service`, does not resize the keyboard, and disappears after the
+`oskar.service`, does not resize the keyboard, and disappears after the
 existing socket handshake succeeds.
 
 For an unavailable service, Retry may run
-`systemctl --user start omarchy-osk.service` and reconnect. A protocol
+`systemctl --user start oskar.service` and reconnect. A protocol
 mismatch says the input service needs updating and offers Copy install
 command plus Retry; the panel never silently builds, installs, escalates or
 loops notifications.

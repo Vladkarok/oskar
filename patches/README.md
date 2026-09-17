@@ -32,7 +32,7 @@ otherwise, which is the intended safety.
 
 ```
 cd /usr/share/omarchy/shell
-sudo patch -p1 < /path/to/omarchy-osk/patches/omarchy-shell-style-live-rounding.patch
+sudo patch -p1 < /path/to/oskar/patches/omarchy-shell-style-live-rounding.patch
 ```
 
 (the patch path is repo-absolute — the shell directory you `cd` into holds

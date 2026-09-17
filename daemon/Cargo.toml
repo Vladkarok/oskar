@@ -1,5 +1,5 @@
 [package]
-name = "omarchy-osk-daemon"
+name = "oskar-daemon"
 version = "0.1.0"
 edition = "2021"
 description = "Persistent Wayland virtual keyboard driven over a unix socket"

@@ -1,13 +1,17 @@
 # The VM — dogfooding lab
 
-Updated 2026-09-02. Why the VM exists and what it cannot do is in
+Updated 2026-09-17 (the ticket-59 rename round; see the as-found note at
+the end). Why the VM exists and what it cannot do is in
 [decisions.md §12](decisions.md#12-testing-ladder-and-what-each-rung-cannot-see);
 this is the operating manual.
 
 ## Repo state
 
-- `~/Projects/omarchy-osk`, `master` at `42017b2`, clean, pushed to the
-  private `Vladkarok/omarchy-osk`.
+- Historical snapshot (2026-09-02, names pre-rename): host checkout under
+  `~/Projects/`, polygon green, plugin hot-reloading. The 2026-09-17
+  state: work happens in worktrees off `spec/v1.1-fixes`; the guest's
+  tree is `~/oskar` (rsync'd, not a clone); the lab runs the packaged
+  product (see the as-found note).
 - Polygon green: `tools/nested-session.sh tools/smoke-daemon.sh`.
 - Host: plugin installed and hot-reloading; user service **disabled** on
   purpose until daily use proves it.
@@ -17,13 +21,15 @@ this is the operating manual.
 - `tools/omarchy-vm.sh` launches it — KVM, UEFI, qcow2 disk under
   `~/.local/share/omarchy-vm/`. First run boots the ISO for the
   interactive install; later runs boot the disk.
-- The same guest is also defined in libvirt as domain `omarchy-osk` on
-  the **user session** connection, so it can be started from
+- The same guest is also defined in libvirt as domain `oskar` (renamed
+  from the pre-rename `omarchy-osk` with `virsh -c qemu:///session
+  domrename` on 2026-09-17; the xml copy moved with it) on the
+  **user session** connection, so it can be started from
   virt-manager. Add the connection once with File → Add Connection →
   QEMU/KVM user session; it appears beside the system connection that
-  holds `win11`. The domain lives at
-  `~/.local/share/omarchy-vm/omarchy-osk.xml`; redefine after editing
-  with `virsh -c qemu:///session define ~/.local/share/omarchy-vm/omarchy-osk.xml`.
+  holds `win11`. The domain xml copy lives at
+  `~/.local/share/omarchy-vm/oskar.xml`; redefine after editing
+  with `virsh -c qemu:///session define ~/.local/share/omarchy-vm/oskar.xml`.
   It is the system connection that cannot host this VM: QEMU there runs
   as `libvirt-qemu`, which cannot traverse `$HOME`.
 - **One at a time.** The script and the libvirt domain open the same
@@ -31,7 +37,7 @@ this is the operating manual.
 - Differences under libvirt: the display is SPICE rather than a QEMU GTK
   window (virt-manager opens it), and libvirt owns the QEMU monitor, so
   hotplug goes through
-  `virsh -c qemu:///session qemu-monitor-command --hmp omarchy-osk 'device_add usb-kbd,id=kbd2'`
+  `virsh -c qemu:///session qemu-monitor-command --hmp oskar 'device_add usb-kbd,id=kbd2'`
   instead of `monitor.sock`. Everything else — 6 vCPU, 8G, the input
   zoo, the read-only 9p mount of the repo at `osk-src`, ssh on 2222 — is
   the same, including S3 being requested.
@@ -70,8 +76,8 @@ ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export HYPRLAND_INSTA
   provision script builds whichever copy it was run from:
 
 ```bash
-git clone https://github.com/vladkarok/omarchy-osk   # then: git pull
-bash omarchy-osk/tools/omarchy-vm-provision.sh
+git clone https://github.com/vladkarok/oskar   # then: git pull
+bash oskar/tools/omarchy-vm-provision.sh
 ```
 
 - The 9p share is the other way, and the only one that can test **work
@@ -101,7 +107,7 @@ ssh -tt omarchy-vm 'bash -s' < tools/omarchy-vm-provision.sh
 - The integration suite in the guest, against the daemon the guest built:
 
 ```bash
-cd ~/omarchy-osk && tools/nested-session.sh tools/smoke-daemon.sh
+cd ~/oskar && tools/nested-session.sh tools/smoke-daemon.sh
 ```
 
   From the tree that was built — the clone, or `~/osk-src` if the source
@@ -187,3 +193,22 @@ Phase 4, after dogfooding is clean:
 - wayland-protocols: comment on #209, revive #296 with the OSK use case.
 - Omarchy: bar widget should prefer `main:true`; share the device
   selection module with this plugin.
+
+## As found — 2026-09-17 (ticket 59, the rename round)
+
+- The lab entered the round with the pre-rename package
+  (`omarchy-osk` 0.1.0-4) installed, set up and active; the round's
+  package-test walked it old → new: `pacman -U oskar` replaced the old
+  package (`replaces=`), `oskar setup` migrated registration, config
+  and state, and a second leg proved bare `oskar upgrade` completes the
+  walk on its own.
+- The lab was left healthy under the NEW name: package `oskar`
+  installed, `oskar setup` active (registration → `/usr/share/oskar/plugin`,
+  unit enabled and running, `oskar doctor` green), the guest's working
+  tree at `~/oskar` (the old `~/omarchy-osk` clone and the old
+  `~/.config/omarchy/plugins/io.github.vladkarok.osk` registration were
+  moved aside by the migration). The pre-rename registration directory
+  survives at `io.github.vladkarok.osk.migrated-<ts>` if its content is
+  ever wanted.
+- The libvirt domain was renamed `omarchy-osk` → `oskar` (user-session
+  connection) so the QMP legs' `virsh` commands match the tree.
