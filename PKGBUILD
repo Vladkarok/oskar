@@ -43,7 +43,7 @@ conflicts=(oskar-git omarchy-osk)
 replaces=(omarchy-osk)
 install=oskar.install
 source=("$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')  # publish gate: replace with the tag tarball checksum
+sha256sums=('75036527b00be411eeb3325b1b1fb466a20617835e01beb3bee2d7fa8a375d67')
 
 _repo=oskar-$pkgver
 
