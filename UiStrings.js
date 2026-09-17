@@ -206,6 +206,38 @@ var STRINGS = {
         ru: "Авто",
         uk: "Авто"
     },
+
+    // ---- the input profile (ticket 58) ----
+    //
+    // The row's three segments share the language row's fixed-width
+    // discipline: the widest translated label ("Сенсор") measures 43px at
+    // fontBody in the mono face, inside the 43.3px slice a 150-unit
+    // three-way control gives (pinned offscreen in tests/input-profile.qml).
+    "settings.section.input": {
+        en: "INPUT",
+        ru: "ВВОД",
+        uk: "ВВЕДЕННЯ"
+    },
+    "settings.row.inputProfile": {
+        en: "Pointer profile",
+        ru: "Профиль ввода",
+        uk: "Профіль введення"
+    },
+    "settings.profile.auto": {
+        en: "Auto",
+        ru: "Авто",
+        uk: "Авто"
+    },
+    "settings.profile.mouse": {
+        en: "Mouse",
+        ru: "Мышь",
+        uk: "Мишка"
+    },
+    "settings.profile.touch": {
+        en: "Touch",
+        ru: "Сенсор",
+        uk: "Сенсор"
+    },
     "settings.section.emoji": {
         en: "EMOJI PAGE",
         ru: "СТРАНИЦА ЭМОДЗИ",

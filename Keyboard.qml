@@ -8,6 +8,7 @@ import "KeyboardLayout.js" as Layout
 import "ModifierReducer.js" as Modifiers
 import "HoldColumn.js" as HoldColumn
 import "Dwell.js" as Dwell
+import "InputProfile.js" as InputProfile
 import "KeyboardSession.js" as Session
 import "Config.js" as ConfigFile
 import "LayoutDevices.js" as LayoutDevices
@@ -124,6 +125,29 @@ Item {
     // delegate bookkeeping; this field is the discriminator the fire
     // path reads — null for a cap rest, the entry for an entry rest.
     property var dwellEntry: null
+
+    // ---- the input profile (ticket 58) ----
+    //
+    // Which pointer world this keyboard answers as. The panel resolves
+    // the setting over the OBSERVATION (InputProfile.resolve — auto flips
+    // to touch the first synthesized press anywhere on the panel, once,
+    // for the panel's life) and hands the effective profile down; the
+    // caps report their presses' `source` back so the fact is panel-wide.
+    // Everything the profile switches is InputProfile.js's pure table
+    // (tests/input-profile.qml): in mouse every value is byte-today; in
+    // touch every character cap types on RELEASE with slide-off cancel
+    // (37's machinery generalized), dwell never arms, and a sliding
+    // finger is never stolen by our own surfaces.
+    property string effectiveInputProfile: "mouse"
+    signal pointerSourceObserved(var source)
+    readonly property var profileAfford: InputProfile.affordances(
+        effectiveInputProfile)
+    // The dwell veto the profile owns: the user's setting AND a profile
+    // with hover. In touch this is simply false — a finger cannot rest
+    // without pressing, and a synthesized press supersedes a rest anyway.
+    readonly property bool dwellActive: InputProfile.dwellArms(
+        effectiveInputProfile, dwellEnabled)
+    onEffectiveInputProfileChanged: dwellReset()
 
     // The size preset's multiplier on top of the theme's own scaling
     // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
@@ -2008,13 +2032,18 @@ Item {
     }
 
     function capDefersHold(capData) {
-        // Ticket 50's interplay, composed at the seam so it is pinned
-        // (tests/dwell.qml): in dwell mode no cap defers — the dwell is
-        // the click and the menu is reached by dwelling past the type;
-        // with dwell off this is HoldColumn.shouldDefer exactly, and
-        // nothing about ticket 37's press behaviour changes.
-        return Dwell.holdDefers(dwellEnabled, capData,
-            capHoldColumn(capData), searchMode, inputReady)
+        // Ticket 58's generalisation, composed at the seam so it is
+        // pinned (tests/input-profile.qml): in the MOUSE profile this is
+        // ticket 50's interplay verbatim — Dwell.holdDefers, i.e. ticket
+        // 37's column-only defer with the dwell veto over it, byte-today.
+        // In the TOUCH profile every character cap defers — a drifting
+        // finger must never strand a phantom character under
+        // press-typing — on InputProfile.touchDefers's own rule (the
+        // hold-menu threshold rides the same beginCapHold/endCapHold
+        // machinery; a columnless hold stays pending past the threshold
+        // and the release then types).
+        return InputProfile.defersTyping(effectiveInputProfile, dwellEnabled,
+            capData, capHoldColumn(capData), searchMode, inputReady)
     }
 
     function beginCapHold(capData, delegate) {
@@ -2039,11 +2068,19 @@ Item {
     /// and sends nothing; the menu stands for its own pick. Readiness can
     /// drop between press and release — then nothing is typed, like a
     /// canceled hold, rather than sounding a dead key.
-    function endCapHold(delegate) {
+    ///
+    /// `inside` is the touch profile's slide-off half (ticket 58): false
+    /// means the pointer LIFTED outside the cap's hit area, and a lifted
+    /// finger that left first cancels — the drift a touch screen is for
+    /// must never type. Undefined (the mouse profile's call) keeps
+    /// byte-today semantics: a mouse hold's release types wherever the
+    /// cursor sits when the button comes up.
+    function endCapHold(delegate, inside) {
         if (holdCap) {
             if (holdDelegate !== delegate) return false
             var cap = holdCap
             clearCapHold()
+            if (inside === false) return true
             if (!inputReady) return true
             typeCap(cap)
             releaseKey()
@@ -2146,7 +2183,10 @@ Item {
     /// the hold menu cannot disagree about what a position offers.
     function dwellEnter(capData, delegate) {
         dwellReset()
-        if (!dwellEnabled) return
+        // dwellActive, not the raw setting (ticket 58): a touch finger
+        // cannot hover, so the touch profile never arms a rest — the
+        // profile's veto, composed in InputProfile.dwellArms.
+        if (!dwellActive) return
         // The pure-dwell user's menu dismissal (ticket 50 review): the
         // standing hold menu's own dismissal routes are all clicks or
         // external folds, and a lingering rest is exactly this
@@ -2189,7 +2229,7 @@ Item {
         dwellReset()
         var delay = Dwell.delayFor(dwellDelayMs)
         var state = Dwell.enterEntry(entry, Date.now(), delay,
-            dwellEnabled, searchMode, inputReady)
+            dwellActive, searchMode, inputReady)
         if (!state) return
         dwellState = state
         dwellEntry = entry
@@ -2924,6 +2964,17 @@ Item {
                                 anchors.topMargin: -rowItem.hitTop
                                 anchors.bottomMargin: -rowItem.hitBottom
                                 hoverEnabled: true
+                                // Ticket 58: in the touch profile our own
+                                // surfaces may not steal a sliding finger
+                                // from a pressed cap — the slide-off cancel
+                                // contract needs the release delivered HERE.
+                                // Nothing on today's grid steals (no
+                                // Flickable parents the caps); the flag is
+                                // the guarantee the profile pins, and it is
+                                // deliberately NOT set on the flickable
+                                // surfaces (the emoji grid, the settings
+                                // scroll) where a slide IS the scroll.
+                                preventStealing: root.profileAfford.preventStealing
 
                                 // Everything that types fires on press, not on
                                 // click. Two reasons, and the second one is
@@ -2980,7 +3031,15 @@ Item {
                                 // what the compositor's own delivery does.
                                 // The bound is what is claimed here, and it is
                                 // the residual the by-hand retest looks for.
-                                onPressed: {
+                                onPressed: (mouse) => {
+                                    // Ticket 58: the press reports its
+                                    // source FIRST, so the very touch that
+                                    // teaches auto already answers as touch
+                                    // — this press defers, its release
+                                    // types, and no phantom character lands
+                                    // on the way the world flipped. A real
+                                    // mouse button observes nothing.
+                                    root.pointerSourceObserved(mouse.source)
                                     // A physical press supersedes any rest:
                                     // dwell and click never double-type, and
                                     // the press keeps exactly the semantics
@@ -3039,8 +3098,22 @@ Item {
                                 // the press+release pair; after the threshold
                                 // it is the hold's own and types nothing,
                                 // leaving the menu standing for its pick.
-                                onReleased: {
-                                    if (root.endCapHold(capDelegate)) return
+                                onReleased: (mouse) => {
+                                    // The slide-off half of ticket 58's
+                                    // release-typing: in the touch profile a
+                                    // lift that left the cap first CANCELS
+                                    // the hold (never types) — capHit still
+                                    // holds the grab, so the release arrives
+                                    // here wherever the finger wandered, and
+                                    // contains() is the honest inside test.
+                                    // The mouse profile passes undefined:
+                                    // byte-today, a deferred hold's release
+                                    // types wherever the button comes up.
+                                    if (root.endCapHold(capDelegate,
+                                            root.profileAfford.slideOffCancels
+                                                ? capHit.contains(mouse)
+                                                : undefined))
+                                        return
                                     if (capRect.types) root.releaseKey()
                                     // A release with the pointer still on
                                     // the cap re-arms the dwell (ticket 50):
@@ -3048,7 +3121,10 @@ Item {
                                     // that ends where it began, as they all
                                     // do — must not need to leave the key
                                     // and come back before resting works.
-                                    if (root.dwellEnabled && capHit.containsMouse)
+                                    // dwellActive, not dwellEnabled: a
+                                    // touch profile never arms a rest even
+                                    // with the setting left on.
+                                    if (root.dwellActive && capHit.containsMouse)
                                         root.dwellEnter(capData, capDelegate)
                                 }
                                 // A deferred hold that loses its grab types

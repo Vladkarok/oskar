@@ -9,6 +9,7 @@ import "ClipboardPaste.js" as ClipboardPaste
 import "Config.js" as ConfigFile
 import "EmojiCatalog.js" as Catalog
 import "EmojiPage.js" as EmojiGrid
+import "InputProfile.js" as InputProfile
 import "LanguageControl.js" as LanguageControl
 import "SettingsPlacement.js" as SettingsPlacement
 import "UiStrings.js" as UiStrings
@@ -131,6 +132,51 @@ Item {
     property string uiLanguage: maintainedDefaults.uiLanguage
     readonly property string uiLang: UiStrings.languageFor(
         keyboard.activeLayoutCode, root.uiLanguage)
+    // The input profile (ticket 58): which pointer world the panel answers
+    // as. The setting is auto/mouse/touch; the OBSERVATION is monotonic —
+    // the first synthesized (touch/pen) mouse event any panel surface sees
+    // flips touchObserved once, for the panel's lifetime, no decay: a
+    // touchscreen laptop's stray mouse click must not flap the profile
+    // back mid-session, and a flip the other way is the explicit
+    // setting's job. The resolution and everything it switches is
+    // InputProfile.js's pure table (tests/input-profile.qml); this is the
+    // one fact only the live panel can hold.
+    property string inputProfile: maintainedDefaults.inputProfile
+    property bool touchObserved: false
+    readonly property string effectiveInputProfile: InputProfile.resolve(
+        root.inputProfile, root.touchObserved)
+    readonly property var inputAfford: InputProfile.affordances(
+        root.effectiveInputProfile)
+
+    // Ticket 58's chrome targets, invisible growth only (no visual
+    // redesign): the arithmetic is InputProfile.chromeHitGrowth's — the
+    // per-side need toward the profile's floor (0 in mouse, so the chips
+    // are byte-today there), capped by the room each control truly owns.
+    // The header's standing chips are 30px tall with cellGap*2 of bar
+    // above them and cellGap below (below THAT the keyboard sibling
+    // outranks them in z, so growing past the bar is dead area); the
+    // failure-path service chips are 28px on the same centre line.
+    readonly property var chromeHitGrow30: InputProfile.chromeHitGrowth(
+        tokens.space(30), keyboard.cellGap,
+        keyboard.cellGap * 2, keyboard.cellGap,
+        inputAfford.minChromeTargetPx)
+    readonly property var chromeHitGrow28: InputProfile.chromeHitGrowth(
+        tokens.space(28), keyboard.cellGap,
+        keyboard.cellGap * 2 + 1, keyboard.cellGap + 1,
+        inputAfford.minChromeTargetPx)
+
+    /// The one writer of the observation. Every MouseArea that handles a
+    /// press reports its event's `source` — synthesized means a finger (or
+    /// a pen: a hover-less pointer gets the touch affordances too), and
+    /// one sighting is the whole lesson. Explicit profiles read the fact
+    /// nowhere; auto reads it everywhere.
+    function observePointerSource(source) {
+        if (touchObserved) return
+        if (!InputProfile.isTouchSource(source)) return
+        touchObserved = true
+        console.log("[osk] input profile: touch events observed "
+            + "(auto resolves to touch for this panel's life)")
+    }
     // Emoji delivery mode (ticket 28): "direct" types the pick through the
     // helper; "clipboard" publishes the exact sequence and sends the paste
     // chord — the owner's choice for Chromium-family clients (ZCode).
@@ -995,6 +1041,7 @@ Item {
         root.dwellEnabled = effective.dwellEnabled
         root.dwellDelayMs = effective.dwellDelayMs
         root.uiLanguage = effective.uiLanguage
+        root.inputProfile = effective.inputProfile
         // A follow-theme flip while the panel is on screen is immediate:
         // stopping freezes the tokens at the look they then have, and
         // re-enabling releases that snapshot so a later stop freezes the
@@ -1853,7 +1900,16 @@ Item {
                         MouseArea {
                             id: copyArea
                             anchors { fill: parent }
-                            onClicked: root.copyInstallCommand()
+                            // Ticket 58: the 28px failure-path chips grow
+                            // like the standing chrome (zero in mouse).
+                            anchors.leftMargin: -root.chromeHitGrow28.left
+                            anchors.rightMargin: -root.chromeHitGrow28.right
+                            anchors.topMargin: -root.chromeHitGrow28.up
+                            anchors.bottomMargin: -root.chromeHitGrow28.down
+                            onClicked: function (mouse) {
+                                root.observePointerSource(mouse.source)
+                                root.copyInstallCommand()
+                            }
                         }
                     }
 
@@ -1877,7 +1933,16 @@ Item {
                         MouseArea {
                             id: retryArea
                             anchors { fill: parent }
-                            onClicked: root.retryService()
+                            // Ticket 58: growth + observation, copyArea's
+                            // own rule.
+                            anchors.leftMargin: -root.chromeHitGrow28.left
+                            anchors.rightMargin: -root.chromeHitGrow28.right
+                            anchors.topMargin: -root.chromeHitGrow28.up
+                            anchors.bottomMargin: -root.chromeHitGrow28.down
+                            onClicked: function (mouse) {
+                                root.observePointerSource(mouse.source)
+                                root.retryService()
+                            }
                         }
                     }
                 }
@@ -1924,10 +1989,31 @@ Item {
                     MouseArea {
                         id: gearArea
                         anchors { fill: parent }
+                        // Ticket 58: the touch target grows invisibly in
+                        // the touch profile (negative margins; the drawn
+                        // chip never moves), and the press reports its
+                        // source so auto can learn touch. In mouse the
+                        // growth is exactly zero — byte-today.
+                        anchors.leftMargin: -root.chromeHitGrow30.left
+                        anchors.rightMargin: -root.chromeHitGrow30.right
+                        anchors.topMargin: -root.chromeHitGrow30.up
+                        anchors.bottomMargin: -root.chromeHitGrow30.down
                         hoverEnabled: true
+                        // The touch answer for glyph-only chrome (the
+                        // seam's pinned decision): a touch-and-hold names
+                        // the glyph the hover used to, and the release
+                        // still acts — help-then-action, one gesture, the
+                        // click never suppressed.
+                        property bool touchHeld: false
+                        onPressAndHold: if (
+                            root.inputAfford.tooltipGlyphChrome === "hold")
+                            touchHeld = true
+                        onReleased: touchHeld = false
+                        onCanceled: touchHeld = false
                         Accessible.role: Accessible.Button
                         Accessible.name: UiStrings.tr("tooltip.settings", root.uiLang)
-                        onClicked: {
+                        onClicked: function (mouse) {
+                            root.observePointerSource(mouse.source)
                             // The page and the card are mutually exclusive
                             // leftover-centre surfaces (toggleEmojiPage's
                             // rule); the gear restores the card.
@@ -1944,6 +2030,7 @@ Item {
                     HoverTooltip {
                         text: UiStrings.tr("tooltip.settings", root.uiLang)
                         hovered: gearArea.containsMouse
+                        held: gearArea.touchHeld
                     }
                 }
 
@@ -2002,7 +2089,15 @@ Item {
                     MouseArea {
                         id: langHit
                         anchors { fill: parent }
-                        onClicked: {
+                        // Ticket 58: invisible touch-target growth (zero
+                        // in mouse) and the press's source reported to the
+                        // auto profile.
+                        anchors.leftMargin: -root.chromeHitGrow30.left
+                        anchors.rightMargin: -root.chromeHitGrow30.right
+                        anchors.topMargin: -root.chromeHitGrow30.up
+                        anchors.bottomMargin: -root.chromeHitGrow30.down
+                        onClicked: function (mouse) {
+                            root.observePointerSource(mouse.source)
                             if (langCtl.shape !== "menu") {
                                 keyboard.stepLayout()
                                 return
@@ -2062,13 +2157,27 @@ Item {
                     MouseArea {
                         id: modeChipHit
                         anchors { fill: parent }
+                        // Ticket 58: invisible touch-target growth (zero
+                        // in mouse) and the press's source reported.
+                        anchors.leftMargin: -root.chromeHitGrow30.left
+                        anchors.rightMargin: -root.chromeHitGrow30.right
+                        anchors.topMargin: -root.chromeHitGrow30.up
+                        anchors.bottomMargin: -root.chromeHitGrow30.down
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         Accessible.role: Accessible.Button
                         Accessible.name: UiStrings.tr("mode.chip.tooltip", root.uiLang)
-                        onClicked: root.setMode(
-                            root.mode === "docked" ? "floating" : "docked")
+                        onClicked: function (mouse) {
+                            root.observePointerSource(mouse.source)
+                            root.setMode(
+                                root.mode === "docked" ? "floating" : "docked")
+                        }
                     }
+                    // The seam's pinned per-control decision for TEXT
+                    // chrome: the tooltip is hidden on touch (its label
+                    // already states the mode; touch synthesizes no hover,
+                    // so this stays silent by absence — no hold arm, the
+                    // hold vocabulary belongs to input, not chrome help).
                     HoverTooltip {
                         text: UiStrings.tr("mode.chip.tooltip", root.uiLang)
                         hovered: modeChipHit.containsMouse
@@ -2105,14 +2214,31 @@ Item {
                     MouseArea {
                         id: dismissHit
                         anchors { fill: parent }
+                        // Ticket 58: growth + observation + the glyph
+                        // chrome's touch-and-hold tooltip, the gear's own
+                        // rule.
+                        anchors.leftMargin: -root.chromeHitGrow30.left
+                        anchors.rightMargin: -root.chromeHitGrow30.right
+                        anchors.topMargin: -root.chromeHitGrow30.up
+                        anchors.bottomMargin: -root.chromeHitGrow30.down
                         hoverEnabled: true
+                        property bool touchHeld: false
+                        onPressAndHold: if (
+                            root.inputAfford.tooltipGlyphChrome === "hold")
+                            touchHeld = true
+                        onReleased: touchHeld = false
+                        onCanceled: touchHeld = false
                         Accessible.role: Accessible.Button
                         Accessible.name: UiStrings.tr("tooltip.closeKeyboard", root.uiLang)
-                        onClicked: root.close()  // dismiss
+                        onClicked: function (mouse) {
+                            root.observePointerSource(mouse.source)
+                            root.close()  // dismiss
+                        }
                     }
                     HoverTooltip {
                         text: UiStrings.tr("tooltip.closeKeyboard", root.uiLang)
                         hovered: dismissHit.containsMouse
+                        held: dismissHit.touchHeld
                     }
                 }
             }
@@ -2133,6 +2259,17 @@ Item {
                 // the machine, the panel owns the setting.
                 dwellEnabled: root.dwellEnabled
                 dwellDelayMs: root.dwellDelayMs
+                // The input profile (ticket 58): the panel resolves the
+                // setting over the observation (InputProfile.resolve) and
+                // hands the EFFECTIVE profile down — the keyboard owns the
+                // typing semantics, the panel owns the fact. The caps'
+                // presses report their source back so a touch anywhere on
+                // the grid teaches auto, the same fact the header chips
+                // observe.
+                effectiveInputProfile: root.effectiveInputProfile
+                onPointerSourceObserved: function (source) {
+                    root.observePointerSource(source)
+                }
                 // The persisted group feeds LayoutDevices' restart
                 // fallback; every acknowledged configure refreshes it.
                 rememberedLayoutGroup: root.rememberedLayoutGroup
@@ -2316,15 +2453,31 @@ Item {
                 MouseArea {
                     id: pasteArea
                     anchors { fill: parent }
+                    // Ticket 58: growth (zero in mouse) + observation +
+                    // the glyph chrome's touch-and-hold tooltip.
+                    anchors.leftMargin: -root.chromeHitGrow30.left
+                    anchors.rightMargin: -root.chromeHitGrow30.right
+                    anchors.topMargin: -root.chromeHitGrow30.up
+                    anchors.bottomMargin: -root.chromeHitGrow30.down
                     hoverEnabled: true
                     enabled: root.pasteEnabled
+                    property bool touchHeld: false
+                    onPressAndHold: if (
+                        root.inputAfford.tooltipGlyphChrome === "hold")
+                        touchHeld = true
+                    onReleased: touchHeld = false
+                    onCanceled: touchHeld = false
                     Accessible.role: Accessible.Button
                     Accessible.name: UiStrings.tr("access.paste", root.uiLang)
-                    onClicked: root.pasteCurrentContent()
+                    onClicked: function (mouse) {
+                        root.observePointerSource(mouse.source)
+                        root.pasteCurrentContent()
+                    }
                 }
                 HoverTooltip {
                     text: UiStrings.tr("tooltip.paste", root.uiLang)
                     hovered: pasteArea.containsMouse
+                    held: pasteArea.touchHeld
                 }
             }
 
@@ -2635,6 +2788,11 @@ Item {
             visible: root.emojiOpen
             deliveryMode: root.emojiDelivery
             onDeliveryModeRequested: function (mode) { root.setEmojiDelivery(mode) }
+            // Ticket 58: the page's presses join the input-profile
+            // observation, the caps' and the header chips' own rule.
+            onPointerSourceObserved: function (source) {
+                root.observePointerSource(source)
+            }
             // One click is one send to the focused client. The page closes
             // only after helper success when the preference asks it to;
             // usage likewise records acknowledged delivery, never a click
