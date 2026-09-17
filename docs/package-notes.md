@@ -80,7 +80,7 @@ run is recorded on ticket 32.
       owner-gated); the council's record and collision checks live in
       .scratch/next-iteration/evidence/naming-council/.
 
-- [ ] README's `<REPOSITORY-URL>` placeholder in the Install section
+- [x] README's `<REPOSITORY-URL>` placeholder in the Install section
       replaced with the public clone URL (added by the ticket-47
       review; a stranger could not acquire the tree without it).
 - [ ] The AUR path promoted to primary in README's Install section.
