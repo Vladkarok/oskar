@@ -318,7 +318,7 @@ QtObject {
                 "\u0410\u0432\u0442\u043e", "\u041c\u044b\u0448\u044c",
                 "\u0421\u0435\u043d\u0441\u043e\u0440"]
             var probe = Qt.createQmlObject(
-                'import QtQuick 2.0; Text { font.family: "monospace"; ' +
+                'import QtQuick 2.0; Text { font.family: "JetBrainsMono Nerd Font"; ' +
                 'font.pixelSize: 12 }',
                 harnessTarget)
             var widest = 0
@@ -343,7 +343,7 @@ QtObject {
             var labels = ["Auto+touch",
                 "\u0410\u0432\u0442\u043e+\u0442\u0430\u0447"]
             var probe = Qt.createQmlObject(
-                'import QtQuick 2.0; Text { font.family: "monospace"; ' +
+                'import QtQuick 2.0; Text { font.family: "JetBrainsMono Nerd Font"; ' +
                 'font.pixelSize: 12 }',
                 harnessTarget)
             var widest = 0
