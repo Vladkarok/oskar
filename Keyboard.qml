@@ -130,8 +130,9 @@ Item {
     //
     // Which pointer world this keyboard answers as. The panel resolves
     // the setting over the OBSERVATION (InputProfile.resolve — auto flips
-    // to touch the first synthesized press anywhere on the panel, once,
-    // for the panel's life) and hands the effective profile down; the
+    // to touch at the first synthesized press anywhere on the panel, per
+    // summon: a hidden panel forgets, dwell enabled guards it off) and
+    // hands the effective profile down; the
     // caps report their presses' `source` back so the fact is panel-wide.
     // Everything the profile switches is InputProfile.js's pure table
     // (tests/input-profile.qml): in mouse every value is byte-today; in

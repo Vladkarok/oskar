@@ -338,8 +338,8 @@ QtObject {
             // Ticket 62: while auto stands flipped to touch, the Auto
             // segment carries the "Auto+touch" notice and the row widens
             // from 150 to 240 — the notice must fit (240 - 4 - 2 * 2) / 3
-            // = 78px minus its 4px padding, in every language (RU measured
-            // 71.875px — the review caught 235 falling 1.6px short).
+            // = 77.33px minus its 4px padding, in every language (EN is the
+            // widest at 71.875px; the review caught 235 falling 0.2px short).
             var labels = ["Auto+touch",
                 "\u0410\u0432\u0442\u043e+\u0442\u0430\u0447"]
             var probe = Qt.createQmlObject(
@@ -352,8 +352,8 @@ QtObject {
                 widest = Math.max(widest, probe.implicitWidth)
             }
             probe.destroy()
-            T.equal(widest <= 78 - 4, true,
-                "widest notice " + widest + "px vs 74px widened segment")
+            T.equal(widest <= 77.33 - 4, true,
+                "widest notice " + widest + "px vs 73.33px widened segment")
         })
 
         Qt.exit(T.report("input profile"))
