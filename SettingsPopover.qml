@@ -733,8 +733,16 @@ Rectangle {
                         touch: UiStrings.tr("settings.profile.touch", panel.uiLang)
                     })
                     segments: ConfigFile.INPUT_PROFILES.map(function (value) {
-                        return { value: value,
-                            label: inputProfileControl.profileLabels[value] }
+                        var label = inputProfileControl.profileLabels[value]
+                        // The flip made visible (the touch council's
+                        // cheapest high-value ask, ticket 62): when auto
+                        // has flipped to touch, the AUTO segment says so —
+                        // typing semantics changed and the user deserves
+                        // the one-word notice where the escape lives.
+                        if (value === "auto" && panel.effectiveInputProfile === "touch")
+                            label = UiStrings.tr("settings.profile.autoTouch",
+                                panel.uiLang)
+                        return { value: value, label: label }
                     })
                     current: panel.inputProfile
                     onPicked: function (value) {

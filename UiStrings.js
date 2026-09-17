@@ -223,6 +223,11 @@ var STRINGS = {
         ru: "Профиль ввода",
         uk: "Профіль введення"
     },
+    "settings.profile.autoTouch": {
+        en: "Auto (touch)",
+        ru: "Авто (тач)",
+        uk: "Авто (тач)"
+    },
     "settings.profile.auto": {
         en: "Auto",
         ru: "Авто",

@@ -107,31 +107,43 @@ an independent colour schema — that remains v2.
 
 ## Input profile (mouse and touch)
 
-The panel answers two pointer worlds, one setting in Settings
-(**Auto** by default, or pinned to Mouse/Touch):
+**Touch is beta.** OSKar's design centre is the mouse; the touch
+profile is new and usable but not yet polished — expect small targets
+in the emoji and settings chrome, and set `input profile = mouse` if
+a stray touch switches behaviour you did not want. Mouse behaviour is
+unchanged in every particular.
 
-- **Mouse** is the design centre: hover tooltips everywhere,
+One setting, three values (**Auto** by default, or pinned to
+Mouse/Touch):
+
+- **Mouse** (the design centre): hover tooltips everywhere,
   dwell-to-type (rest on a cap and it types — the accessibility
-  slice), hold-a-key column menus, and press-typing with the
-  compositor's own key repeat.
+  slice), hold-a-key column menus, press-typing with the compositor's
+  own key repeat.
 - **Touch** re-answers what a finger cannot do: a touch cannot hover,
-  so dwell never arms and tooltips either show on touch-and-hold
-  (gear/close/paste) or stay hidden (a label states it); fingers
-  drift, so every character cap **types on release** and sliding off
-  the cap cancels it (no phantom characters); long-press opens the
-  same hold-column menus (320 ms — the mobile idiom); chrome hit
-  areas grow invisibly toward touch-era target sizes; Space/BackSpace
-  and the command caps keep press semantics, so holding BackSpace
-  repeats exactly as on a hardware keyboard.
-- **Auto** flips to the touch affordances the moment the panel sees a
-  touch-drawn event (for the session — a stray touch will not flap it
-  back; the setting is the deliberate switch).
+  so dwell never arms and tooltips show on touch-and-hold
+  (gear/close/paste) or stay hidden where a label already states the
+  thing; fingers drift, so character caps **type on release** and
+  sliding off cancels; long-press opens the same hold-column menus
+  (the mobile idiom); chrome hit areas grow toward comfortable size
+  where the geometry allows; Space/BackSpace keep press semantics, so
+  holding BackSpace repeats exactly as on a hardware keyboard, and
+  the close cap answers a release like every character cap.
+- **Auto** observes the pointer's source: the first touch-drawn event
+  switches to the touch affordances **for that summon** (a hidden
+  panel forgets), and the settings row says `Auto (touch)` while it
+  stands — the manual Mouse pin is the deliberate escape. One guard
+  is absolute: with **dwell enabled, auto never flips** — a chosen
+  access method is not disarmed by a stray touch.
 
-Touch is proven against an emulated multitouch device end to end
-(evdev → libinput → the compositor's wl_touch) and Qt's own touch
-synthesis on the shipping Qt version; real-finger hardware has not
-been in our hands yet — mouse remains the design centre, touch is a
-first-class profile.
+Known rough edges, named: the emoji group tabs and settings segments
+remain small targets; pen input is untested (a pen receives the touch
+affordances); the observation is panel-wide — a touch on one monitor
+switches the caps on all of them until the panel hides. Touch is
+proven against an emulated multitouch device end to end (evdev →
+libinput → the compositor's wl_touch) and Qt's own touch synthesis on
+the shipping Qt version; real-finger hardware has not been in our
+hands yet.
 
 ## Why there is a helper at all
 
