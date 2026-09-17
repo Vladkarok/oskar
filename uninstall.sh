@@ -7,22 +7,22 @@
 # uninstalling this. Best-effort: in a mixed state (registration at this
 # checkout while the packaged unit is the active one) the unit the
 # teardown disables may be the packaged one — recoverable with
-# `omarchy-osk setup`. Config and state are never touched. Package files
-# belong to pacman; run `omarchy-osk teardown` there instead.
+# `oskar setup`. Config and state are never touched. Package files
+# belong to pacman; run `oskar teardown` there instead.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-reg="$HOME/.config/omarchy/plugins/io.github.vladkarok.osk"
+reg="$HOME/.config/omarchy/plugins/io.github.vladkarok.oskar"
 
 if [[ "$(readlink -f "$reg" 2>/dev/null || true)" == "$here" ]]; then
-  bash "$here/bin/omarchy-osk" teardown
+  bash "$here/bin/oskar" teardown
 else
   echo "uninstall.sh: registration does not point at this checkout; leaving the live install alone" >&2
 fi
 
-rm -f "$HOME/.config/systemd/user/omarchy-osk.service"
-rm -f "$HOME/.local/libexec/omarchy-osk-daemon"
-rm -f "$HOME/.local/bin/omarchy-osk"
+rm -f "$HOME/.config/systemd/user/oskar.service"
+rm -f "$HOME/.local/libexec/oskar-daemon"
+rm -f "$HOME/.local/bin/oskar"
 systemctl --user daemon-reload
 
 echo "Source install removed. Config and state preserved."

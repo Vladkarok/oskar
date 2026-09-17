@@ -26,7 +26,7 @@ if [[ ! -f "$OSK_NEST_CONFIG" || -z "${HYPRLAND_INSTANCE_SIGNATURE:-}"
 fi
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-daemon="$root/daemon/target/release/omarchy-osk-daemon"
+daemon="$root/daemon/target/release/oskar-daemon"
 # The suite's mid-delivery stop test respawns the helper after the mid-hold
 # test has stopped it; it needs the binary path to do that.
 export OSK_DAEMON="$daemon"
@@ -44,8 +44,8 @@ if [[ -x "$daemon" ]]; then
     exit 1
   fi
 fi
-socket="$XDG_RUNTIME_DIR/omarchy-osk/control.sock"
-log="$XDG_RUNTIME_DIR/omarchy-osk-smoke.log"
+socket="$XDG_RUNTIME_DIR/oskar/control.sock"
+log="$XDG_RUNTIME_DIR/oskar-smoke.log"
 
 # Build the deliberately tiny public Wayland observer used by decisions §35's
 # keymap-payload regression. Generated xdg-shell bindings stay in the private
@@ -80,7 +80,7 @@ export OSK_KEYMAP_OBSERVER="$observer"
 # through that four times over would be useless, so the helper takes the cap
 # from the environment and the suite reads the same variable — what is asserted
 # is the cap's behaviour, with its duration as the one injected fact.
-export OMARCHY_OSK_HOLD_CAP_MS="${OMARCHY_OSK_HOLD_CAP_MS:-2000}"
+export OSKAR_HOLD_CAP_MS="${OSKAR_HOLD_CAP_MS:-2000}"
 
 # The helper must not start against a compositor whose config is still
 # loading. Hyprland applies input:kb_layout to a keyboard when the device

@@ -7,7 +7,7 @@ import qs.Ui
 // itself can never disagree about who owns the toggle.
 BarWidget {
     id: root
-    moduleName: "io.github.vladkarok.osk"
+    moduleName: "io.github.vladkarok.oskar"
 
     implicitWidth: toggle.implicitWidth
     implicitHeight: toggle.implicitHeight
@@ -25,7 +25,7 @@ BarWidget {
         onPressed: function() {
             if (!root.bar)
                 return
-            root.bar.run("omarchy-shell shell toggle io.github.vladkarok.osk")
+            root.bar.run("omarchy-shell shell toggle io.github.vladkarok.oskar")
         }
     }
 }

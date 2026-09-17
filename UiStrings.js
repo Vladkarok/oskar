@@ -31,14 +31,14 @@ var STRINGS = {
         uk: "Вміст буфера обміну більше недоступний"
     },
     "hint.needsUpdate": {
-        en: "omarchy-osk.service needs updating",
-        ru: "omarchy-osk.service требует обновления",
-        uk: "omarchy-osk.service потребує оновлення"
+        en: "oskar.service needs updating",
+        ru: "oskar.service требует обновления",
+        uk: "oskar.service потребує оновлення"
     },
     "hint.notRunning": {
-        en: "omarchy-osk.service is not running",
-        ru: "omarchy-osk.service не работает",
-        uk: "omarchy-osk.service не запущено"
+        en: "oskar.service is not running",
+        ru: "oskar.service не работает",
+        uk: "oskar.service не запущено"
     },
     "hint.keymapUnavailable": {
         en: "Keymap unavailable — drawn caps may not match what typing produces",
@@ -96,9 +96,9 @@ var STRINGS = {
         uk: "Син"
     },
     "hint.starting": {
-        en: "Starting omarchy-osk.service…",
-        ru: "Запуск omarchy-osk.service…",
-        uk: "Запуск omarchy-osk.service…"
+        en: "Starting oskar.service…",
+        ru: "Запуск oskar.service…",
+        uk: "Запуск oskar.service…"
     },
 
     // ---- the header's action chips ----

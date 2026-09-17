@@ -40,7 +40,7 @@ CMD_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", ""),
 LOG_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", ""),
                         "osk-qmp-log")
 SOCKET = os.path.join(os.environ.get("XDG_RUNTIME_DIR", ""),
-                      "omarchy-osk/control.sock")
+                      "oskar/control.sock")
 
 
 def note(line):
@@ -80,7 +80,7 @@ def main():
     with LiveSession() as lab:
         for attempt in range(4):
             subprocess.run(
-                ["systemctl", "--user", "stop", "omarchy-osk.service"],
+                ["systemctl", "--user", "stop", "oskar.service"],
                 capture_output=True, timeout=15)
             try:
                 wait_for(lambda: not service_active(), 5,

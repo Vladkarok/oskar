@@ -77,7 +77,7 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
         panel_canary) env_var="OSK_PANEL_CANARY_LIVE=1" ;;
         restart_settle) env_var="OSK_RESTART_SETTLE_LIVE=1" ;;
       esac
-      if ssh "$LAB" "cd ~/omarchy-osk \
+      if ssh "$LAB" "cd ~/oskar \
           && export XDG_RUNTIME_DIR=/run/user/\$(id -u) \
           && export HYPRLAND_INSTANCE_SIGNATURE=\$(ls -t \$XDG_RUNTIME_DIR/hypr | head -1) \
           && export WAYLAND_DISPLAY=wayland-1 \

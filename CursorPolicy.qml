@@ -256,7 +256,7 @@ Item {
             if (action.op === "read") {
                 if (readPending) {
                     if (queuedActions.length === 0)
-                        console.log("[osk] cursor policy: read queued behind the run in flight")
+                        console.log("[oskar] cursor policy: read queued behind the run in flight")
                     queueAction(action)
                     continue
                 }
@@ -283,7 +283,7 @@ Item {
                             + action.value + " } })"])
                 } else if (writePending) {
                     if (queuedActions.length === 0)
-                        console.log("[osk] cursor policy: write queued behind the run in flight")
+                        console.log("[oskar] cursor policy: write queued behind the run in flight")
                     queueAction(action)
                     continue
                 } else {
@@ -305,7 +305,7 @@ Item {
         // The journal is the diagnostic channel for the races this policy
         // arbitrates; log only what changed, so a quiet session stays quiet.
         if (policyState.outcome !== lastOutcome) {
-            console.log("[osk] cursor policy:", policyState.outcome)
+            console.log("[oskar] cursor policy:", policyState.outcome)
             lastOutcome = policyState.outcome
         }
     }

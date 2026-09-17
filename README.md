@@ -1,8 +1,10 @@
-# On-Screen Keyboard for Omarchy
+# OSKar — on-screen keyboard for Omarchy
 
-A mouse-driven on-screen keyboard for Omarchy Quattro. The key caps follow the
-active keyboard layout, so what is drawn is what gets typed, and the panel takes
-its colours and geometry from the Omarchy theme.
+OSKar (say it "OS-car", Оскар in Cyrillic) is a mouse-driven on-screen
+keyboard for Omarchy Quattro. OSKar is not Oscar — no statuettes; it's
+the OSK, ar. The key caps follow the active keyboard layout, so what is
+drawn is what gets typed, and the panel takes its colours and geometry
+from the Omarchy theme.
 
 ## Status
 
@@ -25,7 +27,7 @@ on that day (this one).
 
 | path | what it is |
 |---|---|
-| `manifest.json` | plugin manifest (`io.github.vladkarok.osk`) |
+| `manifest.json` | plugin manifest (`io.github.vladkarok.oskar`) |
 | `Panel.qml` | the keyboard window: a docked full-width strip or a floating overlay |
 | `Keyboard.qml` | key grid, layout tracking, socket client |
 | `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
@@ -54,8 +56,8 @@ fullscreen window ignores exclusive zones and is overlaid instead. **Floating**
 reserves nothing and is dragged by its bar. Mode is chosen in Settings.
 
 Maintained defaults ship in `Config.js`. Deliberate user choices are sparse in
-`$XDG_CONFIG_HOME/omarchy-osk/config.json`; floating geometry is separate in
-`$XDG_STATE_HOME/omarchy-osk/state.json`. Both files reload on change without
+`$XDG_CONFIG_HOME/oskar/config.json`; floating geometry is separate in
+`$XDG_STATE_HOME/oskar/state.json`. Both files reload on change without
 polling and GUI writes replace them atomically. Invalid external text stays
 untouched while the panel keeps the last valid runtime value.
 
@@ -202,7 +204,7 @@ Notes from the survey:
 
 ## Troubleshooting
 
-Run `omarchy-osk doctor` — it checks the service, socket and protocol,
+Run `oskar doctor` — it checks the service, socket and protocol,
 registration, the keymap share, keycap-fallback journal lines, layouts
 and theme dependencies, and names the one fix to try for each failure
 (exit 0 is healthy).
@@ -214,7 +216,7 @@ feedback loop in an earlier version drove xkbcomp 56,547 times in five minutes
 and froze the desktop hard enough to require a TTY switch.
 
 ```sh
-tools/nested-session.sh ./daemon/target/release/omarchy-osk-daemon
+tools/nested-session.sh ./daemon/target/release/oskar-daemon
 tools/nested-session.sh tools/smoke-daemon.sh
 ```
 
@@ -249,10 +251,10 @@ From a source checkout — the primary path today. Get the repository
 and run one flow of three steps:
 
 ```sh
-git clone <REPOSITORY-URL> omarchy-osk && cd omarchy-osk
+git clone <REPOSITORY-URL> oskar && cd oskar
 ./install.sh           # builds the helper, installs it + its unit + the
-                       # omarchy-osk command, enables and starts the service
-omarchy-osk setup      # registers the checkout under the stable plugin id,
+                       # oskar command, enables and starts the service
+oskar setup            # registers the checkout under the stable plugin id,
                        # enables the plugin in Omarchy, re-checks the service
 omarchy restart shell  # the running shell only picks up a newly registered
                        # plugin at restart (or log out and back in)
@@ -263,31 +265,31 @@ omarchy restart shell  # the running shell only picks up a newly registered
 missing). After updating the checkout, rerun both commands: the QML side
 and the helper share a protocol version, and a plugin updated without its
 helper reports that it needs reinstalling rather than typing nothing
-(`omarchy-osk upgrade` is the same rerun under one name). The keyboard's
+(`oskar upgrade` is the same rerun under one name). The keyboard's
 icon appears in the bar; clicking it (or the toggle below) shows the
 panel:
 
 ```sh
-omarchy-shell shell toggle io.github.vladkarok.osk
+omarchy-shell shell toggle io.github.vladkarok.oskar
 ```
 
-An AUR package (`omarchy-osk`) will become the primary path on publish —
+An AUR package (`oskar`) will become the primary path on publish —
 it does not exist yet. Until then there is no packaged channel: the
 source checkout above is the only install, and it has to come from the
 project's repository directly.
 
-`omarchy-osk setup` is idempotent and also owns `status` and `teardown`
+`oskar setup` is idempotent and also owns `status` and `teardown`
 (full removal: registration, plugin enable, unit, state). For reference,
 the manual equivalent of `install.sh`:
 
 ```sh
 cd daemon && cargo build --release
-install -Dm755 target/release/omarchy-osk-daemon ~/.local/libexec/omarchy-osk-daemon
-install -Dm644 ../systemd/omarchy-osk.service ~/.config/systemd/user/omarchy-osk.service
+install -Dm755 target/release/oskar-daemon ~/.local/libexec/oskar-daemon
+install -Dm644 ../systemd/oskar.service ~/.config/systemd/user/oskar.service
 systemctl --user daemon-reload
-systemctl --user enable omarchy-osk.service
+systemctl --user enable oskar.service
 systemctl --user --quiet is-active graphical-session.target \
-  && systemctl --user restart omarchy-osk.service
+  && systemctl --user restart oskar.service
 ```
 
-The panel alone can be enabled with `omarchy plugin enable io.github.vladkarok.osk`.
+The panel alone can be enabled with `omarchy plugin enable io.github.vladkarok.oskar`.

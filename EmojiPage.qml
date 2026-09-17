@@ -350,7 +350,7 @@ Rectangle {
                         emojiRoot.pointerSourceObserved(mouse.source)
                         if (emojiRoot.searchArmed) return
                         emojiRoot.searchArmed = true
-                        console.log("[osk] emoji search armed by field click")
+                        console.log("[oskar] emoji search armed by field click")
                     }
                 }
 

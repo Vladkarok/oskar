@@ -14,7 +14,7 @@
 #   status       read-only report on a freshly installed package
 #   setup        activate, then activate AGAIN (idempotence)
 #   protocol     one hello roundtrip against the live helper + panel toggle
-#   upgrade      pkgrel+1 build, pacman -U, omarchy-osk upgrade
+#   upgrade      pkgrel+1 build, pacman -U, oskar upgrade
 #   teardown     deactivate twice; assert nothing dangles
 #   reinstall    package + setup again
 #   legacy       source install.sh, then package + setup --migrate-source
@@ -22,7 +22,7 @@
 #
 # Each phase is independently rerunnable and prints PASS/FAIL lines; the
 # exit code is non-zero when any assertion fails. The developer checkout
-# at ~/omarchy-osk is only the SOURCE of the tarball — everything the
+# at ~/oskar is only the SOURCE of the tarball — everything the
 # phases exercise is the installed package's world.
 
 set -euo pipefail
@@ -34,9 +34,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # On disk, not /tmp: a makepkg srcdir grows a full cargo target (~1G+) and
 # a tmpfs /tmp caps out mid-extract with a confusing quota error.
 BUILD="${OSK_PKG_BUILD:-$HOME/.cache/osk-pkg}"
-PKGOUT="$BUILD/omarchy-osk-0.1.0-1-x86_64.pkg.tar.zst"
-PKGOUT2="$BUILD/omarchy-osk-0.1.0-2-x86_64.pkg.tar.zst"
-PLUGIN_ID=io.github.vladkarok.osk
+PKGOUT="$BUILD/oskar-0.1.0-1-x86_64.pkg.tar.zst"
+PKGOUT2="$BUILD/oskar-0.1.0-2-x86_64.pkg.tar.zst"
+PLUGIN_ID=io.github.vladkarok.oskar
 REG="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 PASS=0
 FAIL=0
@@ -48,7 +48,7 @@ summary() {
   ((FAIL == 0))
 }
 
-SOCKET="${XDG_RUNTIME_DIR:-$HOME/.run}/omarchy-osk/control.sock"
+SOCKET="${XDG_RUNTIME_DIR:-$HOME/.run}/oskar/control.sock"
 
 hello() {
   { printf 'hello 5\n' |
@@ -93,7 +93,7 @@ make_tarball() {
   # tarball would carry (minus build output and the local board).
   tar -C "$HERE" \
     --exclude='./.git' --exclude='./daemon/target' --exclude='./.scratch' \
-    --transform="s|^\./|omarchy-osk-$ver/|" \
+    --transform="s|^\./|oskar-$ver/|" \
     -czf "$out" .
 }
 
@@ -106,32 +106,32 @@ local_pkgbuild() {
     -e "s|^pkgrel=.*|pkgrel=$rel|" \
     "$HERE/PKGBUILD" >"$BUILD/PKGBUILD"
   # The recipe is exercised as written: GitHub tag tarballs extract to
-  # omarchy-osk-<pkgver>/ and the local tarball matches that shape, so
-  # _repo=omarchy-osk-$pkgver needs no patching here.
-  cp "$HERE/omarchy-osk.install" "$BUILD/omarchy-osk.install"
+  # oskar-<pkgver>/ and the local tarball matches that shape, so
+  # _repo=oskar-$pkgver needs no patching here.
+  cp "$HERE/oskar.install" "$BUILD/oskar.install"
 }
 
 phase_build() {
   mkdir -p "$BUILD"
-  make_tarball "$BUILD/omarchy-osk-0.1.0.tar.gz" 0.1.0
+  make_tarball "$BUILD/oskar-0.1.0.tar.gz" 0.1.0
   local sums
-  sums="$(sha256sum "$BUILD/omarchy-osk-0.1.0.tar.gz" | awk '{print $1}')"
-  local_pkgbuild 0.1.0 1 omarchy-osk-0.1.0.tar.gz "$sums"
+  sums="$(sha256sum "$BUILD/oskar-0.1.0.tar.gz" | awk '{print $1}')"
+  local_pkgbuild 0.1.0 1 oskar-0.1.0.tar.gz "$sums"
   (cd "$BUILD" && makepkg -f --nosign) >/dev/null
   [[ -f "$PKGOUT" ]] && ok "makepkg produced $(basename "$PKGOUT")" \
     || no "package missing after makepkg"
 
   # .SRCINFO generates from the final recipe — the publish gate's artifact.
   (cd "$BUILD" && makepkg --printsrcinfo > .SRCINFO)
-  grep -q "pkgname = omarchy-osk" "$BUILD/.SRCINFO" \
+  grep -q "pkgname = oskar" "$BUILD/.SRCINFO" \
     && ok ".SRCINFO generated" || no ".SRCINFO missing"
 
   # No symlinks in the payload, and the lifecycle command is in place.
   # The package is not installed yet, so inspect the tar stream itself.
   bad="$(tar -tf "$PKGOUT" | grep -c ' -> ' || true)"
   [[ "$bad" == 0 ]] && ok "payload is symlink-free" || no "symlinks in payload: $bad"
-  pacman -Qlp "$PKGOUT" 2>/dev/null | grep -q "/usr/bin/omarchy-osk$" \
-    && ok "lifecycle command packaged" || no "/usr/bin/omarchy-osk missing"
+  pacman -Qlp "$PKGOUT" 2>/dev/null | grep -q "/usr/bin/oskar$" \
+    && ok "lifecycle command packaged" || no "/usr/bin/oskar missing"
 
   # namcap, when available (informational unless installed).
   if command -v namcap >/dev/null; then
@@ -143,9 +143,9 @@ phase_build() {
 
   # The staged helper's dynamic set must be covered by depends=.
   rm -rf "$BUILD/inspect" && mkdir -p "$BUILD/inspect"
-  tar -xf "$PKGOUT" -C "$BUILD/inspect" usr/lib/omarchy-osk/omarchy-osk-daemon
+  tar -xf "$PKGOUT" -C "$BUILD/inspect" usr/lib/oskar/oskar-daemon
   local libs uncovered lib
-  libs="$(ldd "$BUILD/inspect/usr/lib/omarchy-osk/omarchy-osk-daemon" |
+  libs="$(ldd "$BUILD/inspect/usr/lib/oskar/oskar-daemon" |
     awk '/=> \//{print $1}' | sort -u)"
   uncovered=""
   local lib
@@ -198,7 +198,7 @@ phase_chroot_build() {
     -- -f --nodeps --nocheck) >"$BUILD/chroot-build.log" 2>&1; then
     # PKGDEST is the cwd ($BUILD): the chroot product lands beside the
     # dirty one, same name.
-    [[ -s "$BUILD/omarchy-osk-0.1.0-1-x86_64.pkg.tar.zst" ]] \
+    [[ -s "$BUILD/oskar-0.1.0-1-x86_64.pkg.tar.zst" ]] \
       && ok "clean-chroot build produced the package into \$BUILD (log: $BUILD/chroot-build.log)" \
       || ok "clean-chroot build completed (log: $BUILD/chroot-build.log)"
   else
@@ -210,16 +210,30 @@ phase_chroot_build() {
 
 phase_install() {
   [[ -f "$PKGOUT" ]] || { no "no package built"; summary; return; }
+  # The rename walk (ticket 59): pacman -U does NOT honor replaces=
+  # (that is -Syu's, and an AUR helper's, job) and conflicts= makes a
+  # plain -U a hard error while the old package stands — so the
+  # pre-rename omarchy-osk package comes out first, the documented
+  # path for installed machines. The old unit file goes with it; the
+  # daemon it started keeps running until setup's migration stops it.
+  if pacman -Q omarchy-osk >/dev/null 2>&1; then
+    sudo pacman -Rdd --noconfirm omarchy-osk >/dev/null
+    ok "pre-rename package omarchy-osk removed (replaces= also walks \
+it out on -Syu)"
+  fi
   sudo pacman -U --noconfirm "$PKGOUT" >/dev/null
-  pacman -Qi omarchy-osk >/dev/null && ok "package installed" || no "not installed"
-  command -v omarchy-osk >/dev/null && ok "omarchy-osk on PATH" || no "command missing"
-  [[ -d /usr/share/omarchy-osk/plugin ]] && ok "payload present" || no "payload missing"
+  pacman -Qi oskar >/dev/null && ok "package installed" || no "not installed"
+  pacman -Q omarchy-osk >/dev/null 2>&1 \
+    && no "the old omarchy-osk package still stands" \
+    || ok "no omarchy-osk package left installed"
+  command -v oskar >/dev/null && ok "oskar on PATH" || no "command missing"
+  [[ -d /usr/share/oskar/plugin ]] && ok "payload present" || no "payload missing"
   summary
 }
 
 phase_status() {
   session_env
-  omarchy-osk status | tee "$BUILD/status-fresh.log"
+  oskar status | tee "$BUILD/status-fresh.log"
   grep -q "mode:            packaged" "$BUILD/status-fresh.log" \
     && ok "status reports packaged mode" || no "mode line wrong"
   grep -q "registration:.*-> none" "$BUILD/status-fresh.log" \
@@ -229,26 +243,26 @@ phase_status() {
 
 phase_setup() {
   session_env
-  omarchy-osk setup | tee "$BUILD/setup1.log"
-  [[ "$(readlink -f "$REG")" == /usr/share/omarchy-osk/plugin ]] \
+  oskar setup | tee "$BUILD/setup1.log"
+  [[ "$(readlink -f "$REG")" == /usr/share/oskar/plugin ]] \
     && ok "registration -> packaged payload" || no "registration wrong"
   omarchy plugin list --json | jq -e --arg id "$PLUGIN_ID" \
     '.[] | select(.id == $id) | .enabled' | grep -q true \
     && ok "plugin enabled" || no "plugin not enabled"
-  systemctl --user --quiet is-enabled omarchy-osk.service \
+  systemctl --user --quiet is-enabled oskar.service \
     && ok "unit enabled" || no "unit not enabled"
-  systemctl --user --quiet is-active omarchy-osk.service \
+  systemctl --user --quiet is-active oskar.service \
     && ok "unit active" || no "unit not active"
 
-  omarchy-osk setup >/dev/null && ok "second setup exits 0" || no "second setup failed"
-  [[ "$(readlink -f "$REG")" == /usr/share/omarchy-osk/plugin ]] \
+  oskar setup >/dev/null && ok "second setup exits 0" || no "second setup failed"
+  [[ "$(readlink -f "$REG")" == /usr/share/oskar/plugin ]] \
     && ok "second setup kept the registration" || no "registration changed"
   summary
 }
 
 phase_protocol() {
   session_env
-  local sock="$XDG_RUNTIME_DIR/omarchy-osk/control.sock" reply tries=20
+  local sock="$XDG_RUNTIME_DIR/oskar/control.sock" reply tries=20
   while ((tries-- > 0)); do
     if [[ -S "$sock" ]]; then break; fi
     sleep 0.5
@@ -270,16 +284,16 @@ phase_protocol() {
 
 phase_upgrade() {
   session_env
-  make_tarball "$BUILD/omarchy-osk-0.1.0.tar.gz" 0.1.0
+  make_tarball "$BUILD/oskar-0.1.0.tar.gz" 0.1.0
   local sums
-  sums="$(sha256sum "$BUILD/omarchy-osk-0.1.0.tar.gz" | awk '{print $1}')"
-  local_pkgbuild 0.1.0 2 omarchy-osk-0.1.0.tar.gz "$sums"
+  sums="$(sha256sum "$BUILD/oskar-0.1.0.tar.gz" | awk '{print $1}')"
+  local_pkgbuild 0.1.0 2 oskar-0.1.0.tar.gz "$sums"
   (cd "$BUILD" && makepkg -f --nosign) >/dev/null
   [[ -f "$PKGOUT2" ]] && ok "pkgrel=2 package built" || no "upgrade package missing"
   sudo pacman -U --noconfirm "$PKGOUT2" >/dev/null
-  [[ "$(pacman -Q omarchy-osk)" == *-2 ]] && ok "pkgrel=2 installed" || no "pkgrel wrong"
-  omarchy-osk upgrade | tee "$BUILD/upgrade.log"
-  systemctl --user --quiet is-active omarchy-osk.service \
+  [[ "$(pacman -Q oskar)" == *-2 ]] && ok "pkgrel=2 installed" || no "pkgrel wrong"
+  oskar upgrade | tee "$BUILD/upgrade.log"
+  systemctl --user --quiet is-active oskar.service \
     && ok "helper active after upgrade" || no "helper down after upgrade"
   reply="$(hello_until_ready)"
   [[ "$reply" == "hello 5" ]] && ok "protocol ok after upgrade" || no "hello reply: $reply"
@@ -288,26 +302,26 @@ phase_upgrade() {
 
 phase_teardown() {
   session_env
-  omarchy-osk teardown | tee "$BUILD/teardown1.log"
+  oskar teardown | tee "$BUILD/teardown1.log"
   [[ ! -e "$REG" ]] && ok "registration unlinked" || no "registration still present"
-  systemctl --user --quiet is-enabled omarchy-osk.service 2>/dev/null \
+  systemctl --user --quiet is-enabled oskar.service 2>/dev/null \
     && no "unit still enabled" || ok "unit disabled"
-  systemctl --user --quiet is-active omarchy-osk.service 2>/dev/null \
+  systemctl --user --quiet is-active oskar.service 2>/dev/null \
     && no "unit still active" || ok "unit stopped"
 
-  omarchy-osk teardown >/dev/null && ok "second teardown exits 0" || no "second teardown failed"
+  oskar teardown >/dev/null && ok "second teardown exits 0" || no "second teardown failed"
   [[ ! -e "$REG" ]] && ok "no dangling registration" || no "registration dangles"
-  [[ -e $HOME/.config/omarchy-osk ]] && ok "config preserved" || ok "config absent (fresh lab)"
+  [[ -e $HOME/.config/oskar ]] && ok "config preserved" || ok "config absent (fresh lab)"
   summary
 }
 
 phase_reinstall() {
   session_env
   sudo pacman -U --noconfirm "$PKGOUT" >/dev/null
-  omarchy-osk setup >/dev/null
-  systemctl --user --quiet is-active omarchy-osk.service \
+  oskar setup >/dev/null
+  systemctl --user --quiet is-active oskar.service \
     && ok "reinstalled + setup: helper active" || no "helper down after reinstall"
-  [[ "$(readlink -f "$REG")" == /usr/share/omarchy-osk/plugin ]] \
+  [[ "$(readlink -f "$REG")" == /usr/share/oskar/plugin ]] \
     && ok "registration restored" || no "registration wrong after reinstall"
   summary
 }
@@ -316,34 +330,34 @@ phase_legacy() {
   session_env
   # A source install from a separate checkout — the legacy state.
   rm -rf /tmp/osk-legacy && mkdir -p /tmp/osk-legacy
-  make_tarball /tmp/osk-legacy/omarchy-osk-0.1.0.tar.gz 0.1.0
-  tar -C /tmp/osk-legacy -xzf /tmp/osk-legacy/omarchy-osk-0.1.0.tar.gz
-  (cd /tmp/osk-legacy/omarchy-osk-0.1.0 && bash install.sh) >/dev/null 2>&1
-  [[ -f $HOME/.config/systemd/user/omarchy-osk.service ]] \
+  make_tarball /tmp/osk-legacy/oskar-0.1.0.tar.gz 0.1.0
+  tar -C /tmp/osk-legacy -xzf /tmp/osk-legacy/oskar-0.1.0.tar.gz
+  (cd /tmp/osk-legacy/oskar-0.1.0 && bash install.sh) >/dev/null 2>&1
+  [[ -f $HOME/.config/systemd/user/oskar.service ]] \
     && ok "legacy user unit installed" || no "legacy unit missing"
-  systemctl --user --quiet is-active omarchy-osk.service \
+  systemctl --user --quiet is-active oskar.service \
     && ok "legacy helper running" || no "legacy helper not running"
 
   # The packaged unit is shadowed: plain setup must refuse.
-  if omarchy-osk setup >/dev/null 2>&1; then
+  if oskar setup >/dev/null 2>&1; then
     no "setup did not refuse the legacy override"
   else
     ok "setup refuses while the legacy unit overrides"
   fi
 
-  omarchy-osk setup --migrate-source | tee "$BUILD/migrate.log"
-  [[ ! -e $HOME/.config/systemd/user/omarchy-osk.service ]] \
+  oskar setup --migrate-source | tee "$BUILD/migrate.log"
+  [[ ! -e $HOME/.config/systemd/user/oskar.service ]] \
     && ok "legacy unit moved aside" || no "legacy unit still in place"
-  ls $HOME/.config/systemd/user/omarchy-osk.service.migrated-* >/dev/null 2>&1 \
+  ls $HOME/.config/systemd/user/oskar.service.migrated-* >/dev/null 2>&1 \
     && ok "legacy unit kept (renamed)" || no "legacy unit not preserved"
-  [[ ! -e $HOME/.local/libexec/omarchy-osk-daemon ]] \
+  [[ ! -e $HOME/.local/libexec/oskar-daemon ]] \
     && ok "legacy helper binary removed" || no "legacy binary still present"
-  [[ ! -e $HOME/.local/bin/omarchy-osk ]] \
+  [[ ! -e $HOME/.local/bin/oskar ]] \
     && ok "source lifecycle symlink removed from ~/.local/bin" \
-    || no "~/.local/bin/omarchy-osk still shadows /usr/bin"
-  systemctl --user --quiet is-active omarchy-osk.service \
+    || no "~/.local/bin/oskar still shadows /usr/bin"
+  systemctl --user --quiet is-active oskar.service \
     && ok "helper active from the packaged unit" || no "helper down after migration"
-  [[ "$(readlink -f "$REG")" == /usr/share/omarchy-osk/plugin ]] \
+  [[ "$(readlink -f "$REG")" == /usr/share/oskar/plugin ]] \
     && ok "registration points at the packaged payload" || no "registration wrong"
   summary
 }
@@ -351,11 +365,11 @@ phase_legacy() {
 phase_coldboot() {
   session_env
   sleep 3
-  systemctl --user --quiet is-active omarchy-osk.service \
+  systemctl --user --quiet is-active oskar.service \
     && ok "helper active after cold boot" || no "helper down after cold boot"
   reply="$(hello_until_ready)"
   [[ "$reply" == "hello 5" ]] && ok "protocol ok after cold boot" || no "hello reply: $reply"
-  [[ "$(readlink -f "$REG")" == /usr/share/omarchy-osk/plugin ]] \
+  [[ "$(readlink -f "$REG")" == /usr/share/oskar/plugin ]] \
     && ok "registration intact" || no "registration lost on boot"
   omarchy-shell shell toggle "$PLUGIN_ID" && sleep 2 \
     && ok "panel loads from the packaged payload" || no "panel toggle failed"
