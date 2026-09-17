@@ -527,7 +527,7 @@ function reportMisses(misses, layoutCode) {
     if (misses.length === 0) return
     var shown = misses.slice(0, 12).join(" ")
     if (misses.length > 12) shown += " … and " + (misses.length - 12) + " more"
-    reportOnce("[osk] keycap fallback to built-in table for " + layoutCode
+    reportOnce("[oskar] keycap fallback to built-in table for " + layoutCode
         + ": " + misses.length + " cap(s): " + shown)
 }
 
@@ -659,7 +659,7 @@ function applyLanguage(rowsSource, layoutCode, capsFacts) {
     // symbols, and the miss list is still the only place a positioned cap's
     // own miss is named.
     if (capsFacts && glyphCaps > 0 && glyphHits === 0)
-        reportOnce("[osk] not one character this page draws is in the keymap"
+        reportOnce("[oskar] not one character this page draws is in the keymap"
             + " the helper installed: the reserved symbol block did not land"
             + " (decisions §33), so every symbol cap draws unavailable."
             + " " + glyphCaps + " cap(s) affected. A layout option that puts"
