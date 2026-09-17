@@ -262,7 +262,8 @@ beside it — merge by hand if something was wanted from it"
   if command -v pacman >/dev/null 2>&1 \
     && pacman -Q omarchy-osk >/dev/null 2>&1; then
     warn "the old omarchy-osk package is still installed; remove it: \
-sudo pacman -Rns omarchy-osk (this package replaces= it on -U/-Syu)"
+sudo pacman -Rns omarchy-osk (or let the next pacman -Syu replace it — \
+this package declares replaces=omarchy-osk)"
   fi
 }
 

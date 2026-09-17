@@ -10,7 +10,8 @@ renamed OSKAR_* (doctor seams OSKAR_DOCTOR_*, daemon timing
 OSKAR_HOLD_CAP_MS/OSKAR_TEXT_SETTLE_MS). `oskar setup`/`upgrade`
 migrate an installed old-name world (unit, registration, PATH shadow,
 config/state dirs MOVE to the new names); `replaces=(omarchy-osk)`
-carries the old package away on pacman -U; teardown deactivates an old
+carries the old package away on pacman -Syu (a plain -U refuses on
+conflicts — remove the old package first); teardown deactivates an old
 world; doctor fails on old-world leftovers. Older sections below quote
 the birth name `omarchy-osk` as history — the naming note lives in
 docs/orientation.md. The lab's end state for the round is in

@@ -73,7 +73,8 @@ run is recorded on ticket 32.
       Done 2026-09-17: the sweep renamed package, binary, payload dirs,
       unit, plugin id, socket/keymap paths, log prefix and UI strings;
       `replaces=(omarchy-osk)` walks an installed old-name package to
-      this one, and `oskar setup`/`upgrade` migrate the old world
+      this one on -Syu (a plain -U refuses on conflicts: remove the
+      old package first), and `oskar setup`/`upgrade` migrate the old world
       (unit, registration, PATH shadow, config and state dirs). The
       GitHub repo is created/renamed to `oskar` at publish (still
       owner-gated); the council's record and collision checks live in

@@ -210,8 +210,22 @@ phase_chroot_build() {
 
 phase_install() {
   [[ -f "$PKGOUT" ]] || { no "no package built"; summary; return; }
+  # The rename walk (ticket 59): pacman -U does NOT honor replaces=
+  # (that is -Syu's, and an AUR helper's, job) and conflicts= makes a
+  # plain -U a hard error while the old package stands — so the
+  # pre-rename omarchy-osk package comes out first, the documented
+  # path for installed machines. The old unit file goes with it; the
+  # daemon it started keeps running until setup's migration stops it.
+  if pacman -Q omarchy-osk >/dev/null 2>&1; then
+    sudo pacman -Rdd --noconfirm omarchy-osk >/dev/null
+    ok "pre-rename package omarchy-osk removed (replaces= also walks \
+it out on -Syu)"
+  fi
   sudo pacman -U --noconfirm "$PKGOUT" >/dev/null
   pacman -Qi oskar >/dev/null && ok "package installed" || no "not installed"
+  pacman -Q omarchy-osk >/dev/null 2>&1 \
+    && no "the old omarchy-osk package still stands" \
+    || ok "no omarchy-osk package left installed"
   command -v oskar >/dev/null && ok "oskar on PATH" || no "command missing"
   [[ -d /usr/share/oskar/plugin ]] && ok "payload present" || no "payload missing"
   summary
