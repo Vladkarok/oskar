@@ -58,10 +58,17 @@ var PROFILES = ["auto", "mouse", "touch"]
 var MOUSE_SOURCE_NOT_SYNTHESIZED = 0
 
 /// The effective profile: an explicit override wins over the observation,
-/// auto (and any junk that degraded to it) follows the observed fact.
-function resolve(setting, touchObserved) {
+/// auto (and any junk that degraded to it) follows the observed fact —
+/// EXCEPT that dwell answers first (the touch council's a11y guard,
+/// ticket 62): a user who ENABLED dwell chose their access method, and
+/// one stray touch (theirs, a caregiver's, the cat's) must not disarm
+/// it for the panel's life while the recovery path needs the very
+/// input that was lost. Auto never flips away from mouse while dwell
+/// is on; an explicit touch pin still wins (a deliberate choice).
+function resolve(setting, touchObserved, dwellEnabled) {
     if (setting === "mouse") return "mouse"
     if (setting === "touch") return "touch"
+    if (dwellEnabled === true) return "mouse"
     return touchObserved === true ? "touch" : "mouse"
 }
 

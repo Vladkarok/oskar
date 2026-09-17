@@ -20,6 +20,21 @@ QtObject {
     Component.onCompleted: {
         // ---- the resolution: setting + observation -> effective profile ----
 
+        T.test("the dwell guard: auto never flips away from mouse while dwell is on", function () {
+            // The touch council's a11y rule (ticket 62): a user who
+            // ENABLED dwell chose their access method — one stray touch
+            // (theirs, a caregiver's, the cat's) must not disarm it for
+            // the panel's life while the recovery path needs the very
+            // input that was lost. An explicit touch pin still wins.
+            T.equal(InputProfile.resolve("auto", true, true), "mouse")
+            T.equal(InputProfile.resolve("auto", true, false), "touch")
+            T.equal(InputProfile.resolve("auto", false, true), "mouse")
+            T.equal(InputProfile.resolve("touch", false, true), "touch")
+            T.equal(InputProfile.resolve("mouse", true, true), "mouse")
+            // The two-arg call (dwell unspecified) keeps the 58 contract.
+            T.equal(InputProfile.resolve("auto", true), "touch")
+        })
+
         T.test("auto with no touch observed is the mouse, byte-today", function () {
             // The default world: everything the panel ships today keeps
             // happening until a finger says otherwise.

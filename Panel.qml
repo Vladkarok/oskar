@@ -155,7 +155,7 @@ Item {
     property string inputProfile: maintainedDefaults.inputProfile
     property bool touchObserved: false
     readonly property string effectiveInputProfile: InputProfile.resolve(
-        root.inputProfile, root.touchObserved)
+        root.inputProfile, root.touchObserved, root.dwellEnabled)
     readonly property var inputAfford: InputProfile.affordances(
         root.effectiveInputProfile)
 
@@ -1237,6 +1237,12 @@ Item {
         // Locked Shift is genuinely held down at the device, so closing the
         // panel has to let go of it before the keyboard disappears.
         keyboard.releaseModifiers()
+        // The touch observation is per-SUMMON, not per-process (the touch
+        // council's scoping fix, ticket 62): a hidden panel is a session
+        // boundary — "restart forgets" was too coarse when the panel is
+        // summoned dozens of times a day, and a touch on one monitor must
+        // not park release-typing on another for the whole session.
+        touchObserved = false
     }
 
     // Panel-local clipboard read (colour field, emoji search — R2). The
