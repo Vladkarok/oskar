@@ -1,3 +1,19 @@
+# Handoff — updated 2026-09-17 (the board is clean)
+
+**START HERE.** Everything through ticket 62 is shipped with full
+review cycles: the oskar rename (59) + the host migration done, the
+touch profile (58) with both council rounds and their four code
+fixes (62: hold-release dedupe, the dwell guard, the visible flip,
+per-summon observation, every tooltip gated), the languages
+mirroring the seat's layouts (61), ticket 60, and all three lab
+debts discharged PASS (44 closed — churn confirmed; 58's wl_touch
+hop proven live; the wall's first full green on the renamed tree).
+The one open item on the whole map: PUBLISHING — owner-gated.
+(GitHub repo `oskar` + tag v0.1.0 + checksums per the checklist in
+docs/package-notes.md; AUR the morning registration opens.)
+
+---
+
 # Handoff — updated 2026-09-17 evening (ticket 59, the oskar rename)
 
 **The tree is renamed omarchy-osk → oskar** on branch `rename-oskar`
