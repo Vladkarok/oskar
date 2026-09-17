@@ -1,3 +1,19 @@
+# Handoff — updated 2026-09-17 (PUBLISHED)
+
+**START HERE.** OSKar v0.1.0 is PUBLIC: github.com/Vladkarok/oskar
+(renamed, public, description+topics fixed — the first screenshots
+caught the stale 'work in progress' line), master pushed with both
+polish rounds merged, v0.1.0 tagged and checksummed into PKGBUILD,
+.SRCINFO shipped, CI green (after two real first-run finds: Arch
+package names libxkbcommon/rust; the width probes now pin
+JetBrainsMono Nerd Font and CI installs it). Awaiting: the AUR
+upload the morning registration reopens (checksums+SRCINFO ready);
+the owner's announcement posts (drafts in
+.scratch/next-iteration/announce-drafts.md) — the recruitment
+gate (>=5 retained strangers by day 30) starts with them.
+
+---
+
 # Handoff — updated 2026-09-17 (the board is clean)
 
 **START HERE.** Everything through ticket 62 is shipped with full
