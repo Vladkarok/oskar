@@ -144,12 +144,15 @@ Item {
             ? root.uiLanguage : "auto"
     }
     // The input profile (ticket 58): which pointer world the panel answers
-    // as. The setting is auto/mouse/touch; the OBSERVATION is monotonic —
-    // the first synthesized (touch/pen) mouse event any panel surface sees
-    // flips touchObserved once, for the panel's lifetime, no decay: a
-    // touchscreen laptop's stray mouse click must not flap the profile
-    // back mid-session, and a flip the other way is the explicit
-    // setting's job. The resolution and everything it switches is
+    // as. The setting is auto/mouse/touch; the OBSERVATION is monotonic
+    // PER SUMMON — the first synthesized (touch/pen) mouse event any panel
+    // surface sees flips touchObserved, and a HIDDEN panel forgets it
+    // (ticket 62: a touch on one monitor must not park release-typing on
+    // another for the whole session; "restart forgets" was too coarse).
+    // Within a summon it never decays — a touchscreen laptop's stray
+    // mouse click must not flap the profile back — and with dwell ENABLED
+    // auto never flips at all (the a11y guard; the explicit setting is the
+    // deliberate switch). The resolution and everything it switches is
     // InputProfile.js's pure table (tests/input-profile.qml); this is the
     // one fact only the live panel can hold.
     property string inputProfile: maintainedDefaults.inputProfile
@@ -186,7 +189,7 @@ Item {
         if (!InputProfile.isTouchSource(source)) return
         touchObserved = true
         console.log("[oskar] input profile: touch events observed "
-            + "(auto resolves to touch for this panel's life)")
+            + "(auto resolves to touch until the panel hides)")
     }
     // Emoji delivery mode (ticket 28): "direct" types the pick through the
     // helper; "clipboard" publishes the exact sequence and sends the paste
@@ -2214,7 +2217,11 @@ Item {
                     // hold vocabulary belongs to input, not chrome help).
                     HoverTooltip {
                         text: UiStrings.tr("mode.chip.tooltip", root.uiLang)
+                        // Text chrome: hidden under touch (the table's
+                        // own tooltipTextChrome rule — enforced, not
+                        // assumed; ticket 62's review found it ungated).
                         hovered: modeChipHit.containsMouse
+                            && root.inputAfford.tooltipHoverShows
                     }
                 }
 

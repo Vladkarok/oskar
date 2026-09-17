@@ -21,12 +21,14 @@
 //
 // Three decisions inside it:
 //
-//   Stickiness: ONCE SEEN, panel lifetime. The observation is a monotonic
-//     fact the caller holds (the panel's touchObserved flips true exactly
-//     once); there is no decay. A touchscreen laptop's stray mouse click
-//     must not flap the profile back mid-session — a flip the other way is
-//     the explicit setting's job. A panel restart forgets, and the next
-//     observed touch re-teaches it.
+//   Stickiness: ONCE SEEN, per SUMMON (amended by ticket 62's council:
+//     the panel hides => the observation forgets). Within a summon the
+//     observation is a monotonic fact (touchObserved flips true exactly
+//     once, no decay — a touchscreen laptop's stray mouse click must not
+//     flap the profile back mid-session; a flip the other way is the
+//     explicit setting's job). And with dwell ENABLED auto never flips
+//     at all (the a11y guard) — a chosen access method is not disarmed
+//     by a stray touch.
 //
 //   The observation itself: Qt synthesizes the mouse events a MouseArea
 //     sees from touch (and tablet) input, and the event's `source` is the
@@ -41,9 +43,10 @@
 //     one gesture; the TEXT chrome (the mode chip) hides it — "hidden" —
 //     because its label already states what it is, and the hold vocabulary
 //     stays reserved for input. Everything else that is hover-only today
-//     (the emoji cells' names, the settings rows) is hidden on touch by
-//     absence: touch synthesizes no hover, so the wiring needs no change
-//     and the decision is this comment.
+//     (the emoji cells' names, the settings chrome) is hidden on touch by
+//     the EXPLICIT tooltipHoverShows gate (ticket 62's review: synthesized
+//     hover may follow a stationary finger — "hidden by absence" was an
+//     assumption, and every hover arm is gated now, not assumed away).
 
 /// The setting's value space. One list here, so validation (Config.js),
 /// the popover's segments and the tests cannot disagree — the SUPER_MARKS

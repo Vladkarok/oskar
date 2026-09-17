@@ -651,6 +651,7 @@ Rectangle {
 
             SettingsConfirmChip {
                 tokens: editor.tokens
+                panel: editor.panel
                 enabled: editor.panel && editor.panel.configHealthy
                 accessName: UiStrings.tr("color.editor.confirm",
                     editor.panel && editor.panel.uiLang, [editor.labelText])
@@ -688,7 +689,10 @@ Rectangle {
                 }
                 HoverTooltip {
                     text: UiStrings.tr("color.editor.cancelEdit", editor.panel && editor.panel.uiLang)
-                    hovered: cancelArea.containsMouse
+                    hovered: panel && panel.inputAfford
+                        ? cancelArea.containsMouse
+                            && panel.inputAfford.tooltipHoverShows
+                        : cancelArea.containsMouse
                 }
             }
 
