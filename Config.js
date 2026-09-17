@@ -26,6 +26,11 @@ var EMOJI_SKIN_TONES = ["", "🏻", "🏼", "🏽", "🏾", "🏿"]
 // validation, the popover's segments and the tests cannot disagree —
 // the SUPER_MARKS rule.
 var UI_LANGUAGES = ["auto", "en", "ru", "uk"]
+// Ticket 58: the input profile. "auto" (the default) activates the touch
+// affordances when the panel observes touch events; mouse/touch pin the
+// world. One list for validation, the popover's segments and the tests —
+// the SUPER_MARKS rule.
+var INPUT_PROFILES = ["auto", "mouse", "touch"]
 // Ticket 28: "direct" types the pick (decisions §39/§40); "clipboard"
 // publishes the exact sequence and sends the paste chord — the mode the
 // owner chose for Chromium-family clients such as ZCode.
@@ -46,6 +51,9 @@ var CONFIG_FIELDS = [
     // Ticket 52: the UI language override — auto (follow the active
     // layout) by default.
     { file: "ui_language", value: "uiLanguage" },
+    // Ticket 58: the input profile — auto (touch affordances when touch
+    // events are observed) by default.
+    { file: "input_profile", value: "inputProfile" },
     { file: "key_radius", value: "capCorner" },
     { file: "panel_radius", value: "panelRadius" },
     { file: "key_background", value: "keyBackground" },
@@ -86,6 +94,10 @@ function maintainerDefaults() {
         // the user pins one — the shipped searchPlaceholder behaviour,
         // generalised to every word the panel draws.
         uiLanguage: "auto",
+        // Ticket 58: the panel answers as a mouse until a finger (or the
+        // user) says otherwise — auto observes and flips, the explicit
+        // pins win (InputProfile.resolve owns the semantics).
+        inputProfile: "auto",
         capCorner: 8,
         panelRadius: 12,
         keyBackground: "#303030",
@@ -200,6 +212,12 @@ function validFieldValue(field, value) {
     // could not reach the file can never blank the UI either.
     if (field.file === "ui_language")
         return UI_LANGUAGES.indexOf(value) !== -1
+    // Exactly the three words the popover offers; anything else is a
+    // malformed edit with the §5 preservation semantics — InputProfile's
+    // resolve degrades junk to auto's semantics at the seam, so a value
+    // that could not reach the file can never strand the panel either.
+    if (field.file === "input_profile")
+        return INPUT_PROFILES.indexOf(value) !== -1
     if (field.file === "key_radius" || field.file === "panel_radius")
         return isRadius(value)
     if (field.file === "key_background" || field.file === "panel_background"

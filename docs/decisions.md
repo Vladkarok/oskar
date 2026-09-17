@@ -1941,3 +1941,100 @@ setMode the Settings row uses (config-health guard and the
 floating-position restore included). The Settings row stays for
 discoverability; the notice group's right boundary moved to the chip
 (noticeEdge's fallback, ticket 57's anchor discipline preserved).
+
+## 57. The panel knows its pointer: an input profile, and touch types on release
+
+2026-09-17, ticket 58 (the owner's "я б сделал до выхода тоже": the
+touch half of audit backlog item 4, brought ahead of publish). The
+mouse and touch use-cases genuinely differ, so the panel grows an
+INPUT PROFILE — auto (default) / mouse / touch — and everything the
+profile switches is DATA in one pure module, InputProfile.js
+(tests/input-profile.qml, 24 cases, red-first: the module was written
+against a failing suite). Five decisions inside it:
+
+- **The observation is the synthesized mouse event's `source`, and it
+  is sticky.** Qt synthesizes the mouse events a MouseArea sees from
+  touch (and tablet) input; `mouse.source !== Qt.MouseEventNotSynthetized`
+  is the one thing that tells a finger from a button, and every
+  interactive surface reports its presses' source to the panel's one
+  writer (caps first — the press that teaches auto already types on
+  release — then the header chips, the emoji page's cells and field).
+  ONCE SEEN, panel lifetime: no decay, because a touchscreen laptop's
+  stray mouse click must not flap the profile back mid-session, and a
+  deliberate flip the other way is the explicit setting's job. A
+  restart forgets; the next touch re-teaches. Pens get the touch
+  affordances too — a hover-less pointer is the same world. Explicit
+  mouse/touch overrides win over the observation; junk degrades to
+  auto's semantics at the seam (the file's validation is the
+  ui_language precedent: exactly three words).
+- **Touch types on RELEASE, and a slide-off cancels — 37's machinery
+  generalized, not duplicated.** In touch EVERY character cap defers
+  (`InputProfile.touchDefers`: no column requirement, exact &123 caps
+  included; `key` caps and Space keep press semantics because
+  hold-to-repeat is their idiom), press sends nothing, and the release
+  walks 37's own beginCapHold/endCapHold pair — one typing pipeline,
+  the defer decision the only thing that changed (capDefersHold now
+  asks the seam; in mouse the answer is Dwell.holdDefers verbatim,
+  byte-today and regression-pinned by both suites). The 320 ms
+  threshold rides the same timer: a columnless hold stays pending past
+  it and the release then types. The slide-off check is the one new
+  line in endCapHold: in touch, a lift outside the hit area cancels
+  (never types); the mouse profile passes undefined and keeps today's
+  type-wherever-the-button-comes-up semantics exactly.
+- **Hover affordances die with the hover, as decisions.** Dwell never
+  arms in touch (`dwellArms` composes the setting AND the profile — a
+  leftover dwell_enabled override strands nothing); hover highlight is
+  inert by absence (touch synthesizes no hover, the binding needed no
+  change). Tooltips, decided per control: the header's GLYPH chrome
+  (gear, close, paste) shows its tooltip on touch-and-hold —
+  help-then-action as one gesture, the release still clicks — and the
+  TEXT chrome (the mode chip) hides it, because its label already
+  states what it is; everything else hover-only (the emoji cells'
+  names) is hidden on touch by absence. The table owns the two named
+  classes; the module header pins the rest.
+- **Chrome targets grow invisibly, gap-capped.** The touch floor is
+  44px (the number the platform guidelines converge on); the chips are
+  28-30px drawn and NEVER redrawn — the MouseAreas grow by negative
+  margins, vertically the full need bounded by the room each control
+  owns (the drag bar's band above, the bar's edge below), horizontally
+  capped at the MIDPOINT of the gap to the neighbour (the capHit
+  discipline, so two grown areas tile instead of fighting). Mouse
+  grows nothing anywhere: the table's mouse minimum is 0, byte-today.
+- **preventStealing is the pinned guarantee, not a present fix.**
+  Nothing on today's grid steals a sliding finger (no Flickable
+  parents the caps), so the touch profile's flag is a no-op made
+  load-bearing the day the grid grows a scrollable surface — and it is
+  deliberately NOT set on the surfaces where a slide IS the gesture
+  (the emoji grid, the settings scroll): those keep stealing, which is
+  finger scrolling.
+
+The daemon, the protocol and the keymap pipeline are untouched — a
+press is a press. The settings row (INPUT section, Pointer profile)
+is localized EN/RU/UK with the widest segment label ("Сенсор", 43px at
+fontBody) pinned offscreen to fit its 47px slice.
+
+The VM leg (lab ticket 58, 2026-09-17): QEMU 11.1.1 CAN emulate
+multitouch for this lab — `virtio-multitouch-pci` (bound
+`display=<vga-id>`, present at boot: the lab's pcie.0 refuses
+hotplug, so a temporary wrapper booted the same disk with the device
+added; NO domain XML was touched) presents a real protocol-B evdev
+touchscreen, and QMP `input-send-event` mtt begin/data/end + btn
+touch drives it — with two lab traps now on record: the kernel input
+core DROPS duplicate ABS_MT values (scripted taps must jitter, a real
+finger always does), and device-addressed events need the console
+binding. Proven live, in order: kernel evdev (tracking ids, BTN_TOUCH,
+0..32767), libinput (TOUCH_DOWN/FRAME/UP), and Hyprland forwarding
+wl_touch to a client surface with exact coordinates (WAYLAND_DEBUG
+capture). NOT proven live: the panel reacting inside the guest — the
+guest's Qt never turned the delivered wl_touch into app events in any
+process (bare qml window or quickshell), and Hyprland's wl_touch
+delivery was not reproducible under changed focus in that build (its
+own movecursor dispatcher also errors — an unstable snapshot, not a
+stable oracle). The burden fell where the ticket said it would: the
+seam's 24 cases plus the HOST proof that Qt 6.11.2 — the guest's exact
+version — synthesizes MouseArea presses from touch with
+`source == Qt.MouseEventSynthesizedByQt` (qmltestrunner, mouse
+baseline + touch case), which is the exact fact the observation keys
+on. The owner's finger on real hardware remains the acceptance it
+always is; a lab re-run owes the wl_touch-into-Qt hop a second look on
+a stable Hyprland build.

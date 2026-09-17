@@ -126,6 +126,7 @@ Rectangle {
         [UiStrings.tr("settings.row.mode", panel.uiLang),
          UiStrings.tr("settings.row.size", panel.uiLang),
          UiStrings.tr("settings.row.language", panel.uiLang),
+         UiStrings.tr("settings.row.inputProfile", panel.uiLang),
          UiStrings.tr("settings.row.emojiPicking", panel.uiLang),
          UiStrings.tr("settings.row.emojiPageSize", panel.uiLang),
          UiStrings.tr("settings.row.superMark", panel.uiLang),
@@ -672,6 +673,79 @@ Rectangle {
                     tokens: popoverRoot.tokens
                     panel: popoverRoot.panel
                     overrideName: "uiLanguage"
+                }
+            }
+
+            SettingsHairline {}
+
+            // ---- INPUT (ticket 58) ----
+            //
+            // Which pointer world the panel answers as: auto (the
+            // default) activates the touch affordances when the panel
+            // observes touch events — a 2-in-1 flipping modes never
+            // visits Settings — and mouse/touch pin the world over the
+            // observation. The effective behaviour (release-typing, no
+            // dwell, grown chrome targets) is InputProfile.js's table;
+            // this row only writes the setting.
+            Text {
+                width: parent.width
+                text: UiStrings.tr("settings.section.input", panel.uiLang)
+                color: tokens.muted
+                font.family: tokens.fontFamily
+                font.pixelSize: tokens.fontBodySmall
+            }
+
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+
+                Text {
+                    anchors {
+                        left: parent.left
+                        verticalCenter: parent.verticalCenter
+                    }
+                    text: UiStrings.tr("settings.row.inputProfile", panel.uiLang)
+                    color: tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBody
+                }
+
+                SettingsSegmented {
+                    id: inputProfileControl
+                    x: popoverRoot.controlColumnX
+                    anchors {
+                        verticalCenter: parent.verticalCenter
+                    }
+                    // The size row's width: three segments of ~47px each,
+                    // and the widest translated label ("Сенсор") measures
+                    // 43px at fontBody — pinned offscreen in
+                    // tests/input-profile.qml, the ticket-52 discipline.
+                    width: tokens.space(150)
+                    readonly property var profileLabels: ({
+                        auto: UiStrings.tr("settings.profile.auto", panel.uiLang),
+                        mouse: UiStrings.tr("settings.profile.mouse", panel.uiLang),
+                        touch: UiStrings.tr("settings.profile.touch", panel.uiLang)
+                    })
+                    segments: ConfigFile.INPUT_PROFILES.map(function (value) {
+                        return { value: value,
+                            label: inputProfileControl.profileLabels[value] }
+                    })
+                    current: panel.inputProfile
+                    onPicked: function (value) {
+                        panel.setOverride("inputProfile", value)
+                    }
+                }
+
+                SettingsResetChip {
+                    anchors {
+                        left: inputProfileControl.right
+                        leftMargin: tokens.space(6)
+                        verticalCenter: parent.verticalCenter
+                    }
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "inputProfile"
                 }
             }
 

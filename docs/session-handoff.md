@@ -1,3 +1,25 @@
+# Handoff — updated 2026-09-17 (ticket 58, the touch pass)
+
+**START HERE — work continues on spec/v1.1-fixes** (fast-forwarded to
+master's merge state 852c005 first; master itself untouched since).
+Ticket 58 (the input profile) is IMPLEMENTED on that branch, review
+and the owner's feel pass still owed — decisions §57 owns the whole
+record; the ticket file carries the evidence tally. The one-line
+world: InputProfile.js is the pure seam (resolution + the
+affordance table, 24 red-first cases), touch types on RELEASE through
+37's own machinery with slide-off cancel, dwell never arms, chrome
+targets grow invisibly to 44px, and the mouse profile is byte-today.
+The VM lab proved QEMU 11.1.1's virtio-multitouch end to end (QMP mtt
+→ kernel → libinput → Hyprland's wl_touch, exact coordinates) but NOT
+the guest's Qt hop — that build's input stack is not a stable oracle
+(the seam + a host qmltestrunner proof of Qt 6.11.2's touch→mouse
+synthesis carry the burden; §57's VM paragraph has the traps: ABS
+dedup needs jitter, console binding needed, no hotplug on pcie.0, no
+domain XML touched, lab restored). The owner's uncommitted
+package-notes edit (ticket 59 rename note) is preserved unstaged.
+
+---
+
 # Handoff — updated 2026-09-15 (master merge)
 
 **START HERE — the branch IS master now.** The audited round merged

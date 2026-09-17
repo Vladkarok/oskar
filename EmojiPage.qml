@@ -96,6 +96,10 @@ Rectangle {
     // "backspace", "escape"). The panel applies it with the very rule the
     // caps' input uses, so Escape's disarm has one definition.
     signal physicalSearchInput(string action, string text)
+    // Ticket 58: the page's presses report their pointer source to the
+    // panel's input-profile observation — a touch on the emoji page teaches
+    // auto exactly a touch on the caps does.
+    signal pointerSourceObserved(var source)
 
     // One intercepted keyboard cap, applied to the standing query. The
     // keyboard names the action ("char" with the character it drew,
@@ -342,7 +346,8 @@ Rectangle {
                     Accessible.name: emojiRoot.searchArmed
                         ? "Search field — typing goes here"
                         : "Search field — click to type here"
-                    onClicked: {
+                    onClicked: function (mouse) {
+                        emojiRoot.pointerSourceObserved(mouse.source)
                         if (emojiRoot.searchArmed) return
                         emojiRoot.searchArmed = true
                         console.log("[osk] emoji search armed by field click")
@@ -378,7 +383,10 @@ Rectangle {
                         hoverEnabled: true
                         Accessible.role: Accessible.Button
                         Accessible.name: UiStrings.tr("emoji.clearSearch", emojiRoot.uiLang)
-                        onClicked: emojiRoot.query = ""
+                        onClicked: function (mouse) {
+                            emojiRoot.pointerSourceObserved(mouse.source)
+                            emojiRoot.query = ""
+                        }
                     }
                     HoverTooltip {
                         text: UiStrings.tr("emoji.clearSearch", emojiRoot.uiLang)
@@ -641,7 +649,10 @@ Rectangle {
                                     Accessible.role: Accessible.Button
                                     Accessible.name: UiStrings.tr("access.insert",
                                         emojiRoot.uiLang, [modelData.name])
-                                    onClicked: emojiRoot.emojiChosen(modelData, false)
+                                    onClicked: function (mouse) {
+                                        emojiRoot.pointerSourceObserved(mouse.source)
+                                        emojiRoot.emojiChosen(modelData, false)
+                                    }
                                 }
                                 HoverTooltip {
                                     text: modelData.name
@@ -690,9 +701,12 @@ Rectangle {
                         // history — decides the tone flag, with exactly the
                         // two facts that chose this grid's model (R1):
                         // history repeats its exact stored sequence.
-                        onClicked: emojiRoot.emojiChosen(modelData,
-                            EmojiGrid.appliesTone(emojiRoot.searching,
-                                emojiRoot.activeGroup))
+                        onClicked: function (mouse) {
+                            emojiRoot.pointerSourceObserved(mouse.source)
+                            emojiRoot.emojiChosen(modelData,
+                                EmojiGrid.appliesTone(emojiRoot.searching,
+                                    emojiRoot.activeGroup))
+                        }
                     }
                     HoverTooltip {
                         text: modelData.name
