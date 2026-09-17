@@ -21,7 +21,7 @@ jobs:
       # died on a nonexistent 'xkbcommon'): libxkbcommon is the lib,
       # cargo rides the rust package.
       - run: pacman -Syu --noconfirm git qt6-declarative qt6-tools
-             libxkbcommon rust python coreutils grep
+             libxkbcommon rust python coreutils grep ttf-jetbrains-mono-nerd
       - uses: actions/checkout@v4
       - name: Host battery (16 suites + qml gates)
         run: ./tools/run-tests.sh
