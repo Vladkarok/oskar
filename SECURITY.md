@@ -31,19 +31,30 @@ daemon's own sloppy writes.
 - **Five writes could kill the keyboard permanently** — an unbounded
   line plus `MemoryMax` plus `StartLimitBurst` meant a same-user
   client could OOM-loop the unit into `failed`, and a user who types
-  through OSKar cannot type their way out. Fixed: 4 KiB frame cap on
-  both the completed-line and the dribble paths, `err line too long`,
-  connection closed.
+  through OSKar cannot type their way out. Fixed with a manual
+  chunked read loop (the first cut's post-hoc length check missed an
+  active newline-free stream — the cross-round caught it): every
+  read is capped at one 8 KiB buffer, the frame cap is enforced per
+  chunk, overflow answers `err line too long` and closes.
 - **Slot starvation** — four idle connections held every slot forever
   while the socket stayed alive (the panel reported the helper
-  healthy). Fixed: a 5-second pre-handshake window and a loud
-  `err too many clients` on refusal.
-- **Socket-directory pre-bind impersonation** — the daemon now refuses
-  to serve from any runtime directory it does not solely own (uid +
-  0700 asserted at start; explicit mode on create).
+  healthy). Fixed with an ABSOLUTE 5-second connect-to-`hello`
+  deadline (a renewable timeout evicted no one — the cross-round's
+  catch) and a loud `err too many clients` on refusal. Post-handshake
+  idle connections are indistinguishable from the real panel and stay
+  by design.
+- **Socket-directory pre-bind impersonation** — the daemon refuses to
+  serve from any runtime directory it does not solely own (uid +
+  0700 asserted at start; explicit mode on create). Residual, stated
+  plainly: a same-user attacker who binds their own socket before the
+  daemon's first start still races it — the panel does not yet verify
+  the peer; the same-user boundary is the actual wall.
 - **Clipboard preview rich text** — a text/plain payload with a
   remote image tag could make the preview issue a network request.
-  Fixed: `Text.PlainText`, always; `wl-copy` gains `--`.
+  Fixed: `Text.PlainText`, always; `wl-copy` gains `--`; every
+  `wl-paste` reader is stream-capped at 64 KiB so a malicious
+  clipboard owner cannot balloon the shell's memory through the
+  collector.
 - **Dev-tool surfaces** — the nested-lab harness used a predictable
   `/tmp` path (now `mktemp -d` exclusive); the wall's logs are
   private; CI pins its action by commit SHA, declares
