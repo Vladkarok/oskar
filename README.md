@@ -109,7 +109,8 @@ an independent colour schema — that remains v2.
 
 **Touch is beta.** OSKar's design centre is the mouse; the touch
 profile is new and usable but not yet polished — expect small targets
-in the emoji and settings chrome, and set `input profile = mouse` if
+in the emoji and settings chrome, and set Input profile to Mouse in
+Settings if
 a stray touch switches behaviour you did not want. Mouse behaviour is
 unchanged in every particular.
 

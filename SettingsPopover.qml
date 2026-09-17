@@ -320,7 +320,8 @@ Rectangle {
                 }
                 HoverTooltip {
                     text: UiStrings.tr("settings.decrease", panel.uiLang)
-                    hovered: stepDownArea.containsMouse
+                    hovered: popoverRoot.panel.inputAfford.tooltipHoverShows
+                        ? stepDownArea.containsMouse : false
                 }
             }
 
@@ -371,7 +372,8 @@ Rectangle {
                 }
                 HoverTooltip {
                     text: UiStrings.tr("settings.increase", panel.uiLang)
-                    hovered: stepUpArea.containsMouse
+                    hovered: popoverRoot.panel.inputAfford.tooltipHoverShows
+                        ? stepUpArea.containsMouse : false
                 }
             }
         }
@@ -722,11 +724,15 @@ Rectangle {
                     anchors {
                         verticalCenter: parent.verticalCenter
                     }
-                    // The size row's width: three segments of ~47px each,
-                    // and the widest translated label ("Сенсор") measures
-                    // 43px at fontBody — pinned offscreen in
+                    // Three segments of ~47px; the widest plain label
+                    // ("Сенсор") measures 43px at fontBody. While auto has
+                    // FLIPPED to touch, the Auto segment carries the
+                    // "Auto+touch" notice (72px) and the row widens to give
+                    // it a slice — both budgets pinned offscreen in
                     // tests/input-profile.qml, the ticket-52 discipline.
-                    width: tokens.space(150)
+                    width: panel.effectiveInputProfile === "touch"
+                        && panel.inputProfile === "auto"
+                        ? tokens.space(240) : tokens.space(150)
                     readonly property var profileLabels: ({
                         auto: UiStrings.tr("settings.profile.auto", panel.uiLang),
                         mouse: UiStrings.tr("settings.profile.mouse", panel.uiLang),

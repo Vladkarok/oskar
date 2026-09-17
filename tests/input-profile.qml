@@ -69,9 +69,10 @@ QtObject {
             T.equal(InputProfile.resolve("TOUCH", false), "mouse")
         })
 
-        T.test("the stickiness decision is pinned: once seen, panel lifetime", function () {
-            // Touch observed is MONOTONIC in the caller (the panel holds
-            // the fact); the seam is stateless and never decays it. A
+        T.test("the stickiness decision is pinned: once seen, per summon", function () {
+            // Touch observed is MONOTONIC within a summon (the panel holds
+            // the fact; the seam is stateless and never decays it, and a
+            // HIDDEN panel resets it — ticket 62's council scoping). A
             // touchscreen laptop's stray mouse click must not flap the
             // profile back mid-session, and a flip the other way is the
             // explicit setting's job. What is pinned here is the
@@ -331,6 +332,28 @@ QtObject {
             // 4px horizontal padding each segment's label keeps.
             T.equal(widest <= 47.3 - 4, true,
                 "widest label " + widest + "px vs 43.3px segment")
+        })
+
+        T.test("the auto-flipped notice fits its widened segment", function () {
+            // Ticket 62: while auto stands flipped to touch, the Auto
+            // segment carries the "Auto+touch" notice and the row widens
+            // from 150 to 240 — the notice must fit (240 - 4 - 2 * 2) / 3
+            // = 78px minus its 4px padding, in every language (RU measured
+            // 71.875px — the review caught 235 falling 1.6px short).
+            var labels = ["Auto+touch",
+                "\u0410\u0432\u0442\u043e+\u0442\u0430\u0447"]
+            var probe = Qt.createQmlObject(
+                'import QtQuick 2.0; Text { font.family: "monospace"; ' +
+                'font.pixelSize: 12 }',
+                harnessTarget)
+            var widest = 0
+            for (var i = 0; i < labels.length; i++) {
+                probe.text = labels[i]
+                widest = Math.max(widest, probe.implicitWidth)
+            }
+            probe.destroy()
+            T.equal(widest <= 78 - 4, true,
+                "widest notice " + widest + "px vs 74px widened segment")
         })
 
         Qt.exit(T.report("input profile"))

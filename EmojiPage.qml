@@ -665,6 +665,7 @@ Rectangle {
                                 HoverTooltip {
                                     text: modelData.name
                                     hovered: frequentArea.containsMouse
+                                        && emojiRoot.tooltipHoverShows
                                 }
                             }
                         }
@@ -719,6 +720,7 @@ Rectangle {
                     HoverTooltip {
                         text: modelData.name
                         hovered: cellArea.containsMouse
+                            && emojiRoot.tooltipHoverShows
                     }
                 }
 
@@ -798,6 +800,7 @@ Rectangle {
                                 emojiRoot.uiLang)
                             : modelData.label
                         hovered: toneChoiceArea.containsMouse
+                            && emojiRoot.tooltipHoverShows
                     }
                 }
             }

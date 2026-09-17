@@ -224,9 +224,9 @@ var STRINGS = {
         uk: "Профіль введення"
     },
     "settings.profile.autoTouch": {
-        en: "Auto (touch)",
-        ru: "Авто (тач)",
-        uk: "Авто (тач)"
+        en: "Auto+touch",
+        ru: "Авто+тач",
+        uk: "Авто+тач"
     },
     "settings.profile.auto": {
         en: "Auto",
@@ -637,7 +637,7 @@ function languageFor(layoutCode, override, layoutCodes) {
 /// layout code the seat carries. `layoutCodes` is the seat's installed
 /// xkb list (Keyboard.layoutCodes); junk, case and duplicates cost
 /// nothing. The owner's call: a us,ua seat sees Auto/English/
-/// Україїнська — no Русский segment for a language it cannot type;
+/// Українська — no Русский segment for a language it cannot type;
 /// a seat with ru gains it.
 function languageChoices(layoutCodes) {
     var codes = Array.isArray(layoutCodes) ? layoutCodes : []

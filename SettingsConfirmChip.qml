@@ -7,6 +7,7 @@ Rectangle {
     id: chip
 
     property var tokens
+    property var panel
     property string accessName: "Confirm colour"
     signal confirmed()
 
@@ -41,6 +42,8 @@ Rectangle {
     }
     HoverTooltip {
         text: chip.accessName
-        hovered: chipArea.containsMouse
+        hovered: panel && panel.inputAfford
+            ? chipArea.containsMouse && panel.inputAfford.tooltipHoverShows
+            : chipArea.containsMouse
     }
 }
