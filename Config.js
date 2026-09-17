@@ -276,6 +276,20 @@ function parseOverrides(text) {
             continue
         }
         var value = parsed.value[key]
+        // Boolean fields written as JSON strings ("true"/"false") heal
+        // instead of poisoning the file (ticket: the owner's live config
+        // carried "true" from the omarchy-osk era; the validator then
+        // failed EVERY load forever, and reset chips could not reach it —
+        // a §5 failure the preservation semantics kept alive). The heal
+        // is offered to every non-string field and accepted only when the
+        // healed boolean passes validation — a string-typed field
+        // (emoji_app) rejects the boolean and keeps its string.
+        if (typeof value === "string" && field.file !== "mode"
+            && field.file !== "size_preset" && field.file !== "sound"
+            && field.file !== "emoji_delivery" && field.file !== "super_mark"
+            && (value === "true" || value === "false")
+            && validFieldValue(field, value === "true"))
+            value = value === "true"
         if (!validFieldValue(field, value))
             return { value: null, error: "Invalid value for " + key }
         // Validation trims colours (#... with stray padding is accepted), so
