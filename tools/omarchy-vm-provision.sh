@@ -3,8 +3,8 @@
 # Runs INSIDE the Omarchy VM (not on the host), from whichever copy of the
 # repo the guest has. Two ways to get one:
 #
-#   git clone https://github.com/vladkarok/omarchy-osk   # simplest
-#   bash omarchy-osk/tools/omarchy-vm-provision.sh
+#   git clone https://github.com/vladkarok/oskar   # simplest
+#   bash oskar/tools/omarchy-vm-provision.sh
 #
 # and the 9p share the VM exports, which is the host's working tree — the
 # only way to test edits that are not pushed yet:
@@ -40,7 +40,7 @@
 set -euo pipefail
 
 SHARE=/mnt/osk-src
-PLUGIN_ID=io.github.vladkarok.osk
+PLUGIN_ID=io.github.vladkarok.oskar
 MOUNT_OPTS=trans=virtio,version=9p2000.L,msize=104857600
 
 # Where this script is speaks for which copy of the repo it belongs to. Piped
@@ -112,8 +112,8 @@ mkdir -p "$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 rsync -a --delete \
     --exclude .git --exclude daemon --exclude tools --exclude 'core.*' \
     "$BUILD_SRC/" "$HOME/.config/omarchy/plugins/$PLUGIN_ID/"
-install -Dm755 "$BUILD_SRC/daemon/target/release/omarchy-osk-daemon" "$HOME/.local/libexec/omarchy-osk-daemon"
-install -Dm644 "$BUILD_SRC/systemd/omarchy-osk.service" "$HOME/.config/systemd/user/omarchy-osk.service"
+install -Dm755 "$BUILD_SRC/daemon/target/release/oskar-daemon" "$HOME/.local/libexec/oskar-daemon"
+install -Dm644 "$BUILD_SRC/systemd/oskar.service" "$HOME/.config/systemd/user/oskar.service"
 systemctl --user daemon-reload
 
 # Spec-v1.1 §6 (decisions §19): provisioning enables and starts the helper
@@ -125,8 +125,8 @@ systemctl --user daemon-reload
 # cannot start must not block provisioning) and rather than passing
 # silently (a §11 silent failure).
 if [[ "${OSK_NO_AUTOSTART:-}" == "1" ]]; then
-    systemctl --user disable --now omarchy-osk 2>/dev/null \
-        || echo "WARNING: could not disable omarchy-osk.service; see 'systemctl --user status omarchy-osk'" >&2
+    systemctl --user disable --now oskar 2>/dev/null \
+        || echo "WARNING: could not disable oskar.service; see 'systemctl --user status oskar'" >&2
     unit_state="off (OSK_NO_AUTOSTART — unit left disabled)"
 else
     # Enable and start each warn on failure rather than dying (a helper
@@ -134,10 +134,10 @@ else
     # passing silently (a §11 silent failure): what actually happened is
     # warned on stderr here and reported truthfully in the summary below,
     # never papered over with a default success.
-    if systemctl --user enable omarchy-osk 2>/dev/null; then
+    if systemctl --user enable oskar 2>/dev/null; then
         unit_state="enabled"
     else
-        echo "WARNING: could not enable omarchy-osk.service; see 'systemctl --user status omarchy-osk'" >&2
+        echo "WARNING: could not enable oskar.service; see 'systemctl --user status oskar'" >&2
         unit_state="NOT enabled (systemctl enable failed — run it by hand)"
     fi
     if systemctl --user --quiet is-active graphical-session.target; then
@@ -145,10 +145,10 @@ else
         # new binary, and an already-running service would keep serving the
         # old one. Without a live session the unit's ConditionEnvironment
         # refuses an earlier start — WantedBy starts it at the next login.
-        if systemctl --user restart omarchy-osk 2>/dev/null; then
+        if systemctl --user restart oskar 2>/dev/null; then
             unit_state+=" and started"
         else
-            echo "WARNING: omarchy-osk.service did not start; see 'journalctl --user -u omarchy-osk'" >&2
+            echo "WARNING: oskar.service did not start; see 'journalctl --user -u oskar'" >&2
         fi
     else
         unit_state+=" (no graphical session — starts at the next login)"

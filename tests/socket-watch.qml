@@ -6,7 +6,7 @@
 // stranger's service restarts, once on purpose). The old reconnect policy
 // answered "an open socket is never torn down" with a re-hello — written
 // into a dead object, unanswered forever — so the panel wedged at
-// "Starting omarchy-osk.service…" with the typing gate shut, every key
+// "Starting oskar.service…" with the typing gate shut, every key
 // click a silent no-op, and only a shell restart escaped it.
 //
 // The decision table here pins the watchdog: a hello that has gone

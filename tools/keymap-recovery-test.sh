@@ -30,10 +30,10 @@ set -euo pipefail
 phase="${1:-}"
 [[ -n "$phase" ]] || { echo "usage: tools/keymap-recovery-test.sh run|cleanup" >&2; exit 2; }
 
-PLUGIN_ID=io.github.vladkarok.osk
+PLUGIN_ID=io.github.vladkarok.oskar
 CUSTOM="$HOME/osk-06-custom.xkb"
-LOOKALIKE_DIR="$HOME/osk-06-lookalike/omarchy-osk"
-RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omarchy-osk"
+LOOKALIKE_DIR="$HOME/osk-06-lookalike/oskar"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/oskar"
 SIDECAR="$RUNTIME_DIR/user-keymap-source"
 PUBLISHED="$RUNTIME_DIR/keymap.xkb"
 PASS=0
@@ -162,7 +162,7 @@ phase_run() {
   sleep 2
   check "$(get_kbfile)" "$PUBLISHED" "SIGKILL left the compositor on the published keymap"
   check "$(hello)" "hello 5" "the helper survived the shell's death"
-  systemctl --user restart omarchy-osk.service
+  systemctl --user restart oskar.service
   sleep 2
   check "$(cat "$SIDECAR" 2>/dev/null | tr -d '\n')" "$CUSTOM" \
     "the record survived the helper restart (RuntimeDirectoryPreserve)"
@@ -178,7 +178,7 @@ phase_run() {
 
   # --- 3. helper restart in the same session: the live panel re-feeds the
   # source on the new handshake whatever systemd did to the runtime dir.
-  systemctl --user restart omarchy-osk.service
+  systemctl --user restart oskar.service
   sleep 3
   check "$(hello)" "hello 5" "the helper restarted in the same session"
   local after
@@ -186,18 +186,18 @@ phase_run() {
   check "$after" "$CUSTOM" "the sidecar converged back after the helper restart"
   check "$(cap_for AD01)" "'" "typing still derives from the custom file (AD01=')"
 
-  # --- 3.5 the routine trigger: `omarchy-osk upgrade` restarts the helper
+  # --- 3.5 the routine trigger: `oskar upgrade` restarts the helper
   # and then the shell — with the custom map set, nothing may lose it.
-  omarchy-osk upgrade >/dev/null
+  oskar upgrade >/dev/null
   sleep 4
   check "$(cat "$SIDECAR" 2>/dev/null | tr -d '\n')" "$CUSTOM" \
-    "the record survived omarchy-osk upgrade's helper restart"
+    "the record survived oskar upgrade's helper restart"
   check "$(ad01_cap)" "'" "typing derives from the custom file after upgrade (AD01=')"
 
   # --- 4. an edited custom file at the same path: the record holds the
   # PATH, the compile reads fresh content.
   xkbcli compile-keymap --layout us --variant colemak >"$CUSTOM"
-  systemctl --user restart omarchy-osk.service
+  systemctl --user restart oskar.service
   sleep 4
   local cap
   cap="$(wait_for cap-colemak "q" ad01_cap)"

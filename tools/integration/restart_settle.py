@@ -44,7 +44,7 @@ before and restored after.
 
 Run inside the VM's lab session:
 
-  cd ~/omarchy-osk && OSK_RESTART_SETTLE_LIVE=1 \
+  cd ~/oskar && OSK_RESTART_SETTLE_LIVE=1 \
       python3 tools/integration/restart_settle.py
 """
 
@@ -82,7 +82,7 @@ class LabSession:
     def __enter__(self):
         for attempt in range(4):
             subprocess.run(
-                ["systemctl", "--user", "stop", "omarchy-osk.service"],
+                ["systemctl", "--user", "stop", "oskar.service"],
                 capture_output=True, timeout=15,
             )
             try:
@@ -93,7 +93,7 @@ class LabSession:
             except Failure:
                 if attempt == 3:
                     state = subprocess.run(
-                        ["systemctl", "--user", "show", "omarchy-osk.service",
+                        ["systemctl", "--user", "show", "oskar.service",
                          "-p", "ActiveState,SubState,MainPID,NRestarts"],
                         capture_output=True, text=True).stdout
                     raise Failure("the packaged service would not stop: "
@@ -101,7 +101,7 @@ class LabSession:
                 continue
         # A stale socket file from the dying daemon reads as "another
         # daemon owns the socket" to the next one (measured live, canary).
-        stale = os.path.join(RUNTIME, "omarchy-osk/control.sock")
+        stale = os.path.join(RUNTIME, "oskar/control.sock")
         if os.path.exists(stale):
             os.unlink(stale)
         try:
@@ -118,7 +118,7 @@ class LabSession:
         for name, group in self.group_was.items():
             hyprctl("switchxkblayout", name, str(group))
         subprocess.run(
-            ["systemctl", "--user", "start", "omarchy-osk.service"],
+            ["systemctl", "--user", "start", "oskar.service"],
             capture_output=True, timeout=15,
         )
         return False
@@ -131,7 +131,7 @@ RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "")
 # IPC failed with ServerNotFoundError while plain hyprctl runs (a shorter
 # env) kept working. Measured live.
 PRIVATE = os.path.join(RUNTIME, "osk-sl-rt")
-STATE_FILE = os.path.expanduser("~/.local/state/omarchy-osk/state.json")
+STATE_FILE = os.path.expanduser("~/.local/state/oskar/state.json")
 
 
 def guard():
@@ -183,7 +183,7 @@ def sane_restore_target(pre_leg):
         return ""
     if pre_leg.startswith(PRIVATE):
         return ""
-    if pre_leg == os.path.join(RUNTIME, "omarchy-osk", "keymap.xkb"):
+    if pre_leg == os.path.join(RUNTIME, "oskar", "keymap.xkb"):
         return ""
     if not os.path.exists(pre_leg):
         return ""
@@ -252,7 +252,7 @@ def keyboard_groups(env=None):
 
 def service_active():
     out = subprocess.run(
-        ["systemctl", "--user", "is-active", "omarchy-osk.service"],
+        ["systemctl", "--user", "is-active", "oskar.service"],
         capture_output=True, text=True).stdout.strip()
     return out == "active"
 
@@ -260,7 +260,7 @@ def service_active():
 class PrivateRuntime:
     """The hosted panel and the leg daemon under one private runtime dir.
 
-    The panel dials `$XDG_RUNTIME_DIR/omarchy-osk/control.sock`; pointing
+    The panel dials `$XDG_RUNTIME_DIR/oskar/control.sock`; pointing
     that at a private directory keeps the lab session's own packaged panel
     (which reconnects to whatever owns the public path — measured live in
     the ticket-40 canary) out of the leg daemon's client list, so every
@@ -301,10 +301,10 @@ class LegDaemon:
         self.log_path = os.path.join(RUNTIME, f"osk-settle-leg-daemon-{tag}.log")
         self.log = open(self.log_path, "w+")
         self.process = subprocess.Popen(
-            [os.path.join(repo, "daemon/target/release/omarchy-osk-daemon")],
+            [os.path.join(repo, "daemon/target/release/oskar-daemon")],
             stdout=self.log, stderr=subprocess.STDOUT, env=env,
         )
-        self.socket_path = os.path.join(PRIVATE, "omarchy-osk/control.sock")
+        self.socket_path = os.path.join(PRIVATE, "oskar/control.sock")
 
     def wait_socket(self):
         wait_for(lambda: os.path.exists(self.socket_path), 10,
@@ -798,7 +798,7 @@ def restore_service():
     for attempt in range(3):
         if not service_active():
             subprocess.run(
-                ["systemctl", "--user", "start", "omarchy-osk.service"],
+                ["systemctl", "--user", "start", "oskar.service"],
                 capture_output=True, timeout=15)
         try:
             wait_for(service_active, 10,
@@ -807,7 +807,7 @@ def restore_service():
         except Failure:
             if attempt == 2:
                 raise
-    print("ok    lab restored: omarchy-osk.service active")
+    print("ok    lab restored: oskar.service active")
 
 
 def main():
@@ -819,7 +819,7 @@ def main():
     daemon = None
     panel = None
     with LabSession() as lab, PrivateRuntime() as rt:
-        packaged_keymap = os.path.join(RUNTIME, "omarchy-osk/keymap.xkb")
+        packaged_keymap = os.path.join(RUNTIME, "oskar/keymap.xkb")
         packaged_backup = None
         try:
             # The lab session's own packaged panel is ALIVE while this leg
@@ -925,7 +925,7 @@ def main():
             if packaged_backup is not None:
                 with open(packaged_keymap, "wb") as handle:
                     handle.write(packaged_backup)
-            sidecar = os.path.join(PRIVATE, "omarchy-osk",
+            sidecar = os.path.join(PRIVATE, "oskar",
                                    "user-keymap-source")
             if os.path.exists(sidecar):
                 os.unlink(sidecar)

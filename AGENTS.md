@@ -1,4 +1,4 @@
-# omarchy-osk
+# oskar
 
 Mouse-driven on-screen keyboard for Omarchy (Hyprland + Quickshell).
 Start with [docs/orientation.md](docs/orientation.md). When continuing a

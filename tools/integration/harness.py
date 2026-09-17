@@ -282,7 +282,7 @@ def share_published_keymap():
     either implementation's state.
     """
     runtime = os.environ.get("XDG_RUNTIME_DIR", "")
-    path = os.path.join(runtime, "omarchy-osk", "keymap.xkb")
+    path = os.path.join(runtime, "oskar", "keymap.xkb")
     if not os.path.isfile(path) or os.path.getsize(path) == 0:
         raise Failure(f"helper did not publish a keymap at {path!r}")
     for value in ("", path):
@@ -320,7 +320,7 @@ def published_keymap_is_live():
     through here.
     """
     runtime = os.environ.get("XDG_RUNTIME_DIR", "")
-    path = os.path.join(runtime, "omarchy-osk", "keymap.xkb")
+    path = os.path.join(runtime, "oskar", "keymap.xkb")
     proc = subprocess.run(
         ["hyprctl", "getoption", "input:kb_file", "-j"],
         capture_output=True,

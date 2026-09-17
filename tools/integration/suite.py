@@ -37,7 +37,7 @@ from harness import (
 # The helper's stuck-key cap, injected by tools/smoke-daemon.sh so the suite
 # does not have to sleep through the real fifteen seconds. Same variable the
 # helper reads, so the two cannot drift apart.
-HOLD_CAP = int(os.environ.get("OMARCHY_OSK_HOLD_CAP_MS", "15000")) / 1000.0
+HOLD_CAP = int(os.environ.get("OSKAR_HOLD_CAP_MS", "15000")) / 1000.0
 
 # Evdev codes, which is what the helper names in its log. AD01 is the Q
 # position and LFSH the left Shift.
@@ -85,7 +85,7 @@ def startup_keyboard_inventory(helper, keyboard):
     names = [name for name in reply.split("\t")[1:] if name]
     if not names:
         raise Failure("the test machine has physical keyboards but inventory was empty")
-    poisoned = ("hl-virtual-keyboard", "power-button", "video-bus", "omarchy-osk")
+    poisoned = ("hl-virtual-keyboard", "power-button", "video-bus", "oskar")
     if any(name.startswith(poisoned) for name in names):
         raise Failure(f"inventory included a pseudo keyboard: {names!r}")
     client.close()
@@ -1007,7 +1007,7 @@ def reserved_symbols_reach_electron(helper, keyboard):
     client.expect("hello 5", "hello 5")
     client.configure(CONFIGURE_GROUP0)
     published = share_published_keymap()
-    if not published.endswith("/omarchy-osk/keymap.xkb"):
+    if not published.endswith("/oskar/keymap.xkb"):
         raise Failure(f"unexpected published keymap path: {published!r}")
     client.expect("group 0", "ok")
     keyboard.expect_group(0)

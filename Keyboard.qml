@@ -464,13 +464,13 @@ Item {
             for (var j = 0; j < rowModel[i].length; j++) {
                 var w = rowModel[i][j].w || 1
                 if ((w * 2) % 1 !== 0) {
-                    console.error("[osk] row " + i + " cap " + j + " width "
+                    console.error("[oskar] row " + i + " cap " + j + " width "
                         + w + " is not a multiple of half a unit")
                 }
                 sum += w
             }
             if (Math.abs(sum - gridUnits) > 0.01) {
-                console.error("[osk] row " + i + " widths sum to " + sum
+                console.error("[oskar] row " + i + " widths sum to " + sum
                     + ", expected " + gridUnits)
             }
         }
@@ -590,7 +590,7 @@ Item {
     // `input:kb_file` at what the helper installed makes the compositor
     // compile the same keymap for every physical keyboard, and the swap has
     // nothing left to swap between.
-    readonly property string publishedKeymap: "/omarchy-osk/keymap.xkb"
+    readonly property string publishedKeymap: "/oskar/keymap.xkb"
     property int sharedKeymapGen: 0
     // The `kb_file` the USER configured, remembered across the moment this
     // panel replaces it with the published one. Without it the compositor's
@@ -663,7 +663,7 @@ Item {
                 return
             }
             attempts = 0
-            console.error("[osk] could not give the compositor the published"
+            console.error("[oskar] could not give the compositor the published"
                 + " keymap (exit " + code + ", five attempts): the seat is"
                 + " carrying two keymaps and a client's layout group will"
                 + " reset on every focus change (decisions §35).")
@@ -690,7 +690,7 @@ Item {
     FileView {
         id: userSourceSeed
         path: (Quickshell.env("XDG_RUNTIME_DIR") || "").replace(/\/+$/, "")
-            + "/omarchy-osk/user-keymap-source"
+            + "/oskar/user-keymap-source"
         blockLoading: true
         watchChanges: false
         printErrors: false
@@ -809,7 +809,7 @@ Item {
             layoutCodes = detected
         var configGroup = (typeof picked.group === "number" && picked.group >= 0)
             ? picked.group : (reading.active_layout_index || 0)
-        console.log("[osk] layout reading:", reading.name, "group:", configGroup,
+        console.log("[oskar] layout reading:", reading.name, "group:", configGroup,
             "named:", anchorKeyboardName || "(none)",
             "remembered:", root.rememberedLayoutGroup)
         // The restart-settle guard (ticket 38): for a short window after
@@ -833,7 +833,7 @@ Item {
             Date.now())
         root.settleGuard = settle.state
         if (!settle.follow) {
-            console.log("[osk] settle guard: holding group", settle.held,
+            console.log("[oskar] settle guard: holding group", settle.held,
                 "— uncommanded reading", configGroup,
                 "inside the post-reconnect window")
             configGroup = settle.held
@@ -883,7 +883,7 @@ Item {
             // this snapshot compiles from RMLVO and the share below
             // points the compositor back at the published keymap.
             if (kbFile !== "" && !keymapSourceExists(kbFile)) {
-                console.warn("[osk] the compositor's kb_file names a"
+                console.warn("[oskar] the compositor's kb_file names a"
                     + " keymap that no longer exists; configuring from"
                     + " RMLVO instead:", kbFile)
                 kbFile = ""
@@ -1302,7 +1302,7 @@ Item {
         var done = completed || null
         var cls = String(wmClass || "")
         var chord = Modifiers.pasteChordForClass(cls)
-        console.log("[osk] paste chord for", cls === "" ? "(unknown class)" : cls,
+        console.log("[oskar] paste chord for", cls === "" ? "(unknown class)" : cls,
             "->", (chord.ctrl ? "Ctrl+" : "") + (chord.shift ? "Shift+" : "")
             + chord.position)
         var event = {
@@ -1553,7 +1553,7 @@ Item {
 
         Socket {
             id: helper
-            path: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"
+            path: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/oskar/control.sock"
             connected: true
 
             onConnectionStateChanged: {
@@ -1729,7 +1729,7 @@ Item {
                                 var missing = Session.missingCapGroups(
                                     root.session, root.groupCount)
                                 if (missing.length > 0)
-                                    console.log("[osk] caps requested for group(s)",
+                                    console.log("[oskar] caps requested for group(s)",
                                         missing.join(","), "of", root.groupCount)
                                 for (var mg = 0; mg < missing.length; mg++)
                                     sendCommandUnchecked(capsRequestLine(missing[mg]))
@@ -1749,7 +1749,7 @@ Item {
                             // A reply the parser refuses is protocol drift,
                             // not an empty keymap: refuse the world rather
                             // than draw a guessed level.
-                            console.error("[osk] unreadable keycap facts reply")
+                            console.error("[oskar] unreadable keycap facts reply")
                             root.capsFactsFailed = true
                             root.inputReady = false
                         } else {
@@ -1770,7 +1770,7 @@ Item {
                             root.pendingTextReplies = failures
                             if (failed) failed(false)
                         }
-                        console.warn("[osk] text delivery refused:", reply)
+                        console.warn("[oskar] text delivery refused:", reply)
                     } else if (reply.indexOf("err") === 0) {
                         if (reply.indexOf("err protocol") === 0) {
                             // The helper answered hello with the version it
@@ -1794,7 +1794,7 @@ Item {
                             // stays enabled. The panel's chords never produce
                             // them, so one appearing is a client bug worth a
                             // journal line without bricking the keyboard.
-                            console.warn("[osk] ownership refusal:", reply)
+                            console.warn("[oskar] ownership refusal:", reply)
                         } else if (reply === "err bad group") {
                             // A caps request earns this when the helper
                             // refuses facts for a group its keymap does not
@@ -1819,7 +1819,7 @@ Item {
                             if (root.capsFactsFailed) {
                                 root.inputReady = false
                             } else {
-                                console.error("[osk] helper has no facts for a"
+                                console.error("[oskar] helper has no facts for a"
                                     + " pre-fetched group; that group will"
                                     + " resolve on switch")
                             }
@@ -1880,12 +1880,12 @@ Item {
                             // refusal any verb can still earn, and it says
                             // the installed helper predates this panel's
                             // verbs — status-only, never a typing gate.
-                            console.warn("[osk] helper refused a command:", reply)
+                            console.warn("[oskar] helper refused a command:", reply)
                         } else {
                             // An unrecognized reply can only be protocol
                             // drift; fail closed and leave a trace.
                             root.inputReady = false
-                            console.warn("[osk] unrecognized reply:", reply)
+                            console.warn("[oskar] unrecognized reply:", reply)
                         }
                     } else if (reply.indexOf("hello ") === 0) {
                         // A hello naming another version than the one this
@@ -1945,7 +1945,7 @@ Item {
 
     Process {
         id: socketPathCheck
-        command: ["test", "-S", (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"]
+        command: ["test", "-S", (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/oskar/control.sock"]
         onExited: (code, ok) => {
             // The check ran a moment ago; the socket may have connected since
             // (the original attempt succeeding, or a sibling tick's rebuild).
@@ -1976,7 +1976,7 @@ Item {
             // open socket is only ever re-helloed — turned a socket that lies
             // `connected` on a peer-closed transport into a permanent wedge
             // (the install-from-zero stranger's dead keys: re-hellos written
-            // into a dead object, "Starting omarchy-osk.service…" standing,
+            // into a dead object, "Starting oskar.service…" standing,
             // every key click a silent no-op, escape only by shell restart).
             // Now a hello outstanding past its fair window rebuilds the
             // socket object whatever `connected` claims; a live helper

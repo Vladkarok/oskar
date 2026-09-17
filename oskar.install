@@ -3,28 +3,28 @@
 
 post_install() {
   cat <<'EOF'
-omarchy-osk installed (files only). Activate in your session with:
+oskar installed (files only). Activate in your session with:
 
-    omarchy-osk setup
+    oskar setup
 
-See `omarchy-osk help` for upgrade, status and teardown.
+See `oskar help` for upgrade, status and teardown.
 EOF
 }
 
 post_upgrade() {
   cat <<'EOF'
-omarchy-osk upgraded. Reload the helper and the panel with:
+oskar upgraded. Reload the helper and the panel with:
 
-    omarchy-osk upgrade
+    oskar upgrade
 
 EOF
 }
 
 pre_remove() {
   cat <<'EOF'
-Removing omarchy-osk. Deactivate first so nothing dangles:
+Removing oskar. Deactivate first so nothing dangles:
 
-    omarchy-osk teardown
+    oskar teardown
 
 (disable the unit and unlink the plugin registration before pacman
 removes the payload; config and state survive either way).

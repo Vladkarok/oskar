@@ -9,6 +9,11 @@ the execution brief that shaped the current round, and
 
 ## The idea
 
+**Naming history:** the project was born `omarchy-osk` and renamed
+`oskar` pre-publish (2026-09-15, the naming council's unanimous call,
+owner-approved) — machine layer lowercase `oskar`, human wordmark
+**OSKar**. Older documents quote the birth name as history.
+
 A mouse-driven on-screen keyboard for Omarchy (Arch + Hyprland +
 Quickshell), modelled on the Windows touch keyboard: you open it, click
 keys, and **what is drawn on the caps is what gets typed** — including
@@ -39,11 +44,11 @@ while the panel and the bar both correctly report the second. See
 | `Keyboard.qml` | key grid, layout tracking, socket client, keycap pipeline |
 | `KeyboardLayout.js` | rows, keysym tables, xkb position mapping |
 | `daemon/src/main.rs` | Rust helper owning one `zwp_virtual_keyboard_v1` |
-| `systemd/omarchy-osk.service` | user unit, tied to `graphical-session.target` |
-| `bin/omarchy-osk` | the lifecycle command: setup / upgrade / status / teardown (§45) |
+| `systemd/oskar.service` | user unit, tied to `graphical-session.target` |
+| `bin/oskar` | the lifecycle command: setup / upgrade / status / teardown (§45) |
 | `tools/` | nested-session polygon, daemon smoke, package + recovery choreography |
 
-Panel talks to the helper over `$XDG_RUNTIME_DIR/omarchy-osk/control.sock`,
+Panel talks to the helper over `$XDG_RUNTIME_DIR/oskar/control.sock`,
 line protocol, version 5:
 
 ```
@@ -70,12 +75,12 @@ else about the protocol lives in `parse()`/`apply_locked()` in
   fixes. `backup/pre-squash` holds the original 247-commit history.
 - The external audit's runtime tickets are closed and independently
   reviewed `ship`: 28 (serialized clipboard emoji delivery), 32 (the
-  `omarchy-osk` package lifecycle, full VM choreography), 06 (the custom
+  `oskar` package lifecycle, full VM choreography), 06 (the custom
   kb_file survives shell crashes and helper restarts), 31 (the remembered
   group bounded by the map). 33 (this reconciliation) closes the round.
 - Host suites: sixteen QML/JS files + Rust unit tests, all green; provenance
   gate zero against the upstream sketch.
-- The VM lab runs the PACKAGED product (`omarchy-osk` installed +
+- The VM lab runs the PACKAGED product (`oskar` installed +
   `setup` active); the nested integration suite and the phase-driven
   package/recovery choreographies live in `tools/`.
 

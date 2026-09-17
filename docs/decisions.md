@@ -2038,3 +2038,47 @@ baseline + touch case), which is the exact fact the observation keys
 on. The owner's finger on real hardware remains the acceptance it
 always is; a lab re-run owes the wl_touch-into-Qt hop a second look on
 a stable Hyprland build.
+
+## 58. The name settles pre-publish: oskar, wordmark OSKar
+
+2026-09-17, ticket 59 (owner's decision 2026-09-15 after a three-model
+naming council — Codex conceded to Opus's final, the orchestrator's
+third voice concurred; `oskar` over omarchy-osk / vkarok / karok /
+klava. Collision checks live: AUR zero, crates.io free, GitHub nothing
+significant in-domain). A partial rename is worse than none, so the
+sweep is total:
+
+- **Two layers, one name.** The MACHINE layer is lowercase `oskar`
+  everywhere — AUR package, binary, unit, socket dir, repo paths; that
+  is policy, not taste. The HUMAN layer (README H1, docs headers,
+  package description, the shell's plugin display name) writes the
+  wordmark **OSKar**: the OSK skeleton stays visible and the
+  Oscar-the-statue reading dies. README carries the pronunciation line
+  ("OS-car"; RU/UA read Оскар unambiguously) and the icebreaker: "OSKar
+  is not Oscar — no statuettes; it's the OSK, ar."
+- **The OSK_ env-gates stay.** `OSK_PANEL_CANARY_LIVE` and the whole
+  OSK_ family are generic on-screen-keyboard vocabulary with fresh,
+  settled tool conventions — renaming them is churn without value. The
+  OMARCHY_OSK_* family, however, was the old NAME in env-var clothing:
+  the doctor seams became `OSKAR_DOCTOR_*`, the daemon's timing seams
+  `OSKAR_HOLD_CAP_MS` / `OSKAR_TEXT_SETTLE_MS`.
+- **Installed machines walk, they do not start over.** The package
+  declares `replaces=(omarchy-osk)` (and conflicts): `pacman -Syu` and
+  the AUR helpers' sync installs carry the old package away by
+  replacement; a plain `pacman -U` REFUSES while the old package stands
+  (proven live in the lab), so its documented path is
+  `sudo pacman -Rns omarchy-osk` first; `oskar setup`/`upgrade` detect
+  any remaining old-name world — old unit (stopped, disabled, moved
+  aside `*.migrated-<ts>`), old registration (unlinked if a symlink,
+  moved aside if a directory), old PATH shadow, old helper — and MOVE
+  `~/.config/omarchy-osk` → `~/.config/oskar`,
+  `~/.local/state/omarchy-osk` → `~/.local/state/oskar`, so the
+  keyboard keeps its settings through rename day. `oskar teardown`
+  deactivates an old world too; `oskar doctor` fails on old-world
+  leftovers. Everything idempotent: a clean machine finds nothing and
+  the migration says nothing.
+- **The log prefix grew a syllable:** `[osk]` → `[oskar]`, with every
+  tool regex that matches it (doctor's keycap-fallback sweep was already
+  prefix-agnostic). Bare `osk` test-harness vocabulary (osk-nest dirs,
+  osk-typed.txt, the 9p tag `osk-src`) is generic infrastructure
+  naming, not the product name, and stays.

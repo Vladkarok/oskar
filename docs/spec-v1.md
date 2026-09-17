@@ -215,7 +215,7 @@ behaviour exists and stays.
 
 ## 10. Configuration
 
-One file, `$XDG_CONFIG_HOME/omarchy-osk/config.json`, both the persisted
+One file, `$XDG_CONFIG_HOME/oskar/config.json`, both the persisted
 state and the documented user config. One file rather than two, because
 two files that can disagree is a bug class this project has already met.
 

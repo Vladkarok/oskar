@@ -21,7 +21,7 @@
 /// evdev and carry an XKB group nobody advances. `hl-virtual-keyboard` is any
 /// virtual keyboard on the seat, this helper's own included — the compositor
 /// must not become a second writer of a group `configure` owns (§6).
-var PSEUDO = /(^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus))|omarchy-osk/i
+var PSEUDO = /(^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus))|oskar/i
 
 function isTyped(name) {
     var text = String(name || "")

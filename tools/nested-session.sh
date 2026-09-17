@@ -13,7 +13,7 @@
 # Both the compositor and XDG_RUNTIME_DIR are private to the run, so the test
 # daemon binds its own control socket and cannot collide with the live one.
 #
-#   tools/nested-session.sh daemon/target/release/omarchy-osk-daemon
+#   tools/nested-session.sh daemon/target/release/oskar-daemon
 #   tools/nested-session.sh foot   # sanity-check the nested session itself
 #
 set -uo pipefail

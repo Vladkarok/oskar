@@ -18,7 +18,7 @@ guest:
     the keyboard and the emoji page, focuses a foot terminal, and asserts
     the query and the client at each phase;
   - the HOST half sends the physical keystrokes through QMP
-    (`virsh qemu-monitor-command --hmp omarchy-osk 'sendkey …'`) when this
+    (`virsh qemu-monitor-command --hmp oskar 'sendkey …'`) when this
     script signals a phase file, and touches a go-file to advance.
 
 Phases (files under $XDG_RUNTIME_DIR/osk-emoji-leg/):
@@ -36,7 +36,7 @@ holds the keyboard while armed (no activewindow), the app holds it again
 after Escape (activewindow is the client). Run inside the VM's lab
 session, with the host driver stepping the phases:
 
-  cd ~/omarchy-osk && OSK_EMOJI_FOCUS_LIVE=1 \
+  cd ~/oskar && OSK_EMOJI_FOCUS_LIVE=1 \
       python3 tools/integration/emoji_focus.py
 """
 
@@ -361,7 +361,7 @@ def main():
     panel = None
     target = None
     with LabSession() as lab, PrivateRuntime() as rt:
-        packaged_keymap = os.path.join(RUNTIME, "omarchy-osk/keymap.xkb")
+        packaged_keymap = os.path.join(RUNTIME, "oskar/keymap.xkb")
         packaged_backup = None
         try:
             # The same stale-file heal the settle leg does: the seat's
