@@ -68,6 +68,12 @@ run is recorded on ticket 32.
 
 ## Publish-day checklist (owner-gated)
 
+- [ ] RENAME FIRST (ticket 59): the tree ships as `oskar` — package,
+      plugin id, service, paths, strings — before the public push.
+      The GitHub repo is created/renamed to `oskar` at publish; the
+      council's record and collision checks live in
+      .scratch/next-iteration/evidence/naming-council/.
+
 - [ ] README's `<REPOSITORY-URL>` placeholder in the Install section
       replaced with the public clone URL (added by the ticket-47
       review; a stranger could not acquire the tree without it).
