@@ -198,17 +198,18 @@ Phase 4, after dogfooding is clean:
 
 - The lab entered the round with the pre-rename package
   (`omarchy-osk` 0.1.0-4) installed, set up and active; the round's
-  package-test walked it old → new: `pacman -U oskar` replaced the old
-  package (`replaces=`), `oskar setup` migrated registration, config
-  and state, and a second leg proved bare `oskar upgrade` completes the
-  walk on its own.
+  package-test walked it old → new: the old package came out first
+  (`pacman -Rdd omarchy-osk` — a plain `pacman -U oskar` refuses on
+  conflicts; `replaces=` only walks the replacement on -Syu),
+  `oskar setup` migrated registration, config and state, and a second
+  leg proved bare `oskar upgrade` completes the walk on its own.
 - The lab was left healthy under the NEW name: package `oskar`
-  installed, `oskar setup` active (registration → `/usr/share/oskar/plugin`,
-  unit enabled and running, `oskar doctor` green), the guest's working
-  tree at `~/oskar` (the old `~/omarchy-osk` clone and the old
-  `~/.config/omarchy/plugins/io.github.vladkarok.osk` registration were
-  moved aside by the migration). The pre-rename registration directory
-  survives at `io.github.vladkarok.osk.migrated-<ts>` if its content is
-  ever wanted.
+  (0.1.0-2) installed, `oskar setup` active (registration →
+  `/usr/share/oskar/plugin`, unit enabled and running, `oskar doctor`
+  green), the guest's working tree at `~/oskar`. The old registration
+  was a symlink here and was unlinked by the migration; a registration
+  that is a real DIRECTORY (the provisioner's shape) would be moved
+  aside as `io.github.vladkarok.osk.migrated-<ts>`. The old-name clone
+  at `~/omarchy-osk` is inert and unregistered — delete it whenever.
 - The libvirt domain was renamed `omarchy-osk` → `oskar` (user-session
   connection) so the QMP legs' `virsh` commands match the tree.

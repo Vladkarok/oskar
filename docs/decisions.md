@@ -2063,8 +2063,11 @@ sweep is total:
   the doctor seams became `OSKAR_DOCTOR_*`, the daemon's timing seams
   `OSKAR_HOLD_CAP_MS` / `OSKAR_TEXT_SETTLE_MS`.
 - **Installed machines walk, they do not start over.** The package
-  declares `replaces=(omarchy-osk)` (and conflicts), so installing
-  `oskar` carries the old package away; `oskar setup`/`upgrade` detect
+  declares `replaces=(omarchy-osk)` (and conflicts): `pacman -Syu` and
+  the AUR helpers' sync installs carry the old package away by
+  replacement; a plain `pacman -U` REFUSES while the old package stands
+  (proven live in the lab), so its documented path is
+  `sudo pacman -Rns omarchy-osk` first; `oskar setup`/`upgrade` detect
   any remaining old-name world — old unit (stopped, disabled, moved
   aside `*.migrated-<ts>`), old registration (unlinked if a symlink,
   moved aside if a directory), old PATH shadow, old helper — and MOVE
