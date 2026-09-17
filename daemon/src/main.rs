@@ -2239,7 +2239,30 @@ fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
         .map_err(|_| "XDG_RUNTIME_DIR is unset; this must run inside a user session")?;
     let dir = PathBuf::from(dir).join("oskar");
     std::fs::create_dir_all(&dir)?;
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    // The daemon's own guarantee, not systemd's (the audit's 1.5/7.1):
+    // the directory must belong to THIS uid and carry no group/other
+    // bits — a pre-created group-writable directory (or one another
+    // user planted before our first start, binding their own socket
+    // for the panel to talk to) is refused loudly instead of trusted.
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let meta = std::fs::metadata(&dir)?;
+    if meta.uid() != nix_uid() || (meta.mode() & 0o077) != 0 {
+        return Err(format!(
+            "runtime dir {:?} is uid {} mode {:o}; expected uid {} and no              group/other bits — refusing to serve from a directory we do              not solely own",
+            dir,
+            meta.uid(),
+            meta.mode() & 0o777,
+            nix_uid()
+        )
+        .into());
+    }
     Ok(dir.join("control.sock"))
+}
+
+fn nix_uid() -> u32 {
+    // SAFETY: getuid takes no arguments and cannot fail.
+    unsafe { libc::getuid() }
 }
 
 /// The names Hyprland gives kernel input devices that udev identifies as
@@ -2461,7 +2484,11 @@ fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
     for stream in listener.incoming().flatten() {
         if clients.fetch_add(1, Ordering::AcqRel) >= MAX_CLIENTS {
             clients.fetch_sub(1, Ordering::AcqRel);
-            drop(stream);
+            // Refuse LOUDLY (the audit: the silent drop kept the panel
+            // believing the helper healthy while it could not get in).
+            // The message names the condition; SocketWatch's rebuild
+            // path reads any error the same way it always did.
+            let _ = writeln!(&mut { stream }, "err too many clients");
             continue;
         }
         let shared = Arc::clone(&shared);
@@ -2498,22 +2525,60 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         Err(_) => return,
     });
     let mut pending = String::new();
+    let mut handshaked = false;
     loop {
         // The only thing this connection ever waits on is its own next line.
         // Arming that wait with the cap's deadline is what enforces the cap
         // without a timer thread: no hold means no deadline and the read
         // blocks the way it always did, and a hold means exactly one wakeup,
         // at the moment the key is due to be lifted.
-        let timeout = hold_deadline(&shared, conn_id).map(|deadline| {
+        // The pre-handshake window (the audit's slot-starvation
+        // finding): four idle connections that never send a byte used
+        // to hold every slot forever — the socket stayed alive, the
+        // panel's probes reported the helper healthy, and the real
+        // client could not get in. Until this connection has completed
+        // a `hello`, its read deadline is 5 s out; a hold's deadline
+        // still wins when it is sooner.
+        let handshake = if handshaked {
+            None
+        } else {
+            Some(Duration::from_secs(5))
+        };
+        let hold = hold_deadline(&shared, conn_id).map(|deadline| {
             deadline
                 .saturating_duration_since(Instant::now())
                 .max(Duration::from_millis(1))
         });
+        let timeout = match (handshake, hold) {
+            (Some(window), Some(hold)) => Some(window.min(hold)),
+            (Some(window), None) => Some(window),
+            (None, hold) => hold,
+        };
         if stream.set_read_timeout(timeout).is_err() {
             break;
         }
+        // The dribble half of the cap: a sender that never sends a
+        // newline still grows `pending` across timed-out partial reads
+        // (BufReader appends before returning WouldBlock) — the loop-top
+        // check bounds that path exactly like the completed-line one.
+        if pending.len() > MAX_LINE {
+            let _ = writeln!(out, "err line too long");
+            break;
+        }
+        // A frame cap (the security audit's HIGH realization of known
+        // item 7): an unbounded line plus MemoryMax plus StartLimitBurst
+        // meant five writes from any same-user client OOM-killed the
+        // unit into `failed` — a keyboard user cannot type their way
+        // out of that lockout. 4 KiB is generous (a maximal 16-scalar
+        // `text` is tens of bytes); overflow answers once and closes,
+        // and `pending` never grows past the cap + one read chunk.
+        const MAX_LINE: usize = 4096;
         match reader.read_line(&mut pending) {
             Ok(0) => break,
+            Ok(_) if pending.len() > MAX_LINE => {
+                let _ = writeln!(out, "err line too long");
+                break;
+            }
             Ok(_) => {}
             Err(error)
                 if matches!(
@@ -2556,6 +2621,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 }
             };
             let _ = writeln!(out, "{reply}");
+            handshaked = matches!(hello, Ok(wanted) if wanted == PROTOCOL_VERSION);
             continue;
         }
         if line == "ping" {

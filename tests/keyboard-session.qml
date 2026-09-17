@@ -571,6 +571,54 @@ QtObject {
             T.deepEqual(Object.keys(parsed.byPosition.AD01[0]), ["text"])
         })
 
+        T.test("luaQuote seals the literal against filename injection", function () {
+            // The security audit's finding 3: a crafted keymap filename
+            // must not escape the hyprctl-eval Lua string it is spliced
+            // into. The auditor's exact payload and friends:
+            var payload = "/home/user/map'}}); print('INJECTED'); --"
+            var quoted = Session.luaQuote(payload)
+            // The literal contains no unescaped quote and no newline-class
+            // byte: nothing inside can close it early.
+            T.equal(quoted.charAt(0), "'")
+            T.equal(quoted.charAt(quoted.length - 1), "'")
+            // Evaluating the escapes back yields the original (the round
+            // trip the compositor performs).
+            var inner = quoted.slice(1, -1)
+            var decoded = ""
+            for (var i = 0; i < inner.length; i++) {
+                if (inner.charAt(i) === "\\") {
+                    var next = inner.charAt(i + 1)
+                    if (next === "\\" || next === "'") { decoded += next; i += 1 }
+                    else {
+                        var digits = inner.slice(i + 1, i + 4)
+                        if (/^[0-9][0-9][0-9]$/.test(digits)) {
+                            decoded += String.fromCharCode(parseInt(digits, 10))
+                            i += 3
+                        } else decoded += next
+                    }
+                } else decoded += inner.charAt(i)
+            }
+            T.equal(decoded, payload)
+            // The injection payload's quotes survive as DATA: every
+            // single quote inside the literal is backslash-escaped (a
+            // naive substring ban trips on the escape itself).
+            var innerRaw = quoted.slice(1, -1)
+            for (var q = 0; q < innerRaw.length; q++)
+                if (innerRaw.charAt(q) === "'")
+                    T.equal(innerRaw.charAt(q - 1), "\\",
+                        "quote at " + q + " unescaped")
+            T.equal(Session.luaQuote(""), "''")
+            T.equal(Session.luaQuote("plain.xkb"), "'plain.xkb'")
+            // The bash layer: a double quote in the path must arrive
+            // escaped, or it closes the hyprctl eval argument.
+            var dq = Session.luaQuote('a"b')
+            // Expected exactly: 'a\"b' — quote, a, backslash, dquote, b, quote.
+            T.equal(dq, "'a" + String.fromCharCode(92) + '"' + "b'")
+            var evil = "a\nb'c}"
+            T.equal(Session.luaQuote(evil).indexOf("'"), 0)
+            T.equal(Session.luaQuote(evil).length > evil.length, true)
+        })
+
         Qt.exit(T.report("keyboard session"))
     }
 }

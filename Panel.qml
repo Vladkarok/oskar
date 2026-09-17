@@ -1415,7 +1415,7 @@ Item {
     function beginEmojiPublish(emoji) {
         if (emojiClipboardPublish.running)
             emojiClipboardPublish.running = false
-        emojiClipboardPublish.command = ["wl-copy", "--foreground", emoji]
+        emojiClipboardPublish.command = ["wl-copy", "--foreground", "--", emoji]
         emojiClipboardPublish.running = true
         emojiPublishVerifyTimer.restart()
     }
@@ -1594,7 +1594,14 @@ Item {
         id: soundResolve
         property string eventId: "bell"
         command: ["bash", "-c",
-            "for base in ${2//:/ } ${3//:/ }; do "
+            // The env expansions ride through a bash array split on
+            // ':' with quoting intact (the audit: the old word-split
+            // glob-expanded the values); no XDG_RUNTIME_DIR means no
+            // session — the sound is skipped rather than guessed into
+            // a world-writable /tmp.
+            "[[ -n \"$4\" ]] || exit 1; "
+            + "bases=(${2//:/ } ${3//:/ }); "
+            + "for base in \"${bases[@]}\"; do "
             + "file=$base/sounds/freedesktop/stereo/$1.oga; "
             + "if [ -f \"$file\" ]; then "
             + "out=$4/oskar-keyclick.wav; "
@@ -1605,7 +1612,7 @@ Item {
             "oskar-sound", soundResolve.eventId,
             Quickshell.env("XDG_DATA_HOME") || ((Quickshell.env("HOME") || "") + "/.local/share"),
             Quickshell.env("XDG_DATA_DIRS") || "/usr/local/share:/usr/share",
-            Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"]
+            Quickshell.env("XDG_RUNTIME_DIR") || ""]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
@@ -2462,6 +2469,12 @@ Item {
                     anchors { centerIn: parent }
                     width: Math.min(implicitWidth, parent.width - tokens.space(12))
                     text: root.clipboardPreview
+                    // PlainText, always (the security audit): AutoText
+                    // renders rich clipboard content — a text/plain
+                    // payload with a remote <img> made the preview issue
+                    // a network request. A preview displays data; it
+                    // never interprets it.
+                    textFormat: Text.PlainText
                     color: pasteArea.containsMouse && root.pasteEnabled
                         ? tokens.accent : tokens.foreground
                     font.family: tokens.fontFamily
