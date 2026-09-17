@@ -43,7 +43,7 @@ conflicts=(oskar-git omarchy-osk)
 replaces=(omarchy-osk)
 install=oskar.install
 source=("$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('75036527b00be411eeb3325b1b1fb466a20617835e01beb3bee2d7fa8a375d67')
+sha256sums=('461cf30ab6471ddff3bca9dbaf7e3451f6c2a15385b64e7ecfb18f080da665b2')
 
 _repo=oskar-$pkgver
 
