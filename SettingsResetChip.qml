@@ -51,6 +51,10 @@ Rectangle {
     }
     HoverTooltip {
         text: UiStrings.tr("access.resetSetting", panel.uiLang)
-        hovered: resetChipArea.containsMouse
+        // Text chrome: hidden under touch (tooltipTextChrome enforced).
+        hovered: panel && panel.inputAfford
+            ? resetChipArea.containsMouse
+                && panel.inputAfford.tooltipHoverShows
+            : resetChipArea.containsMouse
     }
 }

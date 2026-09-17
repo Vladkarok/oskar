@@ -1,4 +1,4 @@
-# omarchy-osk
+# oskar
 
 A mouse-driven on-screen keyboard for Omarchy, where what is drawn on the
 keys is what the system will actually type. Most of the vocabulary below

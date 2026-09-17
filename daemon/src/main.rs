@@ -110,7 +110,7 @@ const DEFAULT_HOLD_CAP: Duration = Duration::from_secs(15);
 fn hold_cap() -> Duration {
     static CAP: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
     *CAP.get_or_init(|| {
-        std::env::var("OMARCHY_OSK_HOLD_CAP_MS")
+        std::env::var("OSKAR_HOLD_CAP_MS")
             .ok()
             .and_then(|raw| raw.trim().parse::<u64>().ok())
             .filter(|ms| *ms > 0)
@@ -131,7 +131,7 @@ const DEFAULT_TEXT_SETTLE_MS: u64 = 50;
 fn text_settle() -> Duration {
     static SETTLE: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
     *SETTLE.get_or_init(|| {
-        std::env::var("OMARCHY_OSK_TEXT_SETTLE_MS")
+        std::env::var("OSKAR_TEXT_SETTLE_MS")
             .ok()
             .and_then(|raw| raw.trim().parse::<u64>().ok())
             .map_or(
@@ -2111,7 +2111,7 @@ impl Dispatch<ZwpVirtualKeyboardV1, ()> for State {
 /// `kb_file` from outliving the panel that pointed at it.
 fn published_keymap_path() -> Option<PathBuf> {
     let dir = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    let dir = PathBuf::from(dir).join("omarchy-osk");
+    let dir = PathBuf::from(dir).join("oskar");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("keymap.xkb"))
 }
@@ -2163,7 +2163,7 @@ fn is_published_keymap(path: &str) -> bool {
 /// `ProtectSystem=strict` leaves writable. The unit preserves that
 /// directory across service stops (`RuntimeDirectoryPreserve=yes`) because
 /// the record must survive helper restarts within the graphical session —
-/// `omarchy-osk upgrade` restarts the helper as a routine step — while
+/// `oskar upgrade` restarts the helper as a routine step — while
 /// systemd still removes it when the session ends, which is exactly the
 /// record's intended lifetime. The helper survives a shell crash; the
 /// panel does not, and the panel's in-memory `userKeymapFile` was the only
@@ -2237,7 +2237,7 @@ fn publish_keymap(text: &str) {
 fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let dir = std::env::var("XDG_RUNTIME_DIR")
         .map_err(|_| "XDG_RUNTIME_DIR is unset; this must run inside a user session")?;
-    let dir = PathBuf::from(dir).join("omarchy-osk");
+    let dir = PathBuf::from(dir).join("oskar");
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("control.sock"))
 }
@@ -2358,7 +2358,7 @@ fn physical_keyboard_names(input_root: &Path, udev_root: &Path) -> Vec<String> {
                 "sleep-button",
                 "lid-switch",
                 "video-bus",
-                "omarchy-osk",
+                "oskar",
             ]
             .iter()
             .any(|prefix| name.starts_with(prefix))
@@ -2789,7 +2789,7 @@ fn apply_locked(
                 SourceDecision::Leave => Ok(()),
             };
             if let Err(error) = outcome {
-                eprintln!("[osk] could not record the user keymap source: {error}");
+                eprintln!("[oskar] could not record the user keymap source: {error}");
             }
         }
         // Ticket 31's defence in depth: a group the configure's OWN map
@@ -3139,13 +3139,13 @@ fn main() {
             .downcast_ref::<StartupFailure>()
             .is_some();
         if startup {
-            eprintln!("omarchy-osk-daemon: {error}");
+            eprintln!("oskar-daemon: {error}");
             std::process::exit(78);
         }
         // A RUNTIME failure (a dispatch error with the session standing):
         // exit 1 keeps Restart=always — a stopped-here 78 would leave the
         // keyboard dead until a manual restart (review finding).
-        eprintln!("omarchy-osk-daemon: runtime failure: {error}");
+        eprintln!("oskar-daemon: runtime failure: {error}");
         std::process::exit(1);
     }
 }
@@ -3556,7 +3556,7 @@ mod tests {
         // The panel builds this path by concatenation, so the spelling it
         // sends need not be the one `published_keymap_path` produces.
         assert!(
-            is_published_keymap(&spelling.replace("/omarchy-osk/", "//omarchy-osk/")),
+            is_published_keymap(&spelling.replace("/oskar/", "//oskar/")),
             "a doubled separator is still our own file"
         );
         assert!(
@@ -3588,7 +3588,7 @@ mod tests {
         }
         // The audit's misclassification: an unrelated custom path whose
         // suffix resembles the published path.
-        let lookalike = "/home/u/backups/omarchy-osk/keymap.xkb";
+        let lookalike = "/home/u/backups/oskar/keymap.xkb";
         assert!(matches!(
             user_source_decision(lookalike),
             SourceDecision::Remember(_)
@@ -3634,7 +3634,7 @@ mod tests {
     /// Ticket 06: the sidecar sits BESIDE the published keymap — the one
     /// directory `ProtectSystem=strict` leaves the helper writable, and
     /// the one the unit preserves across service stops so a routine
-    /// `omarchy-osk upgrade` cannot wipe the record.
+    /// `oskar upgrade` cannot wipe the record.
     #[test]
     fn the_source_sidecar_lives_beside_the_published_keymap() {
         let Some(published) = published_keymap_path() else {
@@ -3823,7 +3823,7 @@ mod tests {
     #[test]
     fn startup_inventory_rejects_a_mouse_keyboard_interface() {
         let root =
-            std::env::temp_dir().join(format!("omarchy-osk-device-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("oskar-device-test-{}", std::process::id()));
         let input = root.join("input");
         let udev = root.join("udev");
         std::fs::create_dir_all(&udev).unwrap();

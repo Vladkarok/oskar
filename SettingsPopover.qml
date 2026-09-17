@@ -126,6 +126,7 @@ Rectangle {
         [UiStrings.tr("settings.row.mode", panel.uiLang),
          UiStrings.tr("settings.row.size", panel.uiLang),
          UiStrings.tr("settings.row.language", panel.uiLang),
+         UiStrings.tr("settings.row.inputProfile", panel.uiLang),
          UiStrings.tr("settings.row.emojiPicking", panel.uiLang),
          UiStrings.tr("settings.row.emojiPageSize", panel.uiLang),
          UiStrings.tr("settings.row.superMark", panel.uiLang),
@@ -319,7 +320,8 @@ Rectangle {
                 }
                 HoverTooltip {
                     text: UiStrings.tr("settings.decrease", panel.uiLang)
-                    hovered: stepDownArea.containsMouse
+                    hovered: popoverRoot.panel.inputAfford.tooltipHoverShows
+                        ? stepDownArea.containsMouse : false
                 }
             }
 
@@ -370,7 +372,8 @@ Rectangle {
                 }
                 HoverTooltip {
                     text: UiStrings.tr("settings.increase", panel.uiLang)
-                    hovered: stepUpArea.containsMouse
+                    hovered: popoverRoot.panel.inputAfford.tooltipHoverShows
+                        ? stepUpArea.containsMouse : false
                 }
             }
         }
@@ -653,11 +656,16 @@ Rectangle {
                         auto: UiStrings.tr("settings.lang.auto", panel.uiLang),
                         en: "English", ru: "Русский", uk: "Українська"
                     })
-                    segments: ConfigFile.UI_LANGUAGES.map(function (code) {
-                        return { value: code,
-                            label: languageControl.languageLabels[code] }
-                    })
-                    current: panel.uiLanguage
+                    // The offered languages mirror the seat's layouts
+                    // (ticket 61): Auto and English always, plus each
+                    // translation whose layout is installed — a us,ua
+                    // seat never sees a Русский segment it cannot type.
+                    segments: UiStrings.languageChoices(panel.seatLayoutCodes)
+                        .map(function (code) {
+                            return { value: code,
+                                label: languageControl.languageLabels[code] }
+                        })
+                    current: panel.uiLanguageDisplay
                     onPicked: function (value) {
                         panel.setOverride("uiLanguage", value)
                     }
@@ -672,6 +680,91 @@ Rectangle {
                     tokens: popoverRoot.tokens
                     panel: popoverRoot.panel
                     overrideName: "uiLanguage"
+                }
+            }
+
+            SettingsHairline {}
+
+            // ---- INPUT (ticket 58) ----
+            //
+            // Which pointer world the panel answers as: auto (the
+            // default) activates the touch affordances when the panel
+            // observes touch events — a 2-in-1 flipping modes never
+            // visits Settings — and mouse/touch pin the world over the
+            // observation. The effective behaviour (release-typing, no
+            // dwell, grown chrome targets) is InputProfile.js's table;
+            // this row only writes the setting.
+            Text {
+                width: parent.width
+                text: UiStrings.tr("settings.section.input", panel.uiLang)
+                color: tokens.muted
+                font.family: tokens.fontFamily
+                font.pixelSize: tokens.fontBodySmall
+            }
+
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+
+                Text {
+                    anchors {
+                        left: parent.left
+                        verticalCenter: parent.verticalCenter
+                    }
+                    text: UiStrings.tr("settings.row.inputProfile", panel.uiLang)
+                    color: tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBody
+                }
+
+                SettingsSegmented {
+                    id: inputProfileControl
+                    x: popoverRoot.controlColumnX
+                    anchors {
+                        verticalCenter: parent.verticalCenter
+                    }
+                    // Three segments of ~47px; the widest plain label
+                    // ("Сенсор") measures 43px at fontBody. While auto has
+                    // FLIPPED to touch, the Auto segment carries the
+                    // "Auto+touch" notice (72px) and the row widens to give
+                    // it a slice — both budgets pinned offscreen in
+                    // tests/input-profile.qml, the ticket-52 discipline.
+                    width: panel.effectiveInputProfile === "touch"
+                        && panel.inputProfile === "auto"
+                        ? tokens.space(240) : tokens.space(150)
+                    readonly property var profileLabels: ({
+                        auto: UiStrings.tr("settings.profile.auto", panel.uiLang),
+                        mouse: UiStrings.tr("settings.profile.mouse", panel.uiLang),
+                        touch: UiStrings.tr("settings.profile.touch", panel.uiLang)
+                    })
+                    segments: ConfigFile.INPUT_PROFILES.map(function (value) {
+                        var label = inputProfileControl.profileLabels[value]
+                        // The flip made visible (the touch council's
+                        // cheapest high-value ask, ticket 62): when auto
+                        // has flipped to touch, the AUTO segment says so —
+                        // typing semantics changed and the user deserves
+                        // the one-word notice where the escape lives.
+                        if (value === "auto" && panel.effectiveInputProfile === "touch")
+                            label = UiStrings.tr("settings.profile.autoTouch",
+                                panel.uiLang)
+                        return { value: value, label: label }
+                    })
+                    current: panel.inputProfile
+                    onPicked: function (value) {
+                        panel.setOverride("inputProfile", value)
+                    }
+                }
+
+                SettingsResetChip {
+                    anchors {
+                        left: inputProfileControl.right
+                        leftMargin: tokens.space(6)
+                        verticalCenter: parent.verticalCenter
+                    }
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "inputProfile"
                 }
             }
 

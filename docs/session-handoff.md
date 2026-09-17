@@ -1,3 +1,62 @@
+# Handoff — updated 2026-09-17 (the board is clean)
+
+**START HERE.** Everything through ticket 62 is shipped with full
+review cycles: the oskar rename (59) + the host migration done, the
+touch profile (58) with both council rounds and their four code
+fixes (62: hold-release dedupe, the dwell guard, the visible flip,
+per-summon observation, every tooltip gated), the languages
+mirroring the seat's layouts (61), ticket 60, and all three lab
+debts discharged PASS (44 closed — churn confirmed; 58's wl_touch
+hop proven live; the wall's first full green on the renamed tree).
+The one open item on the whole map: PUBLISHING — owner-gated.
+(GitHub repo `oskar` + tag v0.1.0 + checksums per the checklist in
+docs/package-notes.md; AUR the morning registration opens.)
+
+---
+
+# Handoff — updated 2026-09-17 evening (ticket 59, the oskar rename)
+
+**The tree is renamed omarchy-osk → oskar** on branch `rename-oskar`
+(worktree `~/Projects/omarchy-osk-rename`, off spec/v1.1-fixes a05160b).
+Decisions §58 owns the record: machine layer lowercase `oskar`
+(package, binary, unit, socket dir, plugin id, paths), human wordmark
+**OSKar** (README H1 + pronunciation + icebreaker, docs headers,
+package description); OSK_ env gates KEPT; the OMARCHY_OSK_* seams
+renamed OSKAR_* (doctor seams OSKAR_DOCTOR_*, daemon timing
+OSKAR_HOLD_CAP_MS/OSKAR_TEXT_SETTLE_MS). `oskar setup`/`upgrade`
+migrate an installed old-name world (unit, registration, PATH shadow,
+config/state dirs MOVE to the new names); `replaces=(omarchy-osk)`
+carries the old package away on pacman -Syu (a plain -U refuses on
+conflicts — remove the old package first); teardown deactivates an old
+world; doctor fails on old-world leftovers. Older sections below quote
+the birth name `omarchy-osk` as history — the naming note lives in
+docs/orientation.md. The lab's end state for the round is in
+docs/vm-handoff.md's as-found note (new name installed and active).
+
+---
+
+# Handoff — updated 2026-09-17 (ticket 58, the touch pass)
+
+**START HERE — work continues on spec/v1.1-fixes** (fast-forwarded to
+master's merge state 852c005 first; master itself untouched since).
+Ticket 58 (the input profile) is IMPLEMENTED on that branch, review
+and the owner's feel pass still owed — decisions §57 owns the whole
+record; the ticket file carries the evidence tally. The one-line
+world: InputProfile.js is the pure seam (resolution + the
+affordance table, 24 red-first cases), touch types on RELEASE through
+37's own machinery with slide-off cancel, dwell never arms, chrome
+targets grow invisibly to 44px, and the mouse profile is byte-today.
+The VM lab proved QEMU 11.1.1's virtio-multitouch end to end (QMP mtt
+→ kernel → libinput → Hyprland's wl_touch, exact coordinates) but NOT
+the guest's Qt hop — that build's input stack is not a stable oracle
+(the seam + a host qmltestrunner proof of Qt 6.11.2's touch→mouse
+synthesis carry the burden; §57's VM paragraph has the traps: ABS
+dedup needs jitter, console binding needed, no hotplug on pcie.0, no
+domain XML touched, lab restored). The owner's uncommitted
+package-notes edit (ticket 59 rename note) is preserved unstaged.
+
+---
+
 # Handoff — updated 2026-09-15 (master merge)
 
 **START HERE — the branch IS master now.** The audited round merged
@@ -47,7 +106,7 @@ The board is CLEAN: every ticket through 57 is shipped with full
 review cycles.
 
 Next per the vision: the publish decision is the OWNER's (checklist
-in docs/omarchy-osk-package-notes.md — URL placeholder, AUR primary,
+in docs/package-notes.md — URL placeholder, AUR primary,
 pacman -Ql hygiene, fresh-lab emoji re-gate); after the gate: the
 recruitment window, then niri (the seat-backend seam design already
 lives in the vision + 41's parked accent-layer design waits in
@@ -475,9 +534,9 @@ re-derive, never re-measure, if legs are added.
 
 ```sh
 rsync -a --delete --exclude '.git' --exclude 'daemon/target' --exclude '.scratch' \
-  ./ omarchy-vm:~/omarchy-osk/
+  ./ omarchy-vm:~/oskar/
 ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export WAYLAND_DISPLAY=wayland-1;
-  cd ~/omarchy-osk && cargo build --release --manifest-path daemon/Cargo.toml &&
+  cd ~/oskar && cargo build --release --manifest-path daemon/Cargo.toml &&
   tools/nested-session.sh tools/smoke-daemon.sh'
 ```
 
@@ -487,8 +546,8 @@ session: `pkill -f` on a pattern your own command line contains killed an
 ssh session, and `hyprctl dispatch movecursor` is refused by the Lua parser
 — position the cursor with QMP `input-send-event` abs axes (0–32767 over
 the screen) instead; `virsh -c qemu:///session qemu-monitor-command
-omarchy-osk '{"execute":"input-send-event",...}'` clicks and moves for any
-UI proof, and `omarchy-shell shell toggle io.github.vladkarok.osk` needs
+oskar '{"execute":"input-send-event",...}'` clicks and moves for any
+UI proof, and `omarchy-shell shell toggle io.github.vladkarok.oskar` needs
 `OMARCHY_PATH=/usr/share/omarchy` exported or the panel never appears.
 
 ## What landed since the last handoff (all on this branch, unpushed)

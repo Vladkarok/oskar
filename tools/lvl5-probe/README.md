@@ -48,7 +48,7 @@ Files (this directory, host) → `~/lvl5-probe/` (VM, `scp -r`):
 
 ```sh
 scp -r tools/lvl5-probe omarchy-vm:~/
-ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u) WAYLAND_DISPLAY=wayland-1; cd ~/omarchy-osk && tools/nested-session.sh bash ~/lvl5-probe/run.sh'
+ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u) WAYLAND_DISPLAY=wayland-1; cd ~/oskar && tools/nested-session.sh bash ~/lvl5-probe/run.sh'
 ```
 
 The steps: control (`tap AB01` → `z`), negative (`tap I219`, a keycode

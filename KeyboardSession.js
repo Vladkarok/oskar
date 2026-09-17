@@ -374,7 +374,7 @@ function textLine(s) {
 function publishedKeymapPath(runtimeDir) {
     var base = String(runtimeDir || "").replace(/\/+$/, "")
     if (base === "") return ""
-    return base + "/omarchy-osk/keymap.xkb"
+    return base + "/oskar/keymap.xkb"
 }
 
 /// Whether a compositor-reported kb_file IS the published keymap — exact

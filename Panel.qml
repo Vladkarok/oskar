@@ -9,6 +9,7 @@ import "ClipboardPaste.js" as ClipboardPaste
 import "Config.js" as ConfigFile
 import "EmojiCatalog.js" as Catalog
 import "EmojiPage.js" as EmojiGrid
+import "InputProfile.js" as InputProfile
 import "LanguageControl.js" as LanguageControl
 import "SettingsPlacement.js" as SettingsPlacement
 import "UiStrings.js" as UiStrings
@@ -27,9 +28,9 @@ Item {
     // defaults in Config.js, sparse choices in config.json, and geometry in
     // state.json. Both writable files are watched below; no polling is used.
     readonly property string configDir: (Quickshell.env("XDG_CONFIG_HOME")
-        || ((Quickshell.env("HOME") || "") + "/.config")) + "/omarchy-osk"
+        || ((Quickshell.env("HOME") || "") + "/.config")) + "/oskar"
     readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME")
-        || ((Quickshell.env("HOME") || "") + "/.local/state")) + "/omarchy-osk"
+        || ((Quickshell.env("HOME") || "") + "/.local/state")) + "/oskar"
     readonly property string configPath: configDir + "/config.json"
     readonly property string statePath: stateDir + "/state.json"
     readonly property var maintainedDefaults: ConfigFile.maintainerDefaults()
@@ -129,8 +130,67 @@ Item {
     // tr() call site reads — override over layout, English for anything
     // we do not ship, the searchPlaceholder rule generalised.
     property string uiLanguage: maintainedDefaults.uiLanguage
+    // The seat's installed layout list, exposed for the popover's row
+    // (the offered languages mirror it — the owner's 2026-09-17 rule).
+    readonly property var seatLayoutCodes: keyboard.layoutCodes
     readonly property string uiLang: UiStrings.languageFor(
-        keyboard.activeLayoutCode, root.uiLanguage)
+        keyboard.activeLayoutCode, root.uiLanguage, keyboard.layoutCodes)
+    // What the LANGUAGE row shows selected: the override when it is
+    // representable on this seat, else Auto (a stale hand-edited value
+    // or a shrunk layout list leaves it inert, not lying).
+    readonly property string uiLanguageDisplay: {
+        var offered = UiStrings.languageChoices(keyboard.layoutCodes)
+        return offered.indexOf(root.uiLanguage) !== -1
+            ? root.uiLanguage : "auto"
+    }
+    // The input profile (ticket 58): which pointer world the panel answers
+    // as. The setting is auto/mouse/touch; the OBSERVATION is monotonic
+    // PER SUMMON — the first synthesized (touch/pen) mouse event any panel
+    // surface sees flips touchObserved, and a HIDDEN panel forgets it
+    // (ticket 62: a touch on one monitor must not park release-typing on
+    // another for the whole session; "restart forgets" was too coarse).
+    // Within a summon it never decays — a touchscreen laptop's stray
+    // mouse click must not flap the profile back — and with dwell ENABLED
+    // auto never flips at all (the a11y guard; the explicit setting is the
+    // deliberate switch). The resolution and everything it switches is
+    // InputProfile.js's pure table (tests/input-profile.qml); this is the
+    // one fact only the live panel can hold.
+    property string inputProfile: maintainedDefaults.inputProfile
+    property bool touchObserved: false
+    readonly property string effectiveInputProfile: InputProfile.resolve(
+        root.inputProfile, root.touchObserved, root.dwellEnabled)
+    readonly property var inputAfford: InputProfile.affordances(
+        root.effectiveInputProfile)
+
+    // Ticket 58's chrome targets, invisible growth only (no visual
+    // redesign): the arithmetic is InputProfile.chromeHitGrowth's — the
+    // per-side need toward the profile's floor (0 in mouse, so the chips
+    // are byte-today there), capped by the room each control truly owns.
+    // The header's standing chips are 30px tall with cellGap*2 of bar
+    // above them and cellGap below (below THAT the keyboard sibling
+    // outranks them in z, so growing past the bar is dead area); the
+    // failure-path service chips are 28px on the same centre line.
+    readonly property var chromeHitGrow30: InputProfile.chromeHitGrowth(
+        tokens.space(30), keyboard.cellGap,
+        keyboard.cellGap * 2, keyboard.cellGap,
+        inputAfford.minChromeTargetPx)
+    readonly property var chromeHitGrow28: InputProfile.chromeHitGrowth(
+        tokens.space(28), keyboard.cellGap,
+        keyboard.cellGap * 2 + 1, keyboard.cellGap + 1,
+        inputAfford.minChromeTargetPx)
+
+    /// The one writer of the observation. Every MouseArea that handles a
+    /// press reports its event's `source` — synthesized means a finger (or
+    /// a pen: a hover-less pointer gets the touch affordances too), and
+    /// one sighting is the whole lesson. Explicit profiles read the fact
+    /// nowhere; auto reads it everywhere.
+    function observePointerSource(source) {
+        if (touchObserved) return
+        if (!InputProfile.isTouchSource(source)) return
+        touchObserved = true
+        console.log("[oskar] input profile: touch events observed "
+            + "(auto resolves to touch until the panel hides)")
+    }
     // Emoji delivery mode (ticket 28): "direct" types the pick through the
     // helper; "clipboard" publishes the exact sequence and sends the paste
     // chord — the owner's choice for Chromium-family clients (ZCode).
@@ -250,7 +310,7 @@ Item {
             Qt.callLater(function () {
                 if (root.emojiOpen && emojiPage.searchArmed) {
                     emojiPage.searchArmed = false
-                    console.log("[osk] emoji search disarmed: focus moved to",
+                    console.log("[oskar] emoji search disarmed: focus moved to",
                         root.focusedClientClass() || "an unnamed client")
                 }
             })
@@ -280,7 +340,7 @@ Item {
             if (emojiPage.searchArmed) {
                 emojiPage.searchArmed = false
                 emojiPage.query = ""
-                console.log("[osk] emoji search disarmed by Esc")
+                console.log("[oskar] emoji search disarmed by Esc")
                 return
             }
             root.emojiOpen = false
@@ -494,19 +554,19 @@ Item {
     // panel itself.
     //
     // The copied command is the lifecycle command (ticket 32): one
-    // `omarchy-osk setup` converges registration, plugin enable and the
+    // `oskar setup` converges registration, plugin enable and the
     // unit — and exists both for the package (/usr/bin) and after any
     // source install.sh run (~/.local/bin). Only a never-installed source
     // checkout lacks it, and exactly there the checkout's own install.sh
     // is the honest command; the probe picks once at startup.
     property bool lifecycleCommandAvailable: false
     readonly property string installCommand: root.lifecycleCommandAvailable
-        ? "omarchy-osk setup"
+        ? "oskar setup"
         : "bash " + (Quickshell.env("HOME") || "")
-            + "/.config/omarchy/plugins/io.github.vladkarok.osk/install.sh"
+            + "/.config/omarchy/plugins/io.github.vladkarok.oskar/install.sh"
 
     function retryService() {
-        Quickshell.execDetached(["systemctl", "--user", "start", "omarchy-osk.service"])
+        Quickshell.execDetached(["systemctl", "--user", "start", "oskar.service"])
     }
 
     function copyInstallCommand() {
@@ -792,7 +852,7 @@ Item {
                     relayoutProbe.value = JSON.parse(this.text).int || 0
                 } catch (error) {
                     root.relayoutBusy = false
-                    console.warn("[osk] cannot read gaps_out; no relayout nudge")
+                    console.warn("[oskar] cannot read gaps_out; no relayout nudge")
                     return
                 }
                 // A fresh cycle: this write is the +1 nudge, the next is
@@ -995,6 +1055,7 @@ Item {
         root.dwellEnabled = effective.dwellEnabled
         root.dwellDelayMs = effective.dwellDelayMs
         root.uiLanguage = effective.uiLanguage
+        root.inputProfile = effective.inputProfile
         // A follow-theme flip while the panel is on screen is immediate:
         // stopping freezes the tokens at the look they then have, and
         // re-enabling releases that snapshot so a later stop freezes the
@@ -1179,6 +1240,12 @@ Item {
         // Locked Shift is genuinely held down at the device, so closing the
         // panel has to let go of it before the keyboard disappears.
         keyboard.releaseModifiers()
+        // The touch observation is per-SUMMON, not per-process (the touch
+        // council's scoping fix, ticket 62): a hidden panel is a session
+        // boundary — "restart forgets" was too coarse when the panel is
+        // summoned dozens of times a day, and a touch on one monitor must
+        // not park release-typing on another for the whole session.
+        touchObserved = false
     }
 
     // Panel-local clipboard read (colour field, emoji search — R2). The
@@ -1332,11 +1399,11 @@ Item {
             root.focusedClientClass())
         root.emojiTxnState = picked.state
         if (picked.action === "queued") {
-            console.log("[osk] emoji pick queued behind an unfinished paste")
+            console.log("[oskar] emoji pick queued behind an unfinished paste")
             return
         }
         if (picked.action === "refused") {
-            console.warn("[osk] emoji pick refused: empty payload")
+            console.warn("[oskar] emoji pick refused: empty payload")
             return
         }
         beginEmojiPublish(emoji)
@@ -1356,7 +1423,7 @@ Item {
     function cancelEmojiPublish(reason) {
         var cancelled = ClipboardPaste.txnCancel(root.emojiTxnState)
         if (cancelled.action === "dropped")
-            console.warn("[osk] emoji paste transaction cancelled:", reason)
+            console.warn("[oskar] emoji paste transaction cancelled:", reason)
         root.emojiTxnState = cancelled.state
     }
 
@@ -1369,7 +1436,7 @@ Item {
             return
         }
         if (result.action === "drop") {
-            console.warn("[osk] emoji clipboard publication not confirmed;"
+            console.warn("[oskar] emoji clipboard publication not confirmed;"
                 + " pick dropped, no chord sent")
             startNextEmojiTxn()
             return
@@ -1405,7 +1472,7 @@ Item {
             emojiPickSettled()
             if (root.emojiCloseAfterPick) root.emojiOpen = false
         } else if (done.action === "cancelled") {
-            console.warn("[osk] emoji paste chord refused or aborted;"
+            console.warn("[oskar] emoji paste chord refused or aborted;"
                 + " no usage recorded (the clipboard keeps the pick)")
         }
         startNextEmojiTxn()
@@ -1492,7 +1559,7 @@ Item {
         onExited: (exitCode, exitStatus) => {
             if (root.configurationError) return
             if (exitCode !== 0 || exitStatus !== 0) {
-                console.warn("[osk] could not create", root.configDir, "- configuration not saved")
+                console.warn("[oskar] could not create", root.configDir, "- configuration not saved")
                 return
             }
             configFile.setText(ConfigFile.serializeOverrides(root.userOverrides))
@@ -1505,7 +1572,7 @@ Item {
         onExited: (exitCode, exitStatus) => {
             if (root.stateError) return
             if (exitCode !== 0 || exitStatus !== 0) {
-                console.warn("[osk] could not create", root.stateDir, "- state not saved")
+                console.warn("[oskar] could not create", root.stateDir, "- state not saved")
                 return
             }
             stateFile.setText(ConfigFile.serializeState(root.geometryState))
@@ -1530,12 +1597,12 @@ Item {
             "for base in ${2//:/ } ${3//:/ }; do "
             + "file=$base/sounds/freedesktop/stereo/$1.oga; "
             + "if [ -f \"$file\" ]; then "
-            + "out=$4/omarchy-osk-keyclick.wav; "
+            + "out=$4/oskar-keyclick.wav; "
             + "ffmpeg -nostdin -v error -y -i \"$file\" \"$out\" || exit 3; "
             + "printf '%s' \"$out\"; exit 0; "
             + "fi; "
             + "done; exit 1",
-            "omarchy-osk-sound", soundResolve.eventId,
+            "oskar-sound", soundResolve.eventId,
             Quickshell.env("XDG_DATA_HOME") || ((Quickshell.env("HOME") || "") + "/.local/share"),
             Quickshell.env("XDG_DATA_DIRS") || "/usr/local/share:/usr/share",
             Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"]
@@ -1549,17 +1616,17 @@ Item {
         onExited: (exitCode, exitStatus) => {
             if (exitCode === 1) {
                 root.soundUnavailable = true
-                console.warn("[osk] no '" + soundResolve.eventId
+                console.warn("[oskar] no '" + soundResolve.eventId
                     + "' event found in the freedesktop sound theme; the key click stays silent")
                 return
             }
             if (exitCode !== 0 || exitStatus !== 0) {
                 root.soundUnavailable = true
-                console.warn("[osk] could not decode the '" + soundResolve.eventId
+                console.warn("[oskar] could not decode the '" + soundResolve.eventId
                     + "' event sound; the key click stays silent")
                 return
             }
-            console.log("[osk] key click sound:", root.soundFile)
+            console.log("[oskar] key click sound:", root.soundFile)
         }
     }
 
@@ -1574,7 +1641,7 @@ Item {
         onStatusChanged: {
             if (status === Loader.Error) {
                 root.soundUnavailable = true
-                console.warn("[osk] QtMultimedia is not available; the key click sound stays off")
+                console.warn("[oskar] QtMultimedia is not available; the key click sound stays off")
             }
         }
     }
@@ -1597,11 +1664,11 @@ Item {
     Process {
         id: lifecycleProbe
         // One startup check for the installed lifecycle command (ticket
-        // 32): present as /usr/bin/omarchy-osk from the package and as
-        // ~/.local/bin/omarchy-osk after any source install.sh. Reruns are
+        // 32): present as /usr/bin/oskar from the package and as
+        // ~/.local/bin/oskar after any source install.sh. Reruns are
         // pointless — installation paths do not appear mid-session.
         command: ["bash", "-c",
-            "test -x /usr/bin/omarchy-osk || test -x \"$HOME/.local/bin/omarchy-osk\""]
+            "test -x /usr/bin/oskar || test -x \"$HOME/.local/bin/oskar\""]
         onExited: (exitCode, exitStatus) => {
             root.lifecycleCommandAvailable = exitCode === 0 && exitStatus === 0
         }
@@ -1612,7 +1679,7 @@ Item {
         // The app-id is omitted: xdg-terminal-exec resolves the
         // preferred terminal on its own and the title is enough context.
         command: ["xdg-terminal-exec",
-            "--title=Fetch omarchy-osk components",
+            "--title=Fetch OSKar components",
             "omarchy", "pkg", "add", "hyprland", "jq"]
         onExited: (exitCode, exitStatus) => {
             root.depsOk = false
@@ -1661,7 +1728,7 @@ Item {
         // armed emoji search are the exceptions, and both live on the
         // settings overlay, not here.
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-        WlrLayershell.namespace: "io.github.vladkarok.osk"
+        WlrLayershell.namespace: "io.github.vladkarok.oskar"
         WlrLayershell.layer: WlrLayer.Overlay
         // Docked reserves its height along the bottom edge — windows move up
         // rather than being covered, and closing the panel hands the space
@@ -1853,7 +1920,16 @@ Item {
                         MouseArea {
                             id: copyArea
                             anchors { fill: parent }
-                            onClicked: root.copyInstallCommand()
+                            // Ticket 58: the 28px failure-path chips grow
+                            // like the standing chrome (zero in mouse).
+                            anchors.leftMargin: -root.chromeHitGrow28.left
+                            anchors.rightMargin: -root.chromeHitGrow28.right
+                            anchors.topMargin: -root.chromeHitGrow28.up
+                            anchors.bottomMargin: -root.chromeHitGrow28.down
+                            onClicked: function (mouse) {
+                                root.observePointerSource(mouse.source)
+                                root.copyInstallCommand()
+                            }
                         }
                     }
 
@@ -1877,7 +1953,16 @@ Item {
                         MouseArea {
                             id: retryArea
                             anchors { fill: parent }
-                            onClicked: root.retryService()
+                            // Ticket 58: growth + observation, copyArea's
+                            // own rule.
+                            anchors.leftMargin: -root.chromeHitGrow28.left
+                            anchors.rightMargin: -root.chromeHitGrow28.right
+                            anchors.topMargin: -root.chromeHitGrow28.up
+                            anchors.bottomMargin: -root.chromeHitGrow28.down
+                            onClicked: function (mouse) {
+                                root.observePointerSource(mouse.source)
+                                root.retryService()
+                            }
                         }
                     }
                 }
@@ -1924,10 +2009,32 @@ Item {
                     MouseArea {
                         id: gearArea
                         anchors { fill: parent }
+                        // Ticket 58: the touch target grows invisibly in
+                        // the touch profile (negative margins; the drawn
+                        // chip never moves), and the press reports its
+                        // source so auto can learn touch. In mouse the
+                        // growth is exactly zero — byte-today.
+                        anchors.leftMargin: -root.chromeHitGrow30.left
+                        anchors.rightMargin: -root.chromeHitGrow30.right
+                        anchors.topMargin: -root.chromeHitGrow30.up
+                        anchors.bottomMargin: -root.chromeHitGrow30.down
                         hoverEnabled: true
-                        Accessible.role: Accessible.Button
-                        Accessible.name: UiStrings.tr("tooltip.settings", root.uiLang)
-                        onClicked: {
+                        // The touch answer for glyph-only chrome (the
+                        // seam's pinned decision): a touch-and-hold names
+                        // the glyph the hover used to, and the release
+                        // still acts — help-then-action, one gesture, the
+                        // click never suppressed.
+                        // The hold flag is UNCONDITIONAL and the action
+                        // rides release-or-click deduped (the touch
+                        // council's probe on Qt 6.11.2: clicked is
+                        // suppressed after an accepted pressAndHold —
+                        // so a hold's release must act itself, inside
+                        // the cap; and the flag may not depend on the
+                        // profile, or a long MOUSE press would lose the
+                        // click to the same suppression).
+                        property bool touchHeld: false
+                        function act(mouse) {
+                            root.observePointerSource(mouse.source)
                             // The page and the card are mutually exclusive
                             // leftover-centre surfaces (toggleEmojiPage's
                             // rule); the gear restores the card.
@@ -1940,10 +2047,27 @@ Item {
                                 settingsPopover.visible = true
                             }
                         }
+                        onPressAndHold: touchHeld = true
+                        onReleased: function (mouse) {
+                            if (touchHeld
+                                    && mouse.x >= 0 && mouse.x <= width
+                                    && mouse.y >= 0 && mouse.y <= height)
+                                act(mouse)
+                            touchHeld = false
+                        }
+                        onCanceled: touchHeld = false
+                        Accessible.role: Accessible.Button
+                        Accessible.name: UiStrings.tr("tooltip.settings", root.uiLang)
+                        onClicked: function (mouse) { act(mouse) }
                     }
                     HoverTooltip {
                         text: UiStrings.tr("tooltip.settings", root.uiLang)
+                        // Hover names the glyph in MOUSE only — in touch
+                        // the answer is the hold above (possibly-synthesized
+                        // hover never shows one; the council's finding 2).
                         hovered: gearArea.containsMouse
+                            && root.inputAfford.tooltipHoverShows
+                        held: gearArea.touchHeld
                     }
                 }
 
@@ -2002,7 +2126,15 @@ Item {
                     MouseArea {
                         id: langHit
                         anchors { fill: parent }
-                        onClicked: {
+                        // Ticket 58: invisible touch-target growth (zero
+                        // in mouse) and the press's source reported to the
+                        // auto profile.
+                        anchors.leftMargin: -root.chromeHitGrow30.left
+                        anchors.rightMargin: -root.chromeHitGrow30.right
+                        anchors.topMargin: -root.chromeHitGrow30.up
+                        anchors.bottomMargin: -root.chromeHitGrow30.down
+                        onClicked: function (mouse) {
+                            root.observePointerSource(mouse.source)
                             if (langCtl.shape !== "menu") {
                                 keyboard.stepLayout()
                                 return
@@ -2062,16 +2194,36 @@ Item {
                     MouseArea {
                         id: modeChipHit
                         anchors { fill: parent }
+                        // Ticket 58: invisible touch-target growth (zero
+                        // in mouse) and the press's source reported.
+                        anchors.leftMargin: -root.chromeHitGrow30.left
+                        anchors.rightMargin: -root.chromeHitGrow30.right
+                        anchors.topMargin: -root.chromeHitGrow30.up
+                        anchors.bottomMargin: -root.chromeHitGrow30.down
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         Accessible.role: Accessible.Button
                         Accessible.name: UiStrings.tr("mode.chip.tooltip", root.uiLang)
-                        onClicked: root.setMode(
-                            root.mode === "docked" ? "floating" : "docked")
+                        onClicked: function (mouse) {
+                            root.observePointerSource(mouse.source)
+                            root.setMode(
+                                root.mode === "docked" ? "floating" : "docked")
+                        }
                     }
+                    // The seam's pinned per-control decision for TEXT
+                    // chrome: the tooltip is hidden on touch — its label
+                    // already states the mode, and the hide is ENFORCED by
+                    // the tooltipHoverShows gate below (ticket 62: a
+                    // synthesized hover may follow a finger; nothing is
+                    // silent "by absence"). No hold arm: the hold
+                    // vocabulary belongs to input, not chrome help.
                     HoverTooltip {
                         text: UiStrings.tr("mode.chip.tooltip", root.uiLang)
+                        // Text chrome: hidden under touch (the table's
+                        // own tooltipTextChrome rule — enforced, not
+                        // assumed; ticket 62's review found it ungated).
                         hovered: modeChipHit.containsMouse
+                            && root.inputAfford.tooltipHoverShows
                     }
                 }
 
@@ -2105,14 +2257,41 @@ Item {
                     MouseArea {
                         id: dismissHit
                         anchors { fill: parent }
+                        // Ticket 58: growth + observation + the glyph
+                        // chrome's touch-and-hold tooltip, the gear's own
+                        // rule.
+                        anchors.leftMargin: -root.chromeHitGrow30.left
+                        anchors.rightMargin: -root.chromeHitGrow30.right
+                        anchors.topMargin: -root.chromeHitGrow30.up
+                        anchors.bottomMargin: -root.chromeHitGrow30.down
                         hoverEnabled: true
+                        // The gear site's dedupe rule: the hold flag
+                        // unconditional, the action on release-inside or
+                        // click (Qt suppresses clicked after an accepted
+                        // hold — the council's probe).
+                        property bool touchHeld: false
+                        function act(mouse) {
+                            root.observePointerSource(mouse.source)
+                            root.close()  // dismiss
+                        }
+                        onPressAndHold: touchHeld = true
+                        onReleased: function (mouse) {
+                            if (touchHeld
+                                    && mouse.x >= 0 && mouse.x <= width
+                                    && mouse.y >= 0 && mouse.y <= height)
+                                act(mouse)
+                            touchHeld = false
+                        }
+                        onCanceled: touchHeld = false
                         Accessible.role: Accessible.Button
                         Accessible.name: UiStrings.tr("tooltip.closeKeyboard", root.uiLang)
-                        onClicked: root.close()  // dismiss
+                        onClicked: function (mouse) { act(mouse) }
                     }
                     HoverTooltip {
                         text: UiStrings.tr("tooltip.closeKeyboard", root.uiLang)
                         hovered: dismissHit.containsMouse
+                            && root.inputAfford.tooltipHoverShows
+                        held: dismissHit.touchHeld
                     }
                 }
             }
@@ -2133,6 +2312,17 @@ Item {
                 // the machine, the panel owns the setting.
                 dwellEnabled: root.dwellEnabled
                 dwellDelayMs: root.dwellDelayMs
+                // The input profile (ticket 58): the panel resolves the
+                // setting over the observation (InputProfile.resolve) and
+                // hands the EFFECTIVE profile down — the keyboard owns the
+                // typing semantics, the panel owns the fact. The caps'
+                // presses report their source back so a touch anywhere on
+                // the grid teaches auto, the same fact the header chips
+                // observe.
+                effectiveInputProfile: root.effectiveInputProfile
+                onPointerSourceObserved: function (source) {
+                    root.observePointerSource(source)
+                }
                 // The persisted group feeds LayoutDevices' restart
                 // fallback; every acknowledged configure refreshes it.
                 rememberedLayoutGroup: root.rememberedLayoutGroup
@@ -2316,15 +2506,41 @@ Item {
                 MouseArea {
                     id: pasteArea
                     anchors { fill: parent }
+                    // Ticket 58: growth (zero in mouse) + observation +
+                    // the glyph chrome's touch-and-hold tooltip.
+                    anchors.leftMargin: -root.chromeHitGrow30.left
+                    anchors.rightMargin: -root.chromeHitGrow30.right
+                    anchors.topMargin: -root.chromeHitGrow30.up
+                    anchors.bottomMargin: -root.chromeHitGrow30.down
                     hoverEnabled: true
                     enabled: root.pasteEnabled
+                    property bool touchHeld: false
+                    // The gear site's dedupe rule (Qt suppresses
+                    // clicked after an accepted hold — the council's
+                    // probe): flag unconditional, release-inside acts.
+                    onPressAndHold: touchHeld = true
+                    onReleased: function (mouse) {
+                        if (touchHeld
+                                && mouse.x >= 0 && mouse.x <= width
+                                && mouse.y >= 0 && mouse.y <= height) {
+                            root.observePointerSource(mouse.source)
+                            root.pasteCurrentContent()
+                        }
+                        touchHeld = false
+                    }
+                    onCanceled: touchHeld = false
                     Accessible.role: Accessible.Button
                     Accessible.name: UiStrings.tr("access.paste", root.uiLang)
-                    onClicked: root.pasteCurrentContent()
+                    onClicked: function (mouse) {
+                        root.observePointerSource(mouse.source)
+                        root.pasteCurrentContent()
+                    }
                 }
                 HoverTooltip {
                     text: UiStrings.tr("tooltip.paste", root.uiLang)
                     hovered: pasteArea.containsMouse
+                        && root.inputAfford.tooltipHoverShows
+                    held: pasteArea.touchHeld
                 }
             }
 
@@ -2450,7 +2666,7 @@ Item {
         color: "#00000000"
         anchors { top: true; bottom: true; left: true; right: true }
         exclusionMode: ExclusionMode.Ignore
-        WlrLayershell.namespace: "io.github.vladkarok.osk.settings"
+        WlrLayershell.namespace: "io.github.vladkarok.oskar.settings"
         WlrLayershell.layer: WlrLayer.Overlay
         // Two sanctioned exceptions, never at once: a colour field being
         // typed (spec-v1.1 §5) and the armed emoji search (ticket 42).
@@ -2626,6 +2842,7 @@ Item {
             usageRecords: root.emojiUsage
             skinTone: root.emojiSkinTone
             layoutCode: keyboard.activeLayoutCode
+            tooltipHoverShows: root.inputAfford.tooltipHoverShows === true
             uiLang: root.uiLang
             hostWidth: settingsLayer.leftoverBox.w
             hostHeight: settingsLayer.leftoverBox.h
@@ -2635,6 +2852,11 @@ Item {
             visible: root.emojiOpen
             deliveryMode: root.emojiDelivery
             onDeliveryModeRequested: function (mode) { root.setEmojiDelivery(mode) }
+            // Ticket 58: the page's presses join the input-profile
+            // observation, the caps' and the header chips' own rule.
+            onPointerSourceObserved: function (source) {
+                root.observePointerSource(source)
+            }
             // One click is one send to the focused client. The page closes
             // only after helper success when the preference asks it to;
             // usage likewise records acknowledged delivery, never a click

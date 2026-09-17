@@ -8,6 +8,7 @@ import "KeyboardLayout.js" as Layout
 import "ModifierReducer.js" as Modifiers
 import "HoldColumn.js" as HoldColumn
 import "Dwell.js" as Dwell
+import "InputProfile.js" as InputProfile
 import "KeyboardSession.js" as Session
 import "Config.js" as ConfigFile
 import "LayoutDevices.js" as LayoutDevices
@@ -124,6 +125,30 @@ Item {
     // delegate bookkeeping; this field is the discriminator the fire
     // path reads — null for a cap rest, the entry for an entry rest.
     property var dwellEntry: null
+
+    // ---- the input profile (ticket 58) ----
+    //
+    // Which pointer world this keyboard answers as. The panel resolves
+    // the setting over the OBSERVATION (InputProfile.resolve — auto flips
+    // to touch at the first synthesized press anywhere on the panel, per
+    // summon: a hidden panel forgets, dwell enabled guards it off) and
+    // hands the effective profile down; the
+    // caps report their presses' `source` back so the fact is panel-wide.
+    // Everything the profile switches is InputProfile.js's pure table
+    // (tests/input-profile.qml): in mouse every value is byte-today; in
+    // touch every character cap types on RELEASE with slide-off cancel
+    // (37's machinery generalized), dwell never arms, and a sliding
+    // finger is never stolen by our own surfaces.
+    property string effectiveInputProfile: "mouse"
+    signal pointerSourceObserved(var source)
+    readonly property var profileAfford: InputProfile.affordances(
+        effectiveInputProfile)
+    // The dwell veto the profile owns: the user's setting AND a profile
+    // with hover. In touch this is simply false — a finger cannot rest
+    // without pressing, and a synthesized press supersedes a rest anyway.
+    readonly property bool dwellActive: InputProfile.dwellArms(
+        effectiveInputProfile, dwellEnabled)
+    onEffectiveInputProfileChanged: dwellReset()
 
     // The size preset's multiplier on top of the theme's own scaling
     // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
@@ -440,13 +465,13 @@ Item {
             for (var j = 0; j < rowModel[i].length; j++) {
                 var w = rowModel[i][j].w || 1
                 if ((w * 2) % 1 !== 0) {
-                    console.error("[osk] row " + i + " cap " + j + " width "
+                    console.error("[oskar] row " + i + " cap " + j + " width "
                         + w + " is not a multiple of half a unit")
                 }
                 sum += w
             }
             if (Math.abs(sum - gridUnits) > 0.01) {
-                console.error("[osk] row " + i + " widths sum to " + sum
+                console.error("[oskar] row " + i + " widths sum to " + sum
                     + ", expected " + gridUnits)
             }
         }
@@ -566,7 +591,7 @@ Item {
     // `input:kb_file` at what the helper installed makes the compositor
     // compile the same keymap for every physical keyboard, and the swap has
     // nothing left to swap between.
-    readonly property string publishedKeymap: "/omarchy-osk/keymap.xkb"
+    readonly property string publishedKeymap: "/oskar/keymap.xkb"
     property int sharedKeymapGen: 0
     // The `kb_file` the USER configured, remembered across the moment this
     // panel replaces it with the published one. Without it the compositor's
@@ -639,7 +664,7 @@ Item {
                 return
             }
             attempts = 0
-            console.error("[osk] could not give the compositor the published"
+            console.error("[oskar] could not give the compositor the published"
                 + " keymap (exit " + code + ", five attempts): the seat is"
                 + " carrying two keymaps and a client's layout group will"
                 + " reset on every focus change (decisions §35).")
@@ -666,7 +691,7 @@ Item {
     FileView {
         id: userSourceSeed
         path: (Quickshell.env("XDG_RUNTIME_DIR") || "").replace(/\/+$/, "")
-            + "/omarchy-osk/user-keymap-source"
+            + "/oskar/user-keymap-source"
         blockLoading: true
         watchChanges: false
         printErrors: false
@@ -785,7 +810,7 @@ Item {
             layoutCodes = detected
         var configGroup = (typeof picked.group === "number" && picked.group >= 0)
             ? picked.group : (reading.active_layout_index || 0)
-        console.log("[osk] layout reading:", reading.name, "group:", configGroup,
+        console.log("[oskar] layout reading:", reading.name, "group:", configGroup,
             "named:", anchorKeyboardName || "(none)",
             "remembered:", root.rememberedLayoutGroup)
         // The restart-settle guard (ticket 38): for a short window after
@@ -809,7 +834,7 @@ Item {
             Date.now())
         root.settleGuard = settle.state
         if (!settle.follow) {
-            console.log("[osk] settle guard: holding group", settle.held,
+            console.log("[oskar] settle guard: holding group", settle.held,
                 "— uncommanded reading", configGroup,
                 "inside the post-reconnect window")
             configGroup = settle.held
@@ -859,7 +884,7 @@ Item {
             // this snapshot compiles from RMLVO and the share below
             // points the compositor back at the published keymap.
             if (kbFile !== "" && !keymapSourceExists(kbFile)) {
-                console.warn("[osk] the compositor's kb_file names a"
+                console.warn("[oskar] the compositor's kb_file names a"
                     + " keymap that no longer exists; configuring from"
                     + " RMLVO instead:", kbFile)
                 kbFile = ""
@@ -1278,7 +1303,7 @@ Item {
         var done = completed || null
         var cls = String(wmClass || "")
         var chord = Modifiers.pasteChordForClass(cls)
-        console.log("[osk] paste chord for", cls === "" ? "(unknown class)" : cls,
+        console.log("[oskar] paste chord for", cls === "" ? "(unknown class)" : cls,
             "->", (chord.ctrl ? "Ctrl+" : "") + (chord.shift ? "Shift+" : "")
             + chord.position)
         var event = {
@@ -1529,7 +1554,7 @@ Item {
 
         Socket {
             id: helper
-            path: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"
+            path: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/oskar/control.sock"
             connected: true
 
             onConnectionStateChanged: {
@@ -1705,7 +1730,7 @@ Item {
                                 var missing = Session.missingCapGroups(
                                     root.session, root.groupCount)
                                 if (missing.length > 0)
-                                    console.log("[osk] caps requested for group(s)",
+                                    console.log("[oskar] caps requested for group(s)",
                                         missing.join(","), "of", root.groupCount)
                                 for (var mg = 0; mg < missing.length; mg++)
                                     sendCommandUnchecked(capsRequestLine(missing[mg]))
@@ -1725,7 +1750,7 @@ Item {
                             // A reply the parser refuses is protocol drift,
                             // not an empty keymap: refuse the world rather
                             // than draw a guessed level.
-                            console.error("[osk] unreadable keycap facts reply")
+                            console.error("[oskar] unreadable keycap facts reply")
                             root.capsFactsFailed = true
                             root.inputReady = false
                         } else {
@@ -1746,7 +1771,7 @@ Item {
                             root.pendingTextReplies = failures
                             if (failed) failed(false)
                         }
-                        console.warn("[osk] text delivery refused:", reply)
+                        console.warn("[oskar] text delivery refused:", reply)
                     } else if (reply.indexOf("err") === 0) {
                         if (reply.indexOf("err protocol") === 0) {
                             // The helper answered hello with the version it
@@ -1770,7 +1795,7 @@ Item {
                             // stays enabled. The panel's chords never produce
                             // them, so one appearing is a client bug worth a
                             // journal line without bricking the keyboard.
-                            console.warn("[osk] ownership refusal:", reply)
+                            console.warn("[oskar] ownership refusal:", reply)
                         } else if (reply === "err bad group") {
                             // A caps request earns this when the helper
                             // refuses facts for a group its keymap does not
@@ -1795,7 +1820,7 @@ Item {
                             if (root.capsFactsFailed) {
                                 root.inputReady = false
                             } else {
-                                console.error("[osk] helper has no facts for a"
+                                console.error("[oskar] helper has no facts for a"
                                     + " pre-fetched group; that group will"
                                     + " resolve on switch")
                             }
@@ -1856,12 +1881,12 @@ Item {
                             // refusal any verb can still earn, and it says
                             // the installed helper predates this panel's
                             // verbs — status-only, never a typing gate.
-                            console.warn("[osk] helper refused a command:", reply)
+                            console.warn("[oskar] helper refused a command:", reply)
                         } else {
                             // An unrecognized reply can only be protocol
                             // drift; fail closed and leave a trace.
                             root.inputReady = false
-                            console.warn("[osk] unrecognized reply:", reply)
+                            console.warn("[oskar] unrecognized reply:", reply)
                         }
                     } else if (reply.indexOf("hello ") === 0) {
                         // A hello naming another version than the one this
@@ -1921,7 +1946,7 @@ Item {
 
     Process {
         id: socketPathCheck
-        command: ["test", "-S", (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-osk/control.sock"]
+        command: ["test", "-S", (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/oskar/control.sock"]
         onExited: (code, ok) => {
             // The check ran a moment ago; the socket may have connected since
             // (the original attempt succeeding, or a sibling tick's rebuild).
@@ -1952,7 +1977,7 @@ Item {
             // open socket is only ever re-helloed — turned a socket that lies
             // `connected` on a peer-closed transport into a permanent wedge
             // (the install-from-zero stranger's dead keys: re-hellos written
-            // into a dead object, "Starting omarchy-osk.service…" standing,
+            // into a dead object, "Starting oskar.service…" standing,
             // every key click a silent no-op, escape only by shell restart).
             // Now a hello outstanding past its fair window rebuilds the
             // socket object whatever `connected` claims; a live helper
@@ -2008,13 +2033,18 @@ Item {
     }
 
     function capDefersHold(capData) {
-        // Ticket 50's interplay, composed at the seam so it is pinned
-        // (tests/dwell.qml): in dwell mode no cap defers — the dwell is
-        // the click and the menu is reached by dwelling past the type;
-        // with dwell off this is HoldColumn.shouldDefer exactly, and
-        // nothing about ticket 37's press behaviour changes.
-        return Dwell.holdDefers(dwellEnabled, capData,
-            capHoldColumn(capData), searchMode, inputReady)
+        // Ticket 58's generalisation, composed at the seam so it is
+        // pinned (tests/input-profile.qml): in the MOUSE profile this is
+        // ticket 50's interplay verbatim — Dwell.holdDefers, i.e. ticket
+        // 37's column-only defer with the dwell veto over it, byte-today.
+        // In the TOUCH profile every character cap defers — a drifting
+        // finger must never strand a phantom character under
+        // press-typing — on InputProfile.touchDefers's own rule (the
+        // hold-menu threshold rides the same beginCapHold/endCapHold
+        // machinery; a columnless hold stays pending past the threshold
+        // and the release then types).
+        return InputProfile.defersTyping(effectiveInputProfile, dwellEnabled,
+            capData, capHoldColumn(capData), searchMode, inputReady)
     }
 
     function beginCapHold(capData, delegate) {
@@ -2039,11 +2069,19 @@ Item {
     /// and sends nothing; the menu stands for its own pick. Readiness can
     /// drop between press and release — then nothing is typed, like a
     /// canceled hold, rather than sounding a dead key.
-    function endCapHold(delegate) {
+    ///
+    /// `inside` is the touch profile's slide-off half (ticket 58): false
+    /// means the pointer LIFTED outside the cap's hit area, and a lifted
+    /// finger that left first cancels — the drift a touch screen is for
+    /// must never type. Undefined (the mouse profile's call) keeps
+    /// byte-today semantics: a mouse hold's release types wherever the
+    /// cursor sits when the button comes up.
+    function endCapHold(delegate, inside) {
         if (holdCap) {
             if (holdDelegate !== delegate) return false
             var cap = holdCap
             clearCapHold()
+            if (inside === false) return true
             if (!inputReady) return true
             typeCap(cap)
             releaseKey()
@@ -2146,7 +2184,10 @@ Item {
     /// the hold menu cannot disagree about what a position offers.
     function dwellEnter(capData, delegate) {
         dwellReset()
-        if (!dwellEnabled) return
+        // dwellActive, not the raw setting (ticket 58): a touch finger
+        // cannot hover, so the touch profile never arms a rest — the
+        // profile's veto, composed in InputProfile.dwellArms.
+        if (!dwellActive) return
         // The pure-dwell user's menu dismissal (ticket 50 review): the
         // standing hold menu's own dismissal routes are all clicks or
         // external folds, and a lingering rest is exactly this
@@ -2189,7 +2230,7 @@ Item {
         dwellReset()
         var delay = Dwell.delayFor(dwellDelayMs)
         var state = Dwell.enterEntry(entry, Date.now(), delay,
-            dwellEnabled, searchMode, inputReady)
+            dwellActive, searchMode, inputReady)
         if (!state) return
         dwellState = state
         dwellEntry = entry
@@ -2924,6 +2965,17 @@ Item {
                                 anchors.topMargin: -rowItem.hitTop
                                 anchors.bottomMargin: -rowItem.hitBottom
                                 hoverEnabled: true
+                                // Ticket 58: in the touch profile our own
+                                // surfaces may not steal a sliding finger
+                                // from a pressed cap — the slide-off cancel
+                                // contract needs the release delivered HERE.
+                                // Nothing on today's grid steals (no
+                                // Flickable parents the caps); the flag is
+                                // the guarantee the profile pins, and it is
+                                // deliberately NOT set on the flickable
+                                // surfaces (the emoji grid, the settings
+                                // scroll) where a slide IS the scroll.
+                                preventStealing: root.profileAfford.preventStealing
 
                                 // Everything that types fires on press, not on
                                 // click. Two reasons, and the second one is
@@ -2980,7 +3032,15 @@ Item {
                                 // what the compositor's own delivery does.
                                 // The bound is what is claimed here, and it is
                                 // the residual the by-hand retest looks for.
-                                onPressed: {
+                                onPressed: (mouse) => {
+                                    // Ticket 58: the press reports its
+                                    // source FIRST, so the very touch that
+                                    // teaches auto already answers as touch
+                                    // — this press defers, its release
+                                    // types, and no phantom character lands
+                                    // on the way the world flipped. A real
+                                    // mouse button observes nothing.
+                                    root.pointerSourceObserved(mouse.source)
                                     // A physical press supersedes any rest:
                                     // dwell and click never double-type, and
                                     // the press keeps exactly the semantics
@@ -3039,8 +3099,22 @@ Item {
                                 // the press+release pair; after the threshold
                                 // it is the hold's own and types nothing,
                                 // leaving the menu standing for its pick.
-                                onReleased: {
-                                    if (root.endCapHold(capDelegate)) return
+                                onReleased: (mouse) => {
+                                    // The slide-off half of ticket 58's
+                                    // release-typing: in the touch profile a
+                                    // lift that left the cap first CANCELS
+                                    // the hold (never types) — capHit still
+                                    // holds the grab, so the release arrives
+                                    // here wherever the finger wandered, and
+                                    // contains() is the honest inside test.
+                                    // The mouse profile passes undefined:
+                                    // byte-today, a deferred hold's release
+                                    // types wherever the button comes up.
+                                    if (root.endCapHold(capDelegate,
+                                            root.profileAfford.slideOffCancels
+                                                ? capHit.contains(mouse)
+                                                : undefined))
+                                        return
                                     if (capRect.types) root.releaseKey()
                                     // A release with the pointer still on
                                     // the cap re-arms the dwell (ticket 50):
@@ -3048,7 +3122,10 @@ Item {
                                     // that ends where it began, as they all
                                     // do — must not need to leave the key
                                     // and come back before resting works.
-                                    if (root.dwellEnabled && capHit.containsMouse)
+                                    // dwellActive, not dwellEnabled: a
+                                    // touch profile never arms a rest even
+                                    // with the setting left on.
+                                    if (root.dwellActive && capHit.containsMouse)
                                         root.dwellEnter(capData, capDelegate)
                                 }
                                 // A deferred hold that loses its grab types

@@ -9,7 +9,7 @@
 // live observation, and the install-from-zero stranger's whole session
 // (2026-09-14, lab journal) ran inside the resulting wedge: the panel
 // re-helloed a dead object every two seconds, nothing ever answered, the
-// typing gate stayed shut with "Starting omarchy-osk.service…" standing
+// typing gate stayed shut with "Starting oskar.service…" standing
 // and every key click a silent no-op, and only a shell restart escaped.
 // The one escape the code had — the path check that rebuilds the socket —
 // is guarded by `!connected`, so a socket that lies true never reaches it.

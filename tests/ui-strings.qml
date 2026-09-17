@@ -71,26 +71,56 @@ QtObject {
                 true)
         })
 
-        T.test("languageFor: the override wins, auto follows the layout", function () {
-            // Auto is the shipped searchPlaceholder mapping, no more:
-            // ua speaks Ukrainian, ru Russian, everything else English.
-            T.equal(UiStrings.languageFor("ua", "auto"), "uk")
-            T.equal(UiStrings.languageFor("ru", "auto"), "ru")
-            T.equal(UiStrings.languageFor("us", "auto"), "en")
-            T.equal(UiStrings.languageFor("de", "auto"), "en")
-            T.equal(UiStrings.languageFor("", "auto"), "en")
-            T.equal(UiStrings.languageFor(undefined, "auto"), "en")
+        T.test("languageFor: the override wins ONLY if its language is installed, auto follows the layout", function () {
+            // The owner's 2026-09-17 call: never offer — let alone apply —
+            // a language the seat cannot type. Auto is the searchPlaceholder
+            // mapping (ua→uk, ru→ru, else en); an explicit override pins
+            // the UI ONLY when its language rides an installed layout (or
+            // is English, the product's fallback); otherwise it is inert
+            // and the layout answers. layoutCodes is the seat's list.
+            T.equal(UiStrings.languageFor("ua", "auto", ["us", "ua"]), "uk")
+            T.equal(UiStrings.languageFor("ru", "auto", ["us", "ru"]), "ru")
+            T.equal(UiStrings.languageFor("us", "auto", ["us"]), "en")
+            T.equal(UiStrings.languageFor("de", "auto", ["de"]), "en")
+            T.equal(UiStrings.languageFor("", "auto", []), "en")
+            T.equal(UiStrings.languageFor(undefined, "auto", undefined), "en")
             // The xkb code arrives uppercased sometimes; the placeholder
             // lowercases before comparing and so does this.
-            T.equal(UiStrings.languageFor("UA", "auto"), "uk")
-            // An explicit choice pins the UI regardless of the layout.
-            T.equal(UiStrings.languageFor("us", "ru"), "ru")
-            T.equal(UiStrings.languageFor("ua", "en"), "en")
-            // A junk override (validation rejects it at the file; this is
-            // the runtime's own last word) degrades to the layout answer.
-            T.equal(UiStrings.languageFor("ua", "junk"), "uk")
-            T.equal(UiStrings.languageFor("us", "junk"), "en")
-            T.equal(UiStrings.languageFor(undefined, undefined), "en")
+            T.equal(UiStrings.languageFor("UA", "auto", ["US", "UA"]), "uk")
+            // A representable override pins: en is always representable
+            // (the fallback); ru/uk only when the layout carries them.
+            T.equal(UiStrings.languageFor("us", "en", ["us"]), "en")
+            T.equal(UiStrings.languageFor("us", "ru", ["us", "ru"]), "ru")
+            // The owner's exact case: ru chosen on a seat that has none —
+            // stale file, hand-edited config, or layouts shrank — the
+            // override goes inert, the layout answers, nothing is shoved.
+            T.equal(UiStrings.languageFor("us", "ru", ["us", "ua"]), "en")
+            T.equal(UiStrings.languageFor("ua", "ru", ["us", "ua"]), "uk")
+            // A junk override degrades the same way.
+            T.equal(UiStrings.languageFor("ua", "junk", ["us", "ua"]), "uk")
+            T.equal(UiStrings.languageFor("us", "junk", ["us"]), "en")
+            T.equal(UiStrings.languageFor(undefined, undefined, undefined), "en")
+        })
+
+        T.test("languageChoices: the offered languages mirror the installed layouts", function () {
+            // The LANGUAGE row offers Auto and English always, plus each
+            // translation whose layout the seat carries (the owner's
+            // 2026-09-17 call: a us,ua seat sees Auto/English/Українська
+            // — no Русский segment for a language it cannot type).
+            T.deepEqual(UiStrings.languageChoices(["us", "ua"]),
+                ["auto", "en", "uk"])
+            T.deepEqual(UiStrings.languageChoices(["us", "ru"]),
+                ["auto", "en", "ru"])
+            T.deepEqual(UiStrings.languageChoices(["us"]),
+                ["auto", "en"])
+            T.deepEqual(UiStrings.languageChoices(["us", "ua", "ru"]),
+                ["auto", "en", "ru", "uk"])
+            // Junk/empty/dup codes cost nothing; case-insensitive.
+            T.deepEqual(UiStrings.languageChoices([]), ["auto", "en"])
+            T.deepEqual(UiStrings.languageChoices(undefined), ["auto", "en"])
+            T.deepEqual(UiStrings.languageChoices(["UA", "ua"]),
+                ["auto", "en", "uk"])
+            T.deepEqual(UiStrings.languageChoices(["de"]), ["auto", "en"])
         })
 
         T.test("the shipped placeholder is the table's first word", function () {

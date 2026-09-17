@@ -210,7 +210,7 @@ def resolve_upstream(args):
     cache = os.environ.get(
         "XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache")
     )
-    cache = os.path.join(cache, "omarchy-osk", "provenance-upstream")
+    cache = os.path.join(cache, "oskar", "provenance-upstream")
     if not shutil.which("git"):
         die("git is required to fetch upstream")
     try:

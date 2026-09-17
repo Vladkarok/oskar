@@ -346,7 +346,7 @@ def main():
             "flake — re-run before believing a failure)")
         sys.exit(42)
 
-    helper = Helper(os.path.join(runtime, "omarchy-osk/control.sock"))
+    helper = Helper(os.path.join(runtime, "oskar/control.sock"))
     say(f".... helper: {helper.send('hello 5')}")
     configure(helper)
 
