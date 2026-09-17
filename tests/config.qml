@@ -288,6 +288,33 @@ QtObject {
             T.equal(effective.superMark, "word")
         })
 
+        T.test("a boolean written as a JSON string heals instead of poisoning", function () {
+            // The owner's live config carried "emoji_close_after_pick":
+            // "true" (string) from the omarchy-osk era; the validator's
+            // boolean contract then failed EVERY load forever, and the
+            // reset chip could not reach it (§5 keeps the bad value
+            // alive). The heal: the writer always meant the boolean.
+            var parsed = Config.reloadOverrides({},
+                '{"emoji_close_after_pick":"true","mode":"docked"}')
+            T.equal(parsed.error, "")
+            T.equal(parsed.value.emojiCloseAfterPick, true)
+            // And the false spelling heals the same way.
+            var falseCase = Config.reloadOverrides({},
+                '{"emoji_close_after_pick":"false"}')
+            T.equal(falseCase.error, "")
+            T.equal(falseCase.value.emojiCloseAfterPick, false)
+            // A string that is NOT a boolean spelling still poisons —
+            // garbage stays loud (§5's preservation, unchanged).
+            var junk = Config.reloadOverrides({},
+                '{"emoji_close_after_pick":"sure"}')
+            T.equal(junk.error, "Invalid value for emoji_close_after_pick")
+            // An UNDECLARED key ("emoji_app" lives in state, not here) is
+            // carried verbatim, never healed and never rejected.
+            var unk = Config.reloadOverrides({}, '{"emoji_app":"true"}')
+            T.equal(unk.error, "")
+            T.equal(unk.value.emoji_app, "true")
+        })
+
         T.test("sparse overrides merge over theme tokens and shipped fallbacks", function () {
             var parsed = Config.reloadOverrides({}, '{"sound":true,"accent_color":"#ff0000"}')
             var effective = Config.merge(Config.maintainerDefaults(), parsed.value, {
