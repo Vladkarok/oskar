@@ -105,6 +105,34 @@ default, while every unpinned field keeps following or staying frozen as
 `follow_theme` says. Overrides are the whole of the v1.1 appearance surface, not
 an independent colour schema — that remains v2.
 
+## Input profile (mouse and touch)
+
+The panel answers two pointer worlds, one setting in Settings
+(**Auto** by default, or pinned to Mouse/Touch):
+
+- **Mouse** is the design centre: hover tooltips everywhere,
+  dwell-to-type (rest on a cap and it types — the accessibility
+  slice), hold-a-key column menus, and press-typing with the
+  compositor's own key repeat.
+- **Touch** re-answers what a finger cannot do: a touch cannot hover,
+  so dwell never arms and tooltips either show on touch-and-hold
+  (gear/close/paste) or stay hidden (a label states it); fingers
+  drift, so every character cap **types on release** and sliding off
+  the cap cancels it (no phantom characters); long-press opens the
+  same hold-column menus (320 ms — the mobile idiom); chrome hit
+  areas grow invisibly toward touch-era target sizes; Space/BackSpace
+  and the command caps keep press semantics, so holding BackSpace
+  repeats exactly as on a hardware keyboard.
+- **Auto** flips to the touch affordances the moment the panel sees a
+  touch-drawn event (for the session — a stray touch will not flap it
+  back; the setting is the deliberate switch).
+
+Touch is proven against an emulated multitouch device end to end
+(evdev → libinput → the compositor's wl_touch) and Qt's own touch
+synthesis on the shipping Qt version; real-finger hardware has not
+been in our hands yet — mouse remains the design centre, touch is a
+first-class profile.
+
 ## Why there is a helper at all
 
 QML cannot drive `zwp_virtual_keyboard`, so typing has to go through a separate
@@ -121,7 +149,7 @@ layout; most ship their own layout lists that only their own key switches.
 
 | | This keyboard | GNOME OSK | plasma-keyboard (6.6) | squeekboard / Stevia | wvkbd | onboard |
 |---|---|---|---|---|---|---|
-| Mouse-driven desktop use | yes — the design centre | touch activation only | touch-first (mouse use still a known gap) | touch-first | touch-first | yes (its niche) |
+| Mouse-driven desktop use | yes — the design centre (a touch profile ships; see below) | touch activation only | touch-first (mouse use still a known gap) | touch-first | touch-first | yes (its niche) |
 | Caps follow the system layout | both directions — switch with the physical shortcut and the caps follow; switch from the panel and the physical keyboard follows | partial, one-way, ibus-coupled | Qt Virtual Keyboard's own layout lists | its own layout files | static keycap sets | own definitions |
 | What is drawn is what is typed | yes, including non-Latin and per-group variants, proven byte-exact | within GNOME's input stack | within Qt's stack | within Phosh | — | X11 only |
 | XWayland / wine-Proton | proven (paced paste chord) | — | — | — | types, no layout coupling | X11 only |
@@ -162,10 +190,12 @@ Notes from the survey:
   untested.
 - **Language coupling**: any number of configured XKB layouts; typing
   and the caps follow the compositor's layout state in both directions.
-  The UI and the emoji search are English-only for now.
-- **Not tested**: real-hardware sleep/wake (the lab VM cannot suspend).
-  The on-screen keyboard is mouse/touchpad-driven; touch gestures
-  (long-press, multi-touch) are not implemented.
+  The UI ships in English, Russian and Ukrainian, following the active
+  layout (a settings override pins one); the emoji search understands
+  English, Russian and Ukrainian keywords.
+- **Not tested**: real-hardware sleep/wake (the lab VM cannot suspend);
+  real touchscreen hardware (the touch profile is emulator- and
+  Qt-synthesis-proven; see Input profile below).
 
 ## Known problems
 
