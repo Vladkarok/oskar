@@ -2015,15 +2015,16 @@ Item {
                         // the glyph the hover used to, and the release
                         // still acts — help-then-action, one gesture, the
                         // click never suppressed.
+                        // The hold flag is UNCONDITIONAL and the action
+                        // rides release-or-click deduped (the touch
+                        // council's probe on Qt 6.11.2: clicked is
+                        // suppressed after an accepted pressAndHold —
+                        // so a hold's release must act itself, inside
+                        // the cap; and the flag may not depend on the
+                        // profile, or a long MOUSE press would lose the
+                        // click to the same suppression).
                         property bool touchHeld: false
-                        onPressAndHold: if (
-                            root.inputAfford.tooltipGlyphChrome === "hold")
-                            touchHeld = true
-                        onReleased: touchHeld = false
-                        onCanceled: touchHeld = false
-                        Accessible.role: Accessible.Button
-                        Accessible.name: UiStrings.tr("tooltip.settings", root.uiLang)
-                        onClicked: function (mouse) {
+                        function act(mouse) {
                             root.observePointerSource(mouse.source)
                             // The page and the card are mutually exclusive
                             // leftover-centre surfaces (toggleEmojiPage's
@@ -2037,10 +2038,26 @@ Item {
                                 settingsPopover.visible = true
                             }
                         }
+                        onPressAndHold: touchHeld = true
+                        onReleased: function (mouse) {
+                            if (touchHeld
+                                    && mouse.x >= 0 && mouse.x <= width
+                                    && mouse.y >= 0 && mouse.y <= height)
+                                act(mouse)
+                            touchHeld = false
+                        }
+                        onCanceled: touchHeld = false
+                        Accessible.role: Accessible.Button
+                        Accessible.name: UiStrings.tr("tooltip.settings", root.uiLang)
+                        onClicked: function (mouse) { act(mouse) }
                     }
                     HoverTooltip {
                         text: UiStrings.tr("tooltip.settings", root.uiLang)
+                        // Hover names the glyph in MOUSE only — in touch
+                        // the answer is the hold above (possibly-synthesized
+                        // hover never shows one; the council's finding 2).
                         hovered: gearArea.containsMouse
+                            && root.inputAfford.tooltipHoverShows
                         held: gearArea.touchHeld
                     }
                 }
@@ -2233,22 +2250,32 @@ Item {
                         anchors.topMargin: -root.chromeHitGrow30.up
                         anchors.bottomMargin: -root.chromeHitGrow30.down
                         hoverEnabled: true
+                        // The gear site's dedupe rule: the hold flag
+                        // unconditional, the action on release-inside or
+                        // click (Qt suppresses clicked after an accepted
+                        // hold — the council's probe).
                         property bool touchHeld: false
-                        onPressAndHold: if (
-                            root.inputAfford.tooltipGlyphChrome === "hold")
-                            touchHeld = true
-                        onReleased: touchHeld = false
-                        onCanceled: touchHeld = false
-                        Accessible.role: Accessible.Button
-                        Accessible.name: UiStrings.tr("tooltip.closeKeyboard", root.uiLang)
-                        onClicked: function (mouse) {
+                        function act(mouse) {
                             root.observePointerSource(mouse.source)
                             root.close()  // dismiss
                         }
+                        onPressAndHold: touchHeld = true
+                        onReleased: function (mouse) {
+                            if (touchHeld
+                                    && mouse.x >= 0 && mouse.x <= width
+                                    && mouse.y >= 0 && mouse.y <= height)
+                                act(mouse)
+                            touchHeld = false
+                        }
+                        onCanceled: touchHeld = false
+                        Accessible.role: Accessible.Button
+                        Accessible.name: UiStrings.tr("tooltip.closeKeyboard", root.uiLang)
+                        onClicked: function (mouse) { act(mouse) }
                     }
                     HoverTooltip {
                         text: UiStrings.tr("tooltip.closeKeyboard", root.uiLang)
                         hovered: dismissHit.containsMouse
+                            && root.inputAfford.tooltipHoverShows
                         held: dismissHit.touchHeld
                     }
                 }
@@ -2473,10 +2500,19 @@ Item {
                     hoverEnabled: true
                     enabled: root.pasteEnabled
                     property bool touchHeld: false
-                    onPressAndHold: if (
-                        root.inputAfford.tooltipGlyphChrome === "hold")
-                        touchHeld = true
-                    onReleased: touchHeld = false
+                    // The gear site's dedupe rule (Qt suppresses
+                    // clicked after an accepted hold — the council's
+                    // probe): flag unconditional, release-inside acts.
+                    onPressAndHold: touchHeld = true
+                    onReleased: function (mouse) {
+                        if (touchHeld
+                                && mouse.x >= 0 && mouse.x <= width
+                                && mouse.y >= 0 && mouse.y <= height) {
+                            root.observePointerSource(mouse.source)
+                            root.pasteCurrentContent()
+                        }
+                        touchHeld = false
+                    }
                     onCanceled: touchHeld = false
                     Accessible.role: Accessible.Button
                     Accessible.name: UiStrings.tr("access.paste", root.uiLang)
@@ -2488,6 +2524,7 @@ Item {
                 HoverTooltip {
                     text: UiStrings.tr("tooltip.paste", root.uiLang)
                     hovered: pasteArea.containsMouse
+                        && root.inputAfford.tooltipHoverShows
                     held: pasteArea.touchHeld
                 }
             }
@@ -2790,6 +2827,7 @@ Item {
             usageRecords: root.emojiUsage
             skinTone: root.emojiSkinTone
             layoutCode: keyboard.activeLayoutCode
+            tooltipHoverShows: root.inputAfford.tooltipHoverShows === true
             uiLang: root.uiLang
             hostWidth: settingsLayer.leftoverBox.w
             hostHeight: settingsLayer.leftoverBox.h

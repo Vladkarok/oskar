@@ -107,7 +107,8 @@ QtObject {
                 tooltipTextChrome: "hover",
                 hoverHighlight: true,
                 minChromeTargetPx: 0,
-                preventStealing: false
+                preventStealing: false,
+                tooltipHoverShows: true
             })
         })
 
@@ -121,6 +122,7 @@ QtObject {
             // a sliding finger.
             T.deepEqual(InputProfile.affordances("touch"), {
                 profile: "touch",
+                tooltipHoverShows: false,
                 typesOnRelease: true,
                 slideOffCancels: true,
                 dwellPossible: false,

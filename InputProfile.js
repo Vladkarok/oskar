@@ -86,7 +86,11 @@ var MOUSE_AFFORDANCES = {
     tooltipTextChrome: "hover",
     hoverHighlight: true,
     minChromeTargetPx: 0,
-    preventStealing: false
+    preventStealing: false,
+    // Explicit, never 'by absence' (the touch council's finding): hover
+    // shows tooltips only in the mouse profile — Qt may synthesize hover
+    // from a stationary finger, and the touch answer is hold, not hover.
+    tooltipHoverShows: true
 }
 
 /// The touch world: character caps type on RELEASE with slide-off cancel,
@@ -96,6 +100,10 @@ var MOUSE_AFFORDANCES = {
 /// surfaces never steal a sliding finger.
 var TOUCH_AFFORDANCES = {
     profile: "touch",
+    // Explicit, never "by absence" (the touch council): hover never
+    // shows a tooltip in touch — possibly-synthesized hover included;
+    // the glyph chrome answer is touch-and-hold, text stays hidden.
+    tooltipHoverShows: false,
     typesOnRelease: true,
     slideOffCancels: true,
     dwellPossible: false,
