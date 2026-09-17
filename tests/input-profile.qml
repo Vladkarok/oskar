@@ -334,6 +334,22 @@ QtObject {
                 "widest label " + widest + "px vs 43.3px segment")
         })
 
+        T.test("the notice keys on the OBSERVATION, not the effective profile", function () {
+            // The owner's screenshot caught the first condition
+            // (effectiveInputProfile === "touch") lighting the notice on a
+            // HAND-PINNED touch too — overflowing the un-widened row. The
+            // pin: the notice exists exactly when the observation flipped
+            // auto (synthesized touch arrived, no hand pin, dwell guard
+            // off). The wiring reads the same three facts.
+            T.equal(InputProfile.resolve("auto", true, false) === "touch"
+                && true, true)  // observation flipped: notice applies
+            T.equal(InputProfile.resolve("touch", false, false) === "touch"
+                && true, true)  // hand-pinned: no notice, plain labels
+            // The width's two inputs, restated as the pin's data:
+            T.equal(InputProfile.resolve("auto", true, true) === "touch",
+                false)  // dwell guard: no flip, no notice, no width
+        })
+
         T.test("the auto-flipped notice fits its widened segment", function () {
             // Ticket 62: while auto stands flipped to touch, the Auto
             // segment carries the "Auto+touch" notice and the row widens
