@@ -10,7 +10,8 @@ The audit round of 2026-09-13 is complete: every ticket implemented,
 independently reviewed `ship`, and proven in the lab VM on the exact
 release candidate (host suites, the packaged-product lifecycle
 choreography, the crash-recovery choreography, the nested integration
-suite; evidence under `.scratch/next-iteration/evidence/rc/`).
+suite; the maintainers' local evidence board is not part of this
+repository).
 
 Before this is enabled on a machine you rely on, two owner gates stand:
 the owner's own mouse/eyes acceptance of the round's behavior changes,
