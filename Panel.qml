@@ -1812,34 +1812,30 @@ Item {
                 width: parent.width
                 height: tokens.space(30) + keyboard.cellGap * 3
 
-                // The drag affordance (the owner's 2026-09-18 ask): four
-                // grip dots, floating only. The bar has always been
-                // draggable and the cursor already said so — but nothing
-                // VISUAL named the grip until these. Placement: BESIDE THE
-                // LANGUAGE CHIP (the bar's left slot belongs to the gear,
-                // the next slot to langCtl — both opaque chips that paint
-                // over whatever sits under them, which is how two previous
-                // placements vanished). Docked hides the dots with the
-                // drag itself; the register stays the corner-dot marker's
-                // quiet one (ticket 45) — presence, not a shout.
-                Row {
+                // The drag handle (the owner's 2026-09-18 sketch): a thin
+                // 3px line along the floating bar's top edge, rounded,
+                // quiet ink — and ALIVE: while the bar is dragged the line
+                // brightens and shortens from both ends. The window-title
+                // grammar everyone already reads ("a bar = carry me"),
+                // docked hides it with the drag itself.
+                Rectangle {
                     visible: root.mode === "floating"
                     anchors {
-                        left: langCtl.right
-                        leftMargin: keyboard.cellGap
-                        verticalCenter: hintText.verticalCenter
+                        top: parent.top
+                        left: parent.left
+                        right: parent.right
                     }
-                    spacing: keyboard.cellGap * 0.5
-                    Repeater {
-                        model: 4
-                        Rectangle {
-                            width: Math.max(2, Math.round(keyboard.cellGap * 0.4))
-                            height: width
-                            radius: width / 2
-                            color: Util.alpha(tokens.foreground,
-                                Util.alpha(tokens.normalFillAlpha, 2))
-                        }
-                    }
+                    // Shortens from both sides while dragged; settles
+                    // back when the hand leaves.
+                    width: parent.width - 2 * keyboard.cellGap
+                        - (dragArea.drag.active ? tokens.space(12) : 0)
+                    height: Math.max(3, Math.round(keyboard.cellGap * 0.35))
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    Behavior on width { NumberAnimation {
+                        duration: 120; easing.type: Easing.OutQuad } }
+                    radius: height / 2
+                    color: Util.alpha(tokens.foreground,
+                        dragArea.drag.active ? 0.6 : 0.35)
                 }
 
                 MouseArea {
