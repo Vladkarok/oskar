@@ -1827,8 +1827,11 @@ Item {
                         right: parent.right
                         rightMargin: keyboard.cellGap
                     }
-                    // Shortens from both sides while dragged; settles
-                    // back when the hand leaves.
+                    // Answers the hand BEFORE the panel moves: on hover
+                    // it brightens, on grab it brightens more and
+                    // shortens from both ends; settles back on release.
+                    readonly property bool hot: dragArea.containsMouse
+                        || dragArea.drag.active
                     width: parent.width - 2 * keyboard.cellGap
                         - (dragArea.drag.active ? tokens.space(12) : 0)
                     height: Math.max(3, Math.round(keyboard.cellGap * 0.35))
@@ -1837,12 +1840,14 @@ Item {
                         duration: 120; easing.type: Easing.OutQuad } }
                     radius: height / 2
                     color: Util.alpha(tokens.foreground,
-                        dragArea.drag.active ? 0.85 : 0.55)
+                        hot ? 0.85 : 0.45)
+                    Behavior on color { ColorAnimation { duration: 120 } }
                 }
 
                 MouseArea {
                     id: dragArea
                     anchors { fill: parent }
+                    hoverEnabled: true
                     // Docked is a fixed full-width strip; dragging it off the
                     // bottom edge would fight what the mode means. Floating
                     // is dragged by its bar as before.
