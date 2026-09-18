@@ -304,6 +304,34 @@ QtObject {
             T.equal(picked.group, 2)
         })
 
+        T.test("ticket 64: an external toggle splits the twins and the named anchor may be the sleeper", function () {
+            // The owner's live incident: fcitx5's vkb holds `main` (so the
+            // current tier finds nothing — fcitx is pseudo), the anchor
+            // names the SLEEPING twin on group 0 while the typing twin
+            // sits on group 1. The reading must not answer the sleeper's
+            // group: consensus + remembered resolve it, exactly like the
+            // cold-start arm.
+            function splitZoo(sleeperGroup, typingGroup) {
+                var devices = zoo(sleeperGroup, "hl-virtual-keyboard-fcitx5")
+                for (var i = 0; i < devices.length; i++)
+                    if (devices[i].name === "ite-tech.-inc.-ite-device(8176)-keyboard")
+                        devices[i].active_layout_index = typingGroup
+                return devices
+            }
+            var split = splitZoo(0, 1)
+            var picked = Devices.select(split,
+                "at-translated-set-2-keyboard", safeNames, 1)
+            // The named anchor IS safe (at-translated on 0) — a reading
+            // exists — but the set disagrees and the anchor is not the
+            // current keyboard: the divergence arm must fire and the
+            // remembered group (1, what the fingers type) must win.
+            T.equal(picked.group, 1, "remembered group wins over the sleeper's 0")
+            // The converged seat is untouched by the extension.
+            var same = Devices.select(zoo(0, "hl-virtual-keyboard-fcitx5"),
+                "at-translated-set-2-keyboard", safeNames, 0)
+            T.equal(same.group, 0)
+        })
+
         Qt.exit(T.report("layout devices"))
     }
 }
