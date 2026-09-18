@@ -9,13 +9,12 @@ The post-publish polish: the Auto+touch notice keys on the
 OBSERVATION (473e496+35269ec), the config self-heals boolean
 strings (98e82eb), README carries the languages map + security
 posture + touch-beta sections, branch archaeology is tagged.
-In flight: the final review agent (61/62 deltas + security
-ba3ba5a third round). Awaiting the owner: the announcement posts
-(.scratch/next-iteration/announce-drafts.md — the kill-gate clock
-starts with the first one); AUR the morning registration reopens
-(checksum 461cf30a… + .SRCINFO ready; NOTE: security commits
-landed after the tag — re-tag v0.1.0 or cut v0.1.1 on the AUR
-day, the owner's call).
+The final review closed everything (bbc5a42; the stray UTF-8
+release-path bug included) and the hardening shipped as **v0.1.1**
+(checksum f450ba94…, .SRCINFO current). Awaiting the owner: the
+announcement posts (.scratch/next-iteration/announce-drafts.md — the
+kill-gate clock starts with the first one); AUR the morning
+registration reopens (PKGBUILD is v0.1.1-ready as-is).
 
 ---
 
