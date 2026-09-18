@@ -1824,32 +1824,32 @@ Item {
                     // The owner's refined sketch: the line is the bar's
                     // honest handle with THREE states — rest (quiet, full
                     // width), press-grab (the moment the hand closes on
-                    // the bar: brighter, shorter from both ends, shifted
-                    // up a couple px as if lifted), and carried (same held
-                    // look while the panel follows). Hover alone does NOT
-                    // change it — a pointer passing over must not pretend
-                    // a grab.
+                    // the bar: brighter, shorter SYMMETRICALLY from both
+                    // ends, shifted up a couple px as if lifted), and
+                    // carried (same held look while the panel follows).
+                    // Hover alone does NOT change it — a pointer passing
+                    // over must not pretend a grab.
                     readonly property bool grabbed: dragArea.pressed
                     readonly property bool carried: dragArea.drag.active
+                    // NO left/right anchors: symmetric shortening is x +
+                    // width together, and mixing anchors with x is what
+                    // broke the left edge (x was ignored while the left
+                    // anchor held the edge in place).
+                    x: keyboard.cellGap
+                        + (grabbed || carried ? tokens.space(6) : 0)
+                    width: parent.width - 2 * keyboard.cellGap
+                        - (grabbed || carried ? 2 * tokens.space(6) : 0)
                     height: Math.max(3, Math.round(keyboard.cellGap * 0.35))
                     anchors {
                         top: parent.top
                         topMargin: keyboard.cellGap
                             - (grabbed ? Math.round(keyboard.cellGap * 0.25) : 0)
-                        left: parent.left
-                        right: parent.right
-                        rightMargin: keyboard.cellGap
-                            + (grabbed || carried ? tokens.space(6) : 0)
                     }
-                    // The left margin mirrors the right (symmetric
-                    // shortening) via anchors-leftMargin on the same row.
-                    x: keyboard.cellGap
-                        + (grabbed || carried ? tokens.space(6) : 0)
                     Behavior on x { NumberAnimation {
                         duration: 110; easing.type: Easing.OutQuad } }
-                    Behavior on anchors.topMargin { NumberAnimation {
+                    Behavior on width { NumberAnimation {
                         duration: 110; easing.type: Easing.OutQuad } }
-                    Behavior on anchors.rightMargin { NumberAnimation {
+                    Behavior on anchors.topMargin { NumberAnimation {
                         duration: 110; easing.type: Easing.OutQuad } }
                     radius: height / 2
                     color: Util.alpha(tokens.foreground,
