@@ -1853,7 +1853,8 @@ Item {
                         duration: 110; easing.type: Easing.OutQuad } }
                     radius: height / 2
                     color: Util.alpha(tokens.foreground,
-                        grabbed || carried ? 0.75 : 0.35)
+                        grabbed || carried ? 0.75
+                        : dragArea.containsMouse ? 0.55 : 0.35)
                     Behavior on color { ColorAnimation { duration: 110 } }
                 }
 
