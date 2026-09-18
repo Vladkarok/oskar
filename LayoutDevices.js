@@ -129,6 +129,22 @@ function select(devices, namedDevice, safeNames, fallbackGroup) {
     var namedMatch = safe.filter(function (device) { return device.name === named })[0]
     var reading = current || namedMatch || null
 
+    // Ticket 64: the DIVERGED seat must resolve to the consensus +
+    // remembered group even when a reading exists — an external
+    // per-device toggle (Hyprland's own grp:alt_shift_toggle) flips one
+    // twin and leaves the other, and with a pseudo vkb holding `main`
+    // (fcitx5 does whenever the user has not typed since it connected)
+    // the reading is the NAMED anchor — which may be the SLEEPING twin.
+    // The anchor was seeded by enumeration or an old layout event, not
+    // by typing evidence, so when the safe set disagrees AND the reading
+    // is only the named tier, the typing evidence the caller passed
+    // (the layoutDeviceNamed signal) outranks it: consensus device,
+    // remembered group — the same tie-break the cold-start arm uses.
+    var divergedWithAnchor = reading && !current
+        && safe.length > 1 && safe.some(function (device) {
+            return groupOf(device) !== groupOf(safe[0])
+        })
+
     // The safe set DISAGREES with itself when Hyprland's group toggle has
     // moved the keyboard the user types on while its sleeping siblings never
     // receive it (the toggle is per-device). A majority of sleepers then
@@ -141,11 +157,12 @@ function select(devices, namedDevice, safeNames, fallbackGroup) {
     var diverged = safe.length > 1 && safe.some(function (device) {
         return groupOf(device) !== groupOf(safe[0])
     })
+    if (divergedWithAnchor) diverged = true
     var remembered = typeof fallbackGroup === "number"
         && isFinite(fallbackGroup) && fallbackGroup >= 0
         && fallbackGroup === Math.floor(fallbackGroup)
         ? fallbackGroup : -1
-    if (!reading && diverged && remembered >= 0) {
+    if ((!reading || divergedWithAnchor) && diverged && remembered >= 0) {
         var facts = safe.filter(function (device) {
             return groupOf(device) === consensusGroup(safe)
         })[0] || safe[0]
