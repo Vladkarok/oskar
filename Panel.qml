@@ -1819,29 +1819,42 @@ Item {
                 // grammar everyone already reads ("a bar = carry me"),
                 // docked hides it with the drag itself.
                 Rectangle {
+                    id: dragLine
                     visible: root.mode === "floating"
+                    // The owner's refined sketch: the line is the bar's
+                    // honest handle with THREE states — rest (quiet, full
+                    // width), press-grab (the moment the hand closes on
+                    // the bar: brighter, shorter from both ends, shifted
+                    // up a couple px as if lifted), and carried (same held
+                    // look while the panel follows). Hover alone does NOT
+                    // change it — a pointer passing over must not pretend
+                    // a grab.
+                    readonly property bool grabbed: dragArea.pressed
+                    readonly property bool carried: dragArea.drag.active
+                    height: Math.max(3, Math.round(keyboard.cellGap * 0.35))
                     anchors {
                         top: parent.top
                         topMargin: keyboard.cellGap
+                            - (grabbed ? Math.round(keyboard.cellGap * 0.25) : 0)
                         left: parent.left
                         right: parent.right
                         rightMargin: keyboard.cellGap
+                            + (grabbed || carried ? tokens.space(6) : 0)
                     }
-                    // Answers the hand BEFORE the panel moves: on hover
-                    // it brightens, on grab it brightens more and
-                    // shortens from both ends; settles back on release.
-                    readonly property bool hot: dragArea.containsMouse
-                        || dragArea.drag.active
-                    width: parent.width - 2 * keyboard.cellGap
-                        - (dragArea.drag.active ? tokens.space(12) : 0)
-                    height: Math.max(3, Math.round(keyboard.cellGap * 0.35))
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    Behavior on width { NumberAnimation {
-                        duration: 120; easing.type: Easing.OutQuad } }
+                    // The left margin mirrors the right (symmetric
+                    // shortening) via anchors-leftMargin on the same row.
+                    x: keyboard.cellGap
+                        + (grabbed || carried ? tokens.space(6) : 0)
+                    Behavior on x { NumberAnimation {
+                        duration: 110; easing.type: Easing.OutQuad } }
+                    Behavior on anchors.topMargin { NumberAnimation {
+                        duration: 110; easing.type: Easing.OutQuad } }
+                    Behavior on anchors.rightMargin { NumberAnimation {
+                        duration: 110; easing.type: Easing.OutQuad } }
                     radius: height / 2
                     color: Util.alpha(tokens.foreground,
-                        hot ? 0.85 : 0.45)
-                    Behavior on color { ColorAnimation { duration: 120 } }
+                        grabbed || carried ? 0.75 : 0.35)
+                    Behavior on color { ColorAnimation { duration: 110 } }
                 }
 
                 MouseArea {
