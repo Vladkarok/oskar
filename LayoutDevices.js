@@ -91,7 +91,7 @@ function layoutCount(device) {
         .filter(function (code) { return String(code || "").trim() !== "" }).length
 }
 
-/// (devices, anchor, safeNames, fallbackGroup)
+/// (devices, anchor, safeNames, fallbackGroup, movedDevice)
 ///   -> { reading, typing, switchSet, group }
 ///
 /// `anchor` is the keyboard the caller last saw the seat produce a key on.
@@ -99,6 +99,11 @@ function layoutCount(device) {
 /// this panel issues emits one, so an anchor fed from events points at
 /// whichever device the panel itself moved last — the panel reading its own
 /// echo, and then rearranging the seat around it.
+///
+/// `movedDevice` is the keyboard the most recent compositor layout event
+/// named — the one that just moved, whatever moved it. It is evidence about
+/// MOTION, not about typing, and it only ever breaks a diverged seat open;
+/// the anchor stays learned from the seat's own flag and nowhere else.
 ///
 /// `reading` is the device whose group, layout list and RMLVO the panel
 /// follows, or null when nothing can answer — at startup, before the helper's
@@ -108,7 +113,7 @@ function layoutCount(device) {
 /// `reading` and `switchSet` come from the SAME set. That is the invariant
 /// this module exists to hold: a group read off a device the language button
 /// never moves is a group the keyboard will not be typing in.
-function select(devices, namedDevice, safeNames, fallbackGroup) {
+function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice) {
     var all = Array.isArray(devices) ? devices : []
     var names = Array.isArray(safeNames) ? safeNames : []
     var named = String(namedDevice || "")
@@ -129,18 +134,31 @@ function select(devices, namedDevice, safeNames, fallbackGroup) {
     var namedMatch = safe.filter(function (device) { return device.name === named })[0]
     var reading = current || namedMatch || null
 
-    // Ticket 64: the DIVERGED seat must resolve to the consensus +
-    // remembered group even when a reading exists — an external
-    // per-device toggle (Hyprland's own grp:alt_shift_toggle) flips one
-    // twin and leaves the other, and with a pseudo vkb holding `main`
-    // (fcitx5 does whenever the user has not typed since it connected)
-    // the reading is the NAMED anchor — which may be the SLEEPING twin.
-    // The anchor was seeded by enumeration or an old layout event, not
-    // by typing evidence, so when the safe set disagrees AND the reading
-    // is only the named tier, the typing evidence the caller passed
-    // (the layoutDeviceNamed signal) outranks it: consensus device,
-    // remembered group — the same tie-break the cold-start arm uses.
-    var divergedWithAnchor = reading && !current
+    // A DIVERGED seat is resolved by who just moved, never by a vote.
+    // One twin moves and the rest sleep: an external per-device toggle
+    // (Hyprland's own grp:alt_shift_toggle) does it — and so does the
+    // compositor itself flipping a group on a keystroke that carries no
+    // toggle at all (measured 2026-09-18 20:07: a plain Shift press, no
+    // Alt anywhere, no actor in the journal). With a pseudo vkb holding
+    // `main`, the reading is then only the NAMED anchor:
+    //
+    // - The mover IS the anchor (ticket 64's inverse, the 20:07 desync):
+    //   the keyboard under the user's hands is the one that just moved,
+    //   and its own live index answers through the fall-through return.
+    //   The ticket-64 arm used to outvote it with consensus + remembered
+    //   — two devices that never receive keys voting down the typist —
+    //   and every indicator said English while the fingers typed
+    //   Ukrainian, resyncing only on the next Alt+Shift.
+    //
+    // - The mover is NOT the anchor, or there is no mover at all: the
+    //   anchor may itself name a sleeper (ticket 64: seeded by
+    //   enumeration or an old layout event, not typing evidence), or a
+    //   sleeping twin is the one that moved. Its live index is not
+    //   trustworthy either way, so consensus device + remembered group
+    //   answer — the same tie-break the cold-start arm uses.
+    var moved = String(movedDevice || "")
+    var moverIsAnchor = moved !== "" && moved === named
+    var divergedWithAnchor = !moverIsAnchor && reading && !current
         && safe.length > 1 && safe.some(function (device) {
             return groupOf(device) !== groupOf(safe[0])
         })

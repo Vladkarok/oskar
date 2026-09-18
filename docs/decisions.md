@@ -2082,3 +2082,37 @@ sweep is total:
   prefix-agnostic). Bare `osk` test-harness vocabulary (osk-nest dirs,
   osk-typed.txt, the 9p tag `osk-src`) is generic infrastructure
   naming, not the product name, and stays.
+
+## 59. A diverged seat is resolved by who moved, not by a vote
+
+The seat's groups live per device, and only the interface that carries the
+keys ever moves: a physical Alt+Shift toggles the typing twin alone (§34's
+measurement), and the compositor can flip one with no toggle in the
+keystroke at all — caught live by the split-watcher on 2026-09-18 20:07: a
+plain Shift press, no Alt anywhere, no actor in the journal, with
+`us,ua` + `grp:alt_shift_toggle` and nothing else in the options. The
+panel's own vkb held `main` (fresh registration), so the reading was the
+named anchor — the typing twin, live on group 1 against two sleeping
+siblings on 0.
+
+Ticket 64's arm answered that seat with consensus + remembered: two devices
+that never receive keys outvoting the keyboard under the owner's hands.
+Every indicator said English while the fingers typed Ukrainian, and nothing
+resynced until the next Alt+Shift — which "fixed" it only by flipping the
+typist back onto the sleepers' group. The owner refused that cure on the
+spot: patching the symptom.
+
+**The mover breaks the tie.** `LayoutDevices.select` now takes the keyboard
+the most recent `activelayout` event named — motion evidence, recorded by
+the raw-event handler before the refresh it triggers, and never fed to the
+anchor (the anchor stays learned from the seat's own flag; an event-fed
+anchor is the panel reading its own echo, §34). When the mover IS the
+anchor, the anchor's own live index answers and the sleeping twins get no
+vote against it. When it is not — no mover yet, a sleeper that moved, an
+anchor that may itself name a sleeper (ticket 64) — consensus + remembered
+stand exactly as before: a device that cannot type must not drag the panel.
+
+The compositor-side flip itself is upstream territory and is not addressed
+here. What changed is that the panel follows it honestly: indicators, caps
+and the vkb all go where the fingers went, and one Alt+Shift brings
+everything back instead of being the only thing telling the truth.

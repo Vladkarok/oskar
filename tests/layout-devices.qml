@@ -310,7 +310,9 @@ QtObject {
             // names the SLEEPING twin on group 0 while the typing twin
             // sits on group 1. The reading must not answer the sleeper's
             // group: consensus + remembered resolve it, exactly like the
-            // cold-start arm.
+            // cold-start arm. The mover (the device the most recent
+            // activelayout event named) is the typing twin, not the
+            // anchor — so the mover-gated bypass does not apply.
             function splitZoo(sleeperGroup, typingGroup) {
                 var devices = zoo(sleeperGroup, "hl-virtual-keyboard-fcitx5")
                 for (var i = 0; i < devices.length; i++)
@@ -320,7 +322,8 @@ QtObject {
             }
             var split = splitZoo(0, 1)
             var picked = Devices.select(split,
-                "at-translated-set-2-keyboard", safeNames, 1)
+                "at-translated-set-2-keyboard", safeNames, 1,
+                "ite-tech.-inc.-ite-device(8176)-keyboard")
             // The named anchor IS safe (at-translated on 0) — a reading
             // exists — but the set disagrees and the anchor is not the
             // current keyboard: the divergence arm must fire and the
@@ -330,6 +333,41 @@ QtObject {
             var same = Devices.select(zoo(0, "hl-virtual-keyboard-fcitx5"),
                 "at-translated-set-2-keyboard", safeNames, 0)
             T.equal(same.group, 0)
+        })
+
+        // The 2026-09-18 desync (20:07, split-watch.log): the typing
+        // interface flipped 0→1 with no Alt anywhere and no actor in the
+        // journal — the compositor moved it on a plain Shift press. The
+        // panel's own vkb held `main` (fresh registration), so the reading
+        // was only the named anchor — the TYPING twin, live on group 1,
+        // its two sleeping siblings on 0. The ticket-64 arm answered
+        // consensus + remembered = 0: every indicator showed English while
+        // the fingers typed Ukrainian, and nothing resynced until the next
+        // Alt+Shift. The doctrine is "the keyboard under the user's hands
+        // is the authority" — the arm had inverted it into a vote of two
+        // devices that never receive keys.
+        T.test("a flip on the anchor is followed, not outvoted by sleeping twins", function () {
+            var desync = zoo(0, "hl-virtual-keyboard-oskar-daemon")
+            desync[3].active_layout_index = 1
+            var picked = Devices.select(desync,
+                "ite-tech.-inc.-ite-device(8176)-keyboard", safeNames, 0,
+                "ite-tech.-inc.-ite-device(8176)-keyboard")
+            T.equal(picked.group, 1, "the anchor's live group wins over consensus+remembered")
+            T.equal(picked.reading.name, "ite-tech.-inc.-ite-device(8176)-keyboard")
+            T.equal(Devices.activeLayout(picked.reading), "ua")
+            T.equal(picked.switchSet.length, 3)
+        })
+
+        T.test("a flip on a sleeping twin still loses to consensus and memory", function () {
+            // The other half of the gate: the mover is NOT the anchor — a
+            // sleeper moved — and the panel must not be dragged off what
+            // the seat remembers by a device that cannot type.
+            var desync = zoo(0, "hl-virtual-keyboard-oskar-daemon")
+            desync[1].active_layout_index = 1
+            var picked = Devices.select(desync,
+                "ite-tech.-inc.-ite-device(8176)-keyboard", safeNames, 0,
+                "ite-tech.-inc.-ite-device(8295)-keyboard")
+            T.equal(picked.group, 0, "consensus + remembered still answer")
         })
 
         Qt.exit(T.report("layout devices"))

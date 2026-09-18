@@ -1,3 +1,27 @@
+# Handoff — updated 2026-09-18 evening (the 20:07 desync, root-caused and fixed)
+
+**START HERE.** The owner's live language desync (fingers typing
+Ukrainian, every indicator English, no Alt+Shift pressed) is
+root-caused and the panel-side half is FIXED on master. Evidence in
+~/.local/state/oskar/split-watch.log: the compositor flipped the
+typing interface ite(8176) 0→1 on a plain Shift press at 20:07:31 with
+no userspace actor (`us,ua` + `grp:alt_shift_toggle` only — upstream
+territory; the watcher log is the report appendix if we file it), and
+the panel then HID the flip: ticket 64's divergence arm answered the
+consensus of two sleeping twins over the typist. The fix (decisions
+§59): `LayoutDevices.select` takes the keyboard the most recent
+`activelayout` event named (the MOVER — motion evidence recorded in
+the rawEvent handler, never fed to the anchor); mover==anchor → the
+anchor's live group answers and sleepers get no vote; otherwise
+consensus+remembered stand as before. Red test from the live geometry
+(anchor@1 vs sleepers@0 → 1), sleeper-mover case, extended ticket-64
+test; suite 18/18 green. The upstream flip itself is NOT fixed — next
+occurrence is followed honestly and one Alt+Shift resyncs.
+Owner-gated leftovers unchanged: announcement posts, AUR upload,
+README screenshots in the clean lab VM.
+
+---
+
 # Handoff — updated 2026-09-18 (published + hardened)
 
 **START HERE.** v0.1.0 is PUBLIC (github.com/Vladkarok/oskar) and
