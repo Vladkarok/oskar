@@ -298,6 +298,12 @@ QtObject {
                 '{"emoji_close_after_pick":"true","mode":"docked"}')
             T.equal(parsed.error, "")
             T.equal(parsed.value.emojiCloseAfterPick, true)
+            // The review's finding: sound is BOOLEAN-typed and was
+            // wrongly excluded — {"sound":"true"} must heal like every
+            // other boolean, or the banner pathology survives on a sibling.
+            var snd = Config.reloadOverrides({}, '{"sound":"true"}')
+            T.equal(snd.error, "")
+            T.equal(snd.value.sound, true)
             // And the false spelling heals the same way.
             var falseCase = Config.reloadOverrides({},
                 '{"emoji_close_after_pick":"false"}')
