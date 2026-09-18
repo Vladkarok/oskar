@@ -317,6 +317,12 @@ Item {
     // re-enumerated flag.
     property string rememberedLayoutDevice: ""
     signal layoutDeviceNamed(string name)
+    // The keyboard the most recent compositor `activelayout` event named —
+    // the device that just MOVED, whatever moved it (a deliberate toggle,
+    // the panel's own switch loop, or the compositor flipping a group on
+    // its own). Motion evidence only: it breaks a diverged seat open in
+    // LayoutDevices.select and is never fed to the anchor.
+    property string lastLayoutEventDevice: ""
     // Every device carrying the same layout list. A language-button click
     // moves this set to one absolute group, matching the shell's layout
     // widget and converging a seat whose per-device groups drifted apart.
@@ -808,7 +814,8 @@ Item {
         layoutTitles = Object.assign({}, layoutTitles, discoveredTitles)
 
         var picked = LayoutDevices.select(devices, anchorKeyboardName,
-            startupKeyboards, root.rememberedLayoutGroup)
+            startupKeyboards, root.rememberedLayoutGroup,
+            root.lastLayoutEventDevice)
         // Cleared unconditionally: a refresh that finds no safe target must
         // not leave the language button aiming at a device that has gone
         // missing or was never safe to advance.
@@ -1133,6 +1140,15 @@ Item {
             // A reload can add or remove layouts without moving anything, so it
             // changes what the panel may cycle through even with no switch.
             if (name.indexOf("activelayout") !== -1 || name === "configreloaded") {
+                if (name.indexOf("activelayout") !== -1) {
+                    // "device >> layout": the first field names the keyboard
+                    // the event is about. Recorded BEFORE the refresh it
+                    // triggers, so the divergence arm sees who moved.
+                    var fields = String(event.data || "").split(">>")
+                        .map(function (field) { return field.trim() })
+                        .filter(function (field) { return field !== "" })
+                    if (fields.length > 0) root.lastLayoutEventDevice = fields[0]
+                }
                 root.pullLayoutsFromCompositor()
             }
         }
