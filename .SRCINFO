@@ -1,6 +1,6 @@
 pkgbase = oskar
 	pkgdesc = OSKar — mouse-driven on-screen keyboard for Omarchy (Hyprland + Quickshell)
-	pkgver = 0.1.0
+	pkgver = 0.1.1
 	pkgrel = 1
 	url = https://github.com/Vladkarok/oskar
 	install = oskar.install
@@ -21,7 +21,7 @@ pkgbase = oskar
 	conflicts = oskar-git
 	conflicts = omarchy-osk
 	replaces = omarchy-osk
-	source = https://github.com/Vladkarok/oskar/archive/refs/tags/v0.1.0.tar.gz
-	sha256sums = 75036527b00be411eeb3325b1b1fb466a20617835e01beb3bee2d7fa8a375d67
+	source = https://github.com/Vladkarok/oskar/archive/refs/tags/v0.1.1.tar.gz
+	sha256sums = f450ba945b3d545df484b30e40c56841819c53fac4d6c16d872be25e6ff82e67
 
 pkgname = oskar
