@@ -1812,6 +1812,32 @@ Item {
                 width: parent.width
                 height: tokens.space(30) + keyboard.cellGap * 3
 
+                // The drag affordance (the owner's 2026-09-18 ask): four
+                // grip dots at the bar's left edge, floating only. The bar
+                // has always been draggable and the cursor already said so —
+                // but nothing VISUAL named the grip until these. Docked
+                // hides them with the drag itself (the mode's strip is
+                // fixed); the dots speak the corner-dot marker's own quiet
+                // register (ticket 45) — presence, not a shout.
+                Row {
+                    visible: root.mode === "floating"
+                    anchors {
+                        left: parent.left
+                        leftMargin: keyboard.cellGap * 2
+                        verticalCenter: hintText.verticalCenter
+                    }
+                    spacing: keyboard.cellGap * 0.5
+                    Repeater {
+                        model: 4
+                        Rectangle {
+                            width: Math.max(2, Math.round(keyboard.cellGap * 0.4))
+                            height: width
+                            radius: width / 2
+                            color: Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                        }
+                    }
+                }
+
                 MouseArea {
                     id: dragArea
                     anchors { fill: parent }
