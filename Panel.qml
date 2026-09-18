@@ -1822,8 +1822,10 @@ Item {
                     visible: root.mode === "floating"
                     anchors {
                         top: parent.top
+                        topMargin: keyboard.cellGap
                         left: parent.left
                         right: parent.right
+                        rightMargin: keyboard.cellGap
                     }
                     // Shortens from both sides while dragged; settles
                     // back when the hand leaves.
