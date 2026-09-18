@@ -1837,7 +1837,7 @@ Item {
                         duration: 120; easing.type: Easing.OutQuad } }
                     radius: height / 2
                     color: Util.alpha(tokens.foreground,
-                        dragArea.drag.active ? 0.6 : 0.35)
+                        dragArea.drag.active ? 0.85 : 0.55)
                 }
 
                 MouseArea {
