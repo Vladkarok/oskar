@@ -2620,13 +2620,18 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         }
         // Dispatch every COMPLETE line the buffer now holds; the tail
         // without its newline stays for the next chunk.
+        let mut poisoned = false;
         while let Some(nl) = pending.iter().position(|byte| *byte == b'\n') {
             let mut line_bytes = pending.drain(..=nl).collect::<Vec<u8>>();
             line_bytes.pop(); // the newline itself
             let Ok(line_str) = String::from_utf8(line_bytes) else {
-                // Same contract the old reader kept: invalid UTF-8
-                // disconnects rather than guesses.
-                return;
+                // Invalid UTF-8 disconnects rather than guesses — but
+                // THROUGH the release path (the final review's stray-bug
+                // finding: a bare `return` here jumped release_all and
+                // stranded every key this client held, locked modifiers
+                // included, until a daemon restart).
+                poisoned = true;
+                break;
             };
             let line = line_str.trim();
             if line.is_empty() {
@@ -2668,6 +2673,9 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 None => "err unknown command".to_string(),
             };
             let _ = writeln!(out, "{reply}");
+        }
+        if poisoned {
+            break;
         }
     }
 

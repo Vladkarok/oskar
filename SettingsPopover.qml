@@ -734,6 +734,7 @@ Rectangle {
                     // label keys on — notice and width cannot disagree.
                     width: panel.touchObserved
                         && panel.inputProfile === "auto"
+                        && !panel.dwellEnabled
                         ? tokens.space(240) : tokens.space(150)
                     readonly property var profileLabels: ({
                         auto: UiStrings.tr("settings.profile.auto", panel.uiLang),
@@ -753,9 +754,15 @@ Rectangle {
                         // announce, and the previous condition here lit
                         // the notice in that case too — overflowing its
                         // un-widened row (the owner's screenshot).
+                        // The dwell guard hides the notice too: with
+                        // dwell enabled the observation never flips
+                        // anything, and a lit notice over unchanged
+                        // mouse semantics is the lying-notice class
+                        // this delta exists to close.
                         if (value === "auto"
                                 && panel.touchObserved
-                                && panel.inputProfile === "auto")
+                                && panel.inputProfile === "auto"
+                                && !panel.dwellEnabled)
                             label = UiStrings.tr("settings.profile.autoTouch",
                                 panel.uiLang)
                         return { value: value, label: label }

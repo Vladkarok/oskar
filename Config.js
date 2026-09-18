@@ -284,8 +284,13 @@ function parseOverrides(text) {
         // is offered to every non-string field and accepted only when the
         // healed boolean passes validation — a string-typed field
         // (emoji_app) rejects the boolean and keeps its string.
+        // sound heals too (the review's finding: it is boolean-typed,
+        // and excluding it left {"sound":"true"} permanently poisonous
+        // — the exact pathology this heal exists to cure); the
+        // validFieldValue predicate below is the real gate and already
+        // rejects every genuinely string-typed field's boolean.
         if (typeof value === "string" && field.file !== "mode"
-            && field.file !== "size_preset" && field.file !== "sound"
+            && field.file !== "size_preset"
             && field.file !== "emoji_delivery" && field.file !== "super_mark"
             && (value === "true" || value === "false")
             && validFieldValue(field, value === "true"))
