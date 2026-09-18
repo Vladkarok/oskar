@@ -1821,9 +1821,12 @@ Item {
                 // register (ticket 45) — presence, not a shout.
                 Row {
                     visible: root.mode === "floating"
+                    // Beside the GEAR (which owns the bar's left slot at
+                    // this height — the first placement sat under it): the
+                    // dots move right of the gear chip and clear of it.
                     anchors {
-                        left: parent.left
-                        leftMargin: keyboard.cellGap * 2
+                        left: settingsGear.right
+                        leftMargin: keyboard.cellGap
                         verticalCenter: hintText.verticalCenter
                     }
                     spacing: keyboard.cellGap * 0.5
@@ -1833,7 +1836,8 @@ Item {
                             width: Math.max(2, Math.round(keyboard.cellGap * 0.4))
                             height: width
                             radius: width / 2
-                            color: Util.alpha(tokens.foreground, tokens.normalFillAlpha)
+                            color: Util.alpha(tokens.foreground,
+                                Util.alpha(tokens.normalFillAlpha, 2))
                         }
                     }
                 }
