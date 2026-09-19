@@ -2175,3 +2175,21 @@ notes carrying the real hash, `.SRCINFO` fresh. The audit's structural
 advice (integration-boundary suites, splitting the 11.5k-line trio,
 shortening orientation) is recorded as follow-up, deliberately behind
 these reliability fixes.
+
+## 62. The review's second round: the descriptor is the truth
+
+Two P2 refinements of §61's own fixes, both real:
+
+- **Open, then validate.** `read_kb_file_bounded` stated the path and then
+  opened it — two resolutions, and a FIFO swapped in between parked the
+  thread under the shared lock. The open now comes first and NONBLOCKING
+  (a FIFO opens instantly), and the fstat that gates size and regular-file
+  shape runs on the DESCRIPTOR: what is read is exactly what was checked,
+  and no by-name check can be raced.
+- **Deadlines between commands.** The window and the hold cap were checked
+  between reads, not between the commands one buffered chunk can carry —
+  a burst paced past five seconds could still land its late `hello`.
+  Both deadlines are now evaluated inside the dispatch loop as well, and
+  a reply's write bound is the REMAINING window while the handshake is
+  open (`reply_bound`): a parked write can no longer carry a late hello
+  home.

@@ -214,14 +214,25 @@ const KB_FILE_LIMIT: u64 = 2 * 1024 * 1024;
 /// is waited on.
 fn read_kb_file_bounded(path: &str) -> Option<Vec<u8>> {
     use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
     if path.is_empty() {
         return None;
     }
-    let metadata = std::fs::metadata(path).ok()?;
+    // Open NONBLOCKING before anything else, then validate the DESCRIPTOR
+    // (fstat), not the path: resolving the path twice — stat, then open —
+    // leaves a window where a FIFO swapped in between parks this thread
+    // under the shared lock (the review's second round). With the open
+    // first and nonblocking, a FIFO opens instantly and the fstat refuses
+    // it; what is read is exactly what was checked.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    let metadata = file.metadata().ok()?;
     if !metadata.is_file() || metadata.len() > KB_FILE_LIMIT {
         return None;
     }
-    let file = std::fs::File::open(path).ok()?;
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.take(KB_FILE_LIMIT + 1).read_to_end(&mut bytes).ok()?;
     if bytes.len() as u64 > KB_FILE_LIMIT {
@@ -2591,9 +2602,18 @@ fn handshake_expired(handshaked: bool, connected_for: Duration) -> bool {
     !handshaked && connected_for >= HANDSHAKE_WINDOW
 }
 
-/// One bounded reply. `false` means the client is not draining its pipe:
-/// the connection is dropped rather than parked on a blocked write.
-fn write_reply(out: &mut UnixStream, text: &str) -> bool {
+/// One bounded reply. `bound` is the caller's REMAINING time (the review's
+/// second round): while the handshake window is open, a write may not
+/// outlive it — a parked write would let a late hello complete long past
+/// the window. `false` means the bound is spent or the client is not
+/// draining its pipe; the connection is dropped either way.
+fn write_reply(out: &mut UnixStream, text: &str, bound: Duration) -> bool {
+    if bound.is_zero() {
+        return false;
+    }
+    if out.set_write_timeout(Some(bound)).is_err() {
+        return false;
+    }
     match writeln!(out, "{text}") {
         Ok(()) => true,
         Err(error)
@@ -2607,6 +2627,18 @@ fn write_reply(out: &mut UnixStream, text: &str) -> bool {
         // EPIPE and friends: the read side notices the disconnect on its
         // own; an idle writer gains nothing by tearing the loop down here.
         Err(_) => true,
+    }
+}
+
+/// The bound on the NEXT reply write: never more than `WRITE_BOUND`, and
+/// while the handshake window is open, never past its end.
+fn reply_bound(handshaked: bool, connected_for: Duration) -> Duration {
+    if handshaked {
+        WRITE_BOUND
+    } else {
+        HANDSHAKE_WINDOW
+            .saturating_sub(connected_for)
+            .min(WRITE_BOUND)
     }
 }
 
@@ -2745,6 +2777,19 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         let mut poisoned = false;
         let mut write_dead = false;
         while let Some(nl) = pending.iter().position(|byte| *byte == b'\n') {
+            // Deadlines between commands, not only between reads (the
+            // review's second round): one chunk can carry a whole burst,
+            // paced slow enough to cross the window, and its late hello
+            // must not complete. Breaking here drops the rest of the
+            // buffer; the loop-top check finishes dropping the connection.
+            if handshake_expired(handshaked, connected_at.elapsed()) {
+                break;
+            }
+            if hold_deadline(&shared, conn_id).is_some_and(|deadline| deadline <= Instant::now()) {
+                for code in expire_stuck_keys(&shared, &connection) {
+                    held.retain(|entry| *entry != code);
+                }
+            }
             let mut line_bytes = pending.drain(..=nl).collect::<Vec<u8>>();
             line_bytes.pop(); // the newline itself
             let Ok(line_str) = String::from_utf8(line_bytes) else {
@@ -2779,7 +2824,9 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                         format!("err protocol {PROTOCOL_VERSION} required, helper needs reinstall")
                     }
                 };
-                if !write_reply(&mut out, &reply) {
+                if !write_reply(&mut out, &reply,
+                    reply_bound(handshaked, connected_at.elapsed()))
+                {
                     write_dead = true;
                     break;
                 }
@@ -2787,14 +2834,18 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 continue;
             }
             if line == "ping" {
-                if !write_reply(&mut out, "pong") {
+                if !write_reply(&mut out, "pong",
+                    reply_bound(handshaked, connected_at.elapsed()))
+                {
                     write_dead = true;
                     break;
                 }
                 continue;
             }
             if line == "keyboards" {
-                if !write_reply(&mut out, &startup_keyboard_reply()) {
+                if !write_reply(&mut out, &startup_keyboard_reply(),
+                    reply_bound(handshaked, connected_at.elapsed()))
+                {
                     write_dead = true;
                     break;
                 }
@@ -2804,7 +2855,9 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
                 None => "err unknown command".to_string(),
             };
-            if !write_reply(&mut out, &reply) {
+            if !write_reply(&mut out, &reply,
+                reply_bound(handshaked, connected_at.elapsed()))
+            {
                 write_dead = true;
                 break;
             }
@@ -5255,5 +5308,35 @@ mod tests {
         assert!(handshake_expired(false, Duration::from_secs(600)));
         assert!(!handshake_expired(false, Duration::from_secs(4)));
         assert!(!handshake_expired(true, Duration::from_secs(600)));
+    }
+
+    // ---- the review's second round: the descriptor is the truth ----
+
+    #[test]
+    fn a_fifo_is_refused_through_the_opened_descriptor() {
+        use std::ffi::CString;
+        let path = std::env::temp_dir()
+            .join(format!("osk-kbfile-fifo-{}", std::process::id()));
+        let cpath = CString::new(path.display().to_string()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o644) }, 0);
+        // A FIFO opened read-only blocks until a writer appears; the
+        // nonblocking open plus fstat-on-the-descriptor refuses it
+        // instantly — and no swap between a by-name stat and the open can
+        // change what the descriptor then says about itself.
+        let started = Instant::now();
+        assert!(read_kb_file_bounded(path.to_str().unwrap()).is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reply_writes_are_bounded_by_the_remaining_handshake_window() {
+        // Handshaked, the fixed write bound stands. Inside the window the
+        // write gets only what is LEFT of it; past the window, nothing —
+        // a parked write must not carry a late hello home.
+        assert_eq!(reply_bound(true, Duration::from_secs(600)), WRITE_BOUND);
+        assert_eq!(reply_bound(false, Duration::from_secs(1)), Duration::from_secs(4));
+        assert!(reply_bound(false, Duration::from_secs(6)).is_zero());
+        assert_eq!(reply_bound(false, Duration::ZERO), HANDSHAKE_WINDOW);
     }
 }
