@@ -25,9 +25,48 @@ function controlState(layoutCount, switchSetLength) {
     return switchSetLength > 0 ? (count > 2 ? "menu" : "direct") : "disabled"
 }
 
+// A language is named in its own language (owner's 2026-09-19 call): the
+// chip and the chooser show endonyms — English, Українська, Русский,
+// Italiano — not base.lst's English descriptions. Curated and keyed by xkb
+// layout code; a code the table does not carry falls back to base.lst and
+// then to the code itself, so an exotic layout is never blank. `us` and
+// `gb` stay distinct ("English" / "English (UK)") for seats carrying both.
+var ENDONYMS = {
+    us: "English", gb: "English (UK)",
+    ua: "Українська", ru: "Русский", by: "Беларуская",
+    pl: "Polski", cz: "Čeština", sk: "Slovenčina",
+    si: "Slovenščina", hr: "Hrvatski", rs: "Српски", mk: "Македонски",
+    bg: "Български", gr: "Ελληνικά", tr: "Türkçe", hu: "Magyar",
+    ro: "Română", al: "Shqip",
+    de: "Deutsch", fr: "Français", es: "Español", latam: "Español (Latinoamérica)",
+    it: "Italiano", pt: "Português", br: "Português (Brasil)",
+    nl: "Nederlands",
+    se: "Svenska", no: "Norsk", da: "Dansk", fi: "Suomi",
+    is: "Íslenska", ie: "Gaeilge",
+    lt: "Lietuvių", lv: "Latviešu", et: "Eesti", kz: "Қазақша",
+    jp: "日本語", cn: "中文", kr: "한국어",
+    in: "हिन्दी", th: "ไทย", vn: "Tiếng Việt",
+    il: "עברית", ara: "العربية", ir: "فارسی",
+    eo: "Esperanto"
+}
+
+/// The display name for a layout code: its endonym when the table has one,
+/// base.lst's title when it does not, the uppercased code as the last
+/// resort. One truth for the header chip and the chooser rows alike.
+function displayName(code, fallbackTitle) {
+    var key = String(code || "").trim()
+    if (key !== "" && Object.prototype.hasOwnProperty.call(ENDONYMS, key))
+        return ENDONYMS[key]
+    var title = String(fallbackTitle || "").trim()
+    if (title !== "") return title
+    return key !== "" ? key.toUpperCase() : ""
+}
+
 // Group order is the menu order: xkb group indices are the seat's truth,
 // and the entries carry their group so the click switches by index —
 // codes can repeat across variants ("us,us") and must never merge.
+// Titles go through displayName: the endonym table first, base.lst and
+// the bare code behind it.
 function menuEntries(layoutCodes, titles, activeIndex) {
     var out = []
     var codes = Array.isArray(layoutCodes) ? layoutCodes : []
@@ -37,7 +76,7 @@ function menuEntries(layoutCodes, titles, activeIndex) {
         out.push({
             group: i,
             code: code,
-            title: title ? String(title) : code.toUpperCase(),
+            title: displayName(code, title),
             active: i === activeIndex
         })
     }

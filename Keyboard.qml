@@ -15,6 +15,7 @@ import "LayoutDevices.js" as LayoutDevices
 import "SettleGuard.js" as SettleGuard
 import "SocketWatch.js" as SocketWatch
 import "ClipboardPaste.js" as ClipboardPaste
+import "LanguageControl.js" as LanguageControl
 
 Item {
     id: root
@@ -338,10 +339,9 @@ Item {
     property string xkbVariants: ""
     property string xkbOptions: ""
     property string xkbFile: ""
-    property string activeLayoutName: {
-        var name = layoutTitles[activeLayoutCode]
-        return name ? name : activeLayoutCode.toUpperCase()
-    }
+    property string activeLayoutName:
+        LanguageControl.displayName(activeLayoutCode,
+            layoutTitles[activeLayoutCode])
     // Configure transaction bookkeeping for the device-held-modifier
     // handshake. The helper drains every key it holds for us when — and only
     // when — a configure CHANGES the keymap (its same-keymap short-circuit
