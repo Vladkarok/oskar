@@ -1334,7 +1334,7 @@ Item {
             done(false)
     }
 
-    // Route a dispatched chord's success through the helper's ack of its
+    // Route a dispatched chord's success through the helper's reply to its
     // final line. Failure paths never wait: a refusal, an abort or a dead
     // socket is already a verdict.
     function settleChordThroughHelper(done) {
@@ -1343,11 +1343,20 @@ Item {
         chordAckGuard.restart()
     }
 
-    function chordAckSettled(success) {
+    // The chord's own final line was answered: `ok` is success, anything
+    // else — an err — is a failed chord, and both spend the slot.
+    function chordAckCompleted(done, success) {
+        chordAckGuard.stop()
+        if (done) done(success)
+    }
+
+    // The guard timeout, or a connection that cannot answer: the wait
+    // ends failed, and the queue keeps draining on its own.
+    function chordAckTimedOut() {
         var done = root.chordAcks.chordDone
         root.chordAcks = ChordAcks.chordSettled(root.chordAcks)
         chordAckGuard.stop()
-        if (done) done(success)
+        if (done) done(false)
     }
 
     Timer {
@@ -1355,7 +1364,7 @@ Item {
         interval: 5000
         repeat: false
         onTriggered: () => {
-            if (root.chordAcks.chordDone) root.chordAckSettled(false)
+            if (root.chordAcks.chordDone) root.chordAckTimedOut()
         }
     }
 
@@ -1611,7 +1620,7 @@ Item {
         // helper that is being torn down: settle it as a cancellation, the
         // way every other failure path already does — and the ledger of
         // oks owed by the dead connection dies with it.
-        if (root.chordAcks.chordDone) root.chordAckSettled(false)
+        if (root.chordAcks.chordDone) root.chordAckTimedOut()
         root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
         Qt.callLater(function () {
             helperLoader.active = false
@@ -1671,7 +1680,7 @@ Item {
                     // cancellation — the helper released everything it held
                     // on the way down, no ack is coming, and the ledger of
                     // oks owed by this connection dies with it.
-                    if (root.chordAcks.chordDone) root.chordAckSettled(false)
+                    if (root.chordAcks.chordDone) root.chordAckTimedOut()
                     root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
                     // A restarted helper counts its installs from one again,
                     // so the generation this panel last shared can come round
@@ -1692,6 +1701,17 @@ Item {
                     // written before it has been answered or overtaken by
                     // work that is about to answer.
                     root.helloInFlight = false
+                    // And any line is an ANSWER: it pops the oldest
+                    // command's slot in the correlation queue — ok, err,
+                    // fact or generation, the helper answers in order. The
+                    // chord's verdict rides on the pop of its own final
+                    // line, success only when the reply is a bare `ok`
+                    // (round five's blocker: an err used to leave the slot
+                    // occupied forever, failing every later chord).
+                    var ack = ChordAcks.replyReceived(root.chordAcks,
+                        reply === "ok")
+                    root.chordAcks = ack.state
+                    if (ack.done) root.chordAckCompleted(ack.done, ack.success)
                     if (reply === "hello " + Session.PROTOCOL_VERSION) {
                         root.serviceIncompatible = false
                         root.inputReady = false
@@ -1769,14 +1789,6 @@ Item {
                         var succeeded = successes.shift()
                         root.pendingTextReplies = successes
                         if (succeeded) succeeded(true)
-                    } else if (reply === "ok") {
-                        // One plain command acknowledged. Draining the
-                        // ledger settles a waiting chord exactly when its
-                        // own final line's ack has arrived — never on the
-                        // first ok of the burst.
-                        var ack = ChordAcks.okReceived(root.chordAcks)
-                        root.chordAcks = ack.state
-                        if (ack.settle) root.chordAckSettled(true)
                     } else if (reply.indexOf("configured") === 0) {
                         // Mirror the helper's own configure behaviour, for
                         // THE ENTRY THIS REPLY SETTLES — the oldest

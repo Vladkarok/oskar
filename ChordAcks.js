@@ -1,66 +1,78 @@
 .pragma library
 
-// Correlating the helper's bare `ok` replies with the plain commands they
-// answer, so a dispatched paste chord can wait for the acknowledgement of
-// ITS OWN final line (the review's fourth round: a single awaiting slot
-// settled on the FIRST ok — the Ctrl press's — and the next emoji could
-// still replace the clipboard before the paste events left the panel).
+// Correlating the helper's replies with the commands they answer, so a
+// dispatched paste chord can wait for the acknowledgement of ITS OWN
+// final line.
 //
 // The helper serves each connection strictly in order and answers every
-// plain command `down|up|mods|group` with exactly one `ok`. So the panel
-// counts plain commands sent minus oks received; the chord's final line
-// is acked the moment the counter drains to zero while a chord waits.
-// A command the panel never counted (text, configure, caps, ping) never
-// decrements it; a write that failed never increments it. An interleaved
-// click after the chord's last line only delays the drain — late is
-// safe, early was the bug.
+// command with exactly one line — `ok`, an `err …`, a caps fact, a
+// `configured` generation. So the panel keeps a QUEUE: every command sent
+// (through the one send choke point) occupies a slot, and every line the
+// helper sends back pops the oldest, whatever it says. Both verdicts
+// spend the slot (round four's blocker: an err'd plain command used to
+// sit in a bare counter forever, and every later chord "failed" its guard
+// timeout while the pastes themselves worked).
 //
-// One chord waits at a time (the clipboard transaction serializes them),
-// and a connection that dies resets the whole ledger: its oks never
-// come, and the reconnect's world starts clean.
+// The chord's final line is marked when the chord arms; its pop is the
+// verdict — success only when that reply is a bare `ok`. A reply that
+// pops an unmarked slot settles nothing; a reply arriving on an empty
+// queue answers one of the few writes that bypass the choke point (the
+// reconnect's hello/keyboards/mods 0), sent only when the queue is known
+// empty. A dying connection cancels the wait and drops the whole queue:
+// replies owed by a dead socket never come.
+//
+// One chord waits at a time — the clipboard transaction serializes them.
 
 function initial() {
-    return { outstanding: 0, chordDone: null }
+    return { queue: [], chordDone: null }
 }
 
-// The verbs whose reply is a bare `ok` — nothing else moves the counter.
-function isPlainCommand(line) {
-    return /^(down|up|mods|group) /.test(String(line || ""))
-}
-
+// One command went out and will be answered. Called only after a
+// successful write; every kind of command queues, because every kind is
+// answered.
 function sent(state, line) {
-    if (!isPlainCommand(line)) return { state: state, counted: false }
+    var text = String(line || "")
+    if (text === "") return state
     return {
-        state: { outstanding: state.outstanding + 1, chordDone: state.chordDone },
-        counted: true
+        queue: state.queue.concat([{ chordFinal: false }]),
+        chordDone: state.chordDone
     }
 }
 
-// Arm the waiting chord: settle when the drain reaches zero.
+// Arm the waiting chord: the NEWEST slot — the final line just sent —
+// carries the verdict. An empty queue at arming leaves the wait to the
+// caller's guard timer (nothing sent can be waiting for an answer).
 function chordArmed(state, done) {
-    return { outstanding: state.outstanding, chordDone: done || null }
+    if (state.queue.length === 0)
+        return { queue: state.queue, chordDone: done || null }
+    var queue = state.queue.slice(0, state.queue.length - 1)
+        .concat([{ chordFinal: true }])
+    return { queue: queue, chordDone: done || null }
 }
 
-// One `ok` arrived. `settle` is true only when nothing sent is unacked —
-// the chord's final line included, whatever else went out around it.
-function okReceived(state) {
-    if (state.outstanding <= 0)
-        return { state: state, settle: false }
-    var outstanding = state.outstanding - 1
-    return {
-        state: { outstanding: outstanding, chordDone: state.chordDone },
-        settle: state.chordDone !== null && outstanding === 0
-    }
+// One reply line arrived. `ok` says the popped command succeeded; any
+// other reply — an err, a fact, whatever — says it did not get the one
+// answer success means. `done` is the armed chord's callback when the
+// popped slot was its final line, with `success` as the verdict.
+function replyReceived(state, ok) {
+    if (state.queue.length === 0)
+        return { state: state, done: null }
+    var queue = state.queue.slice(1)
+    var popped = state.queue[0]
+    if (!popped.chordFinal)
+        return { state: { queue: queue, chordDone: state.chordDone }, done: null }
+    return { state: { queue: queue, chordDone: null },
+        done: state.chordDone, success: ok === true }
 }
 
-// The verdict is in — the waiting callback leaves, the counter stays (the
-// remaining oks are still owed and still drain).
+// The verdict arrived by another path (the guard timer, a dying
+// connection): the wait ends, the queue keeps draining.
 function chordSettled(state) {
-    return { outstanding: state.outstanding, chordDone: null }
+    return { queue: state.queue, chordDone: null }
 }
 
-// The connection died: no ok is coming for anything sent on it, and the
-// reconnect's replies answer only its own commands.
+// The connection died: no reply is coming for anything sent on it, and
+// the reconnect's answers address only its own writes.
 function connectionLost(state) {
     return initial()
 }

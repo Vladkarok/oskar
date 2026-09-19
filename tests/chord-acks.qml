@@ -1,4 +1,4 @@
-// Correlating bare `ok` replies with the plain commands they answer, so a
+// Correlating the helper's replies with the commands they answer, so a
 // paste chord waits for the acknowledgement of its own final line. Run
 // with tools/run-tests.sh — no compositor, no display.
 import QtQml
@@ -7,16 +7,21 @@ import "harness.js" as T
 
 QtObject {
     Component.onCompleted: {
-        T.test("only plain verb commands are counted", function () {
-            T.equal(ChordAcks.isPlainCommand("down ctrl"), true)
-            T.equal(ChordAcks.isPlainCommand("up ctrl"), true)
-            T.equal(ChordAcks.isPlainCommand("mods 5"), true)
-            T.equal(ChordAcks.isPlainCommand("group 1"), true)
-            T.equal(ChordAcks.isPlainCommand("text 👍"), false)
-            T.equal(ChordAcks.isPlainCommand("configure\tevdev"), false)
-            T.equal(ChordAcks.isPlainCommand("caps 0"), false)
-            T.equal(ChordAcks.isPlainCommand(""), false)
-            T.equal(ChordAcks.isPlainCommand(null), false)
+        T.test("every sent command occupies a slot, every reply pops one", function () {
+            var state = ChordAcks.initial()
+            state = ChordAcks.sent(state, "down ctrl")
+            state = ChordAcks.sent(state, "text 👍")
+            T.equal(state.queue.length, 2)
+            var first = ChordAcks.replyReceived(state, true)
+            T.equal(first.state.queue.length, 1)
+            T.equal(first.done, null)
+            var second = ChordAcks.replyReceived(first.state, false)
+            T.equal(second.state.queue.length, 0)
+            T.equal(second.done, null)
+            // A reply on an empty queue answers one of the bypassed
+            // writes; it settles nothing and owes nothing.
+            var stray = ChordAcks.replyReceived(second.state, true)
+            T.equal(stray.state.queue.length, 0)
         })
 
         T.test("the chord settles on the drain, not the first ok", function () {
@@ -25,57 +30,79 @@ QtObject {
             // press's — must not settle it.
             var state = ChordAcks.initial()
             for (var i = 0; i < 3; i++)
-                state = ChordAcks.sent(state, "down ctrl").state
-            state = ChordAcks.chordArmed(state, function () {})
-            var first = ChordAcks.okReceived(state)
-            T.equal(first.settle, false, "the Ctrl press's ok settles nothing")
-            T.equal(first.state.outstanding, 2)
-            var second = ChordAcks.okReceived(first.state)
-            T.equal(second.settle, false)
-            var third = ChordAcks.okReceived(second.state)
-            T.equal(third.settle, true, "the FINAL line's ack settles the chord")
+                state = ChordAcks.sent(state, "down ctrl")
+            var chordDone = function () {}
+            state = ChordAcks.chordArmed(state, chordDone)
+            var first = ChordAcks.replyReceived(state, true)
+            T.equal(first.done, null, "the Ctrl press's ok settles nothing")
+            T.equal(first.state.queue.length, 2)
+            var second = ChordAcks.replyReceived(first.state, true)
+            T.equal(second.done, null)
+            var third = ChordAcks.replyReceived(second.state, true)
+            T.equal(third.done, chordDone, "the FINAL line's ack settles the chord")
+            T.equal(third.success, true)
+            T.equal(third.state.chordDone, null)
         })
 
-        T.test("an interleaved click delays the drain, never breaks it", function () {
-            // A modifier click after the chord's last line went out: its
-            // ok drains the click too — the chord settles late (safe),
-            // never early (the bug).
+        T.test("an err on the chord's final line settles it failed", function () {
+            // Round five's blocker: an err'd command used to sit in the
+            // ledger forever, failing every later chord by timeout. Now
+            // the err spends the slot AND carries the verdict.
             var state = ChordAcks.initial()
-            state = ChordAcks.sent(state, "down ctrl").state
-            state = ChordAcks.sent(state, "tap AB04").state  // not counted
+            state = ChordAcks.sent(state, "down ctrl")
+            state = ChordAcks.sent(state, "up ctrl")
+            var chordDone = function () {}
+            state = ChordAcks.chordArmed(state, chordDone)
+            var ok = ChordAcks.replyReceived(state, true)
+            T.equal(ok.done, null)
+            var err = ChordAcks.replyReceived(ok.state, false)
+            T.equal(err.done, chordDone)
+            T.equal(err.success, false, "an err'd final line is a failed chord")
+            // The queue is clean: the NEXT chord starts from zero.
+            T.equal(err.state.queue.length, 0)
+        })
+
+        T.test("an err on an unrelated command drains without settling", function () {
+            var state = ChordAcks.initial()
+            state = ChordAcks.sent(state, "group 9")  // will err
+            state = ChordAcks.sent(state, "down ctrl")
             state = ChordAcks.chordArmed(state, function () {})
-            state = ChordAcks.sent(state, "down shift").state  // the click
-            var a = ChordAcks.okReceived(state)
-            T.equal(a.settle, false)
-            T.equal(a.state.outstanding, 1)
-            var b = ChordAcks.okReceived(a.state)
-            T.equal(b.settle, true)
+            var err = ChordAcks.replyReceived(state, false)
+            T.equal(err.done, null, "the group's err is not the chord's verdict")
+            T.equal(err.state.queue.length, 1)
+            var ack = ChordAcks.replyReceived(err.state, true)
+            T.equal(ack.done !== null, true, "the final line's ack settles it")
+            T.equal(ack.success, true)
         })
 
         T.test("a connection that dies resets the ledger and the wait", function () {
             var state = ChordAcks.initial()
-            state = ChordAcks.sent(state, "down ctrl").state
+            state = ChordAcks.sent(state, "down ctrl")
             state = ChordAcks.chordArmed(state, function () {})
             var gone = ChordAcks.connectionLost(state)
-            T.equal(gone.outstanding, 0, "no ok is coming for the dead socket")
+            T.equal(gone.queue.length, 0, "no reply is coming for the dead socket")
             T.equal(gone.chordDone, null)
-            // And the fresh world does not settle ghosts.
-            T.equal(ChordAcks.okReceived(gone).settle, false)
+            T.equal(ChordAcks.replyReceived(gone, true).done, null)
         })
 
-        T.test("a settled chord leaves the counter to finish draining", function () {
+        T.test("the guard timeout clears the wait, the queue keeps draining", function () {
             var state = ChordAcks.initial()
-            state = ChordAcks.sent(state, "down ctrl").state
-            state = ChordAcks.sent(state, "up ctrl").state
+            state = ChordAcks.sent(state, "down ctrl")
+            state = ChordAcks.sent(state, "up ctrl")
             state = ChordAcks.chordArmed(state, function () {})
-            var drained = ChordAcks.okReceived(state)
-            T.equal(drained.settle, false)
-            var after = ChordAcks.chordSettled(drained.state)
-            T.equal(after.outstanding, 1)
+            var after = ChordAcks.chordSettled(state)
             T.equal(after.chordDone, null)
-            var last = ChordAcks.okReceived(after)
-            T.equal(last.settle, false, "nothing waits any more")
-            T.equal(last.state.outstanding, 0)
+            T.equal(after.queue.length, 2)
+            var late = ChordAcks.replyReceived(after, true)
+            T.equal(late.done, null, "nothing waits any more")
+            T.equal(late.state.queue.length, 1)
+        })
+
+        T.test("arming on an empty queue leaves the wait to the guard", function () {
+            var state = ChordAcks.initial()
+            var armed = ChordAcks.chordArmed(state, function () {})
+            T.equal(armed.queue.length, 0)
+            T.equal(armed.chordDone !== null, true)
         })
 
         Qt.exit(T.report("chord acks"))

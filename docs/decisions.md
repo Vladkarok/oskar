@@ -2257,3 +2257,22 @@ Round three's fixes were half-right; round four named the halves:
   5 000-byte line walked through untouched. The dispatch loop now refuses
   any complete line over the cap, leaving the reply-and-close to the tail
   check.
+
+## 65. The review's fifth round: the package is part of the feature
+
+Two blockers, both mine:
+
+- **A runtime module the package did not carry.** ChordAcks.js shipped in
+  the checkout but not in `PLUGIN_RUNTIME` — the packaging check failed,
+  and a package built past it would not load the keyboard at all. The
+  Makefile list is amended; the stage target verified carrying the file.
+- **An err'd command used to occupy the correlation slot forever.** The
+  ledger drained only on `ok`; a `group`/`down` answered with an err left
+  the entry stuck past the guard timeout, and every later chord "failed"
+  while the pastes themselves worked. ChordAcks is a command QUEUE now:
+  every sent command occupies a slot, every reply line — ok, err, fact,
+  generation — pops the oldest (the helper answers strictly in order),
+  and the chord's verdict rides on the pop of its own final line:
+  success only when that reply is a bare `ok`. A reply on an empty queue
+  answers one of the few bypassed reconnect writes, sent only when the
+  queue is known empty.
