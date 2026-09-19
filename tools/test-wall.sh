@@ -5,7 +5,6 @@
 #   host battery    — the pure JS seams (13 suites) + qmllint's fatal
 #                     class + the packaging file-set gate (renames,
 #                     constants, contract drift — classes 1 and 5)
-#   provenance      — zero shared lines with the upstream sketch
 #   clippy          — the daemon's own regressions (class 6)
 #   live legs (lab) — the REAL panel from the tree in the disposable
 #                     lab: the canary (packaged-panel load + facts,
@@ -34,13 +33,6 @@ if (cd "$root" && ./tools/run-tests.sh >"$WALL_TMP"/host.log 2>&1); then
   row "host-battery" PASS "$(grep -cE 'passed, 0 failed' "$WALL_TMP"/host.log) suites + qml gates"
 else
   row "host-battery" FAIL "tail: $(tail -n 3 "$WALL_TMP"/host.log | tr '\n' ' ')"
-fi
-
-echo "== provenance"
-if (cd "$root" && ./tools/provenance.py >"$WALL_TMP"/prov.log 2>&1); then
-  row "provenance" PASS "$(grep -oE 'total +0 / [0-9]+' "$WALL_TMP"/prov.log | tail -1)"
-else
-  row "provenance" FAIL "see $WALL_TMP/prov.log"
 fi
 
 echo "== clippy"

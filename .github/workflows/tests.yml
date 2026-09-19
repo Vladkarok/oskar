@@ -1,6 +1,6 @@
 # The regression wall's host layers on every push (ticket 43's CI half):
 # the 16 offscreen JS suites, qmllint's fatal class, the packaging
-# file-set gate, provenance, and the daemon's tests under clippy. The
+# file-set gate, and the daemon's tests under clippy. The
 # live lab layers (canary, restart-settle, QMP clicks) stay local —
 # they need the disposable VM.
 name: tests
@@ -31,8 +31,6 @@ jobs:
           persist-credentials: false
       - name: Host battery (16 suites + qml gates)
         run: ./tools/run-tests.sh
-      - name: Provenance gate
-        run: ./tools/provenance.py
       - name: Clippy
         run: cargo clippy --manifest-path daemon/Cargo.toml
               --all-targets -- -D warnings

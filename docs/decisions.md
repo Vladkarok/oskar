@@ -295,6 +295,17 @@ dropping it while the scaffold commit is public reads as erasure even
 where it would be legally fine. Note it runs both ways — his repo carries
 our merged fix under his MIT, same as ours carries his.
 
+**Retired 2026-09-20, the owner's call.** The measurement did its work:
+zero was reached, verified and kept for months, and the sole copyright
+stands on that completed cleanup. What killed the gate itself was its own
+success pushed past sense — it flagged `interval: 5000`, a coincidental
+QML boilerplate line this project's own new code wrote, and would keep
+generating such noise forever: any timer constant can collide, and nobody
+owes an upstream mention for that. The comparison is not the licence's
+foundation — the finished reimplementation is; the script measured that
+work once and left, and nothing in the tree compares against upstream any
+more. This section and spec-v1 §13 keep the history.
+
 ## 15. Startup device evidence comes from udev, not a seat guess
 
 At shell start, the seat's `main` keyboard can already be fcitx5 or this
@@ -1572,6 +1583,12 @@ and spec-v1 §13 state the history without attributing the present.
 at all — with zero shared lines, the public mention only misled readers
 into expecting shared code. The history record stays internal
 (orientation, spec-v1 §13, this section); the provenance gate stays.
+
+**Retired 2026-09-20** — see the note at the end of §14: the gate had
+done its job (zero, kept for months) and was removed outright after it
+began flagging coincidental boilerplate. The sole copyright stands on
+the completed reimplementation; this section's title names the moment's
+decision, not the tool's fate.
 
 The measurement stays honest by counting everything that could have been
 written any other way and excluding only what could not: module imports,

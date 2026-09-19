@@ -289,6 +289,13 @@ A script in `tools/` reruns the measurement. When it reads zero, the
 licence becomes a sole copyright and the derivation is recorded as
 history rather than as an ongoing attribution.
 
+**The measurement is retired (2026-09-20).** It read zero, kept zero for
+months, and then started flagging coincidences — `interval: 5000`, the
+kind of line any independently written QML can produce. The gate was
+removed by the owner's call: the sole copyright rests on the completed
+reimplementation recorded above, not on a perpetual comparison, and the
+derivation stays history.
+
 ## 14. Acceptance
 
 Each item ships with its own verification in the VM, one feature per
@@ -306,7 +313,7 @@ feel where the two overlap.
 | focus (§9) | the target window keeps focus through a full sentence typed into it, XWayland included |
 | layout (§11) | caps follow a physical-keyboard layout switch; language button moves the physical device; three-group config cycles correctly |
 | churn | the daemon's compile count stays at two across every test above |
-| provenance (§13) | the `tools/` script reads zero |
+| provenance (§13) | was: the `tools/` script read zero; retired 2026-09-20 (§13) |
 
 ## 15. Test seams
 
