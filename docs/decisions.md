@@ -2135,3 +2135,43 @@ so an exotic layout is never blank and the two never disagree. `us` and
 `gb` stay distinct ("English" / "English (UK)") for seats carrying both.
 Non-Latin scripts render through Qt's font fallback; the fallback chain
 means a missing glyph can never take the name away entirely.
+
+## 61. The 2026-09-19 audit: availability is part of the same-user boundary
+
+An external review of `31b1b46` found five issues; four were ours, one was
+already resolved by the release-metadata commit that followed it. All four
+share one shape — well-tested components failing at the HANDOFF between
+them — and all four are fixed with their failure mode locked in tests:
+
+- **Malformed input never reaches xkbcommon.** An interior NUL in any RMLVO
+  field (or a custom keymap's text) hit xkbcommon's CString conversion,
+  which panics — under the shared lock. The poisoned mutex left the helper
+  alive but dead to every later `lock().unwrap()`, and systemd never
+  ordered the restart. Both doors refuse it now: `parse` drops a configure
+  carrying a NUL, `compile_keymap` refuses any unclean field, and the
+  refusal is exactly a failing compile.
+- **Custom keymaps are read once, bounded.** The mark and the compile each
+  read the whole `kb_file` unbounded under the lock — a huge file spent
+  memory, a FIFO blocked the keyboard for everyone. `read_kb_file_bounded`
+  requires a regular file ≤ 2 MiB, takes the limit plus one byte, and its
+  one read feeds both the mark and the compile.
+- **Deadlines fire on traffic.** The handshake window and the hold cap
+  were enforced only when a read timed out; a client streaming frames
+  never paused long enough, and replies had no write bound at all. Both
+  deadlines are now evaluated every iteration regardless of traffic, and
+  every reply is bounded — a timed-out write drops the connection instead
+  of parking the thread.
+- **Clipboard cancellation kills the group.** The R2 memory-bound
+  pipelines run as `setsid bash -c "wl-paste | head -c N"`, making the
+  direct child a session leader; cancellation kills the whole process
+  group. The old `signal(9)` reached only the shell and left the pipeline
+  orphaned with stdout open, one stalled reader per attempt.
+
+Finding 5 (the v0.1.2 package checksum) was the release-metadata flow
+working as designed — `sha256sums=('SKIP')` in-tree, the real tarball hash
+in the release notes — and `tools/check-release.sh` now gates the whole
+contract mechanically: pkgver == manifest version == pushed tag, release
+notes carrying the real hash, `.SRCINFO` fresh. The audit's structural
+advice (integration-boundary suites, splitting the 11.5k-line trio,
+shortening orientation) is recorded as follow-up, deliberately behind
+these reliability fixes.
