@@ -201,13 +201,6 @@ impl XkbConfig {
 /// panel draws caps for it — the two agreeing with each other and with
 /// nothing the user can see.
 ///
-/// The whole file, not its mtime or its length: an editor that writes in
-/// place keeps the length identical often enough (one glyph for another), and
-/// mtime is what a `cp -p` or a restored backup does not change.
-fn kb_file_mark(path: &str) -> Option<u64> {
-    Some(hash_bytes(&read_kb_file_bounded(path)?))
-}
-
 /// The largest `kb_file` this helper will ever read. The 2026-09-19 audit:
 /// the mark and the compile each read the whole file, unbounded, under the
 /// shared lock — a huge file exhausted memory and a FIFO blocked the
@@ -228,7 +221,7 @@ fn read_kb_file_bounded(path: &str) -> Option<Vec<u8>> {
     if !metadata.is_file() || metadata.len() > KB_FILE_LIMIT {
         return None;
     }
-    let mut file = std::fs::File::open(path).ok()?;
+    let file = std::fs::File::open(path).ok()?;
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.take(KB_FILE_LIMIT + 1).read_to_end(&mut bytes).ok()?;
     if bytes.len() as u64 > KB_FILE_LIMIT {
@@ -254,9 +247,21 @@ fn xkb_field_clean(text: &str) -> bool {
     !text.contains('\0')
 }
 
+/// The whole file, not its mtime or its length: an editor that writes in
+/// place keeps the length identical often enough (one glyph for another), and
+/// mtime is what a `cp -p` or a restored backup does not change. Production
+/// composes this inline (one bounded read feeds the mark and the compile);
+/// the wrapper exists for the suite, which has no lock to share a read across.
+#[cfg(test)]
+fn kb_file_mark(path: &str) -> Option<u64> {
+    Some(hash_bytes(&read_kb_file_bounded(path)?))
+}
+
 /// Builds a keymap for an RMLVO layout list such as "us,ua". The kb_file
 /// bytes are the caller's to supply (`install_config` reads once and feeds
-/// both the mark and this compile); the wrapper reads them itself.
+/// both the mark and this compile); this reading wrapper exists for the
+/// suite, for the same reason.
+#[cfg(test)]
 fn compile_keymap(config: &XkbConfig) -> Option<String> {
     let bytes = read_kb_file_bounded(&config.kb_file);
     compile_keymap_with(config, bytes.as_deref())
@@ -5227,7 +5232,6 @@ mod tests {
         assert!(read_kb_file_bounded("").is_none());
         assert!(read_kb_file_bounded("/dev/null").is_none());
         assert!(read_kb_file_bounded("/tmp").is_none());
-        assert!(kb_file_mark("/dev/null").is_none());
         // At the limit passes; one byte past it is refused unread.
         let path = std::env::temp_dir().join(format!("osk-kbfile-limit-{}", std::process::id()));
         let path = path.to_str().unwrap();
@@ -5236,7 +5240,6 @@ mod tests {
             read_kb_file_bounded(path).map(|bytes| bytes.len()),
             Some(KB_FILE_LIMIT as usize)
         );
-        assert!(kb_file_mark(path).is_some());
         std::fs::write(path, vec![b'x'; KB_FILE_LIMIT as usize + 1])
             .expect("write past the limit");
         assert!(read_kb_file_bounded(path).is_none());
