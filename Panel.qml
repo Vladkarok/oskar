@@ -644,9 +644,7 @@ Item {
         if (started.action !== "read") return
         localClipboardRead.seq = started.state.seq
         localClipboardReadWatchdog.restart()
-        if (localClipboardRead.running)
-            localClipboardRead.running = false
-        localClipboardRead.running = true
+        restartProcessGroup(localClipboardRead)
     }
 
     function finishLocalClipboardRead(seq, raw) {
@@ -674,9 +672,7 @@ Item {
     function refreshClipboardPreview() {
         root.clipboardSeq += 1
         clipboardTypes.seq = root.clipboardSeq
-        if (clipboardTypes.running)
-            clipboardTypes.running = false
-        clipboardTypes.running = true
+        restartProcessGroup(clipboardTypes)
     }
 
     function applyClipboardTypes(text, seq, exitCode) {
@@ -692,9 +688,7 @@ Item {
         root.clipboardPreview = ""
         if (kind !== "text") return
         clipboardText.seq = seq
-        if (clipboardText.running)
-            clipboardText.running = false
-        clipboardText.running = true
+        restartProcessGroup(clipboardText)
     }
 
     function applyClipboardText(text, seq, exitOk) {
@@ -1248,12 +1242,32 @@ Item {
         touchObserved = false
     }
 
+    // The R2 pipelines run as `setsid bash -c "wl-paste | head -c N"`, so
+    // the direct child is a session and process-group LEADER and
+    // cancellation kills the whole group. Killing only the shell — the
+    // 2026-09-19 audit's finding — left wl-paste and head orphaned with
+    // stdout still open, one stalled reader accumulating per attempt.
+    function killProcessGroup(proc) {
+        var pid = Number(proc.processId)
+        if (pid > 0)
+            Quickshell.execDetached(["kill", "-9", "--", "-" + String(pid)])
+        else
+            proc.signal(9)
+    }
+
+    function restartProcessGroup(proc) {
+        if (proc.running) {
+            killProcessGroup(proc)
+            proc.running = false
+        }
+        proc.running = true
+    }
+
     // Panel-local clipboard read (colour field, emoji search — R2). The
-    // same force-kill contract as the probe below; wl-paste runs as the
-    // command itself, so signal(9) kills it directly. The collector
-    // carries the bytes; a late streamFinished from a timed-out read is
-    // refused by the settled state machine before anything is inserted,
-    // and a stream that never ends is the watchdog's to close.
+    // same force-kill contract as the probe below, by process group. The
+    // collector carries the bytes; a late streamFinished from a timed-out
+    // read is refused by the settled state machine before anything is
+    // inserted, and a stream that never ends is the watchdog's to close.
     Process {
         id: localClipboardRead
         property int seq: 0
@@ -1262,7 +1276,7 @@ Item {
         // head caps the stream (the security audit): a malicious clipboard
         // owner cannot balloon the shell's memory through the collector —
         // SIGPIPE closes wl-paste past the bound.
-        command: ["bash", "-c", "wl-paste --no-newline | head -c 65536"]
+        command: ["setsid", "bash", "-c", "wl-paste --no-newline | head -c 65536"]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.finishLocalClipboardRead(
@@ -1292,7 +1306,7 @@ Item {
             // newer sequence (the probe watchdog's own rule).
             localClipboardRead.retiring = localClipboardRead.didStart
             if (localClipboardRead.didStart && result.kill)
-                localClipboardRead.signal(9)
+                root.killProcessGroup(localClipboardRead)
             else
                 localClipboardRead.running = false
         }
@@ -1313,7 +1327,7 @@ Item {
     Process {
         id: clipboardTypes
         property int seq: 0
-        command: ["bash", "-c", "wl-paste --list-types | head -c 4096"]
+        command: ["setsid", "bash", "-c", "wl-paste --list-types | head -c 4096"]
         stdout: StdioCollector {
             id: clipboardTypesOut
             waitForEnd: true
@@ -1329,7 +1343,7 @@ Item {
         // head caps the stream (the security audit): a malicious clipboard
         // owner cannot balloon the shell's memory through the collector —
         // SIGPIPE closes wl-paste past the bound.
-        command: ["bash", "-c", "wl-paste --no-newline | head -c 65536"]
+        command: ["setsid", "bash", "-c", "wl-paste --no-newline | head -c 65536"]
         stdout: StdioCollector {
             id: clipboardTextOut
             waitForEnd: true
@@ -1373,7 +1387,7 @@ Item {
         // head caps the stream (the security audit): a malicious clipboard
         // owner cannot balloon the shell's memory through the collector —
         // SIGPIPE closes wl-paste past the bound.
-        command: ["bash", "-c", "wl-paste --no-newline | head -c 65536"]
+        command: ["setsid", "bash", "-c", "wl-paste --no-newline | head -c 65536"]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.finishEmojiPublishVerify(
@@ -1387,9 +1401,7 @@ Item {
         repeat: false
         onTriggered: () => {
             emojiClipboardVerify.seq = root.emojiTxnState.seq
-            if (emojiClipboardVerify.running)
-                emojiClipboardVerify.running = false
-            emojiClipboardVerify.running = true
+            restartProcessGroup(emojiClipboardVerify)
         }
     }
 
