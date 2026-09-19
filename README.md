@@ -6,6 +6,20 @@ the OSK, ar. The key caps follow the active keyboard layout, so what is
 drawn is what gets typed, and the panel takes its colours and geometry
 from the Omarchy theme.
 
+<p align="center">
+  <img src="assets/screenshots/hero-floating.png" alt="OSKar floating over the desktop, English layout" width="720">
+</p>
+
+## Screenshots
+
+| | |
+|---|---|
+| <img src="assets/screenshots/hero-docked.png" width="480" alt="Docked mode"> <br>**Docked** — flush along the bottom edge, full width | <img src="assets/screenshots/layout-ukrainian.png" width="480" alt="Ukrainian layout"> <br>**Caps follow the seat** — Ukrainian drawn and named Українська |
+| <img src="assets/screenshots/language-menu.png" width="480" alt="Language chooser with endonyms"> <br>**Languages named in their own language** — English, Українська, Italiano; picking one moves the whole seat | <img src="assets/screenshots/hold-column-ukrainian.png" width="480" alt="Hold column on a Ukrainian key"> <br>**Hold a key** — its extra levels stack into a column (Ukrainian н: ŷ) |
+| <img src="assets/screenshots/symbols-ukrainian.png" width="480" alt="Symbols page"> <br>**?123 symbols** — currency and punctuation on every layout | <img src="assets/screenshots/emoji-page.png" width="480" alt="Emoji page"> <br>**Emoji page** — categories, recents, the panel's own grid |
+| <img src="assets/screenshots/emoji-search.png" width="480" alt="Emoji search"> <br>**Emoji search** — type a query, pick from the matches | <img src="assets/screenshots/settings.png" width="480" alt="Settings popover"> <br>**Settings** — mode, size, interface language, input profile |
+| <img src="assets/screenshots/appearance-theme.png" width="480" alt="Appearance editor with a custom red theme"> <br>**Appearance** — radius and colours, applied live | |
+
 ## Status
 
 **v0.1.2 — released 2026-09-18** (v0.1.0 went public 2026-09-17;
