@@ -1402,6 +1402,28 @@ Item {
         onTriggered: () => {
             emojiClipboardVerify.seq = root.emojiTxnState.seq
             restartProcessGroup(emojiClipboardVerify)
+            emojiVerifyWatchdog.restart()
+        }
+    }
+
+    // A clipboard owner that never finishes its read stalls the verify
+    // forever (the review's third round): bounded like every other read,
+    // the stalled run is group-killed and the pick drops — loudly, with
+    // the queue handed over. Sequence-guarded, so a late wakeup for a
+    // verify the machine has already left changes nothing.
+    Timer {
+        id: emojiVerifyWatchdog
+        interval: 3000
+        repeat: false
+        onTriggered: () => {
+            var timedOut = ClipboardPaste.txnVerifyTimedOut(root.emojiTxnState,
+                emojiClipboardVerify.seq)
+            root.emojiTxnState = timedOut.state
+            if (timedOut.action !== "drop") return
+            killProcessGroup(emojiClipboardVerify)
+            console.warn("[oskar] emoji verify stalled — pick dropped,"
+                + " the clipboard keeps whatever it holds")
+            startNextEmojiTxn()
         }
     }
 
@@ -1425,6 +1447,11 @@ Item {
         }
         if (picked.action === "refused") {
             console.warn("[oskar] emoji pick refused: empty payload")
+            return
+        }
+        if (picked.action === "refused-full") {
+            console.warn("[oskar] emoji pick refused: three already queued"
+                + " behind an unfinished paste")
             return
         }
         beginEmojiPublish(emoji)
@@ -1452,6 +1479,9 @@ Item {
         var result = ClipboardPaste.txnServed(root.emojiTxnState, seq, served)
         root.emojiTxnState = result.state
         if (result.action === "stale") return
+        // A real answer disarms the watchdog: only a read that never
+        // finishes is the watchdog's to judge.
+        emojiVerifyWatchdog.stop()
         if (result.action === "retry") {
             emojiPublishVerifyTimer.restart()
             return

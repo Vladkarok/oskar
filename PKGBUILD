@@ -9,7 +9,9 @@
 # updpkgsums ran while pkgver still named the old version). The
 # verifying authority for a release is its GitHub release notes, which
 # publish the tag tarball's real sha256; the AUR PKGBUILD carries the
-# same value when AUR registration reopens. In-tree the sum stays SKIP
+# same value when AUR registration reopens — built mechanically by
+# tools/make-aur-recipe.sh, which emits the AUR copy with the real sum.
+# In-tree the sum stays SKIP
 # and a source-checkout makepkg builds unverified by design.
 #
 # PUBLISHING IS OWNER-GATED. To release a version:

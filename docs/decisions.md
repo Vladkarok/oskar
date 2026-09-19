@@ -2193,3 +2193,38 @@ Two P2 refinements of §61's own fixes, both real:
   a reply's write bound is the REMAINING window while the handshake is
   open (`reply_bound`): a parked write can no longer carry a late hello
   home.
+
+## 63. The review's third round: completion means the counterpart answered
+
+Six findings, all fixed; the theme is that a handoff is not done until the
+other side of it has answered:
+
+- **A chord completes on the helper's ack, not on the panel's write.** The
+  next queued emoji's publication used to race a destination that had not
+  received the paste yet — both records said success while a delayed
+  consumer could paste the second payload twice. The chord's success now
+  settles on the helper's acknowledgement of its final line (one slot,
+  guard-timered; socket death and rebuild settle it as a cancellation).
+  Residual, stated plainly: the ack says the events reached the
+  compositor, not that the client processed them — a protocol-level
+  paste-confirmed reply is the only stronger answer, and it does not
+  exist yet.
+- **A stalled verify drops instead of wedging.** The emoji verify read had
+  a byte cap but no deadline: an owner that never finishes stalled the
+  transaction while picks accumulated. A 3 s watchdog group-kills the
+  read and drops the pick (the five-mismatch shape), and the queue behind
+  a running pick is capped at three — the fourth is refused at the door.
+- **A custom keymap's groups are the file's.** The configure's group
+  ceiling used the layouts string; a one-layout string over a two-group
+  custom map refused a legal group. The ceiling now comes from the
+  compiled keymap itself (`num_layouts`), asked directly.
+- **The frame cap is per line, not per batch.** Coalesced complete
+  commands in one chunk were refused as "too long"; the cap is measured
+  on the tail without its newline — the one line still growing.
+- **`\x00`, never `\0` before a digit.** The test literal `"pc10\05"`
+  parsed as octal `\x05`, not a NUL — exactly the ambiguity the CI lint
+  names. All test NULs are explicit hex now.
+- **The AUR recipe is generated, not hand-copied.**
+  `tools/make-aur-recipe.sh` emits the AUR PKGBUILD with the real tag
+  checksum substituted for the in-tree SKIP — release notes document,
+  makepkg enforces. The README's clone placeholder is the real URL.

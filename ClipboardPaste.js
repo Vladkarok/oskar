@@ -105,7 +105,13 @@ function txnPick(state, emoji, clientClass) {
     // drop would wedge every pick behind it (review finding).
     if (payload === "")
         return { state: state, action: "refused" }
-    if (state.phase !== "idle" || state.pending !== "")
+    if (state.phase !== "idle" || state.pending !== "") {
+        // How many picks may wait behind the running one (the review's
+        // third round): a stalled transaction used to accumulate picks
+        // without end — the fourth is refused at the door, loudly, rather
+        // than wedged quietly behind whatever never finishes.
+        if (state.queue.length >= 3)
+            return { state: state, action: "refused-full" }
         return {
             state: {
                 seq: state.seq, phase: state.phase, pending: state.pending,
@@ -114,12 +120,30 @@ function txnPick(state, emoji, clientClass) {
             },
             action: "queued"
         }
+    }
     return {
         state: {
             seq: state.seq + 1, phase: "publishing", pending: payload,
             clientClass: cls, attempts: 0, queue: state.queue
         },
         action: "publish"
+    }
+}
+
+// The verify watchdog's verdict (finding 2's first half): a clipboard
+// owner that never finishes its read stalls the verify forever, so the
+// caller's timeout is a terminal drop — the same shape the five-mismatch
+// limit already made, loud, no chord, the queue handed over. A stale
+// sequence (the timeout describes a verify the machine no longer holds)
+// changes nothing.
+function txnVerifyTimedOut(state, seq) {
+    if (state.phase !== "publishing" || state.pending === ""
+            || seq !== state.seq)
+        return { state: state, action: "ignore" }
+    return {
+        state: { seq: state.seq, phase: "idle", pending: "", clientClass: "",
+            attempts: 0, queue: state.queue },
+        action: "drop"
     }
 }
 

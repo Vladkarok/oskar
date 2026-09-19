@@ -330,7 +330,7 @@ From a source checkout — the primary path today. Get the repository
 and run one flow of three steps:
 
 ```sh
-git clone <REPOSITORY-URL> oskar && cd oskar
+git clone https://github.com/Vladkarok/oskar.git oskar && cd oskar
 ./install.sh           # builds the helper, installs it + its unit + the
                        # oskar command, enables and starts the service
 oskar setup            # registers the checkout under the stable plugin id,

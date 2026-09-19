@@ -258,6 +258,28 @@ fn xkb_field_clean(text: &str) -> bool {
     !text.contains('\0')
 }
 
+/// A custom keymap's group count, taken from the map itself: compile it and
+/// ask the compiled keymap — `num_layouts` is xkb's name for the group
+/// count, and it is the exact ceiling a group index must sit under.
+/// `None` when the file cannot be read or compiled; the configure that
+/// asked refuses the same way it always refused an uncompilable map.
+fn custom_keymap_group_count(path: &str) -> Option<usize> {
+    use xkbcommon::xkb;
+    let bytes = read_kb_file_bounded(path)?;
+    let text = String::from_utf8(bytes).ok()?;
+    if !xkb_field_clean(&text) {
+        return None;
+    }
+    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+    let keymap = xkb::Keymap::new_from_string(
+        &context,
+        text,
+        xkb::KEYMAP_FORMAT_TEXT_V1,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    )?;
+    Some(keymap.num_layouts() as usize)
+}
+
 /// The whole file, not its mtime or its length: an editor that writes in
 /// place keeps the length identical often enough (one glyph for another), and
 /// mtime is what a `cp -p` or a restored backup does not change. Production
@@ -2768,10 +2790,6 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             Err(_) => break,
         };
         pending.extend_from_slice(&chunk[..read]);
-        if pending.len() > MAX_LINE {
-            let _ = writeln!(out, "err line too long");
-            break;
-        }
         // Dispatch every COMPLETE line the buffer now holds; the tail
         // without its newline stays for the next chunk.
         let mut poisoned = false;
@@ -2863,6 +2881,15 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             }
         }
         if poisoned || write_dead {
+            break;
+        }
+        // The frame cap is per LINE, not per batch (the review's third
+        // round): coalesced complete commands share this chunk legally, so
+        // the cap is measured on what REMAINS — the tail without its
+        // newline, which is the one line still growing. A newline-free
+        // stream still trips it exactly as before.
+        if pending.len() > MAX_LINE {
+            let _ = writeln!(out, "err line too long");
             break;
         }
     }
@@ -3089,10 +3116,24 @@ fn apply_locked(
         // Ticket 31's defence in depth: a group the configure's OWN map
         // cannot carry is refused whole, with no device state changed —
         // the same refusal `caps` already made, extended to the two
-        // commands that MOVE the group. Bounded by the INCOMING layout
-        // list, never the installed one: a shrink-then-grow would
-        // otherwise refuse a correct grow.
-        if !group_in_range(config.group, declared_group_count(&config.layouts)) {
+        // commands that MOVE the group. Bounded by the INCOMING map, never
+        // the installed one: a shrink-then-grow would otherwise refuse a
+        // correct grow. For RMLVO the layouts string IS the map (same count
+        // once compiled); a custom keymap's groups are the FILE's — the
+        // review's third round — so only the compiled map can answer, and
+        // a file that will not compile refuses the configure here rather
+        // than one round later.
+        let group_ceiling = if config.kb_file.is_empty()
+            || is_published_keymap(&config.kb_file)
+        {
+            declared_group_count(&config.layouts)
+        } else {
+            match custom_keymap_group_count(&config.kb_file) {
+                Some(count) => count,
+                None => return "err cannot configure keymap".to_string(),
+            }
+        };
+        if !group_in_range(config.group, group_ceiling) {
             return "err bad group".to_string();
         }
         let installed = shared.install_config(config);
@@ -5247,22 +5288,22 @@ mod tests {
         // helper is alive-but-dead until a restart systemd never orders.
         // Refused like any compile failure now, from every field.
         let config = XkbConfig {
-            layouts: "us\0ua".into(),
+            layouts: "us\x00ua".into(),
             ..XkbConfig::default()
         };
         assert!(compile_keymap(&config).is_none());
         let config = XkbConfig {
-            model: "pc10\05".into(),
+            model: "pc10\x005".into(),
             ..XkbConfig::default()
         };
         assert!(compile_keymap(&config).is_none());
         let config = XkbConfig {
-            options: "compose:caps\0grp:alt_shift_toggle".into(),
+            options: "compose:caps\x00grp:alt_shift_toggle".into(),
             ..XkbConfig::default()
         };
         assert!(compile_keymap(&config).is_none());
         // And the parse gate: a configure carrying a NUL is not a command.
-        assert!(parse("configure\tevdev\tpc105\tus\0ua\t\t\t0").is_none());
+        assert!(parse("configure\tevdev\tpc105\tus\x00ua\t\t\t0").is_none());
         // A clean configure still parses.
         assert!(parse("configure\tevdev\tpc105\tus,ua\t\tcompose:caps\t\t1").is_some());
     }
@@ -5338,5 +5379,29 @@ mod tests {
         assert_eq!(reply_bound(false, Duration::from_secs(1)), Duration::from_secs(4));
         assert!(reply_bound(false, Duration::from_secs(6)).is_zero());
         assert_eq!(reply_bound(false, Duration::ZERO), HANDSHAKE_WINDOW);
+    }
+
+    // ---- the review's third round ----
+
+    #[test]
+    fn a_custom_keymaps_groups_come_from_the_compiled_map() {
+        // A real two-group fixture read through the whole bounded path: a
+        // layouts string of one entry used to refuse group 1 for a map the
+        // file itself carries two groups on (the review's finding 3). The
+        // compiled keymap is the authority, asked directly.
+        let path = std::env::temp_dir()
+            .join(format!("osk-groups-{}.xkb", std::process::id()));
+        std::fs::write(&path, fixture_keymap("us,ua", ""))
+            .expect("write the two-group keymap");
+        assert_eq!(custom_keymap_group_count(path.to_str().unwrap()), Some(2));
+        let one = std::env::temp_dir()
+            .join(format!("osk-groups-one-{}.xkb", std::process::id()));
+        std::fs::write(&one, fixture_keymap("us", ""))
+            .expect("write the one-group keymap");
+        assert_eq!(custom_keymap_group_count(one.to_str().unwrap()), Some(1));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&one);
+        // An uncompilable or unreadable file answers None, not a guess.
+        assert_eq!(custom_keymap_group_count("/definitely/not/here.xkb"), None);
     }
 }

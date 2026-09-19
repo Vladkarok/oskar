@@ -450,6 +450,50 @@ QtObject {
             T.equal(dead.state.clientClass, "")
         })
 
+        // ---- the review's third round: a stalled verify and a full queue ----
+
+        T.test("a stalled verify drops the pick and hands the queue over", function () {
+            // A clipboard owner that never finishes its read can stall the
+            // verify forever (finding 2): the watchdog's timeout is a
+            // terminal drop — the same shape the five-mismatch limit
+            // already made — loud, no chord, and the next queued pick
+            // proceeds.
+            var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(),
+                "😀", "kitty")
+            var queued = ClipboardPaste.txnPick(started.state, "🔥", "kitty")
+            T.equal(queued.action, "queued")
+            var timedOut = ClipboardPaste.txnVerifyTimedOut(
+                queued.state, queued.state.seq)
+            T.equal(timedOut.action, "drop")
+            T.equal(timedOut.state.phase, "idle")
+            T.equal(timedOut.state.queue.length, 1)
+            var next = ClipboardPaste.txnNext(timedOut.state)
+            T.equal(next.action, "publish")
+            T.equal(next.emoji, "🔥")
+            // A stale sequence — the verify this timeout describes is not
+            // the one the machine holds — changes nothing.
+            var stale = ClipboardPaste.txnVerifyTimedOut(queued.state, 0)
+            T.equal(stale.action, "ignore")
+            T.equal(stale.state, queued.state)
+        })
+
+        T.test("the queue refuses to grow without bound", function () {
+            // Picks accumulate behind a stalled transaction (finding 2's
+            // second half): three may wait, the fourth is refused at the
+            // door and the queue stays at three.
+            var state = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(),
+                "😀", "kitty").state
+            for (var i = 0; i < 3; i++) {
+                var queued = ClipboardPaste.txnPick(state, "🔥", "kitty")
+                T.equal(queued.action, "queued")
+                state = queued.state
+            }
+            T.equal(state.queue.length, 3)
+            var fourth = ClipboardPaste.txnPick(state, "😅", "kitty")
+            T.equal(fourth.action, "refused-full")
+            T.equal(fourth.state.queue.length, 3)
+        })
+
         Qt.exit(T.report("clipboard-paste"))
     }
 }

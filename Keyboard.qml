@@ -1262,6 +1262,16 @@ Item {
     property var pastePaceAllLines: []
     property int pastePaceSent: 0
     property var pastePaceDone: null
+    // The chord whose final line is out and whose helper acknowledgement
+    // has not come back yet. Success is THAT ack, not the panel's own
+    // socket write (the review's third round): the next emoji's
+    // publication used to race a destination that had not received the
+    // paste yet and could paste it twice. The ack says the events reached
+    // the compositor — nothing shorter is completion. One chord is in
+    // flight at a time (the transaction serializes them), so a single
+    // slot with a guard timer: a helper that never answers cannot wedge
+    // the queue behind it.
+    property var pendingChordAck: null
     // Which modifiers were locked when the chord computed its lines: a
     // mid-chord event that changes the held world (a configure draining
     // the device, a releaseAll) invalidates the remaining lines, and the
@@ -1316,7 +1326,35 @@ Item {
         root.pastePacing = false
         var done = root.pastePaceDone
         root.pastePaceDone = null
+        if (done && success)
+            settleChordThroughHelper(done)
+        else if (done)
+            done(false)
+    }
+
+    // Route a dispatched chord's success through the helper's ack of its
+    // final line. Failure paths never wait: a refusal, an abort or a dead
+    // socket is already a verdict.
+    function settleChordThroughHelper(done) {
+        if (!done) return
+        root.pendingChordAck = done
+        chordAckGuard.restart()
+    }
+
+    function chordAckSettled(success) {
+        var done = root.pendingChordAck
+        root.pendingChordAck = null
+        chordAckGuard.stop()
         if (done) done(success)
+    }
+
+    Timer {
+        id: chordAckGuard
+        interval: 5000
+        repeat: false
+        onTriggered: () => {
+            if (root.pendingChordAck) root.chordAckSettled(false)
+        }
     }
 
     // A paced chord that cannot continue: lift what its sent prefix
@@ -1390,7 +1428,11 @@ Item {
             if (done) done(false)
             return false
         }
-        if (done) done(true)
+        // Success is the helper's acknowledgement of the final line, not
+        // the write returning (the review's third round): the next emoji
+        // must not replace the clipboard before the paste events have at
+        // least reached the compositor.
+        settleChordThroughHelper(done)
         return true
     }
 
@@ -1563,6 +1605,10 @@ Item {
         })
         root.pendingTextReplies = resets.pendingTextReplies
         root.sharedKeymapGen = resets.sharedKeymapGen
+        // A chord awaiting its final line's ack cannot be completed by a
+        // helper that is being torn down: settle it as a cancellation, the
+        // way every other failure path already does.
+        if (root.pendingChordAck) root.chordAckSettled(false)
         Qt.callLater(function () {
             helperLoader.active = false
             helperLoader.active = true
@@ -1617,6 +1663,10 @@ Item {
                     // hello restarts them (a live helper may still answer for
                     // the transaction a reconnect is racing).
                     root.session = Session.reduce(root.session, { type: "connectionDown" })
+                    // A chord awaiting its final line's ack settles as a
+                    // cancellation: the helper released everything it held
+                    // on the way down, and no ack is coming.
+                    if (root.pendingChordAck) root.chordAckSettled(false)
                     // A restarted helper counts its installs from one again,
                     // so the generation this panel last shared can come round
                     // a second time and the once-per-generation guard would
@@ -1713,6 +1763,11 @@ Item {
                         var succeeded = successes.shift()
                         root.pendingTextReplies = successes
                         if (succeeded) succeeded(true)
+                    } else if (reply === "ok" && root.pendingChordAck) {
+                        // The helper acknowledged a plain command — for a
+                        // chord awaiting its final line, this is the
+                        // completion the transaction was waiting for.
+                        root.chordAckSettled(true)
                     } else if (reply.indexOf("configured") === 0) {
                         // Mirror the helper's own configure behaviour, for
                         // THE ENTRY THIS REPLY SETTLES — the oldest
