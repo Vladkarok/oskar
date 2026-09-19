@@ -39,19 +39,47 @@ QtObject {
         })
 
         T.test("menu entries keep group order and flag the active one", function () {
+            // Endonyms outrank the base.lst titles the panel feeds in:
+            // the seat may say "English (US)"/"Ukrainian", the menu says
+            // English/Українська (the owner's 2026-09-19 call).
             var entries = LanguageControl.menuEntries(
                 ["us", "ua", "de"], { us: "English (US)", ua: "Ukrainian" }, 1)
             T.deepEqual(entries, [
-                { group: 0, code: "us", title: "English (US)", active: false },
-                { group: 1, code: "ua", title: "Ukrainian", active: true },
-                { group: 2, code: "de", title: "DE", active: false }
+                { group: 0, code: "us", title: "English", active: false },
+                { group: 1, code: "ua", title: "Українська", active: true },
+                { group: 2, code: "de", title: "Deutsch", active: false }
             ])
         })
 
+        T.test("a language is named in its own language", function () {
+            T.equal(LanguageControl.displayName("us", "English (US)"), "English")
+            T.equal(LanguageControl.displayName("ua", "Ukrainian"), "Українська")
+            T.equal(LanguageControl.displayName("ru", ""), "Русский")
+            T.equal(LanguageControl.displayName("it", "Italian"), "Italiano")
+            // The two Englishes stay distinct when a seat carries both.
+            T.equal(LanguageControl.displayName("gb", "English (UK)"), "English (UK)")
+            // Scripts the panel font resolves through fallbacks.
+            T.equal(LanguageControl.displayName("jp", ""), "日本語")
+            T.equal(LanguageControl.displayName("il", ""), "עברית")
+        })
+
+        T.test("an unknown code falls back to base.lst, then to the code", function () {
+            T.equal(LanguageControl.displayName("xx", "Exotic Layout"), "Exotic Layout")
+            T.equal(LanguageControl.displayName("xx", ""), "XX")
+            T.equal(LanguageControl.displayName("", ""), "")
+        })
+
+        T.test("menu entries carry endonyms and keep the base.lst fallback", function () {
+            var entries = LanguageControl.menuEntries(
+                ["fr", "xx"], { xx: "Exotic Layout" }, 0)
+            T.equal(entries[0].title, "Français")
+            T.equal(entries[1].title, "Exotic Layout")
+        })
+
         T.test("a missing title falls back to the uppercased code", function () {
-            var entries = LanguageControl.menuEntries(["ru"], {}, 0)
+            var entries = LanguageControl.menuEntries(["xx"], {}, 0)
             T.deepEqual(entries, [
-                { group: 0, code: "ru", title: "RU", active: true }
+                { group: 0, code: "xx", title: "XX", active: true }
             ])
         })
 

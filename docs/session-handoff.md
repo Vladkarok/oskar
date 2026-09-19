@@ -1,3 +1,16 @@
+# Handoff — updated 2026-09-19 (endonyms on the chip and in the chooser)
+
+**START HERE.** Languages are now named in their own language (owner's
+call, decisions §60): the header chip and the chooser rows resolve
+through `LanguageControl.displayName` — endonym table (~45 xkb codes,
+us/gb kept distinct) → base.lst title → uppercased code — so English,
+Українська, Русский, Italiano replace the base.lst English, and an
+exotic layout is never blank. Red tests first, language control 12/12,
+full suite 18/18 green. Takes effect on the next panel/shell restart
+(same restart still owed for the §59 divergence fix).
+
+---
+
 # Handoff — updated 2026-09-18 evening (the 20:07 desync, root-caused and fixed)
 
 **START HERE.** The owner's live language desync (fingers typing

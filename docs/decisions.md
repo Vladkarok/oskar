@@ -2116,3 +2116,22 @@ The compositor-side flip itself is upstream territory and is not addressed
 here. What changed is that the panel follows it honestly: indicators, caps
 and the vkb all go where the fingers went, and one Alt+Shift brings
 everything back instead of being the only thing telling the truth.
+
+## 60. A language is named in its own language
+
+base.lst describes every layout in English — "Ukrainian", "English (US)",
+"Italian" — and the panel used to print those strings straight onto the
+header chip and the chooser rows. The owner's 2026-09-19 call: the name of
+a language belongs to the language itself — English, Українська, Русский,
+Italiano.
+
+**One table, one resolver, two call sites.** The endonyms live in
+`LanguageControl.js`, keyed by xkb layout code, curated (~45 codes — the
+realistic seats; `tw` and `be` are deliberately absent rather than named
+one side of their own question). `displayName(code, fallbackTitle)`
+resolves endonym → base.lst title → uppercased code, and both render
+sites — the chip's `activeLayoutName` and `menuEntries` — go through it,
+so an exotic layout is never blank and the two never disagree. `us` and
+`gb` stay distinct ("English" / "English (UK)") for seats carrying both.
+Non-Latin scripts render through Qt's font fallback; the fallback chain
+means a missing glyph can never take the name away entirely.
