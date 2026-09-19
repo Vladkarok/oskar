@@ -1756,15 +1756,17 @@ Item {
                             // for a transaction a predecessor was holding.
                             root.session = Session.reduce(root.session,
                                 { type: "helloAcked", fresh: true })
-                            helper.write("mods 0\n")
+                            sendCommandUnchecked("mods 0")
                         } else {
                             // The repair timer's re-hello of a live socket:
                             // the handshake holds, nothing resets.
                             root.session = Session.reduce(root.session,
                                 { type: "helloAcked", fresh: false })
                         }
-                        helper.write("keyboards\n")
-                        helper.flush()
+                        // Both through the choke point: every command on
+                        // this connection occupies its correlation slot,
+                        // so these replies pop what they answer.
+                        sendCommandUnchecked("keyboards")
                         // A restarted helper is back at group 0 and has no idea
                         // which layout is current. Re-reading the compositor
                         // sends the right group; using groupCursor here
@@ -2045,8 +2047,10 @@ Item {
                 // reply matcher above compares against the same constant, and
                 // a stale literal here reads as an installation mismatch
                 // against a helper this panel is actually compatible with.
-                root.daemonSocket.write("hello " + Session.PROTOCOL_VERSION + "\n")
-                root.daemonSocket.flush()
+                // Through the choke point like every command: a re-handshake
+                // with commands unanswered must not let hello's reply pop a
+                // queued slot it does not answer.
+                sendCommandUnchecked("hello " + Session.PROTOCOL_VERSION)
                 // The watchdog's mark: written and unanswered. The write
                 // itself cannot be trusted to fail on a dead transport
                 // (quickshell may buffer it silently), so the mark is set

@@ -105,6 +105,35 @@ QtObject {
             T.equal(armed.chordDone !== null, true)
         })
 
+        T.test("a late reply to a timed-out chord settles nothing", function () {
+            // The reviewer's live reproduction: the old chord times out
+            // with two commands unanswered, a new chord arms, and the OLD
+            // replies start arriving — the new chord must not be declared
+            // complete while its own commands are still unacked.
+            var state = ChordAcks.initial()
+            state = ChordAcks.sent(state, "down ctrl")
+            state = ChordAcks.sent(state, "down AB04")
+            state = ChordAcks.chordArmed(state, function () {})
+            // The guard timer fires: the wait dies, the marker dies with it.
+            state = ChordAcks.chordSettled(state)
+            T.equal(state.chordDone, null)
+            // The new chord: one line out, armed.
+            state = ChordAcks.sent(state, "down ctrl")
+            var secondDone = function () {}
+            state = ChordAcks.chordArmed(state, secondDone)
+            // The OLD chord's late replies arrive first: both pop, neither
+            // settles anything.
+            var late1 = ChordAcks.replyReceived(state, true)
+            T.equal(late1.done, null, "the first late reply settles nothing")
+            var late2 = ChordAcks.replyReceived(late1.state, true)
+            T.equal(late2.done, null, "the second late reply settles nothing")
+            T.equal(late2.state.queue.length, 1, "the new chord's line still waits")
+            // Only ITS own ack completes it.
+            var own = ChordAcks.replyReceived(late2.state, true)
+            T.equal(own.done, secondDone)
+            T.equal(own.success, true)
+        })
+
         Qt.exit(T.report("chord acks"))
     }
 }

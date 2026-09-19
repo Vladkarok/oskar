@@ -2276,3 +2276,20 @@ Two blockers, both mine:
   success only when that reply is a bare `ok`. A reply on an empty queue
   answers one of the few bypassed reconnect writes, sent only when the
   queue is known empty.
+
+## 66. The review's sixth round: stale markers and bypassed sends
+
+Two correlation defects, both reproduced by the reviewer on the module
+itself:
+
+- **A timed-out chord's marker outlived its wait.** `chordSettled` cleared
+  the callback but kept the queue's `chordFinal` mark, so the late replies
+  of the DEAD chord popped a marked slot and settled whatever chord waited
+  NEXT — declared complete with two of its own commands still unacked.
+  Arming and settling both strip every existing marker now: one chord
+  waits at a time, so any earlier mark is stale by definition.
+- **The hello, the reconnect `mods 0` and `keyboards` bypassed the choke
+  point.** Their replies still popped queue slots, so a re-handshake with
+  commands unanswered misattributed the pop. Every command on the
+  connection — hello included — now goes through `sendCommandUnchecked`
+  and occupies its slot like everything else.

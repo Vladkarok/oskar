@@ -13,13 +13,14 @@
 // sit in a bare counter forever, and every later chord "failed" its guard
 // timeout while the pastes themselves worked).
 //
-// The chord's final line is marked when the chord arms; its pop is the
-// verdict — success only when that reply is a bare `ok`. A reply that
-// pops an unmarked slot settles nothing; a reply arriving on an empty
-// queue answers one of the few writes that bypass the choke point (the
-// reconnect's hello/keyboards/mods 0), sent only when the queue is known
-// empty. A dying connection cancels the wait and drops the whole queue:
-// replies owed by a dead socket never come.
+// The chord's final line is marked when the chord arms — and arming first
+// strips every earlier marker, because a marker left by a timed-out or
+// aborted chord is stale by definition and a late reply popping it would
+// settle whatever chord waited NEXT. A reply arriving on an empty queue
+// answers nothing queued (every command on the connection goes through
+// the one choke point, hello and the reconnect writes included). A dying
+// connection cancels the wait and drops the whole queue: replies owed by
+// a dead socket never come.
 //
 // One chord waits at a time — the clipboard transaction serializes them.
 
@@ -40,13 +41,15 @@ function sent(state, line) {
 }
 
 // Arm the waiting chord: the NEWEST slot — the final line just sent —
-// carries the verdict. An empty queue at arming leaves the wait to the
-// caller's guard timer (nothing sent can be waiting for an answer).
+// carries the verdict, and every OTHER marker dies first. A marker left
+// by a timed-out or aborted chord is stale by definition (one chord waits
+// at a time), and a late reply popping it would settle whatever chord
+// waited NEXT — the reviewer reproduced exactly that. An empty queue at
+// arming leaves the wait to the caller's guard timer.
 function chordArmed(state, done) {
-    if (state.queue.length === 0)
-        return { queue: state.queue, chordDone: done || null }
-    var queue = state.queue.slice(0, state.queue.length - 1)
-        .concat([{ chordFinal: true }])
+    var queue = state.queue.map(function () { return { chordFinal: false } })
+    if (queue.length > 0)
+        queue[queue.length - 1] = { chordFinal: true }
     return { queue: queue, chordDone: done || null }
 }
 
@@ -66,9 +69,14 @@ function replyReceived(state, ok) {
 }
 
 // The verdict arrived by another path (the guard timer, a dying
-// connection): the wait ends, the queue keeps draining.
+// connection): the wait ends, the queue keeps draining — and the marker
+// dies with the wait. A late reply to the timed-out chord pops an unmarked
+// slot and settles nothing; it must not reach whatever chord waits next.
 function chordSettled(state) {
-    return { queue: state.queue, chordDone: null }
+    return {
+        queue: state.queue.map(function () { return { chordFinal: false } }),
+        chordDone: null
+    }
 }
 
 // The connection died: no reply is coming for anything sent on it, and
