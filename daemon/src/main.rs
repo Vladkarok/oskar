@@ -205,19 +205,73 @@ impl XkbConfig {
 /// place keeps the length identical often enough (one glyph for another), and
 /// mtime is what a `cp -p` or a restored backup does not change.
 fn kb_file_mark(path: &str) -> Option<u64> {
-    use std::hash::{Hash, Hasher};
+    Some(hash_bytes(&read_kb_file_bounded(path)?))
+}
+
+/// The largest `kb_file` this helper will ever read. The 2026-09-19 audit:
+/// the mark and the compile each read the whole file, unbounded, under the
+/// shared lock — a huge file exhausted memory and a FIFO blocked the
+/// keyboard for everyone. One bounded read now feeds both callers.
+const KB_FILE_LIMIT: u64 = 2 * 1024 * 1024;
+
+/// A custom keymap's bytes, read once and bounded: a regular file no larger
+/// than `KB_FILE_LIMIT`, `take`n to the limit plus one byte so a file grown
+/// mid-read still answers a bounded number. Anything else — a FIFO (blocks),
+/// a directory, a device, a vanished path — is refused before a single byte
+/// is waited on.
+fn read_kb_file_bounded(path: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
     if path.is_empty() {
         return None;
     }
-    let bytes = std::fs::read(path).ok()?;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    Some(hasher.finish())
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > KB_FILE_LIMIT {
+        return None;
+    }
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(KB_FILE_LIMIT + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > KB_FILE_LIMIT {
+        return None;
+    }
+    Some(bytes)
 }
 
-/// Builds a keymap for an RMLVO layout list such as "us,ua".
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// A field xkbcommon's CString conversion would panic on. An interior NUL
+/// never arrives from a real panel, but the socket is same-user input and
+/// the panic fires under the shared lock: the mutex poisons, every later
+/// `lock().unwrap()` panics, and the helper stays alive while doing
+/// nothing — systemd sees no crash and never restarts it (2026-09-19
+/// audit, finding 1). Refused exactly like a failing compile.
+fn xkb_field_clean(text: &str) -> bool {
+    !text.contains('\0')
+}
+
+/// Builds a keymap for an RMLVO layout list such as "us,ua". The kb_file
+/// bytes are the caller's to supply (`install_config` reads once and feeds
+/// both the mark and this compile); the wrapper reads them itself.
 fn compile_keymap(config: &XkbConfig) -> Option<String> {
+    let bytes = read_kb_file_bounded(&config.kb_file);
+    compile_keymap_with(config, bytes.as_deref())
+}
+
+fn compile_keymap_with(config: &XkbConfig, kb_file_bytes: Option<&[u8]>) -> Option<String> {
     use xkbcommon::xkb;
+    if !xkb_field_clean(&config.rules)
+        || !xkb_field_clean(&config.model)
+        || !xkb_field_clean(&config.layouts)
+        || !xkb_field_clean(&config.variants)
+        || !xkb_field_clean(&config.options)
+    {
+        return None;
+    }
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
     // Never our own published file. It is this helper's OUTPUT (§35), and
     // taking it as input freezes whatever version wrote it: upgrade the
@@ -231,8 +285,10 @@ fn compile_keymap(config: &XkbConfig) -> Option<String> {
     // directory would otherwise let our own output back in as an input.
     let from_file = !config.kb_file.is_empty() && !is_published_keymap(&config.kb_file);
     if from_file {
-        let text = std::fs::read_to_string(&config.kb_file).ok()?;
-        if text.len() > 2 * 1024 * 1024 {
+        let text = String::from_utf8(kb_file_bytes?.to_vec()).ok()?;
+        // Same CString boundary as the RMLVO fields above: a NUL inside the
+        // keymap text is refused, not panicked on.
+        if !xkb_field_clean(&text) {
             return None;
         }
         let keymap = xkb::Keymap::new_from_string(
@@ -1917,10 +1973,12 @@ impl Shared {
     /// a keystroke can never observe a half-swapped keymap.
     fn install_config(&mut self, config: &XkbConfig) -> bool {
         // Same fields AND, for a kb_file, the same bytes behind them. The
-        // read happens once per configure, which is a deliberate
-        // configuration event; the `group` command reaches none of this and
-        // still moves a group without touching the file (ticket 06).
-        let mark = kb_file_mark(&config.kb_file);
+        // read happens once per configure and feeds BOTH the mark and the
+        // compile (the 2026-09-19 audit: two unbounded reads under this
+        // lock); the `group` command reaches none of this and still moves a
+        // group without touching the file (ticket 06).
+        let file_bytes = read_kb_file_bounded(&config.kb_file);
+        let mark = file_bytes.as_deref().map(hash_bytes);
         if self
             .config
             .as_ref()
@@ -1957,7 +2015,7 @@ impl Shared {
             eprintln!("refusing excessive keymap reconfiguration");
             return false;
         }
-        let Some(text) = compile_keymap(config) else {
+        let Some(text) = compile_keymap_with(config, file_bytes.as_deref()) else {
             eprintln!("cannot compile requested XKB configuration");
             return false;
         };
@@ -2423,6 +2481,13 @@ fn parse(line: &str) -> Option<Command> {
         if fields.len() != 7 {
             return None;
         }
+        // An interior NUL in a field is refused at the door: xkbcommon's
+        // CString conversion panics on it, and that panic fires under the
+        // shared lock (see xkb_field_clean). Malformed input is not a
+        // configure at all.
+        if fields[..6].iter().any(|field| field.contains('\0')) {
+            return None;
+        }
         return Some(Command::Configure(XkbConfig {
             rules: fields[0].to_string(),
             model: fields[1].to_string(),
@@ -2508,10 +2573,49 @@ fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
     }
 }
 
+/// The pre-handshake window and the write bound are both ABSOLUTE: neither
+/// a client that streams frames without pausing nor one that stops reading
+/// may extend them (2026-09-19 audit, finding 4).
+const HANDSHAKE_WINDOW: Duration = Duration::from_secs(5);
+const WRITE_BOUND: Duration = Duration::from_secs(5);
+
+/// Whether a connection that never completed its `hello` has worn the
+/// pre-handshake window out. Evaluated per iteration, not only when a read
+/// times out — continuous traffic must not extend the window.
+fn handshake_expired(handshaked: bool, connected_for: Duration) -> bool {
+    !handshaked && connected_for >= HANDSHAKE_WINDOW
+}
+
+/// One bounded reply. `false` means the client is not draining its pipe:
+/// the connection is dropped rather than parked on a blocked write.
+fn write_reply(out: &mut UnixStream, text: &str) -> bool {
+    match writeln!(out, "{text}") {
+        Ok(()) => true,
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            false
+        }
+        // EPIPE and friends: the read side notices the disconnect on its
+        // own; an idle writer gains nothing by tearing the loop down here.
+        Err(_) => true,
+    }
+}
+
 fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) {
     let Ok(mut out) = stream.try_clone() else {
         return;
     };
+    // A client that stops reading while its pipe is full would park a
+    // reply forever: every write on this connection is bounded, and one
+    // that times out drops the connection — its read side would only ever
+    // notice at an EOF that client never sends.
+    if out.set_write_timeout(Some(WRITE_BOUND)).is_err() {
+        return;
+    }
     // Keys this connection pressed and has not released. If the shell restarts
     // mid-chord the compositor would otherwise keep Ctrl logically down for the
     // rest of the session, which looks like a broken machine rather than a
@@ -2578,6 +2682,19 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         if stream.set_read_timeout(timeout).is_err() {
             break;
         }
+        // Deadline enforcement must not depend on the traffic going quiet
+        // (2026-09-19 audit): a client that streams frames keeps the read
+        // succeeding forever, and checks that lived only in the timeout arm
+        // never ran. Both deadlines are evaluated here too, every turn,
+        // whether or not bytes arrived.
+        if handshake_expired(handshaked, connected_at.elapsed()) {
+            break;
+        }
+        if hold_deadline(&shared, conn_id).is_some_and(|deadline| deadline <= Instant::now()) {
+            for code in expire_stuck_keys(&shared, &connection) {
+                held.retain(|entry| *entry != code);
+            }
+        }
         // The frame cap, enforced per CHUNK (the cross-round's core
         // finding: the audits' HIGH realization of known item 7 — an
         // active newline-free stream grew `pending` without bound inside
@@ -2603,7 +2720,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 // the slot (the audits' starvation finding). Otherwise
                 // this is the hold cap's wakeup: lift what is due and
                 // keep waiting for the rest of the line.
-                if !handshaked && connected_at.elapsed() >= Duration::from_secs(5) {
+                if handshake_expired(handshaked, connected_at.elapsed()) {
                     break;
                 }
                 for code in expire_stuck_keys(&shared, &connection) {
@@ -2621,6 +2738,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         // Dispatch every COMPLETE line the buffer now holds; the tail
         // without its newline stays for the next chunk.
         let mut poisoned = false;
+        let mut write_dead = false;
         while let Some(nl) = pending.iter().position(|byte| *byte == b'\n') {
             let mut line_bytes = pending.drain(..=nl).collect::<Vec<u8>>();
             line_bytes.pop(); // the newline itself
@@ -2656,25 +2774,37 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                         format!("err protocol {PROTOCOL_VERSION} required, helper needs reinstall")
                     }
                 };
-                let _ = writeln!(out, "{reply}");
+                if !write_reply(&mut out, &reply) {
+                    write_dead = true;
+                    break;
+                }
                 handshaked = matches!(hello, Ok(wanted) if wanted == PROTOCOL_VERSION);
                 continue;
             }
             if line == "ping" {
-                let _ = writeln!(out, "pong");
+                if !write_reply(&mut out, "pong") {
+                    write_dead = true;
+                    break;
+                }
                 continue;
             }
             if line == "keyboards" {
-                let _ = writeln!(out, "{}", startup_keyboard_reply());
+                if !write_reply(&mut out, &startup_keyboard_reply()) {
+                    write_dead = true;
+                    break;
+                }
                 continue;
             }
             let reply = match parse(line) {
                 Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
                 None => "err unknown command".to_string(),
             };
-            let _ = writeln!(out, "{reply}");
+            if !write_reply(&mut out, &reply) {
+                write_dead = true;
+                break;
+            }
         }
-        if poisoned {
+        if poisoned || write_dead {
             break;
         }
     }
@@ -5048,5 +5178,79 @@ mod tests {
             text_scalars(&"a".repeat(MAX_TEXT_SCALARS + 1)).unwrap_err(),
             "err text too long"
         );
+    }
+
+    // ---- the 2026-09-19 audit: malformed input must never wedge the helper ----
+
+    #[test]
+    fn nul_in_rmlvo_fields_is_refused_not_fatal() {
+        // xkbcommon's CString conversion panics on an interior NUL, and the
+        // compile runs under the shared lock — one poisoned mutex and the
+        // helper is alive-but-dead until a restart systemd never orders.
+        // Refused like any compile failure now, from every field.
+        let config = XkbConfig {
+            layouts: "us\0ua".into(),
+            ..XkbConfig::default()
+        };
+        assert!(compile_keymap(&config).is_none());
+        let config = XkbConfig {
+            model: "pc10\05".into(),
+            ..XkbConfig::default()
+        };
+        assert!(compile_keymap(&config).is_none());
+        let config = XkbConfig {
+            options: "compose:caps\0grp:alt_shift_toggle".into(),
+            ..XkbConfig::default()
+        };
+        assert!(compile_keymap(&config).is_none());
+        // And the parse gate: a configure carrying a NUL is not a command.
+        assert!(parse("configure\tevdev\tpc105\tus\0ua\t\t\t0").is_none());
+        // A clean configure still parses.
+        assert!(parse("configure\tevdev\tpc105\tus,ua\t\tcompose:caps\t\t1").is_some());
+    }
+
+    #[test]
+    fn nul_inside_a_custom_keymap_is_refused_not_fatal() {
+        let path = std::env::temp_dir().join(format!("osk-nul-keymap-{}.xkb", std::process::id()));
+        std::fs::write(&path, b"xkb_keymap {\x00};").expect("write the NUL keymap");
+        let config = XkbConfig {
+            kb_file: path.display().to_string(),
+            ..XkbConfig::default()
+        };
+        assert!(compile_keymap(&config).is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn custom_keymap_reads_are_bounded_and_regular_file_only() {
+        // Empty path, a device, a directory: refused before a single byte.
+        assert!(read_kb_file_bounded("").is_none());
+        assert!(read_kb_file_bounded("/dev/null").is_none());
+        assert!(read_kb_file_bounded("/tmp").is_none());
+        assert!(kb_file_mark("/dev/null").is_none());
+        // At the limit passes; one byte past it is refused unread.
+        let path = std::env::temp_dir().join(format!("osk-kbfile-limit-{}", std::process::id()));
+        let path = path.to_str().unwrap();
+        std::fs::write(path, vec![b'x'; KB_FILE_LIMIT as usize]).expect("write at the limit");
+        assert_eq!(
+            read_kb_file_bounded(path).map(|bytes| bytes.len()),
+            Some(KB_FILE_LIMIT as usize)
+        );
+        assert!(kb_file_mark(path).is_some());
+        std::fs::write(path, vec![b'x'; KB_FILE_LIMIT as usize + 1])
+            .expect("write past the limit");
+        assert!(read_kb_file_bounded(path).is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn the_handshake_window_is_absolute_under_traffic() {
+        // Continuous frames never pause the read, so the window is checked
+        // per iteration — a connection that streams without a hello is
+        // dropped once the window wears out, not only when it goes quiet.
+        assert!(handshake_expired(false, Duration::from_secs(5)));
+        assert!(handshake_expired(false, Duration::from_secs(600)));
+        assert!(!handshake_expired(false, Duration::from_secs(4)));
+        assert!(!handshake_expired(true, Duration::from_secs(600)));
     }
 }
