@@ -1473,6 +1473,14 @@ Item {
         if (cancelled.action === "dropped")
             console.warn("[oskar] emoji paste transaction cancelled:", reason)
         root.emojiTxnState = cancelled.state
+        // The cancelled transaction's read and timers die with it (the
+        // review's fourth round): a stalled verify left alive outlives the
+        // machine that owned it, and the watchdog — correctly seeing no
+        // live transaction — would leave the process running.
+        emojiVerifyWatchdog.stop()
+        emojiPublishVerifyTimer.stop()
+        if (emojiClipboardVerify.running)
+            killProcessGroup(emojiClipboardVerify)
     }
 
     function finishEmojiPublishVerify(seq, served) {

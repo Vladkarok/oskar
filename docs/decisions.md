@@ -2228,3 +2228,32 @@ other side of it has answered:
   `tools/make-aur-recipe.sh` emits the AUR PKGBUILD with the real tag
   checksum substituted for the in-tree SKIP — release notes document,
   makepkg enforces. The README's clone placeholder is the real URL.
+
+## 64. The review's fourth round: correlate, don't approximate
+
+Round three's fixes were half-right; round four named the halves:
+
+- **The chord waits for ITS OWN last ack.** A single awaiting slot settled
+  on the first `ok` of the burst — the Ctrl press's, before the paste key
+  itself. `ChordAcks.js` now keeps the ledger the ordering actually gives:
+  plain commands (`down|up|mods|group`) sent minus `ok`s received, counted
+  at the one send choke point; the chord settles when the ledger drains to
+  zero while it waits, so an interleaved click delays the drain (safe)
+  and nothing settles early. A dying connection settles the wait as a
+  cancellation and zeroes the ledger — oks owed by a dead socket never
+  come. The residual stands as stated in §63: the ack says the compositor
+  has the events, not that the client read the clipboard; a
+  paste-confirmed protocol reply is the only stronger answer.
+- **Cancellation kills the read, not just the machine.** `cancelEmojiPublish`
+  now stops both verify timers and group-kills a stalled pipeline — a
+  cancelled transaction's watchdog, correctly seeing no live machine, used
+  to leave the process running.
+- **One snapshot validates and installs.** The group ceiling and the
+  install each read the `kb_file`; a swap between the reads validated one
+  file and installed another. `install_config` takes the caller's bytes —
+  the same bounded snapshot that answered the ceiling question.
+- **A complete line is capped before it is parsed.** The per-line cap
+  moved after dispatch measured only the newline-less tail, so a finished
+  5 000-byte line walked through untouched. The dispatch loop now refuses
+  any complete line over the cap, leaving the reply-and-close to the tail
+  check.

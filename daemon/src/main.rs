@@ -258,15 +258,15 @@ fn xkb_field_clean(text: &str) -> bool {
     !text.contains('\0')
 }
 
-/// A custom keymap's group count, taken from the map itself: compile it and
-/// ask the compiled keymap — `num_layouts` is xkb's name for the group
-/// count, and it is the exact ceiling a group index must sit under.
-/// `None` when the file cannot be read or compiled; the configure that
-/// asked refuses the same way it always refused an uncompilable map.
-fn custom_keymap_group_count(path: &str) -> Option<usize> {
+/// A custom keymap's group count, taken from the map's OWN bytes — the
+/// same snapshot the caller will hand to `install_config`, so the ceiling
+/// and the install can never disagree about which file was meant.
+/// Compile the bytes and ask the compiled keymap: `num_layouts` is xkb's
+/// name for the group count, and it is the exact ceiling a group index
+/// must sit under. `None` when the bytes cannot be compiled.
+fn custom_keymap_group_count_bytes(bytes: &[u8]) -> Option<usize> {
     use xkbcommon::xkb;
-    let bytes = read_kb_file_bounded(path)?;
-    let text = String::from_utf8(bytes).ok()?;
+    let text = String::from_utf8(bytes.to_vec()).ok()?;
     if !xkb_field_clean(&text) {
         return None;
     }
@@ -2009,13 +2009,15 @@ impl Shared {
 
     /// Compiles `layouts` and installs the result. Held by the caller's lock so
     /// a keystroke can never observe a half-swapped keymap.
-    fn install_config(&mut self, config: &XkbConfig) -> bool {
+    fn install_config(&mut self, config: &XkbConfig, kb_file_bytes: Option<&[u8]>) -> bool {
         // Same fields AND, for a kb_file, the same bytes behind them. The
-        // read happens once per configure and feeds BOTH the mark and the
-        // compile (the 2026-09-19 audit: two unbounded reads under this
-        // lock); the `group` command reaches none of this and still moves a
-        // group without touching the file (ticket 06).
-        let file_bytes = read_kb_file_bounded(&config.kb_file);
+        // bytes arrive from the caller — ONE read validates the group
+        // ceiling and installs the map (the review's fourth round: the
+        // count and the install each reading the path left a swap between
+        // them validating one file and installing another); the `group`
+        // command reaches none of this and still moves a group without
+        // touching the file (ticket 06).
+        let file_bytes = kb_file_bytes.map(|bytes| bytes.to_vec());
         let mark = file_bytes.as_deref().map(hash_bytes);
         if self
             .config
@@ -2117,7 +2119,7 @@ impl State {
             return;
         }
         shared.keyboard = Some(manager.create_virtual_keyboard(seat, qh, ()));
-        shared.install_config(&XkbConfig::default());
+        shared.install_config(&XkbConfig::default(), None);
     }
 }
 
@@ -2795,6 +2797,14 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         let mut poisoned = false;
         let mut write_dead = false;
         while let Some(nl) = pending.iter().position(|byte| *byte == b'\n') {
+            // A COMPLETE line is capped here, before it is parsed (the
+            // review's fourth round: moving the cap after dispatch let a
+            // 5 000-byte line with its newline through untouched). Breaking
+            // without draining leaves the oversized bytes in `pending` for
+            // the tail check below, which answers and closes.
+            if nl + 1 > MAX_LINE {
+                break;
+            }
             // Deadlines between commands, not only between reads (the
             // review's second round): one chunk can carry a whole burst,
             // paced slow enough to cross the window, and its late hello
@@ -3119,16 +3129,25 @@ fn apply_locked(
         // commands that MOVE the group. Bounded by the INCOMING map, never
         // the installed one: a shrink-then-grow would otherwise refuse a
         // correct grow. For RMLVO the layouts string IS the map (same count
-        // once compiled); a custom keymap's groups are the FILE's — the
-        // review's third round — so only the compiled map can answer, and
-        // a file that will not compile refuses the configure here rather
-        // than one round later.
+        // once compiled); a custom keymap's groups are the FILE's — asked
+        // of the ONE bounded snapshot that will also be installed, so the
+        // ceiling and the map cannot describe two different files.
+        let kb_file_bytes = if config.kb_file.is_empty() {
+            None
+        } else {
+            match read_kb_file_bounded(&config.kb_file) {
+                Some(bytes) => Some(bytes),
+                // Unreadable now is refused now: the install would refuse
+                // the same map one round later anyway.
+                None => return "err cannot configure keymap".to_string(),
+            }
+        };
         let group_ceiling = if config.kb_file.is_empty()
             || is_published_keymap(&config.kb_file)
         {
             declared_group_count(&config.layouts)
         } else {
-            match custom_keymap_group_count(&config.kb_file) {
+            match custom_keymap_group_count_bytes(kb_file_bytes.as_deref().unwrap_or(&[])) {
                 Some(count) => count,
                 None => return "err cannot configure keymap".to_string(),
             }
@@ -3136,7 +3155,7 @@ fn apply_locked(
         if !group_in_range(config.group, group_ceiling) {
             return "err bad group".to_string();
         }
-        let installed = shared.install_config(config);
+        let installed = shared.install_config(config, kb_file_bytes.as_deref());
         let _ = connection.flush();
         // The generation rides on the reply (decisions §23): it is what the
         // panel correlates its keycap facts against, and a same-keymap
@@ -5388,20 +5407,19 @@ mod tests {
         // A real two-group fixture read through the whole bounded path: a
         // layouts string of one entry used to refuse group 1 for a map the
         // file itself carries two groups on (the review's finding 3). The
-        // compiled keymap is the authority, asked directly.
+        // compiled keymap is the authority, asked directly — and the SAME
+        // snapshot the caller threads into install_config, so the ceiling
+        // and the installed map can never be two different files.
         let path = std::env::temp_dir()
             .join(format!("osk-groups-{}.xkb", std::process::id()));
         std::fs::write(&path, fixture_keymap("us,ua", ""))
             .expect("write the two-group keymap");
-        assert_eq!(custom_keymap_group_count(path.to_str().unwrap()), Some(2));
-        let one = std::env::temp_dir()
-            .join(format!("osk-groups-one-{}.xkb", std::process::id()));
-        std::fs::write(&one, fixture_keymap("us", ""))
-            .expect("write the one-group keymap");
-        assert_eq!(custom_keymap_group_count(one.to_str().unwrap()), Some(1));
+        let two = read_kb_file_bounded(path.to_str().unwrap()).expect("read it back");
+        assert_eq!(custom_keymap_group_count_bytes(&two), Some(2));
         let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(&one);
-        // An uncompilable or unreadable file answers None, not a guess.
-        assert_eq!(custom_keymap_group_count("/definitely/not/here.xkb"), None);
+        let one = fixture_keymap("us", "").into_bytes();
+        assert_eq!(custom_keymap_group_count_bytes(&one), Some(1));
+        // Uncompilable bytes answer None, not a guess.
+        assert_eq!(custom_keymap_group_count_bytes(b"not a keymap"), None);
     }
 }

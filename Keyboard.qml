@@ -15,6 +15,7 @@ import "LayoutDevices.js" as LayoutDevices
 import "SettleGuard.js" as SettleGuard
 import "SocketWatch.js" as SocketWatch
 import "ClipboardPaste.js" as ClipboardPaste
+import "ChordAcks.js" as ChordAcks
 import "LanguageControl.js" as LanguageControl
 
 Item {
@@ -1263,15 +1264,16 @@ Item {
     property int pastePaceSent: 0
     property var pastePaceDone: null
     // The chord whose final line is out and whose helper acknowledgement
-    // has not come back yet. Success is THAT ack, not the panel's own
-    // socket write (the review's third round): the next emoji's
-    // publication used to race a destination that had not received the
-    // paste yet and could paste it twice. The ack says the events reached
-    // the compositor — nothing shorter is completion. One chord is in
-    // flight at a time (the transaction serializes them), so a single
-    // slot with a guard timer: a helper that never answers cannot wedge
-    // the queue behind it.
-    property var pendingChordAck: null
+    // has not come back yet. Success is the ack of ITS OWN last command,
+    // correlated through ChordAcks' outstanding-commands ledger — not the
+    // first `ok` on the wire (which answers the chord's Ctrl press), and
+    // not the panel's own socket write (the review's third and fourth
+    // rounds: the next emoji's publication used to race a destination
+    // that had not received the paste yet). The ack says the events
+    // reached the compositor — nothing shorter is completion, and one
+    // chord waits at a time (the transaction serializes them) behind a
+    // guard timer a silent helper cannot wedge.
+    property var chordAcks: ChordAcks.initial()
     // Which modifiers were locked when the chord computed its lines: a
     // mid-chord event that changes the held world (a configure draining
     // the device, a releaseAll) invalidates the remaining lines, and the
@@ -1337,13 +1339,13 @@ Item {
     // socket is already a verdict.
     function settleChordThroughHelper(done) {
         if (!done) return
-        root.pendingChordAck = done
+        root.chordAcks = ChordAcks.chordArmed(root.chordAcks, done)
         chordAckGuard.restart()
     }
 
     function chordAckSettled(success) {
-        var done = root.pendingChordAck
-        root.pendingChordAck = null
+        var done = root.chordAcks.chordDone
+        root.chordAcks = ChordAcks.chordSettled(root.chordAcks)
         chordAckGuard.stop()
         if (done) done(success)
     }
@@ -1353,7 +1355,7 @@ Item {
         interval: 5000
         repeat: false
         onTriggered: () => {
-            if (root.pendingChordAck) root.chordAckSettled(false)
+            if (root.chordAcks.chordDone) root.chordAckSettled(false)
         }
     }
 
@@ -1607,8 +1609,10 @@ Item {
         root.sharedKeymapGen = resets.sharedKeymapGen
         // A chord awaiting its final line's ack cannot be completed by a
         // helper that is being torn down: settle it as a cancellation, the
-        // way every other failure path already does.
-        if (root.pendingChordAck) root.chordAckSettled(false)
+        // way every other failure path already does — and the ledger of
+        // oks owed by the dead connection dies with it.
+        if (root.chordAcks.chordDone) root.chordAckSettled(false)
+        root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
         Qt.callLater(function () {
             helperLoader.active = false
             helperLoader.active = true
@@ -1664,9 +1668,11 @@ Item {
                     // the transaction a reconnect is racing).
                     root.session = Session.reduce(root.session, { type: "connectionDown" })
                     // A chord awaiting its final line's ack settles as a
-                    // cancellation: the helper released everything it held
-                    // on the way down, and no ack is coming.
-                    if (root.pendingChordAck) root.chordAckSettled(false)
+                    // cancellation — the helper released everything it held
+                    // on the way down, no ack is coming, and the ledger of
+                    // oks owed by this connection dies with it.
+                    if (root.chordAcks.chordDone) root.chordAckSettled(false)
+                    root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
                     // A restarted helper counts its installs from one again,
                     // so the generation this panel last shared can come round
                     // a second time and the once-per-generation guard would
@@ -1763,11 +1769,14 @@ Item {
                         var succeeded = successes.shift()
                         root.pendingTextReplies = successes
                         if (succeeded) succeeded(true)
-                    } else if (reply === "ok" && root.pendingChordAck) {
-                        // The helper acknowledged a plain command — for a
-                        // chord awaiting its final line, this is the
-                        // completion the transaction was waiting for.
-                        root.chordAckSettled(true)
+                    } else if (reply === "ok") {
+                        // One plain command acknowledged. Draining the
+                        // ledger settles a waiting chord exactly when its
+                        // own final line's ack has arrived — never on the
+                        // first ok of the burst.
+                        var ack = ChordAcks.okReceived(root.chordAcks)
+                        root.chordAcks = ack.state
+                        if (ack.settle) root.chordAckSettled(true)
                     } else if (reply.indexOf("configured") === 0) {
                         // Mirror the helper's own configure behaviour, for
                         // THE ENTRY THIS REPLY SETTLES — the oldest
@@ -2110,6 +2119,10 @@ Item {
         if (!daemonSocket) return false
         daemonSocket.write(text + "\n")
         daemonSocket.flush()
+        // Every plain command sent is an ok owed: the chord's wait drains
+        // this ledger, so it must see every plain send — counted here, at
+        // the one choke point every command goes through.
+        root.chordAcks = ChordAcks.sent(root.chordAcks, text).state
         return true
     }
 
