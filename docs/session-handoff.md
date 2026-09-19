@@ -1,3 +1,22 @@
+# Handoff — updated 2026-09-19 later (release metadata fixed; screenshots staged)
+
+**START HERE.** The packaging metadata from the first three releases
+is fixed on master. The in-tree checksums had been the PREVIOUS tag's
+tarball both times (v0.1.1 carried v0.1.0's `461cf30…`, v0.1.2 carried
+v0.1.1's `f450ba…` — updpkgsums ran before the pkgver bump), and a
+self-consistent in-tag checksum is impossible anyway: GitHub tag
+tarballs embed the tag's commit SHA in a pax header. PKGBUILD now
+keeps `sha256sums=('SKIP')` with the full story in its header; the
+verifying sha256 lives in each tag's GitHub release notes (all three
+releases now exist as release objects). manifest.json says 0.1.2,
+.SRCINFO regenerated, README Status names v0.1.2. The first README
+screenshot set (9 frames, lab VM, oskar 0.1.2-1 package) is staged in
+`.scratch/screenshots/` for the owner's review — NOT pushed, NOT
+embedded; the owner will re-shoot with endonyms live anyway (see the
+block below — another panel/shell restart is still owed for §59+§60).
+
+---
+
 # Handoff — updated 2026-09-19 (endonyms on the chip and in the chooser)
 
 **START HERE.** Languages are now named in their own language (owner's
@@ -48,10 +67,11 @@ strings (98e82eb), README carries the languages map + security
 posture + touch-beta sections, branch archaeology is tagged.
 The final review closed everything (bbc5a42; the stray UTF-8
 release-path bug included) and the hardening shipped as **v0.1.1**
-(checksum f450ba94…, .SRCINFO current). Awaiting the owner: the
+(its in-tree checksum proved to be v0.1.0's tarball — see the top
+block; release notes carry the real sums now). Awaiting the owner: the
 announcement posts (.scratch/next-iteration/announce-drafts.md — the
 kill-gate clock starts with the first one); AUR the morning
-registration reopens (PKGBUILD is v0.1.1-ready as-is).
+registration reopens (real checksums come from the release notes).
 
 ---
 

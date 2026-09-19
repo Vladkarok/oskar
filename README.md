@@ -8,9 +8,10 @@ from the Omarchy theme.
 
 ## Status
 
-**v0.1.1 — released 2026-09-18** (v0.1.0 went public 2026-09-17;
-0.1.1 lands the two-lab security audit's hardening — see
-SECURITY.md). The audit round and the
+**v0.1.2 — released 2026-09-18** (v0.1.0 went public 2026-09-17;
+v0.1.1 landed the two-lab security audit's hardening — see
+SECURITY.md — and 0.1.2 followed it with the drag-line and notice
+polish). The audit round and the
 polish round behind it are complete: every ticket implemented,
 independently reviewed (`ship` verdicts), and proven in the lab VM on
 the exact release artifacts — host suites, the packaged-product

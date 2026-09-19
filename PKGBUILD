@@ -2,15 +2,25 @@
 # the public default (audit 2026-09-13 §32: one coherent product, not
 # "AUR helper plus a separately managed Git plugin").
 #
-# PUBLISHING IS OWNER-GATED. This repo is currently unpushed and untagged;
-# before publishing the owner must:
-#   1. push the repo public (source= below points at GitHub),
-#   2. create tag v$pkgver at the release commit,
-#   3. replace sha256sums=('SKIP') with the tag tarball's real checksum
-#      (updpkgsums), run makepkg --printsrcinfo > .SRCINFO, commit both
+# CHECKSUMS LIVE OUTSIDE THE TREE. A GitHub tag tarball embeds the tag's
+# commit SHA in a pax global header, so the tarball's bytes depend on the
+# commit and a checksum recorded inside that same tag can never match it
+# (v0.1.1 and v0.1.2 both shipped the PREVIOUS tag's checksum —
+# updpkgsums ran while pkgver still named the old version). The
+# verifying authority for a release is its GitHub release notes, which
+# publish the tag tarball's real sha256; the AUR PKGBUILD carries the
+# same value when AUR registration reopens. In-tree the sum stays SKIP
+# and a source-checkout makepkg builds unverified by design.
+#
+# PUBLISHING IS OWNER-GATED. To release a version:
+#   1. bump pkgver AND manifest.json's version together, create tag
+#      v$pkgver at the release commit, push both,
+#   2. create the GitHub release for the tag; its notes publish the
+#      tag tarball's real sha256 (the AUR copies it later):
+#        curl -sL "$url/archive/refs/tags/v$pkgver.tar.gz" | sha256sum
 #      (oskar.install travels with the PKGBUILD or makepkg fails),
-#      and push to the AUR.
-#   4. revisit README's Status paragraph — it names this gate.
+#   3. run makepkg --printsrcinfo > .SRCINFO, commit that,
+#   4. revisit README's Status paragraph — it names the current release.
 # A -git VCS package may follow later as a separate optional PKGBUILD;
 # this one never resolves a moving branch.
 
@@ -43,7 +53,10 @@ conflicts=(oskar-git omarchy-osk)
 replaces=(omarchy-osk)
 install=oskar.install
 source=("$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('f450ba945b3d545df484b30e40c56841819c53fac4d6c16d872be25e6ff82e67')
+# SKIP by design — see the checksum paragraph in the header: the real
+# sha256 is published in the tag's GitHub release notes and travels to
+# the AUR from there.
+sha256sums=('SKIP')
 
 _repo=oskar-$pkgver
 
