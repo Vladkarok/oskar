@@ -2131,10 +2131,12 @@ Item {
         if (!daemonSocket) return false
         daemonSocket.write(text + "\n")
         daemonSocket.flush()
-        // Every plain command sent is an ok owed: the chord's wait drains
-        // this ledger, so it must see every plain send — counted here, at
-        // the one choke point every command goes through.
-        root.chordAcks = ChordAcks.sent(root.chordAcks, text).state
+        // Every command sent occupies one slot in the correlation queue —
+        // counted here, at the one choke point every command goes through.
+        // The module returns the new state directly; a `.state` suffix
+        // here once silently nulled the queue and killed reply handling
+        // for the rest of the session.
+        root.chordAcks = ChordAcks.sent(root.chordAcks, text)
         return true
     }
 
