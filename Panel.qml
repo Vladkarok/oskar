@@ -1628,9 +1628,15 @@ Item {
         }
     }
 
+    // Private by permission, not by hope (round ten): the documented
+    // 700/600 is now enforced on create AND repaired on every save —
+    // umask-independent, and an existing 755/644 install is healed the
+    // first time the panel saves into it.
     Process {
         id: configDirMaker
-        command: ["mkdir", "-p", root.configDir]
+        command: ["bash", "-c",
+            "install -d -m 700 \"$1\" && chmod 700 \"$1\"", "oskar-config-dir",
+            root.configDir]
         onExited: (exitCode, exitStatus) => {
             if (root.configurationError) return
             if (exitCode !== 0 || exitStatus !== 0) {
@@ -1638,12 +1644,17 @@ Item {
                 return
             }
             configFile.setText(ConfigFile.serializeOverrides(root.userOverrides))
+            Quickshell.execDetached(["bash", "-c",
+                "f=\"$1\"; [[ -f \"$f\" ]] && chmod 600 \"$f\"",
+                "oskar-config-perms", root.configFile.path])
         }
     }
 
     Process {
         id: stateDirMaker
-        command: ["mkdir", "-p", root.stateDir]
+        command: ["bash", "-c",
+            "install -d -m 700 \"$1\" && chmod 700 \"$1\"", "oskar-state-dir",
+            root.stateDir]
         onExited: (exitCode, exitStatus) => {
             if (root.stateError) return
             if (exitCode !== 0 || exitStatus !== 0) {
@@ -1651,6 +1662,9 @@ Item {
                 return
             }
             stateFile.setText(ConfigFile.serializeState(root.geometryState))
+            Quickshell.execDetached(["bash", "-c",
+                "f=\"$1\"; [[ -f \"$f\" ]] && chmod 600 \"$f\"",
+                "oskar-state-perms", root.stateFile.path])
         }
     }
 

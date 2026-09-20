@@ -16,6 +16,7 @@ import "SettleGuard.js" as SettleGuard
 import "SocketWatch.js" as SocketWatch
 import "ClipboardPaste.js" as ClipboardPaste
 import "ChordAcks.js" as ChordAcks
+import "ShareQueue.js" as ShareQueue
 import "LanguageControl.js" as LanguageControl
 
 Item {
@@ -600,6 +601,10 @@ Item {
     // nothing left to swap between.
     readonly property string publishedKeymap: "/oskar/keymap.xkb"
     property int sharedKeymapGen: 0
+    // The share scheduler's state (ShareQueue.js): running/launched/wished
+    // live here, `sharedKeymapGen` above mirrors its .shared for the
+    // paths that predate the module.
+    property var shareQueue: ShareQueue.initial()
     // The `kb_file` the USER configured, remembered across the moment this
     // panel replaces it with the published one. Without it the compositor's
     // own setting is the only record of it, and pointing `kb_file` at the
@@ -617,18 +622,16 @@ Item {
     // seed's own record fighting the clear).
     property bool userKeymapObserved: false
     function shareKeymapWithCompositor() {
-        if (session.ackedGen === 0 || sharedKeymapGen === session.ackedGen) return
-        // `launched` is captured per RUN (round nine): a newer keymap
-        // arriving while this one is in flight only updates the wish,
-        // and the run's completion records the generation IT was told —
-        // so a newer pending gen fails the guard above and reruns the
-        // clear-and-set, instead of being marked shared by an older
-        // run's exit and never re-read.
-        shareProcess.wished = session.ackedGen
-        if (!shareProcess.running) {
-            shareProcess.launched = session.ackedGen
-            shareProcess.running = true
-        }
+        // The scheduler is pure (ShareQueue.js, decisions §69/§71): a run
+        // is launched FOR a generation, a newer generation mid-run only
+        // updates the wish, success records what the run launched AND
+        // schedules the pending wish — the round-ten finding was exactly
+        // a wish that nobody consumed, the newest map unshared with
+        // nothing running and nothing retrying.
+        var next = ShareQueue.acked(root.shareQueue, session.ackedGen)
+        root.shareQueue = next.state
+        root.sharedKeymapGen = next.state.shared
+        if (next.start) shareProcess.running = true
         // Cleared and set rather than set: assigning the same path again is a
         // no-op, and a republished file under the same name has to be re-read
         // or the compositor keeps compiling the keymap before this one.
@@ -647,12 +650,6 @@ Item {
     /// of the session, which is the defect §35 exists to end.
     Process {
         id: shareProcess
-        // The generation this RUN was launched for (immutable while it
-        // runs) and the newer one waiting behind it; `wished` moves, 
-        // `launched` does not — the completion records `launched`, and
-        // the caller's guard reruns for anything newer.
-        property int launched: 0
-        property int wished: 0
         property int attempts: 0
         command: ["bash", "-c",
             // The path comes from the same normalizing builder the
@@ -681,11 +678,15 @@ Item {
             Session.luaQuote(Session.publishedKeymapPath(
                 Quickshell.env("XDG_RUNTIME_DIR")))]
         onExited: (code, status) => {
-            if (code === 0 && status === 0) {
-                // Only what THIS run launched is now shared; anything
-                // newer keeps the guard above armed and reruns.
-                root.sharedKeymapGen = launched
+            var ok = code === 0 && status === 0
+            var done = ShareQueue.runFinished(root.shareQueue, ok)
+            root.shareQueue = done.state
+            root.sharedKeymapGen = done.state.shared
+            if (ok) {
                 attempts = 0
+                // A pending newer generation is scheduled NOW (§71): the
+                // newest map must never sit unshared with nothing running.
+                if (done.start) shareProcess.running = true
                 return
             }
             // Exit 3 is "the helper has not written the file yet", which is
@@ -700,6 +701,10 @@ Item {
                 return
             }
             attempts = 0
+            // The run is given up: release the scheduler's slot so the next
+            // acknowledged generation can launch (a fresh map may succeed
+            // where this one could not; the wish stays).
+            root.shareQueue = ShareQueue.runAbandoned(root.shareQueue)
             console.error("[oskar] could not give the compositor the published"
                 + " keymap (exit " + code + ", five attempts): the seat is"
                 + " carrying two keymaps and a client's layout group will"
@@ -936,8 +941,9 @@ Item {
             }
             userKeymapFile = kbFile
             xkbFile = kbFile
-            if (sharedKeymapGen !== 0) {
-                sharedKeymapGen = 0
+            if (root.sharedKeymapGen !== 0) {
+                root.shareQueue = ShareQueue.displaced(root.shareQueue)
+                root.sharedKeymapGen = 0
                 shareKeymapWithCompositor()
             }
         }
@@ -1641,6 +1647,7 @@ Item {
         })
         root.pendingTextReplies = resets.pendingTextReplies
         root.sharedKeymapGen = resets.sharedKeymapGen
+        root.shareQueue = ShareQueue.initial()
         // A chord awaiting its final line's ack cannot be completed by a
         // helper that is being torn down: settle it as a cancellation, the
         // way every other failure path already does — and the ledger of
@@ -1714,6 +1721,7 @@ Item {
                     // does not change, so nothing would make it re-read the
                     // file either: two keymaps on the seat, silently.
                     root.sharedKeymapGen = 0
+                    root.shareQueue = ShareQueue.initial()
                 }
             }
 

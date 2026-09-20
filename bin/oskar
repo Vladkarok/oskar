@@ -452,7 +452,10 @@ cmd_status() {
   local helper_state="present"
   [[ -f "$HELPER" ]] || helper_state="MISSING"
   local reply
-  reply="$(protocol_probe)"
+  # A failing transport (stale socket, timeout, socat's own nonzero)
+  # must not kill the report under set -e (round ten): the probe's own
+  # empty answer already reads as "not answering" below.
+  reply="$(protocol_probe)" || reply=""
   local proto="ok (protocol $PROTOCOL_VERSION)"
   if [[ "$reply" == "hello $PROTOCOL_VERSION" ]]; then
     :

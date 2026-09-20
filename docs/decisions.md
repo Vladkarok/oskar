@@ -2418,3 +2418,30 @@ The harness learned `negotiate=False` (raw clients, for the gate tests),
 `read_line` (drain without send), and a close that tolerates a dead
 socket. This is the machinery the reviewers kept asking for; the seams
 now have a wall of their own.
+
+## 71. The review's tenth round: the wish is consumed; the plan begins
+
+Three findings; the first is the opening cut of the approved seams plan:
+
+- **ShareQueue.js.** Round nine captured the generation per run but let
+  the success handler return with `wished` unconsumed — the newest map
+  sat unshared, nothing running, nothing retrying (the reviewer's
+  reproduction). The share scheduler is now the pure module the plan
+  called for: ack launches for a generation (at-or-below-shared and
+  stale acks are no work at all — its own suite caught the module
+  relaunching an already-shared gen on a stale ack), a newer
+  generation mid-run only updates the wish, success shares what the
+  run launched AND schedules the pending wish immediately, failure
+  keeps the run for the caller's retry, the five-attempt give-up
+  releases the slot (a fresh map may succeed where the old one could
+  not), and the displaced path voids only the shared record. Six
+  overlap tests; the panel keeps only the Process plumbing.
+- **`oskar status` survives a dead transport.** The probe's nonzero
+  (stale socket, timeout) killed the report under `set -e` before any
+  output; the failure now reads as the "not answering" line it always
+  meant to be.
+- **Private means 700/600, enforced.** The panel's config/state
+  directories were mkdir'd 755 and their JSON written 644 — the
+  documented private posture existed only in prose. `install -d -m 700`
+  plus a post-save `chmod 600`, umask-independent, healing existing
+  installs on their first save (the owner's were healed by hand).
