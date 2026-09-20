@@ -183,9 +183,18 @@ function txnServed(state, seq, served) {
 // The chord's verdict, delivered by pasteCurrent's completion callback.
 // Only "completed" carries the emoji: it is the one outcome that may
 // record usage, settle the search and close the page.
-function txnChordDone(state, success) {
+//
+// The `seq` is the transaction the CALLBACK was armed for — captured at
+// dispatch, compared here (round seven: a cancelled A's late reply used
+// to complete a live B, because the machine's phase said "pasting" and
+// nothing said WHOSE pasting). A seq that is not the machine's own means
+// the verdict belongs to a transaction already cancelled or handed over:
+// it lands as "stale" and changes nothing.
+function txnChordDone(state, seq, success) {
     if (state.phase !== "pasting")
         return { state: state, action: "ignore" }
+    if (seq !== state.seq)
+        return { state: state, action: "stale" }
     var idle = {
         seq: state.seq, phase: "idle", pending: "", clientClass: "",
         attempts: 0, queue: state.queue

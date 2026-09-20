@@ -22,9 +22,12 @@ jobs:
     steps:
       # Arch package names, verified the hard way (the first public run
       # died on a nonexistent 'xkbcommon'): libxkbcommon is the lib,
-      # cargo rides the rust package.
+      # cargo rides the rust package. quickshell (extra) is what makes the
+      # QML handler check real in CI — without its types the check skipped
+      # itself (round seven's finding).
       - run: pacman -Syu --noconfirm git qt6-declarative qt6-tools
              libxkbcommon rust python coreutils grep ttf-jetbrains-mono-nerd
+             quickshell
       # Pinned by commit (the audit's supply-chain nit): v4.2.2.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:

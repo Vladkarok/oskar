@@ -2310,3 +2310,31 @@ itself:
   commands unanswered misattributed the pop. Every command on the
   connection — hello included — now goes through `sendCommandUnchecked`
   and occupies its slot like everything else.
+
+## 67. The review's seventh round: whose pasting is it
+
+Four findings, all confirmed against the tree:
+
+- **A cancelled chord's verdict cannot complete the next pick.** The
+  transaction machine answered "pasting" without saying WHOSE — a
+  cancelled A's delayed reply recorded a live B as successful
+  mid-dispatch (the reviewer reproduced it on the modules). The verdict
+  now carries the seq it was armed for, captured at dispatch, and a seq
+  that is not the machine's own lands stale; cancellation also clears
+  the armed chord wait outright.
+- **The packaging gate never rode behind the QML type check again.** CI
+  installed no Quickshell, so qml-check.sh exited 0 early — skipping the
+  handler check AND the package file-set check that lived behind it,
+  which is exactly how round five's ChordAcks PLUGIN_RUNTIME miss sailed
+  through green. The file-set check is its own script (needs only git
+  and the Makefile), CI installs quickshell from extra, and the handler
+  check's skip is loud and labelled.
+- **Handshake is a gate, not a suggestion.** Commands used to execute
+  before any `hello` and after a version refusal; now nothing but a
+  matching hello runs pre-handshake — one `err hello first` per line,
+  the slot's window still absolute.
+- **The sound lookup splits XDG paths on ':' properly** (read -ra), not
+  by ':'→' ' substitution that broke any entry containing a space.
+
+Released as v0.2.1 with the rounds five–six hardening that had landed
+after v0.2.0.

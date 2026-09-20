@@ -139,7 +139,7 @@ QtObject {
             var midChord = ClipboardPaste.txnPick(served.state, "🎉")
             T.equal(midChord.action, "queued")
             T.equal(ClipboardPaste.txnNext(midChord.state).action, "none")
-            var done = ClipboardPaste.txnChordDone(midChord.state, true)
+            var done = ClipboardPaste.txnChordDone(midChord.state, midChord.state.seq, true)
             T.equal(done.action, "completed")
             T.equal(done.emoji, "😀")
             var next = ClipboardPaste.txnNext(done.state)
@@ -163,7 +163,7 @@ QtObject {
                 var servedOut = ClipboardPaste.txnServed(state, state.seq, served)
                 state = servedOut.state
                 if (servedOut.action === "chord") {
-                    var done = ClipboardPaste.txnChordDone(state, success)
+                    var done = ClipboardPaste.txnChordDone(state, state.seq, success)
                     state = done.state
                     if (done.action === "completed") completions.push(done.emoji)
                 }
@@ -203,7 +203,7 @@ QtObject {
             T.deepEqual(state.queue,
                 [{ emoji: "🔥", clientClass: "" }, { emoji: "🎉", clientClass: "" }])
             state = ClipboardPaste.txnServed(state, state.seq, "😀").state
-            state = ClipboardPaste.txnChordDone(state, true).state
+            state = ClipboardPaste.txnChordDone(state, state.seq, true).state
             var b = ClipboardPaste.txnNext(state)
             T.equal(b.action, "publish")
             T.equal(b.emoji, "🔥")
@@ -214,26 +214,26 @@ QtObject {
             var c = ClipboardPaste.txnNext(
                 ClipboardPaste.txnChordDone(
                     ClipboardPaste.txnServed(b.state, b.state.seq, "🔥").state,
-                    true).state)
+                    b.state.seq, true).state)
             T.equal(c.action, "publish")
             T.equal(c.emoji, "🎉")
             T.deepEqual(c.state.queue, [])
             T.equal(ClipboardPaste.txnNext(
                 ClipboardPaste.txnChordDone(
                     ClipboardPaste.txnServed(c.state, c.state.seq, "🎉").state,
-                    true).state).action, "none")
+                    c.state.seq, true).state).action, "none")
         })
 
         T.test("a refused or aborted chord is a cancellation, never a completion", function () {
             var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(), "😀")
             var served = ClipboardPaste.txnServed(started.state,
                 started.state.seq, "😀")
-            var refused = ClipboardPaste.txnChordDone(served.state, false)
+            var refused = ClipboardPaste.txnChordDone(served.state, served.state.seq, false)
             T.equal(refused.action, "cancelled")
             T.equal(refused.emoji, undefined)
             // The queue still gets its turn.
             var withB = ClipboardPaste.txnPick(served.state, "🔥")
-            var after = ClipboardPaste.txnChordDone(withB.state, false)
+            var after = ClipboardPaste.txnChordDone(withB.state, withB.state.seq, false)
             T.equal(after.action, "cancelled")
             var next = ClipboardPaste.txnNext(after.state)
             T.equal(next.action, "publish")
@@ -312,7 +312,7 @@ QtObject {
                 started.state.seq, "😀")
             var cancelled = ClipboardPaste.txnCancel(served.state)
             T.equal(cancelled.action, "dropped")
-            var lateDone = ClipboardPaste.txnChordDone(cancelled.state, true)
+            var lateDone = ClipboardPaste.txnChordDone(cancelled.state, cancelled.state.seq, true)
             T.equal(lateDone.action, "ignore")
             T.equal(lateDone.emoji, undefined)
         })
@@ -414,7 +414,7 @@ QtObject {
             T.equal(b.action, "queued")
             var done = ClipboardPaste.txnChordDone(
                 ClipboardPaste.txnServed(b.state, b.state.seq, "😀").state,
-                true)
+                b.state.seq, true)
             T.equal(done.action, "completed")
             var next = ClipboardPaste.txnNext(done.state)
             T.equal(next.action, "publish")
@@ -442,7 +442,7 @@ QtObject {
                 "😀", "kitty")
             var cancelled = ClipboardPaste.txnChordDone(
                 ClipboardPaste.txnServed(started.state, started.state.seq,
-                    "😀").state, false)
+                    "😀").state, started.state.seq, false)
             T.equal(cancelled.state.clientClass, "")
             var dropped = ClipboardPaste.txnPick(
                 ClipboardPaste.txnInitial(), "😀", "kitty")
@@ -492,6 +492,38 @@ QtObject {
             var fourth = ClipboardPaste.txnPick(state, "😅", "kitty")
             T.equal(fourth.action, "refused-full")
             T.equal(fourth.state.queue.length, 3)
+        })
+
+        T.test("a cancelled chord's late verdict cannot complete the next pick", function () {
+            // Round seven's reproduction: A's chord dispatched, the mode
+            // flipped (cancel), B started and reached ITS pasting — and
+            // A's delayed reply still said "pasting" and recorded B as
+            // successful mid-dispatch. The verdict now carries the seq it
+            // was armed for; a verdict that names another transaction is
+            // stale, whatever the phase says.
+            var a = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(),
+                "😀", "kitty")
+            var aChord = ClipboardPaste.txnServed(a.state, a.state.seq, "😀")
+            var aSeq = aChord.state.seq
+            var gone = ClipboardPaste.txnCancel(aChord.state)
+            T.equal(gone.action, "dropped")
+            // B runs the whole way to its own chord.
+            var b = ClipboardPaste.txnPick(gone.state, "🔥", "kitty")
+            T.equal(b.action, "publish")
+            var bChord = ClipboardPaste.txnServed(b.state, b.state.seq, "🔥")
+            T.equal(bChord.action, "chord")
+            T.equal(bChord.state.phase, "pasting")
+            // A's late success lands on B's machine: stale, nothing
+            // recorded, B still owns its own verdict.
+            var late = ClipboardPaste.txnChordDone(bChord.state, aSeq, true)
+            T.equal(late.action, "stale", "the phase alone must not answer")
+            T.equal(late.state.phase, "pasting")
+            T.equal(late.state.pending, "🔥")
+            // B's own verdict still completes B.
+            var own = ClipboardPaste.txnChordDone(
+                bChord.state, bChord.state.seq, true)
+            T.equal(own.action, "completed")
+            T.equal(own.emoji, "🔥")
         })
 
         Qt.exit(T.report("clipboard-paste"))

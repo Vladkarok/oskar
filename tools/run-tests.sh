@@ -40,6 +40,11 @@ done
 echo "== qml static check"
 "$root/tools/qml-check.sh" || status=1
 
+# The packaging gate runs on its own (round seven): it must never ride
+# behind the QML check's type-availability skip.
+echo "== packaging file-set check"
+"$root/tools/package-check.sh" || status=1
+
 if [[ "${1:-}" != "--js-only" ]]; then
   echo "== helper unit tests"
   cargo test --manifest-path "$root/daemon/Cargo.toml" --quiet || status=1

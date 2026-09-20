@@ -2861,6 +2861,21 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 handshaked = matches!(hello, Ok(wanted) if wanted == PROTOCOL_VERSION);
                 continue;
             }
+            // Protocol negotiation is a gate, not a suggestion (round
+            // seven): until this connection has completed a `hello` the
+            // version it speaks for is unknown, and nothing — not ping,
+            // not keyboards, and above all not a command that moves keys
+            // or keymaps — executes. A client that never negotiates gets
+            // its slot's five seconds and one refusal per line.
+            if !handshaked {
+                if !write_reply(&mut out, "err hello first",
+                    reply_bound(handshaked, connected_at.elapsed()))
+                {
+                    write_dead = true;
+                    break;
+                }
+                continue;
+            }
             if line == "ping" {
                 if !write_reply(&mut out, "pong",
                     reply_bound(handshaked, connected_at.elapsed()))

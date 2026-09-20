@@ -1481,6 +1481,11 @@ Item {
         emojiPublishVerifyTimer.stop()
         if (emojiClipboardVerify.running)
             killProcessGroup(emojiClipboardVerify)
+        // The cancelled pick's chord wait dies with it too (round seven):
+        // a dispatched chord cannot be un-dispatched, but its ARMED
+        // verdict must not survive the cancel and later complete
+        // whichever pick owns the machine by then.
+        if (keyboard.chordAcks.chordDone) keyboard.chordAckTimedOut()
     }
 
     function finishEmojiPublishVerify(seq, served) {
@@ -1511,18 +1516,23 @@ Item {
         // Ticket 56: the chord is derived for the class the PICK carried
         // (result.state.clientClass) — never re-derived from whoever holds
         // focus by the time the clipboard transaction landed.
+        //
+        // The completion carries the transaction's seq, captured HERE:
+        // a cancelled pick's late reply must land stale, not complete
+        // whichever pick owns the machine by then (round seven).
+        var chordSeq = result.state.seq
         keyboard.pasteCurrent(result.state.clientClass, function (success) {
-            finishEmojiChord(success)
+            finishEmojiChord(chordSeq, success)
         })
     }
 
     // The chord's verdict. Only a real completion records usage, settles
     // the search and closes the page; a cancellation leaves all three
     // alone. A completion arriving for a cancelled transaction (mode
-    // flipped mid-chord) lands as "ignore" and records nothing, then the
-    // queue — empty after a cancel — hands over nothing.
-    function finishEmojiChord(success) {
-        var done = ClipboardPaste.txnChordDone(root.emojiTxnState, success)
+    // flipped mid-chord) lands as "ignore" or "stale" and records
+    // nothing, then the queue — empty after a cancel — hands over nothing.
+    function finishEmojiChord(seq, success) {
+        var done = ClipboardPaste.txnChordDone(root.emojiTxnState, seq, success)
         root.emojiTxnState = done.state
         if (done.action === "completed") {
             recordEmojiSuccess(done.emoji)
@@ -1659,7 +1669,11 @@ Item {
             // session — the sound is skipped rather than guessed into
             // a world-writable /tmp.
             "[[ -n \"$4\" ]] || exit 1; "
-            + "bases=(${2//:/ } ${3//:/ }); "
+            // Split on ':' with read -ra (round seven): the old
+            // ':'→' ' substitution + word splitting broke any XDG entry
+            // that itself contains a space.
+            + "bases=(); IFS=':' read -ra _dirs <<< \"$2:$3\"; "
+            + "for _d in \"${_dirs[@]}\"; do [[ -n \"$_d\" ]] && bases+=(\"$_d\"); done; "
             + "for base in \"${bases[@]}\"; do "
             + "file=$base/sounds/freedesktop/stereo/$1.oga; "
             + "if [ -f \"$file\" ]; then "

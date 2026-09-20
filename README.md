@@ -22,7 +22,11 @@ from the Omarchy theme.
 
 ## Status
 
-**v0.2.0 — released 2026-09-20** (v0.1.0 went public 2026-09-17; v0.1.1
+**v0.2.1 — released 2026-09-20** (v0.2.0 the same day carried the
+endonym chooser and the review hardening through round four; 0.2.1 adds
+rounds five–seven: the paste-chord command-correlation queue, the
+packaging gate that can no longer silently skip, and a daemon that
+executes nothing before a completed protocol hello) (v0.1.0 went public 2026-09-17; v0.1.1
 landed the two-lab security audit's hardening — see SECURITY.md; 0.1.2
 followed with the drag-line and notice polish). Since 0.1.2: languages
 are named in their own language on the chip and in the chooser
