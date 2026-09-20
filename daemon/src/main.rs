@@ -1627,8 +1627,10 @@ fn deliver_text(
     // the panel's facts describe a map that is no longer there — the
     // generation counter exists to make exactly that detectable.
     {
+        // The flag clears only at the Drop guard (§78's triage: a manual
+        // clear here left a gap where a second delivery's set was
+        // cleared by THIS delivery's drop).
         let mut guard = arc.lock().unwrap();
-        guard.delivery_active = false;
         if upload_keymap(&keyboard, &installed).is_err()
             && upload_keymap(&keyboard, &installed).is_err()
         {
