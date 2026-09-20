@@ -432,22 +432,41 @@ Rectangle {
                 }
                 MouseArea {
                     id: deliveryArea
+                    // Touch-and-hold shows the tooltip WITHOUT toggling
+                    // (the gear's pattern, the QML round's finding): in
+                    // the touch profile there is no hover, and the
+                    // clipboard mode's only disclosure — "it replaces
+                    // the clipboard" — lived in a tooltip touch could
+                    // never open.
+                    property bool touchHeld: false
                     anchors.fill: parent
                     hoverEnabled: true
                     Accessible.role: Accessible.Button
                     Accessible.name: emojiRoot.deliveryMode === "clipboard"
                         ? UiStrings.tr("emoji.delivery.clipboardAccess", emojiRoot.uiLang)
                         : UiStrings.tr("emoji.delivery.typing", emojiRoot.uiLang)
-                    onClicked: emojiRoot.deliveryModeRequested(
-                        emojiRoot.deliveryMode === "clipboard"
-                            ? "direct" : "clipboard")
+                    onPressAndHold: touchHeld = true
+                    onReleased: function (mouse) {
+                        if (!(mouse.x >= 0 && mouse.x <= width
+                                && mouse.y >= 0 && mouse.y <= height))
+                            touchHeld = false
+                    }
+                    onCanceled: touchHeld = false
+                    onClicked: function (mouse) {
+                        var held = touchHeld
+                        touchHeld = false
+                        if (held) return
+                        emojiRoot.deliveryModeRequested(
+                            emojiRoot.deliveryMode === "clipboard"
+                                ? "direct" : "clipboard")
+                    }
                 }
                 HoverTooltip {
                     text: emojiRoot.deliveryMode === "clipboard"
                         ? UiStrings.tr("emoji.delivery.clipboardTip", emojiRoot.uiLang)
                         : UiStrings.tr("emoji.delivery.typing", emojiRoot.uiLang)
                     hovered: deliveryArea.containsMouse
-                        && emojiRoot.tooltipHoverShows
+                        && (emojiRoot.tooltipHoverShows || deliveryArea.touchHeld)
                 }
             }
 
@@ -476,16 +495,31 @@ Rectangle {
                 }
                 MouseArea {
                     id: toneArea
+                    // deliveryArea's own touch-and-hold rule: the
+                    // disclosure without the toggle.
+                    property bool touchHeld: false
                     anchors.fill: parent
                     hoverEnabled: true
                     Accessible.role: Accessible.Button
                     Accessible.name: UiStrings.tr("emoji.chooseTone", emojiRoot.uiLang)
-                    onClicked: emojiRoot.tonePickerOpen = !emojiRoot.tonePickerOpen
+                    onPressAndHold: touchHeld = true
+                    onReleased: function (mouse) {
+                        if (!(mouse.x >= 0 && mouse.x <= width
+                                && mouse.y >= 0 && mouse.y <= height))
+                            touchHeld = false
+                    }
+                    onCanceled: touchHeld = false
+                    onClicked: function (mouse) {
+                        var held = touchHeld
+                        touchHeld = false
+                        if (held) return
+                        emojiRoot.tonePickerOpen = !emojiRoot.tonePickerOpen
+                    }
                 }
                 HoverTooltip {
                     text: UiStrings.tr("emoji.chooseTone", emojiRoot.uiLang)
                     hovered: toneArea.containsMouse
-                        && emojiRoot.tooltipHoverShows
+                        && (emojiRoot.tooltipHoverShows || toneArea.touchHeld)
                 }
             }
 

@@ -31,9 +31,6 @@ Rectangle {
     // Reset-all's confirmation state (spec-v1.1 §5), inline in the footer,
     // reset when the popover closes.
     property bool resetAllArmed: false
-    // The emoji chooser reveals its alternatives on demand; closed by a
-    // choice, a second press, or the popover closing.
-    property bool emojiChooserOpen: false
 
     signal customColourRequested(string fieldName, string labelText)
 
@@ -43,7 +40,6 @@ Rectangle {
             resetRowDrafts()
             popoverRoot.resetAllArmed = false
         } else {
-            popoverRoot.emojiChooserOpen = false
             popoverRoot.resetAllArmed = false
             panel.endHexEdit()
         }
@@ -730,13 +726,16 @@ Rectangle {
                     // FLIPPED to touch, the Auto segment carries the
                     // "Auto+touch" notice (72px) and the row widens to give
                     // it a slice — both budgets pinned offscreen in
-                    // tests/input-profile.qml, the ticket-52 discipline.
                     // The wide row rides the SAME observation fact the
                     // label keys on — notice and width cannot disagree.
+                    // 180 (the QML round's bump from 150): the widest
+                    // shipped label is Italian "Tattile" (measured
+                    // 50.3px mono at fontBody); the ticket-52 budget
+                    // test agrees.
                     width: panel.touchObserved
                         && panel.inputProfile === "auto"
                         && !panel.dwellEnabled
-                        ? tokens.space(240) : tokens.space(150)
+                        ? tokens.space(240) : tokens.space(180)
                     readonly property var profileLabels: ({
                         auto: UiStrings.tr("settings.profile.auto", panel.uiLang),
                         mouse: UiStrings.tr("settings.profile.mouse", panel.uiLang),
@@ -918,7 +917,7 @@ Rectangle {
                     anchors {
                         verticalCenter: parent.verticalCenter
                     }
-                    width: tokens.space(290)
+                    width: tokens.space(320)
                     // Omarchy, Windows and macOS are names and stay; the
                     // word and the penguin translate (ticket 52).
                     readonly property var superMarkLabels:

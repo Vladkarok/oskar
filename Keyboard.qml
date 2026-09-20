@@ -467,8 +467,18 @@ Item {
         // A rebuild destroys every cap delegate (page switch, language
         // change, facts refresh): a dwell pointing at one of them dies
         // with it — its underline died with the delegate — and never
-        // fires into a cap that no longer exists.
+        // fires into a cap that no longer exists. A PRESS mid-hold dies
+        // the same way, and its release lived only in the delegate's own
+        // handlers (the QML round's poison): hold Backspace with the
+        // mouse, flip the language with the other hand, and the rows
+        // rebuilt under the grab — the `up` never came, and the key
+        // repeated into the focused window until the daemon's 15 s cap.
+        // The reducer's release is a no-op with nothing pending, so this
+        // lifts only what the destroyed delegate could no longer lift;
+        // rows that came out identical never rebuild and the live
+        // delegate keeps owning its own release.
         dwellReset()
+        releaseKey()
         for (var i = 0; i < rowModel.length; i++) {
             var sum = 0
             for (var j = 0; j < rowModel[i].length; j++) {
@@ -1096,7 +1106,8 @@ Item {
             + "kb_json=$(hyprctl getoption input:kb_file -j 2>/dev/null)"
             + " || exit 1; "
             + "[[ -n \"$kb_json\" ]] || exit 1; "
-            + "kb_file=$(printf '%s' \"$kb_json\" | jq -r '.str // \"\"'); "
+            + "kb_file=$(printf '%s' \"$kb_json\" | jq -r '.str // \"\"')"
+            + " || exit 1; "
             + "printf 'KBFILE\\t%s\\n' \"${kb_file:-[[EMPTY]]}\"; "
             + "printf '%s' \"$compact\" | jq -r '[.[].layout // \"\"] | join(\",\")' "
             + "| tr ',' '\\n' | sed '/^$/d' | sort -u | while read code; do "

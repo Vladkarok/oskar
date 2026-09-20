@@ -2885,3 +2885,69 @@ fake corpse and watching the legs pass).
 Committed locally; push and deploy wait for the owner's word. The
 stop-rule counter stays at zero: one poison, and the previous round's
 fix was half-placed.
+
+## 83. The fourth stop-test round: the release that died with the delegate
+
+The owner ordered the cycle onward at full strength ("не экономим
+пенёнзьы, поехали основательно") and put Claude Code on Opus 4.8 for
+it. Rotated lenses: a cold adversarial audit of the §81–§82 diffs, and
+the QML layer itself (bindings, delegates, property semantics — a
+mechanics pass no round had done). Verdicts: the diff audit broke
+NOTHING in either commit (the merged arm reachable, verb extraction
+correct for tab-separated configure lines, the ledgers aligned, the
+idle window traffic-gated); Claude Code on Opus returned the
+campaign's first fully clean external verdict — zero findings, SAFE
+TO SHIP. The QML lens found the round's single POISON:
+
+- **A mouse-held key loses its release when the rows rebuild under
+  it.** The rebuild handlers lift dwells and hold menus but never a
+  PRESS: the release lived only in the cap delegate's own handlers,
+  and a destroyed MouseArea delivers neither release nor cancel. Reach:
+  hold Backspace with the mouse, flip the language with the other hand
+  (the owner's daily us,ua gesture) — the switch reassigns capsFacts,
+  the rows rebuild under the grab, the `up` never comes, and the key
+  repeats into the focused window for up to the daemon's 15 s cap. A
+  page switch (⇧+&123) mid-hold reaches the same death. Fixed where
+  the dwell is fixed: `onRowModelChanged` now calls `releaseKey()` —
+  the reducer's release is a no-op with nothing pending, and rows that
+  come out identical never rebuild, so a live delegate keeps owning
+  its own release.
+- The diff audit's two niggles, fixed: the idle WouldBlock arm breaks
+  only when the idle window ACTUALLY closed (it used to break on
+  handshaked-and-holdless alone — a stale past-due hold timeout could
+  drop a connection whose last traffic was milliseconds ago); and the
+  configure gate now compiles ONCE — the same text counts the ceiling
+  AND installs, where §82's gate compiled for its count and threw it
+  away (four xkb passes per changed configure, and the only channel
+  for a gate-counts-one-map-install-uploads-another TOCTOU).
+  `install_config` takes the precompiled text; `compiled_group_count`
+  and `custom_keymap_group_count_bytes` are gone, their tests
+  rewritten against the unified path.
+- QML niggles, fixed: the profile row widened 150→180 and the
+  superMark row 290→320 — the budget test now reads its labels
+  straight from UiStrings across ALL four languages (the old probe
+  hand-listed en/ru and let Italian "Tattile", measured 50.3px, paint
+  past its 43.3px budget); the emoji page's delivery and tone buttons
+  gained the gear's touch-and-hold pattern — the disclosure without
+  the toggle, so a touch-profile user can finally learn that clipboard
+  mode replaces the clipboard.
+- Cleanups riding: the jq extraction in the compositor pipeline got
+  its missing `|| exit 1` (the one unguarded pipe in the abort chain);
+  the dead `emojiChooserOpen` property deleted; the serve-fn line
+  artifact repaired.
+- LIVE-WITH recorded: a silent negotiated client holding only
+  modifier codes loses them at the 60 s idle drop (unreachable for the
+  real panel, which pings every 15 s); `err shutting down` answering a
+  configure orphans the entry for the ≤6 s until the socket dies and
+  the fresh hello resets the queue (bounded by construction);
+  BarWidget's tooltip stays English (it lives in the shell's own
+  English chrome); the accepted five-segment language row's widest
+  label is Українська (~72px), not Italiano — the recorded number
+  corrected; a refusal flash started while hidden can greet the next
+  open (informative at worst).
+
+55 Rust tests, all host suites, clippy, the wall's canary (15) and
+restart-settle (8), the nested 40 — green on the fixed tree. Committed
+locally; push and deploy wait for the owner's word. The stop-rule
+counter stays at zero: one poison — but the external leg is finally,
+verifiably clean.

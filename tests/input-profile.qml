@@ -14,6 +14,7 @@ import QtQuick
 import "../InputProfile.js" as InputProfile
 import "../Dwell.js" as Dwell
 import "../HoldColumn.js" as HoldColumn
+import "../UiStrings.js" as UiStrings
 import "harness.js" as T
 
 QtObject {
@@ -314,9 +315,18 @@ QtObject {
         // own label column re-measures.
 
         T.test("every translated profile label fits its segment", function () {
-            var labels = ["Auto", "Mouse", "Touch",
-                "\u0410\u0432\u0442\u043e", "\u041c\u044b\u0448\u044c",
-                "\u0421\u0435\u043d\u0441\u043e\u0440"]
+            // Ticket 52 + the QML round: the labels come straight from
+            // UiStrings across ALL shipped languages (the old probe
+            // listed en/ru by hand and let Italian "Tattile" overflow
+            // the row's own budget — the width follows the vocabulary
+            // now, and the row was widened to 180 to hold it).
+            var labels = []
+            for (var l = 0; l < UiStrings.LANGUAGES.length; l++) {
+                var lang = UiStrings.LANGUAGES[l]
+                labels.push(UiStrings.tr("settings.profile.auto", lang))
+                labels.push(UiStrings.tr("settings.profile.mouse", lang))
+                labels.push(UiStrings.tr("settings.profile.touch", lang))
+            }
             var probe = Qt.createQmlObject(
                 'import QtQuick 2.0; Text { font.family: "JetBrainsMono Nerd Font"; ' +
                 'font.pixelSize: 12 }',
@@ -327,11 +337,11 @@ QtObject {
                 widest = Math.max(widest, probe.implicitWidth)
             }
             probe.destroy()
-            // SettingsSegmented at the 150 the size row uses: three
-            // segments of (150 - 4 - 2 * 2) / 3 = 47.3px each, minus the
+            // SettingsSegmented at the 180 the profile row uses: three
+            // segments of (180 - 4 - 2 * 2) / 3 = 57.3px each, minus the
             // 4px horizontal padding each segment's label keeps.
-            T.equal(widest <= 47.3 - 4, true,
-                "widest label " + widest + "px vs 43.3px segment")
+            T.equal(widest <= 57.3 - 4, true,
+                "widest label " + widest + "px vs 53.3px segment")
         })
 
         T.test("the notice keys on the OBSERVATION, not the effective profile", function () {

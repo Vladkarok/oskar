@@ -265,31 +265,6 @@ fn xkb_field_clean(text: &str) -> bool {
     !text.contains('\0')
 }
 
-/// A custom keymap's group count, taken from the map's OWN bytes — the
-/// same snapshot the caller will hand to `install_config`, so the ceiling
-/// and the install can never disagree about which file was meant.
-/// Compile the bytes and ask the compiled keymap: `num_layouts` is xkb's
-/// name for the group count, and it is the exact ceiling a group index
-/// must sit under. `None` when the bytes cannot be compiled.
-fn custom_keymap_group_count_bytes(bytes: &[u8]) -> Option<usize> {
-    use xkbcommon::xkb;
-    let text = String::from_utf8(bytes.to_vec()).ok()?;
-    if !xkb_field_clean(&text) {
-        return None;
-    }
-    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    let keymap = xkb::Keymap::new_from_string(
-        &context,
-        text,
-        xkb::KEYMAP_FORMAT_TEXT_V1,
-        xkb::KEYMAP_COMPILE_NO_FLAGS,
-    )?;
-    if keymap.max_keycode().raw() > MAX_SANE_KEYCODE {
-        return None;
-    }
-    Some(keymap.num_layouts() as usize)
-}
-
 /// The whole file, not its mtime or its length: an editor that writes in
 /// place keeps the length identical often enough (one glyph for another), and
 /// mtime is what a `cp -p` or a restored backup does not change. Production
@@ -2257,14 +2232,22 @@ impl Shared {
 
     /// Compiles `layouts` and installs the result. Held by the caller's lock so
     /// a keystroke can never observe a half-swapped keymap.
-    fn install_config(&mut self, config: &XkbConfig, kb_file_bytes: Option<&[u8]>) -> bool {
+    fn install_config(
+        &mut self,
+        config: &XkbConfig,
+        kb_file_bytes: Option<&[u8]>,
+        precompiled: Option<&str>,
+    ) -> bool {
         // Same fields AND, for a kb_file, the same bytes behind them. The
         // bytes arrive from the caller — ONE read validates the group
         // ceiling and installs the map (the review's fourth round: the
         // count and the install each reading the path left a swap between
         // them validating one file and installing another); the `group`
         // command reaches none of this and still moves a group without
-        // touching the file (ticket 06).
+        // touching the file (ticket 06). `precompiled` is the SAME text
+        // the caller's ceiling counted (round 18: one compile serves
+        // both) — None means compile here, the way the default install
+        // always did.
         let file_bytes = kb_file_bytes.map(|bytes| bytes.to_vec());
         let mark = file_bytes.as_deref().map(hash_bytes);
         if self
@@ -2294,9 +2277,15 @@ impl Shared {
         // The churn budget is paid by apply's configure gate, before any
         // compile attempt — counting it here again would double-bill every
         // changed configure.
-        let Some(text) = compile_keymap_with(config, file_bytes.as_deref()) else {
-            eprintln!("cannot compile requested XKB configuration");
-            return false;
+        let text = match precompiled {
+            Some(text) => text.to_string(),
+            None => match compile_keymap_with(config, file_bytes.as_deref()) {
+                Some(text) => text,
+                None => {
+                    eprintln!("cannot compile requested XKB configuration");
+                    return false;
+                }
+            },
         };
         let Some(keyboard) = self.keyboard.as_ref() else {
             return false;
@@ -2357,7 +2346,7 @@ impl State {
             return;
         }
         shared.keyboard = Some(manager.create_virtual_keyboard(seat, qh, ()));
-        shared.install_config(&XkbConfig::default(), None);
+        shared.install_config(&XkbConfig::default(), None, None);
     }
 }
 
@@ -2474,21 +2463,6 @@ fn group_in_range(group: u32, installed_groups: usize) -> bool {
 /// old map refuses every grow (a one-group map installing two), which is
 /// a client acting correctly. Zero declared layouts still carries group
 /// 0: a file-only configure owes no layout list.
-/// The group count of what a configure ACTUALLY compiles to (round 17):
-/// the classic evdev rules resolve only layout[1..=4] — a five-layout
-/// declaration compiles to FOUR groups while the layouts string still
-/// says five (xkb warns and silently drops the rest), so trusting the
-/// declaration let group 4 ride past a four-group map: the compositor
-/// wrapped it to 0 and the user typed the first alphabet under the
-/// fifth language's name, every indicator agreeing with the lie. The
-/// kb_file door has counted this way since its own incident
-/// (custom_keymap_group_count_bytes compiles its snapshot); now both
-/// doors agree — the map, never the declaration.
-fn compiled_group_count(config: &XkbConfig, kb_file_bytes: Option<&[u8]>) -> Option<usize> {
-    let text = compile_keymap_with(config, kb_file_bytes)?;
-    Some(keycap_facts_for_groups(&text).len().max(1))
-}
-
 fn is_published_keymap(path: &str) -> bool {
     let Some(ours) = published_keymap_path() else {
         return false;
@@ -2846,7 +2820,8 @@ fn free_text(front: &str) -> Option<Command> {
         .map(|rest| Command::Text(rest.to_string()))
 }
 
-fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {    const MAX_CLIENTS: usize = 4;
+fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
+    const MAX_CLIENTS: usize = 4;
     let clients = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
         if clients.fetch_add(1, Ordering::AcqRel) >= MAX_CLIENTS {
@@ -3085,7 +3060,19 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 if handshake_expired(handshaked, connected_at.elapsed()) {
                     break;
                 }
-                if handshaked && hold_deadline(&shared, conn_id).is_none() {
+                // Round 18's audit: the arm used to break on
+                // handshaked-and-holdless ALONE, but the read deadline
+                // was computed BEFORE the loop-top hold expiry — a
+                // claim that expired between the two (its key hit the
+                // 15 s cap, or another client's install drained it)
+                // leaves a stale past-due timeout that wakes this read
+                // instantly, and a connection whose last traffic was
+                // milliseconds ago would be dropped for "idleness" it
+                // does not have. Only the real window closes it.
+                if handshaked
+                    && hold_deadline(&shared, conn_id).is_none()
+                    && last_activity.elapsed() >= NEGOTIATED_IDLE
+                {
                     break;
                 }
                 for code in expire_stuck_keys(&shared, &connection) {
@@ -3582,28 +3569,31 @@ fn apply_locked(
             }
             shared.uploads.push_back(now);
         }
-        let group_ceiling = if unchanged {
-            shared.caps_per_group.len().max(1)
-        } else if config.kb_file.is_empty()
-            || is_published_keymap(&config.kb_file)
-        {
-            // Round 17: the compiled map's own count, not the layouts
-            // string's declaration (see compiled_group_count) — the
-            // same principle the kb_file branch below already lives by.
-            match compiled_group_count(config, kb_file_bytes.as_deref()) {
-                Some(count) => count,
-                None => return "err cannot configure keymap".to_string(),
-            }
+        // ONE compile serves the whole changed path (round 18's audit):
+        // the ceiling counts it, the install uploads it. The gate used
+        // to compile for its count and throw the result away — four xkb
+        // passes per changed configure under the lock where two
+        // sufficed before §82 — and the two compiles were the only
+        // channel for a gate-counts-one-map, install-uploads-another
+        // TOCTOU (the system xkb database changing between them). One
+        // text now decides both, so the ceiling IS the installed map's
+        // count by construction.
+        let group_ceiling;
+        let compiled: Option<String>;
+        if unchanged {
+            group_ceiling = shared.caps_per_group.len().max(1);
+            compiled = None;
         } else {
-            match custom_keymap_group_count_bytes(kb_file_bytes.as_deref().unwrap_or(&[])) {
-                Some(count) => count,
-                None => return "err cannot configure keymap".to_string(),
-            }
-        };
+            let Some(text) = compile_keymap_with(config, kb_file_bytes.as_deref()) else {
+                return "err cannot configure keymap".to_string();
+            };
+            group_ceiling = keycap_facts_for_groups(&text).len().max(1);
+            compiled = Some(text);
+        }
         if !group_in_range(config.group, group_ceiling) {
             return "err bad group".to_string();
         }
-        let installed = shared.install_config(config, kb_file_bytes.as_deref());
+        let installed = shared.install_config(config, kb_file_bytes.as_deref(), compiled.as_deref());
         let _ = connection.flush();
         // The generation rides on the reply (decisions §23): it is what the
         // panel correlates its keycap facts against, and a same-keymap
@@ -4418,18 +4408,22 @@ mod tests {
         // declaration — classic evdev drops layouts past the fourth).
         // A grow from one group to two must not be refused for the old
         // map's count.
-        let cfg = |layouts: &str| {
+        let count = |layouts: &str| {
             match parse(&format!("configure\tevdev\tpc105\t{layouts}\t\t\t\t0")) {
-                Some(Command::Configure(config)) => config,
+                Some(Command::Configure(config)) => {
+                    let text = compile_keymap_with(&config, None)
+                        .expect("the fixture compiles");
+                    keycap_facts_for_groups(&text).len()
+                }
                 other => panic!("expected a configure, got {other:?}"),
             }
         };
-        assert_eq!(compiled_group_count(&cfg("us"), None), Some(1));
-        assert_eq!(compiled_group_count(&cfg("us,ua"), None), Some(2));
-        assert_eq!(compiled_group_count(&cfg("us,ua,de,ru"), None), Some(4));
+        assert_eq!(count("us"), 1);
+        assert_eq!(count("us,ua"), 2);
+        assert_eq!(count("us,ua,de,ru"), 4);
         // Separators are not layouts; a file-only configure still
         // compiles one group and carries group 0.
-        assert_eq!(compiled_group_count(&cfg("us,"), None), Some(1));
+        assert_eq!(count("us,"), 1);
         assert!(group_in_range(1, 2));
         assert!(!group_in_range(2, 2), "two groups stop before 2");
         assert!(group_in_range(0, 1));
@@ -5777,7 +5771,8 @@ mod tests {
     /// declaration — classic evdev rules resolve only layout[1..=4], so
     /// five declared layouts compile to four groups and a group-4
     /// configure must be refused (before, it silently typed group 0's
-    /// alphabet under the fifth language's name).
+    /// alphabet under the fifth language's name). Round 18 unified the
+    /// gate: this is the exact path apply's configure arm walks.
     #[test]
     fn rmlvo_ceiling_counts_the_compiled_map_not_the_declaration() {
         let layouts = "us,ru,ua,it,fr";
@@ -5785,7 +5780,9 @@ mod tests {
         assert_eq!(declared, 5, "the fixture must declare five");
         match parse("configure\tevdev\tpc105\tus,ru,ua,it,fr\t\t\t\t0") {
             Some(Command::Configure(config)) => {
-                assert_eq!(compiled_group_count(&config, None), Some(4));
+                let text = compile_keymap_with(&config, None)
+                    .expect("the five-layout declaration compiles");
+                assert_eq!(keycap_facts_for_groups(&text).len(), 4);
             }
             other => panic!("expected a configure, got {other:?}"),
         }
@@ -5899,17 +5896,28 @@ mod tests {
     fn a_keycode_beyond_the_sane_range_is_refused_at_every_gate() {
         // Round eleven's blocker: a 60-byte keymap declaring a keycode near
         // u32::MAX made the keycap walk iterate for seconds under the
-        // shared lock. Both compile doors refuse it now.
+        // shared lock. Every compile door refuses it now — this one
+        // drives the unified gate path (round 18: one compile serves the
+        // ceiling and the install).
         let sane = fixture_keymap("us,ua", "");
         let hostile = sane.replace(
             "<ESC> = 9;",
             "<ZZZZ> = 2147483647;\n\t<ESC> = 9;",
         );
         assert!(hostile.contains("<ZZZZ> = 2147483647;"));
+        let config = XkbConfig {
+            rules: "evdev".into(),
+            model: "pc105".into(),
+            layouts: "us".into(),
+            variants: "".into(),
+            options: "".into(),
+            kb_file: "/nonexistent-fixture.xkb".into(),
+            group: 0,
+        };
         assert_eq!(
-            custom_keymap_group_count_bytes(hostile.as_bytes()),
+            compile_keymap_with(&config, Some(hostile.as_bytes())),
             None,
-            "the ceiling compile refuses the huge keycode"
+            "the compile refuses the huge keycode"
         );
         // The walk itself only ever visits NAMED keys: a map that declares
         // none answers no facts, in bounded time by construction.
@@ -5921,19 +5929,41 @@ mod tests {
         // A real two-group fixture read through the whole bounded path: a
         // layouts string of one entry used to refuse group 1 for a map the
         // file itself carries two groups on (the review's finding 3). The
-        // compiled keymap is the authority, asked directly — and the SAME
-        // snapshot the caller threads into install_config, so the ceiling
+        // compiled keymap is the authority — the SAME text round 18's
+        // unified gate counts and hands to install_config, so the ceiling
         // and the installed map can never be two different files.
         let path = std::env::temp_dir()
             .join(format!("osk-groups-{}.xkb", std::process::id()));
         std::fs::write(&path, fixture_keymap("us,ua", ""))
             .expect("write the two-group keymap");
         let two = read_kb_file_bounded(path.to_str().unwrap()).expect("read it back");
-        assert_eq!(custom_keymap_group_count_bytes(&two), Some(2));
+        let config = XkbConfig {
+            rules: "evdev".into(),
+            model: "pc105".into(),
+            layouts: "us".into(),
+            variants: "".into(),
+            options: "".into(),
+            kb_file: path.to_string_lossy().into_owned(),
+            group: 0,
+        };
+        let text = compile_keymap_with(&config, Some(two.as_slice()))
+            .expect("the two-group fixture compiles");
+        assert_eq!(keycap_facts_for_groups(&text).len(), 2);
         let _ = std::fs::remove_file(&path);
-        let one = fixture_keymap("us", "").into_bytes();
-        assert_eq!(custom_keymap_group_count_bytes(&one), Some(1));
+        let one_config = XkbConfig {
+            kb_file: "/nonexistent-fixture.xkb".into(),
+            ..config
+        };
+        let one = compile_keymap_with(
+            &one_config,
+            Some(fixture_keymap("us", "").as_bytes()),
+        )
+        .expect("the one-group fixture compiles");
+        assert_eq!(keycap_facts_for_groups(&one).len(), 1);
         // Uncompilable bytes answer None, not a guess.
-        assert_eq!(custom_keymap_group_count_bytes(b"not a keymap"), None);
+        assert_eq!(
+            compile_keymap_with(&one_config, Some(b"not a keymap")),
+            None
+        );
     }
 }
