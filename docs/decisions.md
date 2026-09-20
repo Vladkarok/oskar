@@ -2338,3 +2338,26 @@ Four findings, all confirmed against the tree:
 
 Released as v0.2.1 with the rounds five–six hardening that had landed
 after v0.2.0.
+
+## 68. The review's eighth round: the fixes' own clients
+
+Three gaps in the round-seven fixes, all real:
+
+- **Doctor negotiates.** The hello gate broke oskar doctor's query
+  clients: fresh connections sending `caps`/`keyboards` bare got
+  `err hello first` and doctor read it as a broken keymap, recommending a
+  shell restart on a healthy machine. Every query now hellos on its own
+  connection and reads the second reply line.
+- **The chord's success is the region's, not the last line's.** A keymap
+  without Insert ERRed both Insert commands while the final Shift
+  release answered ok — and the chord recorded success for a paste that
+  delivered nothing. `chordStart` marks the region at dispatch entry and
+  any non-ok popped inside it poisons the verdict; pre-chord traffic
+  does not count, an interleaved err does (conservative by choice).
+- **The gates enumerate the filesystem.** Both checks walked
+  `git ls-files`; a release archive carries no .git, the enumeration
+  came back empty, and both blessed whatever they were handed — the
+  reviewer slipped invalid QML and a gutted PLUGIN_RUNTIME past them.
+  find-based enumeration now, and an empty enumeration is a failure,
+  never a pass. Verified in a fresh v0.2.1 archive: clean passes,
+  sabotage fails both.

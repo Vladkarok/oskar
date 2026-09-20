@@ -64,13 +64,25 @@ FATAL='no matching signal found for handler'
 
 status=0
 found=""
-while IFS= read -r file; do
+# Round eight: enumerate the FILESYSTEM, not `git ls-files` — a release
+# archive carries no .git, the old enumeration came back empty, and the
+# check blessed whatever it was handed. Tests/tools stay out; an empty
+# enumeration is a failure, never a pass.
+mapfile -t qml_files < <(find "$root" -type f -name '*.qml' \
+  -not -path "$root/tests/*" -not -path "$root/tools/*" \
+  -not -path "$root/daemon/*" -not -path "$root/third_party/*" | sort)
+if (( ${#qml_files[@]} == 0 )); then
+  echo "QML check failed — no QML files found under $root; is this a tree at all?" >&2
+  exit 1
+fi
+for path in "${qml_files[@]}"; do
+  file="${path#"$root"/}"
   # A syntax error makes qmllint exit nonzero and print NOTHING (verified:
   # rc=255, empty output) - the 8993aad class shipped an unparseable
   # Panel.qml through this check because only the FATAL text was gated.
   # The exit code is the gate for that class; the text gate stays for the
   # handler-contract class.
-  if ! output=$("$qmllint" "${imports[@]}" "$root/$file" 2>&1); then
+  if ! output=$("$qmllint" "${imports[@]}" "$path" 2>&1); then
     found+="syntax/parse failure: $file"$'\n'
     status=1
   fi
@@ -79,7 +91,7 @@ while IFS= read -r file; do
     found+="$hits"$'\n'
     status=1
   fi
-done < <(cd "$root" && git ls-files '*.qml')
+done
 
 if (( status != 0 )); then
   echo "QML check failed — a handler names something that does not exist:" >&2

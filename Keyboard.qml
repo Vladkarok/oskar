@@ -1394,6 +1394,11 @@ Item {
         console.log("[oskar] paste chord for", cls === "" ? "(unknown class)" : cls,
             "->", (chord.ctrl ? "Ctrl+" : "") + (chord.shift ? "Shift+" : "")
             + chord.position)
+        // The chord's region begins here (round eight): every command
+        // sent from now until the verdict is the chord's business, and an
+        // err anywhere inside it poisons the success — a final ok alone
+        // proved nothing when the middle of the chord failed.
+        root.chordAcks = ChordAcks.chordStart(root.chordAcks)
         var event = {
             type: "paste",
             ctrl: chord.ctrl === true,

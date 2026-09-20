@@ -553,14 +553,17 @@ doctor_hello() {
 }
 
 doctor_query() {
-  # One command line in, first reply line out; empty = no answer. The
+  # One command line in, its reply line out; empty = no answer. The
   # queries doctor sends (caps, keyboards) are read-only against the
-  # helper's installed state.
+  # helper's installed state. The hello rides the SAME connection (round
+  # eight): the helper executes nothing before a completed handshake, so
+  # a bare query on a fresh connection answered "err hello first" and
+  # doctor misread that as a broken keymap.
   command -v socat >/dev/null 2>&1 || return 0
   [[ -S "$DOCTOR_SOCKET" ]] || return 0
-  printf '%s\n' "$1" |
+  printf 'hello %s\n%s\n' "$PROTOCOL_VERSION" "$1" |
     timeout 2 socat -t1 - UNIX-CONNECT:"$DOCTOR_SOCKET" 2>/dev/null |
-    head -n1 || true
+    sed -n 2p || true
 }
 
 doctor_unit() {

@@ -64,7 +64,8 @@ QtObject {
 
         T.test("an err on an unrelated command drains without settling", function () {
             var state = ChordAcks.initial()
-            state = ChordAcks.sent(state, "group 9")  // will err
+            state = ChordAcks.sent(state, "group 9")  // will err, pre-chord
+            state = ChordAcks.chordStart(state)
             state = ChordAcks.sent(state, "down ctrl")
             state = ChordAcks.chordArmed(state, function () {})
             var err = ChordAcks.replyReceived(state, false)
@@ -132,6 +133,48 @@ QtObject {
             var own = ChordAcks.replyReceived(late2.state, true)
             T.equal(own.done, secondDone)
             T.equal(own.success, true)
+        })
+
+        T.test("an err inside the chord poisons the verdict, final ok or not", function () {
+            // Round eight's reproduction: a custom keymap without Insert
+            // errors both Insert commands while the last Shift release
+            // answers ok — the old logic saw only the final ok and
+            // recorded success for a paste that delivered nothing.
+            var state = ChordAcks.initial()
+            state = ChordAcks.chordStart(state)
+            state = ChordAcks.sent(state, "down shift")
+            state = ChordAcks.sent(state, "down Insert")
+            state = ChordAcks.sent(state, "up Insert")
+            state = ChordAcks.sent(state, "up shift")
+            var chordDone = function () {}
+            state = ChordAcks.chordArmed(state, chordDone)
+            var ok1 = ChordAcks.replyReceived(state, true)
+            T.equal(ok1.done, null)
+            var err1 = ChordAcks.replyReceived(ok1.state, false)
+            T.equal(err1.done, null)
+            var err2 = ChordAcks.replyReceived(err1.state, false)
+            T.equal(err2.done, null)
+            var final = ChordAcks.replyReceived(err2.state, true)
+            T.equal(final.done, chordDone, "the final line still settles it")
+            T.equal(final.success, false, "but the region's errs poisoned it")
+        })
+
+        T.test("a clean chord still succeeds, and pre-chord errs do not count", function () {
+            var state = ChordAcks.initial()
+            // An unrelated command errs BEFORE the chord starts: its pop
+            // is pre-region and must not poison anything.
+            state = ChordAcks.sent(state, "group 9")
+            state = ChordAcks.chordStart(state)
+            state = ChordAcks.sent(state, "down ctrl")
+            state = ChordAcks.sent(state, "up ctrl")
+            state = ChordAcks.chordArmed(state, function () {})
+            var pre = ChordAcks.replyReceived(state, false)
+            T.equal(pre.done, null, "the pre-chord err settles nothing")
+            var a = ChordAcks.replyReceived(pre.state, true)
+            T.equal(a.done, null)
+            var b = ChordAcks.replyReceived(a.state, true)
+            T.equal(b.done !== null, true, "the final line settles it")
+            T.equal(b.success, true)
         })
 
         Qt.exit(T.report("chord acks"))
