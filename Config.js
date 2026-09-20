@@ -25,7 +25,12 @@ var EMOJI_SKIN_TONES = ["", "🏻", "🏼", "🏽", "🏾", "🏿"]
 // shipped searchPlaceholder mapping); en/ru/uk pin it. One list here so
 // validation, the popover's segments and the tests cannot disagree —
 // the SUPER_MARKS rule.
-var UI_LANGUAGES = ["auto", "en", "ru", "uk"]
+// "it" joined with the Italian vocabulary (2026-09-20); the value space
+// and UiStrings.LANGUAGES move together — a shipped language the
+// validator rejects is a frozen settings card (the liveability round's
+// P1: one click on Italiano locked every control until the user
+// hand-edited config.json).
+var UI_LANGUAGES = ["auto", "en", "ru", "uk", "it"]
 // Ticket 58: the input profile. "auto" (the default) activates the touch
 // affordances when the panel observes touch events; mouse/touch pin the
 // world. One list for validation, the popover's segments and the tests —

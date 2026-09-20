@@ -2662,3 +2662,34 @@ remainders are now closed too:
 subagent's own note stands as the closing line of this round: the
 review of the review of the review found nothing the second reviewer
 missed.
+
+## 79. The flows review: two poisons, both silence-class, both closed
+
+The user-flows subagent walked the five flows a person at the desk
+touches. Verdicts: POISON 2, NIGGLE 2, LIVE-WITH 11 — and both poisons
+were failures of SILENCE behind excellent state machines:
+
+- **P1 (the owner's own Italian trap):** the settings Language row
+  offered Italiano (the vocabulary shipped with it) while the config
+  validator still rejected `it` — one click dimmed every control on the
+  card until the user hand-edited config.json. The value space and the
+  vocabulary move together now; the test pin agrees.
+- **P2 (rapid picks vanish in the DEFAULT delivery mode):** the direct
+  typing route had no queue — the daemon's `err text busy` during a
+  delivery (150-250 ms on the Chromium route, i.e. every browser and
+  Discord) was swallowed by a callback whose failure arm simply
+  returned. Direct picks queue now, same order and cap as the clipboard
+  transaction (three waiting), the fourth refusal and the queue-full
+  refusal both flash the hint line in the accent colour — a refused
+  click is VISIBLE, in both modes.
+- **N1** (clipboard queue overflow silent) rides the same flash. **N2**
+  (multi-monitor summon flashes the wrong screen for a frame) is
+  accepted for now: the fix touches window-mapping order and deserves
+  its own careful pass, not an end-of-session rush.
+- The 11 LIVE-WITH findings are recorded in the review archive; among
+  them the honest 2-5 s daemon-restart window with its Retry chip, the
+  clipboard mode's replace-the-clipboard contract (documented in its
+  tooltip), and the 15 s held-key cap.
+
+53 Rust tests, all host suites green; deployed live. The fresh-diff
+subagent's report is the last of the round.

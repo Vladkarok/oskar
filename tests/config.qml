@@ -176,7 +176,7 @@ QtObject {
             // of the layout. One list (UI_LANGUAGES) is the value space —
             // validation, the popover's segments and this pin cannot
             // disagree, the SUPER_MARKS rule.
-            T.deepEqual(Config.UI_LANGUAGES, ["auto", "en", "ru", "uk"])
+            T.deepEqual(Config.UI_LANGUAGES, ["auto", "en", "ru", "uk", "it"])
             var parsed = Config.reloadOverrides({}, '{"ui_language":"ru"}')
             T.equal(parsed.error, "")
             T.deepEqual(parsed.value, { uiLanguage: "ru" })

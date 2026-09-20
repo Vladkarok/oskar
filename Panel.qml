@@ -809,6 +809,9 @@ Item {
     // "retry" for a service that is not running, "update" for a protocol
     // mismatch (Copy install command plus Retry).
     readonly property var hintState: {
+        if (root.emojiPickRefused)
+            return { text: UiStrings.tr("hint.pickRefused", root.uiLang),
+                accent: true }
         if (root.clipboardContentGone)
             return {
                 text: UiStrings.tr("hint.clipboardGone", root.uiLang),
@@ -1591,9 +1594,60 @@ Item {
         if (picked.action === "refused-full") {
             console.warn("[oskar] emoji pick refused: three already queued"
                 + " behind an unfinished paste")
+            // The same visible refusal the direct mode's queue has (the
+            // flows review's N1): silence is the trust killer.
+            root.emojiPickRefused = true
+            emojiPickRefuseTimer.restart()
             return
         }
         beginEmojiPublish(emoji)
+    }
+
+    // Direct-mode (typing) pick queue: one delivery in flight, three
+    // waiting, the same discipline the clipboard transaction already
+    // has. A pick's callback — success or failure — hands the next.
+    property var directPickQueue: []
+    property bool directPickBusy: false
+
+    function pickViaDirect(emoji, unicodeEntry) {
+        if (root.directPickBusy) {
+            if (root.directPickQueue.length >= 3) {
+                console.warn("[oskar] direct pick refused: three already"
+                    + " queued behind a delivery")
+                root.emojiPickRefused = true
+                emojiPickRefuseTimer.restart()
+                return
+            }
+            root.directPickQueue.push({ emoji: emoji, unicodeEntry: unicodeEntry })
+            return
+        }
+        root.sendDirectPick(emoji, unicodeEntry)
+    }
+
+    // The visible refusal (P2's other half): an accent flash on the hint
+    // line, auto-cleared after the clipboard-gone notice's own beat.
+    property bool emojiPickRefused: false
+    Timer {
+        id: emojiPickRefuseTimer
+        interval: 1500
+        repeat: false
+        onTriggered: root.emojiPickRefused = false
+    }
+
+    function sendDirectPick(emoji, unicodeEntry) {
+        root.directPickBusy = true
+        keyboard.sendText(emoji, function (success) {
+            root.directPickBusy = false
+            if (success) {
+                root.recordEmojiSuccess(emoji)
+                root.emojiPickSettled()
+                if (root.emojiCloseAfterPick) root.emojiOpen = false
+            }
+            if (root.directPickQueue.length > 0) {
+                var next = root.directPickQueue.shift()
+                root.sendDirectPick(next.emoji, next.unicodeEntry)
+            }
+        }, unicodeEntry)
     }
 
     // The effects of one accepted pick: replace the clipboard owner, then
@@ -3249,19 +3303,16 @@ Item {
                     root.pickViaClipboard(delivered.emoji)
                     return
                 }
-                // A refused send stays silent by owner decision
-                // (decisions §41): the header's lifecycle hint already
-                // covers a stopped helper, and a connected refusal is not
-                // worth its own surface. Usage and page-close wait for
-                // the helper's acknowledgement either way.
-                keyboard.sendText(delivered.emoji, function (success) {
-                    if (!success) return
-                    root.recordEmojiSuccess(delivered.emoji)
-                    // Ticket 29's flow: the keys go back to the chat the
-                    // emoji landed in.
-                    root.emojiPickSettled()
-                    if (root.emojiCloseAfterPick) root.emojiOpen = false
-                }, EmojiGrid.needsUnicodeEntry(root.focusedClientClass()))
+                // Direct-mode picks QUEUE while a delivery is active
+                // (the liveability round's P2: the daemon's
+                // `err text busy` used to be a silent drop — the second
+                // of two quick picks into a Chromium-family client
+                // simply vanished). Same order and cap as the clipboard
+                // mode's transaction queue: three may wait, the fourth
+                // is refused OUT LOUD, and a pick's own completion
+                // starts the next.
+                root.pickViaDirect(delivered.emoji,
+                    EmojiGrid.needsUnicodeEntry(root.focusedClientClass()))
             }
             onSkinToneChosen: function (tone) { root.chooseEmojiSkinTone(tone) }
             onDismissed: root.emojiOpen = false

@@ -31,6 +31,12 @@ var STRINGS = {
         uk: "Вміст буфера обміну більше недоступний",
         it: "Il contenuto degli appunti non è più disponibile"
     },
+    "hint.pickRefused": {
+        en: "Too many picks in a row — try again in a moment",
+        ru: "Слишком много быстрых выборов — попробуйте ещё раз через мгновение",
+        uk: "Забагато швидких виборів — спробуйте ще за мить",
+        it: "Troppe scelte di fila — riprova tra un istante"
+    },
     "hint.needsUpdate": {
         en: "oskar.service needs updating",
         ru: "oskar.service требует обновления",
