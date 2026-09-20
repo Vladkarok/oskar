@@ -1517,11 +1517,12 @@ fn deliver_text(
         // and write).
         let mut guard = arc.lock().unwrap();
         if guard.shutting_down {
-            // The flag clears IN PLACE (the external audit's blocker: the
-            // guard is held here — finish_delivery would lock the same
-            // mutex and the thread would wait on itself while the 500 ms
-            // exit timer ran out with the user's keys still down).
-            guard.delivery_active = false;
+            // No manual flag clear here (§76's single-owner rule, restored
+            // by the protocol round's finding): the Drop guard below is the
+            // ONLY writer of false. This return releases the loop-scope
+            // mutex guard first, so the DeliveryFlag's own drop then locks
+            // and clears — no self-wait, and no window where a manual clear
+            // and the drop race a second delivery's set.
             return "err shutting down".to_string();
         }
         let shared = &mut *guard;
@@ -1735,6 +1736,14 @@ fn deliver_unicode_text(
         None,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     ) else {
+        return "err keymap".to_string();
+    };
+    // The same keycode gate as every other compile door (round twelve's
+    // rule: one identical check wherever a keymap is compiled). This RMLVO
+    // resolve walks the user's own xkb include paths like the others, so a
+    // planted keycodes file with an insane maximum must die here too, not
+    // live as the one ungated door.
+    if entry_map.max_keycode().raw() > MAX_SANE_KEYCODE {
         return "err keymap".to_string();
     };
     let entry_keymap = entry_map.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);

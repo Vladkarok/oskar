@@ -85,6 +85,54 @@ QtObject {
             T.equal(SocketWatch.HELLO_STALE_MS, 5000)
         })
 
+        // ---- the quiescent probe (the round that kept the timer armed
+        // when healthy) ----
+        //
+        // The watchdog above only ever judged a hello it had reason to
+        // send — and nothing sent one once the panel was healthy, so a
+        // SIGKILLed helper behind a lying `connected` was silent forever
+        // (the wedge the module was built for, at quiescence). The slow
+        // always-armed tick now asks with ping; the table decides which
+        // word.
+
+        T.test("an idle healthy tick asks with ping, not hello", function () {
+            // A hello reply re-handshakes — the gate drops, everything is
+            // re-asked — which is repair when broken and a visible blink
+            // when healthy. ping carries no state.
+            T.equal(SocketWatch.reconnectAction({
+                connected: true, helloInFlight: false, idle: true
+            }), "ping")
+            // Non-idle keeps the old behavior word for word.
+            T.equal(SocketWatch.reconnectAction({
+                connected: true, helloInFlight: false, idle: false
+            }), "hello")
+        })
+
+        T.test("a held wire is never probed", function () {
+            // A paced paste or armed chord owns the connection's reply
+            // stream: ChordAcks poisons a chord on ANY non-ok reply
+            // popped inside its region — a pong included. The tick holds
+            // even when idle.
+            T.equal(SocketWatch.reconnectAction({
+                connected: true, helloInFlight: false,
+                idle: true, probeHold: true
+            }), "wait")
+        })
+
+        T.test("an outstanding probe outranks idle and hold alike", function () {
+            // The window judgement is the same whatever word went out;
+            // the hold never excuses a stale probe from rebuilding.
+            T.equal(SocketWatch.reconnectAction({
+                connected: true, helloInFlight: true,
+                helloAgeMs: SocketWatch.HELLO_STALE_MS,
+                idle: true, probeHold: true
+            }), "rebuild")
+            T.equal(SocketWatch.reconnectAction({
+                connected: true, helloInFlight: true,
+                helloAgeMs: 0, idle: true, probeHold: true
+            }), "wait")
+        })
+
         // ---- ticket 54: the rebuild's own residuals ----
         //
         // The whole point of "rebuild" is that the disconnect arm never
@@ -98,18 +146,27 @@ QtObject {
             // Residual one, the pre-fix shape: the rebuild cleared only
             // the hello mark and left the FIFO standing, so its stale
             // head was settled by the first `text-ok` after recovery —
-            // the wrong reply matched to the wrong request. The drain is
-            // the disconnect arm's semantics exactly: cleared, the
-            // callbacks dropped rather than invoked, because the socket
-            // that owed them answers on no connection this panel holds.
+            // the wrong reply matched to the wrong request. The drain
+            // clears the FIFO AND hands the callbacks back in order for
+            // the caller to settle with failure: the socket that owed
+            // them answers on no connection this panel holds, and §79's
+            // pick queue made "the callback fires exactly once"
+            // load-bearing — dropping them uninvoked wedged the queue.
+            var owed1 = function () {}
+            var owed2 = function () {}
             var resets = SocketWatch.rebuildResets({
-                pendingTextReplies: [function () {}, null, function () {}],
+                pendingTextReplies: [owed1, null, owed2],
                 sharedKeymapGen: 3
             })
             T.deepEqual(resets.pendingTextReplies, [])
+            T.equal(resets.droppedTextReplies.length, 3)
+            T.equal(resets.droppedTextReplies[0] === owed1, true)
+            T.equal(resets.droppedTextReplies[1], null)
+            T.equal(resets.droppedTextReplies[2] === owed2, true)
             // Absent fields reset the same way: the early-boot path
             // check rebuilds a socket that never handed anything over.
             T.deepEqual(SocketWatch.rebuildResets(null).pendingTextReplies, [])
+            T.deepEqual(SocketWatch.rebuildResets(null).droppedTextReplies, [])
         })
 
         T.test("a rebuild zeroes the compositor share generation", function () {

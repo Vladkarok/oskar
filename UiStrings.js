@@ -37,6 +37,24 @@ var STRINGS = {
         uk: "Забагато швидких виборів — спробуйте ще за мить",
         it: "Troppe scelte di fila — riprova tra un istante"
     },
+    "hint.pickFailed": {
+        en: "The pick did not go through — try again in a moment",
+        ru: "Выбор не прошёл — попробуйте ещё раз через мгновение",
+        uk: "Вибір не пройшов — спробуйте ще за мить",
+        it: "La scelta non è andata a buon fine — riprova tra un istante"
+    },
+    "hint.pasteBusy": {
+        en: "Paste did not start — another paste is still finishing",
+        ru: "Вставка не началась — предыдущая ещё завершается",
+        uk: "Вставка не почалася — попередня ще завершується",
+        it: "Incolla non è partito — il precedente sta ancora finendo"
+    },
+    "hint.langMenuBlocked": {
+        en: "Close the open page first — then switch language",
+        ru: "Сначала закройте открытую страницу — потом смените язык",
+        uk: "Спочатку закрийте відкриту сторінку — потім змініть мову",
+        it: "Chiudi prima la pagina aperta — poi cambia lingua"
+    },
     "hint.needsUpdate": {
         en: "oskar.service needs updating",
         ru: "oskar.service требует обновления",
@@ -54,6 +72,18 @@ var STRINGS = {
         ru: "Раскладка недоступна — нарисованные клавиши могут не совпадать с тем, что вводится",
         uk: "Розкладка недоступна — намальовані клавіші можуть не збігатися з тим, що вводиться",
         it: "Layout non disponibile — i tasti disegnati potrebbero non corrispondere a ciò che viene digitato"
+    },
+    "hint.shareFailed": {
+        en: "Layout sync with the compositor failed — apps may flip layouts until the next switch",
+        ru: "Не удалось синхронизировать раскладку с композитором — в приложениях раскладка может сбиваться до следующего переключения",
+        uk: "Не вдалося синхронізувати розкладку з композитором — у застосунках розкладка може збиватися до наступного перемикання",
+        it: "Sincronizzazione del layout con il compositor non riuscita — le app potrebbero cambiare layout fino al prossimo cambio"
+    },
+    "hint.saveFailed": {
+        en: "Settings were not saved — check free space and permissions",
+        ru: "Настройки не сохранены — проверьте свободное место и права",
+        uk: "Налаштування не збережено — перевірте вільне місце та права",
+        it: "Impostazioni non salvate — verifica spazio e permessi"
     },
     "banner.deps.fetching": {
         en: "Fetching missing components\u2026",

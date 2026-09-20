@@ -2693,3 +2693,79 @@ were failures of SILENCE behind excellent state machines:
 
 53 Rust tests, all host suites green; deployed live. The fresh-diff
 subagent's report is the last of the round.
+
+## 80. The stop-test round: the wedged pick queue and the silent socket
+
+The owner set the clean-round bar (findings that touch nothing — not
+security, UX, flow, the system, its files, or speed), and the round ran
+triple: two subagents (protocol/concurrency lens, user-flows lens) plus
+Claude Code external. All three found the SAME poison independently —
+the strongest confirmation signal a round has produced:
+
+- **P1, the wedged direct-pick queue (a §79 regression):** §79 gave
+  direct picks a queue whose busy flag waits on the delivery callback
+  firing exactly once — and nothing re-audited the callback's
+  fire-paths. `sendText` returns false synchronously (gate shut, write
+  refused) without queueing the callback, and both socket-loss paths
+  (disconnect, SocketWatch rebuild) CLEARED `pendingTextReplies`
+  uninvoked. One pick during the honest restart window wedged the emoji
+  page for the whole session: three queue silently, the fourth flashes
+  a refusal that blames the user's speed. Now the send's return is
+  honoured (sync failure fails the pick and its queue VISIBLY — they
+  queued behind a dead socket too), and every dropped callback settles
+  with false: the disconnect arm pays its FIFO directly, the rebuild
+  arm receives `droppedTextReplies` from SocketWatch.rebuildResets (the
+  ledger module hands back what it clears so the caller can pay it —
+  pinned in the suite).
+- **P2, the quiescent lying socket:** the reconnect timer stopped when
+  healthy, so the watchdog it carried only ever judged a hello it had a
+  reason to send — a SIGKILLed helper behind Quickshell's
+  `connected`-that-lies (observed live twice) was never asked anything
+  at idle; keystrokes wrote into the void until an unrelated event or
+  a shell restart. The timer never stops now: unhealthy or with a
+  probe outstanding it keeps the 2 s repair cadence, healthy it ticks
+  slow (15 s) and asks with `ping` — the daemon's own liveness word
+  (hello-gated, one line, no state) that was already in the protocol
+  waiting for this. A hello would not do: its reply re-handshakes and
+  drops the typing gate — a visible blink on every probe of a healthy
+  panel. `pong` got its own reply arm BECAUSE the fail-closed
+  unrecognized-reply fallback would otherwise drop the gate on every
+  probe. The probe never interleaves a paced paste or armed chord
+  (ChordAcks poisons on any non-ok reply in the region — the pure
+  table's `probeHold`).
+- **The niggle tail, all cheap, all fixed:** the keycode-4096 gate on
+  the fourth compile door (the unicode entry map — round twelve's "one
+  identical check at every door" had three of four); shareRetry
+  re-arms instead of consuming the ladder while a wedged hyprctl still
+  runs; the last manual `delivery_active` clear in deliver_text's
+  shutdown exit is gone (the Drop guard is the only owner, as §76 said
+  and 9af7cb9 claimed); the daemon-refused pick flashes instead of
+  vanishing; the paste chip's refusals (transaction in flight,
+  PasteFlow.begin) flash instead of clicking dead; the language chip
+  under a standing overlay says "close the open page first" instead of
+  dead-clicking; the share give-up reaches the hint line (journal-only
+  is silence for the most visible misbehaviour the panel has); a
+  failed config/state save stands on the hint line until a save lands
+  (the controls already showed the new value — the sound row's
+  never-silent precedent); the dwell underline vanishes on the special
+  arm too (§54: progress, never state). All the visible refusals ride
+  one transient channel (`flashRefused`), five new UiStrings keys in
+  four languages (Italian still the owner's draft).
+- **The canary caught a §79 tail live:** `languageChoices` offers `it`
+  on an it-bearing seat, but the settings popover's UI-language label
+  map didn't carry the endonym — three `Unable to assign [undefined]`
+  warnings and an empty segment. `it: "Italiano"` (LanguageControl's
+  ENDONYMS already had it; this map was the miss).
+
+The lab itself needed healing first: fifteen dead Hyprland signatures
+from interrupted leg runs made the wall's `ls -t | head -1` env pick a
+corpse, and every leg died at `lifecycle: starting` — the pre-fix tree
+failed the canary the same way, which is what dated the breakage to
+the environment, not the diff. Dead signatures removed (the live one
+probed before deleting), the wall went green BEFORE the sync and
+stayed green after.
+
+53 Rust tests, all host suites, clippy, the wall's canary (15) and
+restart-settle (8), and the nested 40 — all green on the fixed tree.
+Committed locally; push and deploy wait for the owner's word. The
+stop-rule counter stays at zero: the round found two poisons.

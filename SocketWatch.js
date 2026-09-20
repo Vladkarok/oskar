@@ -31,33 +31,48 @@
 /// to act: a wedge recovers inside ~7s.
 var HELLO_STALE_MS = 5000
 
-/// One reconnect tick's decision.
+/// One tick's decision.
 ///
 /// state.connected — whether the socket object claims to be open. May lie
 ///   true on a dead transport (see above); the decision never trusts it
 ///   alone.
-/// state.helloInFlight — a hello was written and nothing has arrived
-///   since. The caller sets it on write and clears it on any read, so any
-///   reply — not just the hello's — proves the pipe alive end to end.
-/// state.helloAgeMs — milliseconds since that hello was written.
+/// state.helloInFlight — a probe (hello or ping) was written and nothing
+///   has arrived since. The caller sets it on write and clears it on any
+///   read, so any reply — not just the probe's — proves the pipe alive
+///   end to end.
+/// state.helloAgeMs — milliseconds since that probe was written.
+/// state.idle — the panel is healthy and settled: the tick is the slow
+///   quiescent probe. Asking with ping (the daemon's own liveness word:
+///   hello-gated, one line back, no state) rather than hello, because a
+///   hello reply re-handshakes — it drops the typing gate and re-asks for
+///   everything, a visible blink on every probe of an otherwise healthy
+///   panel.
+/// state.probeHold — a paced paste or an armed chord owns the wire. No
+///   probe may interleave: ChordAcks poisons a chord on ANY non-ok reply
+///   popped inside its region, and even a pong is a non-ok reply. The
+///   tick waits for the next one.
 ///
-/// Returns "hello" (write a hello and mark it outstanding), "wait" (the
-/// outstanding hello is still inside its fair window), "rebuild" (tear
-/// the socket object down and let the loader recreate it), or
-/// "path-check" (no socket claims to be open: probe the helper's socket
-/// file and rebuild only if it exists — the pre-watchdog behavior).
+/// Returns "hello" (write a hello and mark it outstanding), "ping" (the
+/// idle probe: write a ping the same way), "wait" (an outstanding probe is
+/// still inside its fair window, or the wire is held), "rebuild" (tear the
+/// socket object down and let the loader recreate it), or "path-check"
+/// (no socket claims to be open: probe the helper's socket file and
+/// rebuild only if it exists — the pre-watchdog behavior).
 function reconnectAction(state) {
     if (!state || typeof state !== "object")
         return "path-check"
     var connected = state.connected === true
     if (!connected)
         return "path-check"
-    if (state.helloInFlight !== true)
-        return "hello"
-    var age = state.helloAgeMs
-    if (typeof age !== "number" || !isFinite(age) || age < 0)
+    if (state.helloInFlight === true) {
+        var age = state.helloAgeMs
+        if (typeof age !== "number" || !isFinite(age) || age < 0)
+            return "wait"
+        return age >= HELLO_STALE_MS ? "rebuild" : "wait"
+    }
+    if (state.probeHold === true)
         return "wait"
-    return age >= HELLO_STALE_MS ? "rebuild" : "wait"
+    return state.idle === true ? "ping" : "hello"
 }
 
 /// Ticket 54: what the rebuild path resets beyond the socket object
@@ -68,9 +83,13 @@ function reconnectAction(state) {
 ///   - the pending text-reply FIFO. A stale head left standing is settled
 ///     by the first `text-ok` after recovery: the wrong reply matched to
 ///     the wrong request. The rebuild drains it with the disconnect arm's
-///     semantics — cleared, the callbacks dropped rather than invoked,
-///     because the socket that owed them answers on no connection this
-///     panel holds.
+///     semantics — cleared, and the callbacks handed back in
+///     `droppedTextReplies` for the caller to settle with failure, because
+///     the socket that owed them answers on no connection this panel
+///     holds. Invoking them (with false, exactly once each) rather than
+///     dropping them became load-bearing with §79's pick queue: the
+///     queue's busy flag waits on its callback firing, and one dropped
+///     callback wedges every later pick for the rest of the session.
 ///   - the compositor share generation. A restarted daemon counts its
 ///     installs from one again, so the fresh connection's ack can repeat
 ///     the generation the panel last shared; the once-per-generation guard
@@ -82,5 +101,12 @@ function reconnectAction(state) {
 /// its resets cannot drift apart; the caller packs its properties in and
 /// assigns the returned fields back, the reconnectAction discipline.
 function rebuildResets(state) {
-    return { pendingTextReplies: [], sharedKeymapGen: 0 }
+    var owed = state && Array.isArray(state.pendingTextReplies)
+        ? state.pendingTextReplies
+        : []
+    return {
+        pendingTextReplies: [],
+        droppedTextReplies: owed,
+        sharedKeymapGen: 0
+    }
 }

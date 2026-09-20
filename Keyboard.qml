@@ -730,6 +730,11 @@ Item {
                 + " keymap (exit " + code + ", five attempts): the seat is"
                 + " carrying two keymaps and a client's layout group will"
                 + " reset on every focus change (decisions §35).")
+            // The journal line is for us; the user's symptom (layouts
+            // flipping on focus change) is one of the most visible
+            // misbehaviors the panel has — the flows round's finding:
+            // journal-only is silence. The panel owns the visible half.
+            keymapShareGivenUp()
         }
     }
 
@@ -737,7 +742,22 @@ Item {
         id: shareRetry
         interval: 400
         repeat: false
-        onTriggered: if (!shareProcess.running) shareProcess.running = true
+        // A retry tick that finds the previous run STILL running must
+        // not consume the ladder (the protocol round's finding): a wedged
+        // hyprctl would otherwise leave the newest acknowledged map
+        // unshared for the rest of the session with nothing supervising
+        // the run. The tick re-arms; the run's own exit resumes the
+        // ladder. Deliberately no deadline-kill here — the kill/restart
+        // retiring discipline is a careful machine of its own, and a
+        // hanging compositor IPC is a wedged compositor, which has
+        // bigger problems than our share.
+        onTriggered: {
+            if (shareProcess.running) {
+                shareRetry.restart()
+                return
+            }
+            shareProcess.running = true
+        }
     }
 
     // Ticket 06: the recovery read. The helper records the user's own
@@ -1551,6 +1571,19 @@ Item {
         return true
     }
 
+    /// The connection that owed the pending text replies is going away
+    /// (the disconnect arm) or already answered on a connection this panel
+    /// no longer holds (the rebuild): settle every outstanding callback
+    /// with failure, exactly once each. §79's pick queue waits on its
+    /// callback to hand the next pick over — a callback dropped uninvoked
+    /// wedges the queue's owner (and with it the emoji page) for the rest
+    /// of the session, which is how the round-eight paste chip died too.
+    function settleTextCallbacks(owed) {
+        for (var i = 0; i < owed.length; i++) {
+            if (owed[i]) owed[i](false)
+        }
+    }
+
     /// Lifts locked Shift and returns every modifier to idle. The panel closing
     /// is not the compositor forgetting: locked Shift is really held at the
     /// device and must come up before the socket goes away. A paced chord
@@ -1670,6 +1703,13 @@ Item {
     // functions out here.
     property QtObject daemonSocket: helperLoader.item
 
+    // The share scheduler gave up on an acknowledged generation (five
+    // failed hyprctl runs): the seat is carrying two keymaps and clients
+    // will flip layout on focus changes until the next share succeeds.
+    // The panel listens and says it on the hint line — the journal is
+    // not a user-visible channel (the flows round's finding).
+    signal keymapShareGivenUp()
+
     // The one rebuild of the socket object: destroy and recreate it
     // through the loader, on the next tick where QML is idle enough to
     // tear a live object graph down safely. onError's original home, now
@@ -1697,6 +1737,10 @@ Item {
         })
         root.pendingTextReplies = resets.pendingTextReplies
         root.sharedKeymapGen = resets.sharedKeymapGen
+        // The FIFO's callbacks settle with failure, not silence: the
+        // pick queue's owner waits on exactly-once (the module hands
+        // them back precisely so this arm can pay them).
+        settleTextCallbacks(resets.droppedTextReplies)
         root.shareQueue = ShareQueue.initial()
         // The scheduler's world died with the connection: a stale run's
         // exit must not read as the next run's verdict, and a pending
@@ -1755,7 +1799,14 @@ Item {
                     helloTimer.restart()
                 } else {
                     root.inputReady = false
+                    // The replies this connection owed settle as failure,
+                    // not silence (§79's pick queue waits on exactly-once;
+                    // a dropped callback wedges its owner for the session).
+                    // Taken and cleared BEFORE the callbacks run, so
+                    // nothing a callback queues mid-settlement is wiped.
+                    var owedReplies = root.pendingTextReplies
                     root.pendingTextReplies = []
+                    settleTextCallbacks(owedReplies)
                     // The hello this object was owed can no longer arrive;
                     // the watchdog must not keep waiting on it.
                     root.helloInFlight = false
@@ -1978,6 +2029,14 @@ Item {
                             if (failed) failed(false)
                         }
                         console.warn("[oskar] text delivery refused:", reply)
+                    } else if (reply === "pong") {
+                        // The quiescent probe's answer: the pipe is alive
+                        // end to end. The any-line clear at the top of
+                        // this handler already lifted the watchdog's
+                        // mark; pong carries no state, settles nothing,
+                        // and must not reach the fail-closed fallback
+                        // below — unrecognized replies drop the typing
+                        // gate, and a liveness answer is not drift.
                     } else if (reply.indexOf("err") === 0) {
                         if (reply.indexOf("err protocol") === 0) {
                             // The helper answered hello with the version it
@@ -2168,40 +2227,62 @@ Item {
 
     Timer {
         id: reconnectTimer
-        interval: 2000
+        // Adaptive, and NEVER stopped (the protocol round's P2): the
+        // timer used to stop once the panel was healthy, so a helper
+        // SIGKILLed at quiescence behind a socket that lies `connected`
+        // (Quickshell 0.3.1, observed live twice) was never asked
+        // anything — every keystroke wrote into the void until an
+        // unrelated event or a shell restart. Healthy, the tick is slow
+        // and asks with ping (below); unhealthy or with a probe still
+        // outstanding, it keeps the repair cadence so a wedge is still
+        // noticed, judged and acted on inside ~7 s.
+        // Also while a configure is outstanding. Readiness alone stopped
+        // being enough once a group-only configure no longer lowered
+        // `inputReady` (ticket 16): a socket that stays `connected` but
+        // never answers `configured` would leave the panel ready-looking,
+        // drawing the acked group while the helper types the queued one,
+        // with no tick to notice. A configure is answered in well under
+        // the fast interval — the helper replies before it compiles
+        // anything — so an entry still outstanding when this fires is a
+        // lost reply, not a slow one.
+        interval: (root.helloInFlight || !root.inputReady
+            || !Session.settled(root.session)) ? 2000 : 15000
         repeat: true
-        // Also while a configure is outstanding. Readiness alone stopped being
-        // enough once a group-only configure no longer lowered `inputReady`
-        // (ticket 16): a socket that stays `connected` but never answers
-        // `configured` would leave the panel ready-looking, drawing the acked
-        // group while the helper types the queued one, with no tick to notice.
-        // A configure is answered in well under this interval — the helper
-        // replies before it compiles anything — so an entry still outstanding
-        // when this fires is a lost reply, not a slow one.
-        running: !root.inputReady || !Session.settled(root.session)
+        running: true
         onTriggered: () => {
-            // Ticket 47's watchdog: the decision is SocketWatch's pure table,
-            // pinned in tests/socket-watch.qml. The old inline policy — an
-            // open socket is only ever re-helloed — turned a socket that lies
-            // `connected` on a peer-closed transport into a permanent wedge
-            // (the install-from-zero stranger's dead keys: re-hellos written
-            // into a dead object, "Starting oskar.service…" standing,
-            // every key click a silent no-op, escape only by shell restart).
-            // Now a hello outstanding past its fair window rebuilds the
-            // socket object whatever `connected` claims; a live helper
-            // answers hello in well under a second, so only a socket that
-            // cannot deliver ever sees the window expire. The rebuild path
-            // is also the silent-dial cure: a fresh socket that connects
-            // without ever signalling gets a hello on the next tick, and
-            // the tick after that treats its silence the same way.
+            // Ticket 47's watchdog: the decision is SocketWatch's pure
+            // table, pinned in tests/socket-watch.qml. The old inline
+            // policy — an open socket is only ever re-helloed — turned a
+            // socket that lies `connected` on a peer-closed transport
+            // into a permanent wedge (the install-from-zero stranger's
+            // dead keys: re-hellos written into a dead object, "Starting
+            // oskar.service…" standing, every key click a silent no-op,
+            // escape only by shell restart). Now a probe outstanding past
+            // its fair window rebuilds the socket object whatever
+            // `connected` claims; a live helper answers in well under a
+            // second, so only a socket that cannot deliver ever sees the
+            // window expire. The rebuild path is also the silent-dial
+            // cure: a fresh socket that connects without ever signalling
+            // gets a hello on the next tick, and the tick after that
+            // treats its silence the same way.
             var item = root.daemonSocket
             var action = SocketWatch.reconnectAction({
                 connected: !!(item && item.connected),
                 helloInFlight: root.helloInFlight,
-                helloAgeMs: Date.now() - root.helloSentAt
+                helloAgeMs: Date.now() - root.helloSentAt,
+                // The quiescent probe: healthy and settled asks with
+                // ping; a paced paste or an armed chord holds the wire
+                // (ChordAcks poisons a chord on any non-ok reply inside
+                // its region — a pong included).
+                idle: root.inputReady && Session.settled(root.session),
+                probeHold: root.pastePacing || !!root.chordAcks.chordDone
             })
             if (action === "hello") {
                 helloTimer.restart()
+                return
+            }
+            if (action === "ping") {
+                sendProbePing()
                 return
             }
             if (action === "rebuild") {
@@ -2212,8 +2293,23 @@ Item {
                 socketPathCheck.running = true
                 return
             }
-            // "wait": the outstanding hello is still inside its window.
+            // "wait": the outstanding probe is still inside its window,
+            // or the wire is held.
         }
+    }
+
+    /// The quiescent probe's write. ping is the daemon's own liveness
+    /// word — hello-gated, one reply line, no state — through the one
+    /// choke point so it occupies its correlation slot like every
+    /// command. The watchdog marks carry the same meaning they carry for
+    /// hello: an answer is owed, and ANY line arriving clears the debt.
+    /// A hello would not do here: its reply re-handshakes (the gate
+    /// drops, keyboards and configure are re-asked), which is repair
+    /// when broken and a visible blink on every probe when healthy.
+    function sendProbePing() {
+        if (!sendCommandUnchecked("ping")) return
+        root.helloInFlight = true
+        root.helloSentAt = Date.now()
     }
 
     /// The one writer for reducer output and panel-originated protocol lines
@@ -2520,17 +2616,17 @@ Item {
             dwellReset()
             return
         }
+        // The underline's uniform rule (§54: progress, never state — it
+        // vanishes the instant the rest ends, typed or not, on EVERY
+        // cap alike, character or special; a pinned-full line through
+        // the menu window would read as state, and the menu opening is
+        // its own signal). Ticket 50 review L1 caught it lingering on
+        // the character arm; the flows round caught the special arm
+        // still missing it.
+        try { dwellDelegate.stopDwellFill() } catch (error) {}
         if (!cap.key) {
             typeCap(cap)
             releaseKey()
-            // The underline's uniform rule (§54: progress, never
-            // state — it vanishes the instant the rest ends, typed or
-            // not, on every character cap alike; a pinned-full line
-            // through the menu window would read as state, and the
-            // menu opening is its own signal). Ticket 50 review L1:
-            // the fill used to linger at full width until the pointer
-            // left.
-            try { dwellDelegate.stopDwellFill() } catch (error) {}
             return
         }
         triggerSpecial(cap, false)

@@ -654,7 +654,8 @@ Rectangle {
                     width: tokens.space(300)
                     readonly property var languageLabels: ({
                         auto: UiStrings.tr("settings.lang.auto", panel.uiLang),
-                        en: "English", ru: "Русский", uk: "Українська"
+                        en: "English", ru: "Русский", uk: "Українська",
+                        it: "Italiano"
                     })
                     // The offered languages mirror the seat's layouts
                     // (ticket 61): Auto and English always, plus each

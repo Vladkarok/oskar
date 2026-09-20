@@ -47,6 +47,13 @@ Item {
     property var geometryState: ConfigFile.stateDefaults()
     property string configurationError: ""
     property string stateError: ""
+    // A config/state save that could not land (dir creation failed, or
+    // the private write failed twice): the in-memory controls already
+    // show the new value, so the only honest panel says so on the hint
+    // line until a save lands (the flows round's finding — a failed
+    // save used to lie silently until the next shell start ate the
+    // setting).
+    property bool saveFailedNotice: false
     // Every control that writes the overrides file stands down while a
     // malformed external edit is standing (spec-v1.1 §5): the popover keeps
     // showing the last valid runtime values and says so, and the bad file is
@@ -620,10 +627,13 @@ Item {
         // finding 7), a chip click pastes whatever the clipboard holds —
         // mid-transaction — and the fire-and-forget chord reopens the
         // paste gate for a second paste behind it. Refuse; the queue
-        // drains in milliseconds.
+        // drains in milliseconds. The refusal is decided — its VISIBILITY
+        // is the flows round's finding: a chip that draws enabled and
+        // clicks dead is the silence class.
         if (root.emojiTxnState.phase !== "idle") {
             console.warn("[oskar] paste chip refused: an emoji pick owns"
                 + " the clipboard")
+            root.flashRefused(UiStrings.tr("hint.pasteBusy", root.uiLang))
             return
         }
         // R2: one target determination before any delivery choice. A
@@ -637,7 +647,15 @@ Item {
             root.refreshClipboardPreview()
             return
         }
-        keyboard.pasteCurrent(root.focusedClientClass())
+        // The callback is the paste flow's own refusal channel
+        // (PasteFlow.begin refuses one-at-a-time, the paced dispatch can
+        // refuse on an empty plan): the chip used to pass nothing, so
+        // those refusals were silent too — same class, same cure.
+        keyboard.pasteCurrent(root.focusedClientClass(), function (ok) {
+            if (!ok) {
+                root.flashRefused(UiStrings.tr("hint.pasteBusy", root.uiLang))
+            }
+        })
     }
 
     // The panel-local read (colour field, emoji search) — bounded and
@@ -812,6 +830,11 @@ Item {
         if (root.emojiPickRefused)
             return { text: UiStrings.tr("hint.pickRefused", root.uiLang),
                 accent: true }
+        if (root.refusedHint !== "")
+            // The general transient channel (flashRefused): the newest
+            // refusal or one-shot notice, already translated by its
+            // caller.
+            return { text: root.refusedHint, accent: true }
         if (root.clipboardContentGone)
             return {
                 text: UiStrings.tr("hint.clipboardGone", root.uiLang),
@@ -832,6 +855,17 @@ Item {
         if (keyboard.lifecycleKind === "unavailable")
             return {
                 text: UiStrings.tr("hint.keymapUnavailable", root.uiLang),
+                accent: true
+            }
+        if (root.saveFailedNotice)
+            // A save that cannot land must not lie (the flows round's
+            // finding): the controls already show the new value, the
+            // disk does not have it, and on the next shell start the
+            // setting is gone. The notice stands until a save lands —
+            // the sound row's "unavailable" precedent: a setting that
+            // cannot take effect is never silent.
+            return {
+                text: UiStrings.tr("hint.saveFailed", root.uiLang),
                 accent: true
             }
         if (keyboard.lifecycleKind === "starting" && root.startingNoticeDue)
@@ -1634,20 +1668,73 @@ Item {
         onTriggered: root.emojiPickRefused = false
     }
 
+    // One transient channel for refused clicks and one-shot notices —
+    // §79's standard ("a refused click is VISIBLE, in both modes"),
+    // generalised past the pick queue by the flows round: the paste chip
+    // refused under a transaction, the language chip refused under a
+    // standing overlay, the share scheduler's give-up, a failed pick.
+    // A newer flash replaces a standing one; the duration is the
+    // caller's (refusals read fast, informational notices get their
+    // beat).
+    property string refusedHint: ""
+    Timer {
+        id: refusedHintTimer
+        interval: 1500
+        repeat: false
+        onTriggered: root.refusedHint = ""
+    }
+    function flashRefused(text, ms) {
+        root.refusedHint = text
+        refusedHintTimer.interval = ms > 0 ? ms : 1500
+        refusedHintTimer.restart()
+    }
+
+    // The share scheduler's give-up, made visible (the flows round's
+    // finding: journal-only is silence, and the symptom — layouts
+    // flipping on focus change — is one of the most visible
+    // misbehaviours the panel has). Informational, so it gets a longer
+    // beat than a refusal.
+    Connections {
+        target: keyboard
+        function onKeymapShareGivenUp() {
+            root.flashRefused(UiStrings.tr("hint.shareFailed", root.uiLang),
+                4000)
+        }
+    }
+
     function sendDirectPick(emoji, unicodeEntry) {
         root.directPickBusy = true
-        keyboard.sendText(emoji, function (success) {
+        var sent = keyboard.sendText(emoji, function (success) {
             root.directPickBusy = false
             if (success) {
                 root.recordEmojiSuccess(emoji)
                 root.emojiPickSettled()
                 if (root.emojiCloseAfterPick) root.emojiOpen = false
+            } else {
+                // The helper answered and refused (budget spent, no
+                // keymap, no slots): a real refusal, so it gets the
+                // same visibility the queue cap has — the arm §79's
+                // own standard forgot (the flows round's finding).
+                root.flashRefused(UiStrings.tr("hint.pickFailed",
+                    root.uiLang))
             }
             if (root.directPickQueue.length > 0) {
                 var next = root.directPickQueue.shift()
                 root.sendDirectPick(next.emoji, next.unicodeEntry)
             }
         }, unicodeEntry)
+        if (!sent) {
+            // The send never left — the gate was shut or the write
+            // bounced — so NO reply will ever fire the callback, and
+            // the queue's busy flag waits on exactly that (the round's
+            // POISON: one such pick wedged every later pick for the
+            // rest of the session). Fail the pick and everything
+            // queued behind it — they queued behind a dead socket too —
+            // visibly, and hand the next click a clean slate.
+            root.directPickBusy = false
+            root.directPickQueue = []
+            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
+        }
     }
 
     // The effects of one accepted pick: replace the clipboard owner, then
@@ -1840,6 +1927,7 @@ Item {
             if (root.configurationError) return
             if (exitCode !== 0 || exitStatus !== 0) {
                 console.warn("[oskar] could not create", root.configDir, "- configuration not saved")
+                root.saveFailedNotice = true
                 return
             }
             writePrivateFile(root.configPath,
@@ -1856,6 +1944,7 @@ Item {
             if (root.stateError) return
             if (exitCode !== 0 || exitStatus !== 0) {
                 console.warn("[oskar] could not create", root.stateDir, "- state not saved")
+                root.saveFailedNotice = true
                 return
             }
             writePrivateFile(root.statePath,
@@ -1878,6 +1967,12 @@ Item {
         id: privateWriter
         command: []
         onExited: (exitCode, exitStatus) => {
+            if (root.privateWriteInFlight
+                    && exitCode === 0 && exitStatus === 0) {
+                // The first save that lands clears the standing notice —
+                // what the controls show is on disk again.
+                root.saveFailedNotice = false
+            }
             if ((exitCode !== 0 || exitStatus !== 0) && root.privateWriteInFlight) {
                 console.warn("[oskar] private write failed (exit " + exitCode
                     + ")" + (root.privateWriteInFlight.retried ? " — again" : ", retrying"))
@@ -1899,6 +1994,12 @@ Item {
                             retried: true
                         })
                     }
+                } else {
+                    // The retry failed too: the newest config/state is
+                    // NOT on disk and every control already shows it —
+                    // the flows round's finding: a failed save must not
+                    // lie. The notice stands until a save lands.
+                    root.saveFailedNotice = true
                 }
             }
             root.privateWriteInFlight = null
@@ -2557,10 +2658,18 @@ Item {
                             // The settings overlay owns the card's attention
                             // while it stands (the same fact its dismiss
                             // layer keys on): the chooser waits rather than
-                            // dropping a menu under another overlay.
+                            // dropping a menu under another overlay. But a
+                            // chip that draws enabled and clicks dead is
+                            // the silence class (the flows round's
+                            // finding) — the wait is SAID, on the hint
+                            // line.
                             if (settingsPopover.visible
                                 || root.customEditorField !== ""
-                                || root.emojiOpen) return
+                                || root.emojiOpen) {
+                                root.flashRefused(UiStrings.tr(
+                                    "hint.langMenuBlocked", root.uiLang))
+                                return
+                            }
                             languageMenu.open()
                         }
                     }
