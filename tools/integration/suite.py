@@ -428,6 +428,161 @@ def protocol_mismatch_is_refused(helper, keyboard):
     client.close()
 
 
+# ---- the review rounds' overlap contract (rounds 2–7), against the REAL
+# helper: the host suites exercise the machines alone; these pin the seams
+# where one operation overlaps another on the same socket.
+
+
+@test("nothing executes before a completed hello, and a refused version never opens the door")
+def pre_handshake_gate(helper, keyboard):
+    raw = helper.connect(negotiate=False)
+    raw.expect("ping", "err hello first")
+    raw.expect("keyboards", "err hello first")
+    # A wrong version is REFUSED, not negotiated: the door stays shut.
+    reply = raw.send("hello 4")
+    if reply != "err protocol 5 required, helper needs reinstall":
+        raise Failure(f"hello 4: {reply!r}")
+    raw.expect("ping", "err hello first")
+    # The matching hello opens it, on the same connection.
+    raw.expect("hello 5", "hello 5")
+    raw.expect("ping", "pong")
+    raw.close()
+
+
+@test("coalesced commands in one write are each answered, in order, whatever they answer")
+def coalesced_batch_is_fully_served(helper, keyboard):
+    client = helper.connect()
+    # One write, three commands — an err among them spends its own slot
+    # (the panel's correlation queue relies on exactly this FIFO).
+    client.write_unread("ping\ngroup 9\nping\n")
+    if client.read_line() != "pong":
+        raise Failure("first coalesced reply was not pong")
+    if client.read_line() != "err bad group":
+        raise Failure("the err'd group did not spend exactly its own slot")
+    if client.read_line() != "pong":
+        raise Failure("the reply after the err was not pong")
+    # The round-three batch finding: valid coalesced commands totalling
+    # far past the 4 KiB frame cap are ALL served — the cap is per line.
+    client.write_unread("ping\n" * 1500)
+    for i in range(1500):
+        if client.read_line() != "pong":
+            raise Failure(f"reply {i} of the oversized batch went missing")
+    client.close()
+
+
+@test("a single line past the frame cap is refused and the connection closed")
+def oversized_line_is_refused(helper, keyboard):
+    client = helper.connect()
+    # Complete (newline-terminated): refused before parsing.
+    client.write_unread("ping" * 1300 + "\n")
+    if client.read_line() != "err line too long":
+        raise Failure("a complete 5 KiB line was served instead of refused")
+    if client.read_line() != "":
+        raise Failure("the connection stayed open past the refused line")
+    client.close()
+    # Incomplete (no newline): the growing tail trips the same cap.
+    tail = helper.connect()
+    tail.write_unread("ping" * 1300)
+    if tail.read_line() != "err line too long":
+        raise Failure("a newline-free 5 KiB tail was not refused")
+    if tail.read_line() != "":
+        raise Failure("the connection stayed open past the refused tail")
+    tail.close()
+
+
+@test("the pre-handshake window is absolute under continuous traffic")
+def handshake_window_survives_traffic(helper, keyboard):
+    raw = helper.connect(negotiate=False)
+    started = time.monotonic()
+    dropped = None
+    # Stream frames without a hello for longer than the five-second
+    # window: the daemon must drop the connection at the window, however
+    # busy the read side keeps it (round two's finding).
+    while time.monotonic() - started < 9:
+        try:
+            raw.write_unread("ping\n" * 64)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            dropped = time.monotonic()
+            break
+        # Drain the refusals so the client's own buffer never blocks us.
+        # A reset is the drop just as an EOF is — closed-with-queued-data
+        # reads that way.
+        for _ in range(64):
+            try:
+                line = raw.read_line()
+            except (ConnectionResetError, BrokenPipeError):
+                line = ""
+            if line == "":
+                dropped = time.monotonic()
+                break
+        if dropped is not None:
+            break
+        if time.monotonic() - started < 5.5:
+            time.sleep(0.05)
+    if dropped is None:
+        # The daemon may also simply stop reading: a final drain proves it.
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if raw.read_line() == "":
+                dropped = time.monotonic()
+                break
+        if dropped is None:
+            raise Failure("a hello-less connection survived 9s of traffic")
+    elapsed = dropped - started
+    if elapsed < 4.5:
+        raise Failure(f"the connection was dropped at {elapsed:.1f}s, before the window")
+    if elapsed > 8.0:
+        raise Failure(f"the connection was dropped at {elapsed:.1f}s, past the window's purpose")
+    raw.close()
+    # And the helper still serves the next client.
+    fresh = helper.connect()
+    fresh.expect("ping", "pong")
+    fresh.close()
+
+
+@test("a stalled reader is dropped by the write bound, not allowed to wedge the helper")
+def write_bound_drops_stalled_reader(helper, keyboard):
+    client = helper.connect()
+    # Flood kilobyte-scale replies without reading a single one: the
+    # daemon's socket buffers fill, its bounded write times out, and the
+    # connection is dropped rather than parked.
+    try:
+        for _ in range(300):
+            client.write_unread("caps 0\n")
+    except OSError:
+        pass  # our own send buffer filling is fine — the point is the daemon's
+
+    def _read_or_eof():
+        """A reply line, or None when the daemon dropped us.
+
+        A socket closed with data still queued reads as a reset rather
+        than an EOF — both are the drop, exactly what this test wants.
+        """
+        try:
+            return client.read_line()
+        except (ConnectionResetError, BrokenPipeError):
+            return None
+
+    saw_eof = False
+    lines = 0
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        line = _read_or_eof()
+        if line is None or line == "":
+            saw_eof = True
+            break
+        lines += 1
+    if not saw_eof:
+        raise Failure(
+            f"the stalled connection was still being served after 15s ({lines} replies)"
+        )
+    client.close()
+    # The helper itself must be untouched.
+    fresh = helper.connect()
+    fresh.expect("ping", "pong")
+    fresh.close()
+
+
 @test("keymap churn stayed at four compiles: default, three-group, configured, swap")
 def churn_held(helper, keyboard):
     # The default compiled at startup, the three-group cycling keymap, the

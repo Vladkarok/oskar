@@ -51,7 +51,7 @@ class Client:
     about claims open more than one of these.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, negotiate=True):
         self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._socket.settimeout(10)
         for attempt in range(50):
@@ -67,12 +67,16 @@ class Client:
         # left at the locale default would encode emoji as ASCII or die trying
         # on a C-locale guest.
         self._stream = self._socket.makefile("rw", encoding="utf-8")
-        # Round eight's lesson, applied here too: the helper executes
-        # nothing before a completed hello, so every client negotiates on
-        # its own connection — the panel, doctor, the recovery script and
-        # this harness alike. The reply is surfaced rather than asserted:
-        # a not-ready helper is a legitimate answer a test may want.
-        self.hello_reply = self.send(f"hello {PROTOCOL_VERSION}")
+        self.hello_reply = None
+        if negotiate:
+            # Round eight's lesson, applied here too: the helper executes
+            # nothing before a completed hello, so every client negotiates
+            # on its own connection — the panel, doctor, the recovery
+            # script and this harness alike. The reply is surfaced rather
+            # than asserted: a not-ready helper is a legitimate answer a
+            # test may want. Raw clients (negotiate=False) exist exactly
+            # to test that gate.
+            self.hello_reply = self.send(f"hello {PROTOCOL_VERSION}")
 
     def send(self, command):
         """Write one protocol line, return the helper's reply."""
@@ -120,6 +124,14 @@ class Client:
         self._stream.write(command + "\n")
         self._stream.flush()
 
+    def read_line(self):
+        """One reply line without sending anything; '' is EOF.
+
+        The batch and bound tests live on this: coalesced writes are drained
+        reply by reply, and a connection the daemon dropped reads to EOF.
+        """
+        return self._stream.readline().rstrip("\n")
+
     def read_reply(self):
         """Read one reply the helper already owes this connection."""
         return self._stream.readline().strip()
@@ -129,10 +141,19 @@ class Client:
 
         Both handles have to go: the buffered stream keeps the socket open,
         so closing the socket alone would never reach the helper's read loop
-        and the mid-chord disconnect tests would assert nothing.
+        and the mid-chord disconnect tests would assert nothing. A
+        connection the helper itself dropped (the bound/gate tests) may
+        already be dead on this side too — closing it is still just
+        closing it, never a failure.
         """
-        self._stream.close()
-        self._socket.close()
+        try:
+            self._stream.close()
+        except OSError:
+            pass
+        try:
+            self._socket.close()
+        except OSError:
+            pass
 
 
 def parse_caps_reply(reply):
@@ -178,8 +199,8 @@ class Helper:
         self.log_path = log_path
         self.pid = pid
 
-    def connect(self):
-        return Client(self.socket_path)
+    def connect(self, negotiate=True):
+        return Client(self.socket_path, negotiate=negotiate)
 
     def terminate(self, timeout=5.0):
         """Stop the helper the way `systemctl stop` does, and wait for it.

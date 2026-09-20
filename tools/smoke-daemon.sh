@@ -12,9 +12,12 @@ set -euo pipefail
 
 # Refuse before any compositor query, process cleanup, or helper startup.
 # This is an accidental-launch guard; nested-session.sh owns these values.
+# The workdir pattern is nested-session.sh's mktemp (/tmp/osk-n.XXXXXX —
+# the security audit's unpredictable-name finding); only the SHAPE is
+# checked here, the session script is the authority.
 nested_runtime="${XDG_RUNTIME_DIR:-}"
 if [[ "${OSK_NESTED_SESSION:-}" != "1"
-    || ! "$nested_runtime" =~ ^/tmp/osk-nest\.[0-9]+/rt$
+    || ! "$nested_runtime" =~ ^/tmp/osk-n\.[A-Za-z0-9]+/rt$
     || "${OSK_NEST_CONFIG:-}" != "${nested_runtime%/rt}/hypr.lua" ]]; then
     echo "Run this test in omarchy-vm via tools/nested-session.sh tools/smoke-daemon.sh." >&2
     exit 1

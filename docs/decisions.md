@@ -2391,3 +2391,30 @@ Three overlaps, all reproduced by controlled event ordering:
 All three are wiring-level — the host suites cannot reach them; the VM
 integration suite (delayed replies, cancel-then-retry, disconnects)
 stays the recorded answer to the named weakness.
+
+## 70. The integration seam runs again, and it grew the overlap contract
+
+The VM integration suite had not run since nested-session.sh's workdir
+pattern changed (the smoke guard still matched the old osk-nest.<pid>
+name and refused every launch); the guard now matches the session's
+actual mktemp shape. In the lab, against the REAL helper under a nested
+Hyprland, 39 tests pass — 34 existing and five new ones pinning the
+review rounds' overlap contract on the live socket:
+
+- nothing executes before a completed matching hello, and a refused
+  version never opens the door (round seven);
+- coalesced commands in one write are each answered, in order, an err
+  spending exactly its own slot — the FIFO the panel's correlation
+  queue is built on (rounds three and five);
+- a complete 5 KiB line and a newline-free 5 KiB tail are both refused
+  and the connection closed (rounds three and four);
+- the pre-handshake window is absolute under continuous traffic: a
+  hello-less connection streaming frames is dropped at the window, not
+  when the traffic pauses (round two);
+- a stalled reader is dropped by the write bound within its deadline
+  and the helper keeps serving the next client (rounds one and two).
+
+The harness learned `negotiate=False` (raw clients, for the gate tests),
+`read_line` (drain without send), and a close that tolerates a dead
+socket. This is the machinery the reviewers kept asking for; the seams
+now have a wall of their own.
