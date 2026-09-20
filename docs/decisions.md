@@ -2822,3 +2822,66 @@ this round.
 restart-settle (8), the nested 40 (one flaky monitor-publish retry) —
 green on the fixed tree. Committed locally; push and deploy wait for
 the owner's word. The stop-rule counter stays at zero: one poison.
+
+## 82. The third stop-test round: the fifth language that typed the first alphabet
+
+The owner ordered the cycle onward. Rotated lenses again — the
+daemon's per-command semantics, and data/config/persistence — plus
+Claude Code external. Verdicts: the data lens found no poison; Claude
+Code said SAFE TO SHIP, and its one niggle was the round's sharpest
+find in disguise; the daemon lens found the poison:
+
+- **The 5+-layout seat.** The RMLVO configure's group ceiling trusted
+  the DECLARED layouts count — but the classic evdev rules resolve
+  only layout[1..=4]: a five-layout declaration compiles to four
+  groups (xkb warns, exits 0), the ceiling said five, and a group-4
+  configure sailed through onto a four-group map. The compositor
+  wrapped the group to 0: every indicator and cap named the fifth
+  language while the fingers typed the first alphabet — the exact
+  "what is drawn is what gets typed" violation the project exists to
+  prevent. The panel even knew (its groupCount clamps to 4) but its
+  picks rode unclamped. The ceiling now counts the COMPILED map
+  (`compiled_group_count`, the same principle the kb_file door has
+  lived by since its own incident); `declared_group_count` is gone,
+  its test rewritten against the compiled authority.
+- **The §81 arm was dead code — Claude Code's catch.** The err
+  dispatcher already had an `err bad group` arm (caps-shaped) ABOVE
+  the one §81 added below `err cannot configure keymap`; the chain
+  never reached it. The orphaned-configure poison §81 claimed to fix
+  was still live, and no suite or lab leg could see the wiring. The
+  fix: ChordAcks slots now carry the command's VERB (the line's first
+  token, preserved across arming and settling), the FIFO pop exposes
+  what the reply settled, and ONE arm at the top of the chain parts
+  the ledgers on it — a configure-earned refusal settles the queue
+  entry (configureFailed, no modifier lift: the refusal precedes any
+  install or drain), a caps/group-earned one keeps the caps-shaped
+  handling, an unattributable pop takes the conservative caps-shaped
+  reading. The suite pins the verbs.
+- Niggles fixed: `text` payloads keep their trailing spaces (peeled
+  off a front-only trim, CR framing stripped — the parser's own
+  contract, which the global line trim violated; `text-unicode` stays
+  on the trimmed path, its payload is structured hex); an idle
+  negotiated client now owes traffic (60 s of post-handshake silence
+  drops the slot — three hung probe clients could lock the panel out
+  with `err too many clients` until a restart; the real panel speaks
+  every 15 s since §80); `emojiCloseAfterPick` persists as a real
+  boolean (the one boolean among the segmented controls was writing
+  the legacy "true"/"false" string the loader's heal exists to cure);
+  the KBFILE half of the compositor pipeline aborts on a FAILED read
+  like the devices half (a transient getoption failure used to read
+  as an observed-empty kb_file — the panel forgot a real custom
+  keymap permanently).
+- LIVE-WITH recorded: `mods` is authoritative from any negotiated
+  connection (same-user trust boundary, documented semantics); the
+  per-path save-failure notice borrows one wording for both channels.
+
+Tooling: the wall now PROBES for the live Hyprland signature instead
+of trusting `ls -t | head -1` (twice in one session the newest dir
+was a corpse the legs themselves left behind; verified by planting a
+fake corpse and watching the legs pass).
+
+55 Rust tests (two new), all host suites, clippy, the wall's canary
+(15) and restart-settle (8), the nested 40 — green on the fixed tree.
+Committed locally; push and deploy wait for the owner's word. The
+stop-rule counter stays at zero: one poison, and the previous round's
+fix was half-placed.

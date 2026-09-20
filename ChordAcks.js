@@ -37,12 +37,18 @@ function initial() {
 
 // One command went out and will be answered. Called only after a
 // successful write; every kind of command queues, because every kind is
-// answered.
+// answered. The slot carries the command's VERB (the line's first
+// token): an err is content-ambiguous — `err bad group` answers a
+// configure, a caps pre-fetch or a `group` alike — and the dispatcher
+// must know WHICH command the reply settled to do the right thing to
+// the right ledger (round 17: an arm that guessed wrong either orphaned
+// a configure entry or dropped one an err never answered).
 function sent(state, line) {
     var text = String(line || "")
     if (text === "") return state
+    var verb = text.split(/\s+/)[0]
     return {
-        queue: state.queue.concat([{ chordFinal: false }]),
+        queue: state.queue.concat([{ chordFinal: false, verb: verb }]),
         chordDone: state.chordDone,
         chordFrom: state.chordFrom,
         chordError: state.chordError
@@ -68,9 +74,14 @@ function chordStart(state) {
 // waited NEXT. An empty queue at arming leaves the wait to the caller's
 // guard timer.
 function chordArmed(state, done) {
-    var queue = state.queue.map(function () { return { chordFinal: false } })
+    var queue = state.queue.map(function (slot) {
+        return { chordFinal: false, verb: slot.verb }
+    })
     if (queue.length > 0)
-        queue[queue.length - 1] = { chordFinal: true }
+        queue[queue.length - 1] = {
+            chordFinal: true,
+            verb: queue[queue.length - 1].verb
+        }
     return {
         queue: queue,
         chordDone: done || null,
@@ -84,10 +95,12 @@ function chordArmed(state, done) {
 // answer success means. Inside the chord's region a non-ok poisons the
 // verdict. `done` is the armed chord's callback when the popped slot was
 // its final line, with `success` true only when that reply is `ok` AND
-// nothing in the region failed.
+// nothing in the region failed. `verb` names the command this reply
+// settled — the dispatcher's only honest way to tell an err that
+// answers a configure from one that answers a caps pre-fetch.
 function replyReceived(state, ok) {
     if (state.queue.length === 0)
-        return { state: state, done: null }
+        return { state: state, done: null, verb: null }
     var queue = state.queue.slice(1)
     var popped = state.queue[0]
     var chordFrom = state.chordFrom
@@ -101,13 +114,15 @@ function replyReceived(state, ok) {
         return {
             state: { queue: queue, chordDone: state.chordDone,
                 chordFrom: chordFrom, chordError: chordError },
-            done: null
+            done: null,
+            verb: popped.verb
         }
     return {
         state: { queue: queue, chordDone: null,
             chordFrom: chordFrom, chordError: chordError },
         done: state.chordDone,
-        success: ok === true && chordError === false
+        success: ok === true && chordError === false,
+        verb: popped.verb
     }
 }
 
@@ -116,7 +131,9 @@ function replyReceived(state, ok) {
 // and the queue keeps draining on its own.
 function chordSettled(state) {
     return {
-        queue: state.queue.map(function () { return { chordFinal: false } }),
+        queue: state.queue.map(function (slot) {
+            return { chordFinal: false, verb: slot.verb }
+        }),
         chordDone: null,
         chordFrom: 0,
         chordError: false

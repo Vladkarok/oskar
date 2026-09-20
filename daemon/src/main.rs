@@ -2474,12 +2474,19 @@ fn group_in_range(group: u32, installed_groups: usize) -> bool {
 /// old map refuses every grow (a one-group map installing two), which is
 /// a client acting correctly. Zero declared layouts still carries group
 /// 0: a file-only configure owes no layout list.
-fn declared_group_count(layouts: &str) -> usize {
-    layouts
-        .split(',')
-        .filter(|entry| !entry.trim().is_empty())
-        .count()
-        .max(1)
+/// The group count of what a configure ACTUALLY compiles to (round 17):
+/// the classic evdev rules resolve only layout[1..=4] — a five-layout
+/// declaration compiles to FOUR groups while the layouts string still
+/// says five (xkb warns and silently drops the rest), so trusting the
+/// declaration let group 4 ride past a four-group map: the compositor
+/// wrapped it to 0 and the user typed the first alphabet under the
+/// fifth language's name, every indicator agreeing with the lie. The
+/// kb_file door has counted this way since its own incident
+/// (custom_keymap_group_count_bytes compiles its snapshot); now both
+/// doors agree — the map, never the declaration.
+fn compiled_group_count(config: &XkbConfig, kb_file_bytes: Option<&[u8]>) -> Option<usize> {
+    let text = compile_keymap_with(config, kb_file_bytes)?;
+    Some(keycap_facts_for_groups(&text).len().max(1))
 }
 
 fn is_published_keymap(path: &str) -> bool {
@@ -2823,8 +2830,23 @@ fn parse(line: &str) -> Option<Command> {
     }
 }
 
-fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
-    const MAX_CLIENTS: usize = 4;
+/// The plain-text verb, peeled off a line trimmed at the FRONT only
+/// (round 17): the payload is the user's string, and the global line
+/// trim used to eat its trailing spaces — `text a ` arrived as `a`, a
+/// spaces-only payload arrived as a bare `text` and answered "err
+/// unknown command", both against the parser's own documented contract.
+/// A single trailing CR (a CRLF client) is framing, not payload.
+/// `text-unicode` stays on the trimmed path on purpose: its payload is
+/// structured hex tokens, not a free string — whitespace around it is
+/// not data.
+fn free_text(front: &str) -> Option<Command> {
+    let front = front.strip_suffix('\r').unwrap_or(front);
+    front
+        .strip_prefix("text ")
+        .map(|rest| Command::Text(rest.to_string()))
+}
+
+fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {    const MAX_CLIENTS: usize = 4;
     let clients = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
         if clients.fetch_add(1, Ordering::AcqRel) >= MAX_CLIENTS {
@@ -2944,6 +2966,17 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
     let mut pending: Vec<u8> = Vec::new();
     let mut handshaked = false;
     let connected_at = Instant::now();
+    // Round 17: an idle NEGOTIATED client also owes traffic. Before
+    // this, only the pre-handshake window was absolute — a client that
+    // hello'd and never spoke again parked one of the four slots for
+    // the process lifetime, and three hung probe clients would lock
+    // the real panel out with `err too many clients` until a restart.
+    // 60 s of post-handshake silence drops the connection through the
+    // ordinary release path; the real panel survives by construction —
+    // §80's never-stopping probe speaks every 15 s, healthy or not,
+    // and a held key already arms its own tighter deadline.
+    let mut last_activity = Instant::now();
+    const NEGOTIATED_IDLE: Duration = Duration::from_secs(60);
     loop {
         // The only thing this connection ever waits on is its own next line.
         // Arming that wait with the cap's deadline is what enforces the cap
@@ -2982,11 +3015,21 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 .saturating_duration_since(Instant::now())
                 .max(Duration::from_millis(1))
         });
-        let timeout = match (handshake, hold) {
-            (Some(window), Some(hold)) => Some(window.min(hold)),
-            (Some(window), None) => Some(window),
-            (None, hold) => hold,
+        let idle = if handshaked && hold.is_none() {
+            Some(
+                last_activity
+                    .checked_add(NEGOTIATED_IDLE)
+                    .map(|deadline| {
+                        deadline
+                            .saturating_duration_since(Instant::now())
+                            .max(Duration::from_millis(1))
+                    })
+                    .unwrap_or(Duration::from_millis(1)),
+            )
+        } else {
+            None
         };
+        let timeout = [handshake, hold, idle].into_iter().flatten().min();
         if stream.set_read_timeout(timeout).is_err() {
             break;
         }
@@ -3002,6 +3045,15 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             for code in expire_stuck_keys(&shared, &connection) {
                 held.retain(|entry| *entry != code);
             }
+        }
+        // The idle window is traffic-gated like the others (a client
+        // streaming frames keeps the reads succeeding; only silence
+        // closes it).
+        if handshaked
+            && hold_deadline(&shared, conn_id).is_none()
+            && last_activity.elapsed() >= NEGOTIATED_IDLE
+        {
+            break;
         }
         // The frame cap, enforced per CHUNK (the cross-round's core
         // finding: the audits' HIGH realization of known item 7 — an
@@ -3025,10 +3077,15 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             {
                 // The deadline came due. Pre-handshake past the window:
                 // this connection never said hello — drop it, freeing
-                // the slot (the audits' starvation finding). Otherwise
-                // this is the hold cap's wakeup: lift what is due and
-                // keep waiting for the rest of the line.
+                // the slot (the audits' starvation finding). Post-
+                // handshake with no hold due, it is the negotiated-idle
+                // window closing — same cure, same release path.
+                // Otherwise this is the hold cap's wakeup: lift what is
+                // due and keep waiting for the rest of the line.
                 if handshake_expired(handshaked, connected_at.elapsed()) {
+                    break;
+                }
+                if handshaked && hold_deadline(&shared, conn_id).is_none() {
                     break;
                 }
                 for code in expire_stuck_keys(&shared, &connection) {
@@ -3038,6 +3095,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             }
             Err(_) => break,
         };
+        last_activity = Instant::now();
         pending.extend_from_slice(&chunk[..read]);
         // Dispatch every COMPLETE line the buffer now holds; the tail
         // without its newline stays for the next chunk.
@@ -3076,6 +3134,10 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 poisoned = true;
                 break;
             };
+            // FRONT-trimmed for the free-text peel: the payload after
+            // `text ` keeps its trailing spaces (free_text's contract,
+            // CR framing included).
+            let front = line_str.trim_start();
             let line = line_str.trim();
             if line.is_empty() {
                 // Even this answers one line (round eleven's finding 7):
@@ -3153,7 +3215,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 }
                 continue;
             }
-            let reply = match parse(line) {
+            let reply = match free_text(front).or_else(|| parse(line)) {
                 Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
                 None => "err unknown command".to_string(),
             };
@@ -3525,7 +3587,13 @@ fn apply_locked(
         } else if config.kb_file.is_empty()
             || is_published_keymap(&config.kb_file)
         {
-            declared_group_count(&config.layouts)
+            // Round 17: the compiled map's own count, not the layouts
+            // string's declaration (see compiled_group_count) — the
+            // same principle the kb_file branch below already lives by.
+            match compiled_group_count(config, kb_file_bytes.as_deref()) {
+                Some(count) => count,
+                None => return "err cannot configure keymap".to_string(),
+            }
         } else {
             match custom_keymap_group_count_bytes(kb_file_bytes.as_deref().unwrap_or(&[])) {
                 Some(count) => count,
@@ -4344,18 +4412,27 @@ mod tests {
     }
 
     #[test]
-    fn a_configures_group_is_bounded_by_its_own_declared_layouts() {
-        // The incoming map is the authority: a grow from one group to
-        // two must not be refused for the old map's count.
-        assert_eq!(declared_group_count("us,ua"), 2);
-        assert_eq!(declared_group_count("us,ua,de,ru"), 4);
-        assert_eq!(declared_group_count("us"), 1);
-        // Separators are not layouts.
-        assert_eq!(declared_group_count("us,"), 1);
-        assert_eq!(declared_group_count(""), 1, "file-only configures still carry group 0");
-        assert!(group_in_range(1, declared_group_count("us,ua")));
-        assert!(!group_in_range(2, declared_group_count("us,ua")));
-        assert!(group_in_range(0, declared_group_count("")));
+    fn a_configures_group_is_bounded_by_its_own_compiled_map() {
+        // The INCOMING map is the authority (round 17 made that literal:
+        // the ceiling counts what the configure compiles to, never the
+        // declaration — classic evdev drops layouts past the fourth).
+        // A grow from one group to two must not be refused for the old
+        // map's count.
+        let cfg = |layouts: &str| {
+            match parse(&format!("configure\tevdev\tpc105\t{layouts}\t\t\t\t0")) {
+                Some(Command::Configure(config)) => config,
+                other => panic!("expected a configure, got {other:?}"),
+            }
+        };
+        assert_eq!(compiled_group_count(&cfg("us"), None), Some(1));
+        assert_eq!(compiled_group_count(&cfg("us,ua"), None), Some(2));
+        assert_eq!(compiled_group_count(&cfg("us,ua,de,ru"), None), Some(4));
+        // Separators are not layouts; a file-only configure still
+        // compiles one group and carries group 0.
+        assert_eq!(compiled_group_count(&cfg("us,"), None), Some(1));
+        assert!(group_in_range(1, 2));
+        assert!(!group_in_range(2, 2), "two groups stop before 2");
+        assert!(group_in_range(0, 1));
     }
 
     /// Ticket 06: the sidecar sits BESIDE the published keymap — the one
@@ -5669,6 +5746,49 @@ mod tests {
             text_scalars(&"a".repeat(MAX_TEXT_SCALARS + 1)).unwrap_err(),
             "err text too long"
         );
+    }
+
+    /// Round 17: the free-text peel reads the payload off a line trimmed
+    /// at the FRONT only — the global line trim used to eat the payload's
+    /// trailing spaces against the parser's own documented contract.
+    #[test]
+    fn free_text_keeps_the_payloads_trailing_spaces() {
+        match free_text("text a ") {
+            Some(Command::Text(payload)) => assert_eq!(payload, "a "),
+            other => panic!("expected a text command, got {other:?}"),
+        }
+        // A spaces-only payload is a payload, not a bare verb.
+        match free_text("text   ") {
+            Some(Command::Text(payload)) => assert_eq!(payload, "  "),
+            other => panic!("expected a text command, got {other:?}"),
+        }
+        // One CR of CRLF framing is not payload.
+        match free_text("text a\r") {
+            Some(Command::Text(payload)) => assert_eq!(payload, "a"),
+            other => panic!("expected a text command, got {other:?}"),
+        }
+        // A bare "text" is no command; `text-unicode` is structured hex,
+        // not a free string — it stays on parse's trimmed path.
+        assert!(free_text("text").is_none());
+        assert!(free_text("text-unicode 0041").is_none());
+    }
+
+    /// Round 17: the RMLVO ceiling counts the COMPILED map, never the
+    /// declaration — classic evdev rules resolve only layout[1..=4], so
+    /// five declared layouts compile to four groups and a group-4
+    /// configure must be refused (before, it silently typed group 0's
+    /// alphabet under the fifth language's name).
+    #[test]
+    fn rmlvo_ceiling_counts_the_compiled_map_not_the_declaration() {
+        let layouts = "us,ru,ua,it,fr";
+        let declared = layouts.split(',').filter(|s| !s.trim().is_empty()).count();
+        assert_eq!(declared, 5, "the fixture must declare five");
+        match parse("configure\tevdev\tpc105\tus,ru,ua,it,fr\t\t\t\t0") {
+            Some(Command::Configure(config)) => {
+                assert_eq!(compiled_group_count(&config, None), Some(4));
+            }
+            other => panic!("expected a configure, got {other:?}"),
+        }
     }
 
     // ---- the 2026-09-19 audit: malformed input must never wedge the helper ----

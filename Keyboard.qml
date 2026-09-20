@@ -1085,7 +1085,18 @@ Item {
             + "'[.keyboards[] | {name, main, active_layout_index, layout, rules, model, variant, options}]' 2>/dev/null); "
             + "[[ -n \"$compact\" ]] || exit 1; "
             + "printf 'DEVICES\\t%s\\n' \"$compact\"; "
-            + "kb_file=$(hyprctl getoption input:kb_file -j 2>/dev/null | jq -r '.str // \"\"'); "
+            // The KBFILE half aborts on a FAILED read like the devices
+            // half does (round 17's finding): a transient getoption
+            // failure used to read as an observed-empty kb_file — the
+            // panel then forgot a real custom keymap permanently (the
+            // recovery seed silenced, the share overwriting the user's
+            // map, the destruction restore writing ''). Empty JSON
+            // output with a live call is the honest "unset" and still
+            // passes through as [[EMPTY]].
+            + "kb_json=$(hyprctl getoption input:kb_file -j 2>/dev/null)"
+            + " || exit 1; "
+            + "[[ -n \"$kb_json\" ]] || exit 1; "
+            + "kb_file=$(printf '%s' \"$kb_json\" | jq -r '.str // \"\"'); "
             + "printf 'KBFILE\\t%s\\n' \"${kb_file:-[[EMPTY]]}\"; "
             + "printf '%s' \"$compact\" | jq -r '[.[].layout // \"\"] | join(\",\")' "
             + "| tr ',' '\\n' | sed '/^$/d' | sort -u | while read code; do "
@@ -1854,6 +1865,11 @@ Item {
                         reply === "ok")
                     root.chordAcks = ack.state
                     if (ack.done) root.chordAckCompleted(ack.done, ack.success)
+                    // What this reply ANSWERED, for the err arms below:
+                    // the FIFO pop is the only honest witness of which
+                    // command a content-ambiguous err settles (round 17
+                    // — `err bad group` serves three different verbs).
+                    var answeredVerb = String(ack.verb || "")
                     if (reply === "hello " + Session.PROTOCOL_VERSION) {
                         root.serviceIncompatible = false
                         root.inputReady = false
@@ -2062,32 +2078,68 @@ Item {
                             // journal line without bricking the keyboard.
                             console.warn("[oskar] ownership refusal:", reply)
                         } else if (reply === "err bad group") {
-                            // A caps request earns this when the helper
-                            // refuses facts for a group its keymap does not
-                            // carry; since ticket 31 a refused configure or
-                            // `group` command answers the same way. The
-                            // panel can earn the latter two in one place
-                            // since §53: a settle-held group meeting a
-                            // layout list that shrank inside the window —
-                            // a triple coincidence that self-heals through
-                            // the quiesce follow — and the handling below
-                            // stays caps-shaped on purpose there too. For the group being DRAWN that
-                            // is keymap-wide disagreement about the world, and
-                            // the hint says so instead of letting the built-in
-                            // table pass for it. For one of the other groups
-                            // the panel pre-fetches it is not: the drawn group
-                            // still has current facts, typing is still
-                            // answering the installed keymap, and the only
-                            // consequence is that switching INTO that group
-                            // will go the slow way. Refusing the whole world
-                            // over it would gate a keyboard that is working.
-                            root.capsFactsFailed = !Session.capsCurrent(root.session)
-                            if (root.capsFactsFailed) {
-                                root.inputReady = false
+                            // One err, three verbs it can answer (round
+                            // 17 straightened the whole arm): a caps
+                            // pre-fetch for a group the keymap does not
+                            // carry, a `group` command, or — since
+                            // ticket 31 — a configure whose own incoming
+                            // map cannot carry its group. The FIFO pop
+                            // above says WHICH this one settled, and the
+                            // ledgers part ways on it.
+                            if (answeredVerb === "configure"
+                                    && root.session.queue.length > 0) {
+                                // The refusal answered a QUEUED configure:
+                                // its entry must settle or it orphans the
+                                // queue — settled() false forever, and
+                                // with §80's never-stopping timer a
+                                // permanent 2 s hello → keyboards →
+                                // compositor pipeline → configure cycle
+                                // until a socket rebuild. The §53 settle
+                                // window makes it reachable (a group
+                                // legal for the old map, a layout list
+                                // that shrank inside it). Failed clean,
+                                // no modifier lift: this refusal happens
+                                // before any install or drain, so a lock
+                                // the panel shows is a lock the device
+                                // still holds.
+                                root.session = Session.reduce(root.session,
+                                    { type: "configureFailed" })
+                            } else if (answeredVerb === "caps"
+                                    || answeredVerb === "group") {
+                                // A caps pre-fetch (or a group switch)
+                                // the helper refused. For the group being
+                                // DRAWN that is keymap-wide disagreement
+                                // about the world, and the hint says so
+                                // instead of letting the built-in table
+                                // pass for it. For one of the other
+                                // groups the panel pre-fetches it is not:
+                                // the drawn group still has current
+                                // facts, typing is still answering the
+                                // installed keymap, and the only
+                                // consequence is that switching INTO
+                                // that group will go the slow way.
+                                // Refusing the whole world over it would
+                                // gate a keyboard that is working.
+                                root.capsFactsFailed =
+                                    !Session.capsCurrent(root.session)
+                                if (root.capsFactsFailed) {
+                                    root.inputReady = false
+                                } else {
+                                    console.error("[oskar] helper has no"
+                                        + " facts for a pre-fetched group;"
+                                        + " that group will resolve on"
+                                        + " switch")
+                                }
                             } else {
-                                console.error("[oskar] helper has no facts for a"
-                                    + " pre-fetched group; that group will"
-                                    + " resolve on switch")
+                                // An unattributable pop (a slot from
+                                // before verbs carried, or a bypassed
+                                // write): the caps-shaped reading is the
+                                // conservative one — it can gate, it can
+                                // never corrupt the configure ledger.
+                                root.capsFactsFailed =
+                                    !Session.capsCurrent(root.session)
+                                if (root.capsFactsFailed)
+                                    root.inputReady = false
                             }
                         } else if (reply === "err cannot configure keymap") {
                             // A FAILED configure is authoritative about the
@@ -2139,29 +2191,6 @@ Item {
                                 sendCommandUnchecked("up " + lockedPositions[u])
                             sendCommandUnchecked("mods 0")
                             root.inputReady = false
-                        } else if (reply === "err bad group") {
-                            // The ceiling refusal (ticket 31) answers a
-                            // command the session queue holds an entry
-                            // for, and an entry settled by no `configured`
-                            // reply ORPHANS the queue: settled() stays
-                            // false forever, and with it — since §80's
-                            // never-stopping timer — the panel never
-                            // leaves the 2 s repair cadence: a permanent
-                            // hello → keyboards → compositor pipeline →
-                            // configure cycle every two seconds, ~86k
-                            // process spawns a day on a battery laptop,
-                            // until a socket rebuild or a shell restart.
-                            // The settle-held-group window (§53) makes it
-                            // reachable: a group legal for the old map,
-                            // refused by a layout list that shrank inside
-                            // the window. Failed clean like the compile
-                            // refusal, MINUS its modifier lift: this
-                            // refusal happens before any install or
-                            // drain, so a lock the panel shows is a lock
-                            // the device still holds — nothing to lift,
-                            // nothing to re-assert.
-                            root.session = Session.reduce(root.session,
-                                { type: "configureFailed" })
                         } else if (reply === "err unknown command") {
                             // Protocol 5 rewrote every text/text-unicode
                             // refusal into `text-err …`, settled by the arm

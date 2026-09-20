@@ -24,6 +24,33 @@ QtObject {
             T.equal(stray.state.queue.length, 0)
         })
 
+        T.test("a slot names its verb, and the reply exposes what it settled", function () {
+            // Round 17: `err bad group` answers a configure, a caps
+            // pre-fetch and a `group` alike — the dispatcher can only
+            // do the right thing to the right ledger if the pop says
+            // WHICH command the reply answered. Arming and settling
+            // must not erase the names either.
+            var state = ChordAcks.initial()
+            state = ChordAcks.sent(state, "caps\t4")
+            state = ChordAcks.sent(state, "configure\t…")
+            state = ChordAcks.sent(state, "ping")
+            T.equal(state.queue[0].verb, "caps")
+            T.equal(state.queue[1].verb, "configure")
+            T.equal(state.queue[2].verb, "ping")
+            var first = ChordAcks.replyReceived(state, false)
+            T.equal(first.verb, "caps", "the err names the caps it answered")
+            var armed = ChordAcks.chordArmed(first.state, null)
+            T.equal(armed.queue[0].verb, "configure", "arming preserves verbs")
+            var second = ChordAcks.replyReceived(armed, false)
+            T.equal(second.verb, "configure")
+            var settled = ChordAcks.chordSettled(second.state)
+            T.equal(settled.queue[0].verb, "ping", "settling preserves verbs")
+            var third = ChordAcks.replyReceived(settled, true)
+            T.equal(third.verb, "ping")
+            // An empty queue has nothing to name.
+            T.equal(ChordAcks.replyReceived(third.state, true).verb, null)
+        })
+
         T.test("the chord settles on the drain, not the first ok", function () {
             // The review's fourth round, head on: a chord of three lines
             // arms its wait after dispatch, and the FIRST ok — the Ctrl

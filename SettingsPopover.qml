@@ -820,7 +820,14 @@ Rectangle {
                     ]
                     current: panel.emojiCloseAfterPick
                     onPicked: function (value) {
-                        panel.setOverride("emojiCloseAfterPick", value)
+                        // The segmented control's signal carries strings;
+                        // this row is the one boolean among the segments
+                        // (round 17's finding), and writing "true"/"false"
+                        // to config.json resurrects exactly the legacy
+                        // string form the loader's heal exists to cure —
+                        // every other boolean saves as a real boolean.
+                        panel.setOverride("emojiCloseAfterPick",
+                            value === "true")
                     }
                 }
                 SettingsResetChip {
