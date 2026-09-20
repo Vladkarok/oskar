@@ -112,7 +112,14 @@ function visibleEntries(entries, catalog, limit) {
         var entry = entries[i]
         var key = toneFamilyKey(entry.emoji)
         var base = bases[key]
-        var visible = base && String(base.group) !== "Text" ? base : entry
+        // "Both directions" means BOTH (§87, three reviewers again): a
+        // Text entry is never REMAPPED either — its family key still
+        // resolves to the catalogue twin's base, and substituting that
+        // drew ♥️ on the Text tab and delivered twin bytes down the
+        // clipboard route. The shelf's tiles are exactly what the shelf
+        // says they are.
+        var visible = String(entry.group) !== "Text" && base
+            && String(base.group) !== "Text" ? base : entry
         var identity = visible.emoji
         if (seen[identity]) continue
         seen[identity] = true

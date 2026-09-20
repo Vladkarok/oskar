@@ -126,10 +126,71 @@ QtObject {
                         "a shelf entry substituted onto " + groups[g])
                 }
             }
-            // The Text tab itself passes through untouched too.
+            // The Text tab itself passes through AS ITSELF, per tile —
+            // §87's mirror poison: the length survived the twin
+            // substitution (each glyph maps to a distinct twin, no
+            // dedup), so only emoji equality catches the rewrite.
             var textSlice = Page.groupEntries(merged, "Text")
             var textView = Page.visibleEntries(textSlice, merged, 0)
             T.equal(textView.length, TextGlyphs.entries().length)
+            for (var t = 0; t < textView.length; t++) {
+                T.equal(textView[t].emoji, textSlice[t].emoji,
+                    "Text tile " + textSlice[t].emoji
+                        + " came out as " + textView[t].emoji)
+                T.equal(textView[t].group, "Text")
+            }
+        })
+
+        T.test("a twinned glyph survives the whole pick flow (§87's mirror)", function () {
+            // END TO END, the way the page really works: the tile's
+            // model → the tone step → the route table. A twinned glyph
+            // under a selected tone must still deliver itself, as a
+            // lone BMP scalar, on the keysym fast lane.
+            var merged = Page.allEntries()
+            var textSlice = Page.groupEntries(merged, "Text")
+            var textView = Page.visibleEntries(textSlice, merged, 0)
+            var tones = ["", "\u{1F3FB}", "\u{1F3FD}", "\u{1F3FF}"]
+            var twinned = 0
+            for (var i = 0; i < textView.length; i++) {
+                var twin = textView[i].emoji + "\uFE0F"
+                var isTwin = false
+                for (var m = 0; m < merged.length; m++)
+                    if (merged[m].emoji === twin) isTwin = true
+                if (!isTwin) continue
+                twinned++
+                for (var t = 0; t < tones.length; t++) {
+                    var toned = Page.entryForTone(textView[i], tones[t], merged)
+                    T.equal(toned.emoji, textView[i].emoji,
+                        textView[i].emoji + " under a tone resolved to "
+                            + toned.emoji)
+                    T.equal(Page.deliveryRoute(toned.emoji, "zcode"), "text",
+                        textView[i].emoji + " routed off the fast lane")
+                    T.equal(Page.deliveryRoute(toned.emoji,
+                        "org.telegram.desktop"), "text")
+                }
+            }
+            T.equal(twinned >= 15, true,
+                "the fixture expects the twin set, got " + twinned)
+        })
+
+        T.test("searchEverything caps the catalogue side, appends glyphs whole", function () {
+            var results = Page.searchEverything("a", 8)
+            var fromCatalog = 0
+            var fromShelf = 0
+            var mergedByEmoji = {}
+            var merged = Page.allEntries()
+            for (var m = 0; m < merged.length; m++)
+                mergedByEmoji[merged[m].emoji] = merged[m]
+            for (var r = 0; r < results.length; r++) {
+                if (results[r].group === "Text") fromShelf++
+                else fromCatalog++
+            }
+            T.equal(fromCatalog <= 8, true,
+                "catalogue side capped at the limit, got " + fromCatalog)
+            // "a" matches shelf keywords (arrow, sun...) — they ride
+            // whole past the cap.
+            T.equal(fromShelf > 0, true,
+                "glyph hits appended past the cap")
         })
 
         T.test("no tone ever applies to a glyph (§86's poison 2)", function () {

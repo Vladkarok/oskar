@@ -3048,3 +3048,41 @@ day-old shelf code, the campaign's pattern holding to the last:
 55 Rust tests, 21 host suites, the wall's canary (15) and
 restart-settle (8) — green; deployed live. The stop-rule counter
 stays at zero, but the round ran itself.
+
+## 87. The mirror: the belt that guarded the wrong side
+
+Round 6 (autonomous, per the standing order) — all three reviewers
+converged a third time, on §86's own fix: the visibleEntries belt
+checked `base.group` where the bug lived in `entry.group` — a dead
+guard (familyBases already kept Text entries out of the base table),
+and the substitution ran in the MIRROR direction. The Text tab drew
+emoji twins for 22 of 108 glyphs (♥️ where the owner asked for ♥),
+picks delivered twin bytes down the clipboard route, and the tone
+immunity was bypassed from the substituted side (✌ tile → ✌🏽 again).
+The Text-tab pin asserted LENGTH — twin substitution preserves it —
+a tautology of the class §84 decried; the negative test had broken
+both guards at once and only proved the forward direction.
+
+- Fixed: `visibleEntries` never remaps a Text entry (both directions,
+  this time proven separately — breaking the entry-side guard alone
+  now reddens the suite with the exact symptom); the Text-tab pin is
+  per-tile emoji equality, and a new END-TO-END pin walks a twinned
+  glyph through the page's real flow — model → tone step → route
+  table — asserting the fast lane holds.
+- The serialization claim got its missing lanes: the paste chip
+  refuses while a direct pick owns the window; a direct pick refuses
+  while the chip's paced chord runs (the panel-paced Ctrl would ride
+  the glyph's tap); the clipboard-MODE branch gates on direct busy
+  (a mode flip mid-flight could otherwise interleave).
+- The clipboard transaction's two silent drop arms (five-mismatch
+  verify, watchdog stall) flash pickFailed now — a dropped pick is
+  the user's click vanishing.
+- searchEverything gained its pin (catalogue side capped, glyph hits
+  appended whole); the deleted placeholder's orphaned comments went.
+- LIVE-WITH recorded: the pre-collapse search cap can under-fill a
+  variant-dense page by a few tiles; emojiPickRefused can mask a
+  newer pickFailed flash for its beat; a mode-flip cancel is silent
+  (the owner just flipped it himself).
+
+55 Rust tests, 21 host suites, the wall's canary (15) and
+restart-settle (8) — green; deployed live.

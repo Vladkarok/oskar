@@ -651,6 +651,13 @@ Item {
             root.flashRefused(UiStrings.tr("hint.pasteBusy", root.uiLang))
             return
         }
+        // The §86 serialization's third lane (§87): a direct text pick
+        // in flight owns the window the same way — the chip's paced
+        // chord would interleave its Ctrl with the delivery.
+        if (root.directPickBusy) {
+            root.flashRefused(UiStrings.tr("hint.pasteBusy", root.uiLang))
+            return
+        }
         // R2: one target determination before any delivery choice. A
         // panel-local input — the colour field, or the emoji page whose
         // search every key is typing into while it is open — takes the
@@ -1627,6 +1634,9 @@ Item {
             killProcessGroup(emojiClipboardVerify)
             console.warn("[oskar] emoji verify stalled — pick dropped,"
                 + " the clipboard keeps whatever it holds")
+            // §87: a dropped pick is the user's click vanishing — the
+            // same silence the chord refusal used to be. Flash it.
+            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
             startNextEmojiTxn()
         }
     }
@@ -1673,8 +1683,10 @@ Item {
 
     function pickViaDirect(emoji, unicodeEntry) {
         // The other half of the cross-route gate: a clipboard
-        // transaction mid-flight owns the window (see onEmojiChosen).
-        if (root.emojiTxnState.phase !== "idle") {
+        // transaction mid-flight owns the window (see onEmojiChosen) —
+        // and so does a paced paste chord (§87's fourth lane: the
+        // panel-paced Ctrl would ride the glyph's tap).
+        if (root.emojiTxnState.phase !== "idle" || keyboard.pastePacing) {
             root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
             return
         }
@@ -1822,6 +1834,9 @@ Item {
         if (result.action === "drop") {
             console.warn("[oskar] emoji clipboard publication not confirmed;"
                 + " pick dropped, no chord sent")
+            // §87: the drop is the click vanishing — flash, don't
+            // journal.
+            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
             startNextEmojiTxn()
             return
         }
@@ -3451,6 +3466,11 @@ Item {
                 // clients (ZCode) that drop the typed routes. Direct keeps
                 // decisions §39/§40 untouched.
                 if (root.emojiDelivery === "clipboard") {
+                    if (root.directPickBusy) {
+                        root.flashRefused(UiStrings.tr("hint.pickFailed",
+                            root.uiLang))
+                        return
+                    }
                     root.pickViaClipboard(delivered.emoji)
                     return
                 }
