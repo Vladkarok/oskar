@@ -2361,3 +2361,33 @@ Three gaps in the round-seven fixes, all real:
   find-based enumeration now, and an empty enumeration is a failure,
   never a pass. Verified in a fresh v0.2.1 archive: clean passes,
   sabotage fails both.
+
+## 69. The review's ninth round: overlaps, not machines
+
+The reviewer named the recurring weakness — the suites exercise each
+state machine alone, and the defects live where two operations overlap.
+Three overlaps, all reproduced by controlled event ordering:
+
+- **A share run records only the generation IT launched.** A newer
+  keymap arriving mid-run used to overwrite the running process's
+  target; the old run's success then marked the NEW generation shared
+  and the required clear-and-set rerun never happened — the compositor
+  compiling yesterday's bytes while the keyboard typed today's.
+  `launched` is immutable per run; `wished` moves; the guard reruns for
+  anything newer.
+- **A second paste click refuses instead of resetting.** chordStart ran
+  at dispatch entry without asking whether a chord was already in
+  flight — clicking the paste chip mid-chord wiped the running chord's
+  error tracking and could turn its failure into success. pasteCurrent
+  refuses clean while another chord paces or awaits its verdict, and
+  nothing of the first's tracking is touched.
+- **Cancellation aborts the pacer.** A mode flip cleared the
+  transaction and the chord wait but left the Wine/Proton tick timer
+  running — the next tick sent the V press onto a Ctrl the cancelled
+  chord still held. cancelEmojiPublish aborts the paced paste (whose
+  own path compensates the sent prefix and releases the world) before
+  clearing the wait.
+
+All three are wiring-level — the host suites cannot reach them; the VM
+integration suite (delayed replies, cancel-then-retry, disconnects)
+stays the recorded answer to the named weakness.

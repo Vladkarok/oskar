@@ -1481,6 +1481,12 @@ Item {
         emojiPublishVerifyTimer.stop()
         if (emojiClipboardVerify.running)
             killProcessGroup(emojiClipboardVerify)
+        // A paced chord mid-flight dies with its transaction (round
+        // nine): the tick timer kept running after a mode-flip cancel,
+        // sending the V press onto a Ctrl the cancelled chord still
+        // held. The abort compensates what the sent prefix pressed and
+        // releases the world.
+        if (keyboard.pastePacing) keyboard.abortPacedPaste()
         // The cancelled pick's chord wait dies with it too (round seven):
         // a dispatched chord cannot be un-dispatched, but its ARMED
         // verdict must not survive the cancel and later complete

@@ -618,8 +618,17 @@ Item {
     property bool userKeymapObserved: false
     function shareKeymapWithCompositor() {
         if (session.ackedGen === 0 || sharedKeymapGen === session.ackedGen) return
-        shareProcess.wanted = session.ackedGen
-        if (!shareProcess.running) shareProcess.running = true
+        // `launched` is captured per RUN (round nine): a newer keymap
+        // arriving while this one is in flight only updates the wish,
+        // and the run's completion records the generation IT was told —
+        // so a newer pending gen fails the guard above and reruns the
+        // clear-and-set, instead of being marked shared by an older
+        // run's exit and never re-read.
+        shareProcess.wished = session.ackedGen
+        if (!shareProcess.running) {
+            shareProcess.launched = session.ackedGen
+            shareProcess.running = true
+        }
         // Cleared and set rather than set: assigning the same path again is a
         // no-op, and a republished file under the same name has to be re-read
         // or the compositor keeps compiling the keymap before this one.
@@ -638,7 +647,12 @@ Item {
     /// of the session, which is the defect §35 exists to end.
     Process {
         id: shareProcess
-        property int wanted: 0
+        // The generation this RUN was launched for (immutable while it
+        // runs) and the newer one waiting behind it; `wished` moves, 
+        // `launched` does not — the completion records `launched`, and
+        // the caller's guard reruns for anything newer.
+        property int launched: 0
+        property int wished: 0
         property int attempts: 0
         command: ["bash", "-c",
             // The path comes from the same normalizing builder the
@@ -668,7 +682,9 @@ Item {
                 Quickshell.env("XDG_RUNTIME_DIR")))]
         onExited: (code, status) => {
             if (code === 0 && status === 0) {
-                root.sharedKeymapGen = wanted
+                // Only what THIS run launched is now shared; anything
+                // newer keeps the guard above armed and reruns.
+                root.sharedKeymapGen = launched
                 attempts = 0
                 return
             }
@@ -1390,6 +1406,15 @@ Item {
     function pasteCurrent(wmClass, completed) {
         var done = completed || null
         var cls = String(wmClass || "")
+        // One chord at a time, and a second click must not touch the
+        // first's tracking (round nine): chordStart used to reset the
+        // region and every recorded error just because the paste chip
+        // was clicked mid-chord — a running failure turned success the
+        // moment its final ok arrived. Refused clean, nothing reset.
+        if (root.pastePacing || root.chordAcks.chordDone !== null) {
+            if (done) done(false)
+            return false
+        }
         var chord = Modifiers.pasteChordForClass(cls)
         console.log("[oskar] paste chord for", cls === "" ? "(unknown class)" : cls,
             "->", (chord.ctrl ? "Ctrl+" : "") + (chord.shift ? "Shift+" : "")
@@ -1406,13 +1431,6 @@ Item {
             position: chord.position
         }
         if (Modifiers.usesWinePasteChord(cls.toLowerCase())) {
-            // Refused while pacing, not fallen through to the instant
-            // path: an immediate write here would interleave with the
-            // draining queue (review finding).
-            if (root.pastePacing) {
-                if (done) done(false)
-                return false
-            }
             root.pastePacing = true
             root.pastePacedLines = []
             applyModifierEvent(event, function (line) {
