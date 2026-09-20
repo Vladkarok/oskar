@@ -77,11 +77,15 @@ get_kbfile() {
 # tabs to the record section, 0x1F between a record's fields, and the
 # first level field is a type tag ('t') followed by the glyph.
 cap_for() {
-  { printf 'caps 0 %s\n' "$1" | timeout 2 socat -t1 - \
+  # hello rides the same connection (round eight): the helper gates
+  # every command behind a completed handshake, and a bare caps query
+  # answers "err hello first" — the first reply line is the hello's.
+  { printf 'hello 5\ncaps 0 %s\n' "$1" | timeout 2 socat -t1 - \
     UNIX-CONNECT:"$RUNTIME_DIR/control.sock" 2>/dev/null |
     python3 -c '
 import sys
-line = sys.stdin.read().split("\n")[0]
+lines = sys.stdin.read().split("\n")
+line = lines[1] if len(lines) > 1 else ""
 parts = line.split("\t", 4)
 if len(parts) < 4 or not parts[3]:
     sys.exit(0)

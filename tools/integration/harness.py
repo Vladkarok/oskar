@@ -32,6 +32,10 @@ import time
 # name. The nested session has no other virtual keyboard to collide with.
 DEVICE_PREFIX = "hl-virtual-keyboard"
 
+# The protocol this harness speaks; the daemon gates every command
+# behind a completed matching hello.
+PROTOCOL_VERSION = 5
+
 # Each compile the helper performs writes one of these.
 COMPILE_MARK = "keymap compiled for"
 
@@ -63,6 +67,12 @@ class Client:
         # left at the locale default would encode emoji as ASCII or die trying
         # on a C-locale guest.
         self._stream = self._socket.makefile("rw", encoding="utf-8")
+        # Round eight's lesson, applied here too: the helper executes
+        # nothing before a completed hello, so every client negotiates on
+        # its own connection — the panel, doctor, the recovery script and
+        # this harness alike. The reply is surfaced rather than asserted:
+        # a not-ready helper is a legitimate answer a test may want.
+        self.hello_reply = self.send(f"hello {PROTOCOL_VERSION}")
 
     def send(self, command):
         """Write one protocol line, return the helper's reply."""

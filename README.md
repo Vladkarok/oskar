@@ -22,26 +22,12 @@ from the Omarchy theme.
 
 ## Status
 
-**v0.2.1 — released 2026-09-20** (v0.2.0 the same day carried the
-endonym chooser and the review hardening through round four; 0.2.1 adds
-rounds five–seven: the paste-chord command-correlation queue, the
-packaging gate that can no longer silently skip, and a daemon that
-executes nothing before a completed protocol hello) (v0.1.0 went public 2026-09-17; v0.1.1
-landed the two-lab security audit's hardening — see SECURITY.md; 0.1.2
-followed with the drag-line and notice polish). Since 0.1.2: languages
-are named in their own language on the chip and in the chooser
-(English, Українська, Русский, Italiano…), and four external-review
-rounds hardened the helper and the panel — malformed configures refused
-before xkbcommon, bounded keymap reads, traffic-independent socket
-deadlines, clipboard pipelines killed by process group, and the paste
-chord settling on the helper's own acknowledgement. The owner
-daily-drives it on his own machine (that is how most of it was found).
-An AUR package (`oskar`) follows as soon as AUR registration reopens;
-until then the source install below is the way.
-
-Known-untested, honestly: real-hardware sleep/wake, and real-finger
-touchscreens (the touch profile is emulator- and Qt-synthesis-proven
-— see Input profile).
+Alpha, daily-driven by its author on his own machine — that is how most
+of it was found and fixed. There are **no releases yet**: the tag
+churn of the first days was premature and has been taken down, and a
+numbered version will appear only after the review rounds settle. Until
+then the source install below is the way, and the changelog that
+matters is `docs/decisions.md`.
 
 ## Layout
 

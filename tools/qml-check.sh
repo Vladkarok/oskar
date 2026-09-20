@@ -66,10 +66,12 @@ status=0
 found=""
 # Round eight: enumerate the FILESYSTEM, not `git ls-files` — a release
 # archive carries no .git, the old enumeration came back empty, and the
-# check blessed whatever it was handed. Tests/tools stay out; an empty
-# enumeration is a failure, never a pass.
+# check blessed whatever it was handed. Tests, tools, the daemon's
+# vendored tree and every hidden directory (a .scratch experiment must
+# not gate the build) stay out; an empty enumeration is a failure, never
+# a pass.
 mapfile -t qml_files < <(find "$root" -type f -name '*.qml' \
-  -not -path "$root/tests/*" -not -path "$root/tools/*" \
+  -not -path "$root/.*" -not -path "$root/tests/*" -not -path "$root/tools/*" \
   -not -path "$root/daemon/*" -not -path "$root/third_party/*" | sort)
 if (( ${#qml_files[@]} == 0 )); then
   echo "QML check failed — no QML files found under $root; is this a tree at all?" >&2
