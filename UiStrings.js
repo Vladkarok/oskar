@@ -44,10 +44,10 @@ var STRINGS = {
         it: "La scelta non è andata a buon fine — riprova tra un istante"
     },
     "hint.pasteBusy": {
-        en: "Paste did not start — another paste is still finishing",
-        ru: "Вставка не началась — предыдущая ещё завершается",
-        uk: "Вставка не почалася — попередня ще завершується",
-        it: "Incolla non è partito — il precedente sta ancora finendo"
+        en: "Paste did not start — try again in a moment",
+        ru: "Вставка не началась — попробуйте ещё раз через мгновение",
+        uk: "Вставка не почалася — спробуйте ще за мить",
+        it: "Incolla non è partito — riprova tra un istante"
     },
     "hint.langMenuBlocked": {
         en: "Close the open page first — then switch language",

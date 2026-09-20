@@ -2769,3 +2769,56 @@ stayed green after.
 restart-settle (8), and the nested 40 — all green on the fixed tree.
 Committed locally; push and deploy wait for the owner's word. The
 stop-rule counter stays at zero: the round found two poisons.
+
+## 81. The second stop-test round: the orphaned configure entry
+
+The owner called for the cycle again ("повторяем цикл"). Two subagents
+with ROTATED lenses — a cold adversarial audit of the §80 commit
+itself, and a lifecycle/resources pass over the whole tree — plus
+Claude Code external. Verdicts: the diff audit broke NONE of §80's
+eight claims (verified-sound, including the ping/chord interplay and
+the Drop-guard ordering); Claude Code's first repeat verdict was SAFE
+TO SHIP with one niggle; the lifecycle pass found the round's single
+POISON:
+
+- **The orphaned configure entry.** The daemon's ceiling refusal
+  (`err bad group`, ticket 31) answers a command the panel's session
+  queue holds an entry for — and an entry settled by no `configured`
+  reply orphans the queue: `settled()` is false forever, every later
+  reply popping the previous entry, exactly one deep. Harmless for
+  years — until §80's never-stopping timer gave `!settled` teeth: the
+  panel pinned to the 2 s repair cadence for the rest of a days-long
+  session, a permanent hello → keyboards → compositor pipeline →
+  configure cycle (~86k process spawns a day, on a battery laptop)
+  until a socket rebuild. The §53 settle window makes it reachable —
+  a group legal for the old map, refused by a layout list that shrank
+  inside the window. Fixed with the queue's own refusal semantics
+  (`configureFailed` — drop the entry, rebase the survivors), MINUS
+  the compile-refusal arm's modifier lift: this refusal happens before
+  any install or drain, so a lock the panel shows is a lock the device
+  still holds.
+- Niggles fixed: `saveFailedNotice` is per-PATH now (config and state
+  are two channels — a landed state write no longer vouches for a
+  config write that never ran; found by two reviewers); the transient
+  hints OVERLAY the base state and carry its action — a refusal flash
+  no longer hides the Retry/Update chip it covered; a paste-mode pick
+  whose chord was refused/aborted flashes like every other refusal
+  (the silence class, one layer down); `hint.pasteBusy` worded
+  generically (it covers more than busy).
+- LIVE-WITH recorded: the shareRetry re-arm loop stays unsupervised
+  (a wedged hyprctl ≈ a frozen compositor — bigger problems than our
+  share); a five-segment UI-language row on a us,ru,ua,it seat is a
+  marginal fit (~58 px "Italiano" in a ~60 px segment); the daemon's
+  staging files (`user-keymap-source.tmp-*`, `keymap.xkb.new`) can
+  survive a SIGKILL until tmpfs logout; the relayout nudge chain has
+  no watchdog (same accepted premise as shareRetry).
+
+Lab note: the wall's `ls -t | head -1` signature pick keeps grabbing
+corpses the legs themselves leave behind (twice this session; probe-
+then-delete heals) — a durable fix belongs in the wall script, not
+this round.
+
+53 Rust tests, all host suites, clippy, the wall's canary (15) and
+restart-settle (8), the nested 40 (one flaky monitor-publish retry) —
+green on the fixed tree. Committed locally; push and deploy wait for
+the owner's word. The stop-rule counter stays at zero: one poison.

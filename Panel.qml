@@ -52,8 +52,24 @@ Item {
     // show the new value, so the only honest panel says so on the hint
     // line until a save lands (the flows round's finding — a failed
     // save used to lie silently until the next shell start ate the
-    // setting).
-    property bool saveFailedNotice: false
+    // setting). Per PATH, not one boolean (the second round's finding):
+    // config and state are two channels — a landed state write must
+    // not vouch for a config write that never ran. A path leaves the
+    // list only when a write of that same path succeeds.
+    property var saveFailedPaths: []
+    readonly property bool saveFailedNotice: root.saveFailedPaths.length > 0
+    function saveFailedMark(path) {
+        var paths = root.saveFailedPaths.filter(function (p) {
+            return p !== path
+        })
+        paths.push(path)
+        root.saveFailedPaths = paths
+    }
+    function saveFailedLanded(path) {
+        root.saveFailedPaths = root.saveFailedPaths.filter(function (p) {
+            return p !== path
+        })
+    }
     // Every control that writes the overrides file stands down while a
     // malformed external edit is standing (spec-v1.1 §5): the popover keeps
     // showing the last valid runtime values and says so, and the bad file is
@@ -827,19 +843,32 @@ Item {
     // "retry" for a service that is not running, "update" for a protocol
     // mismatch (Copy install command plus Retry).
     readonly property var hintState: {
+        // The transients OVERLAY the base and carry its action through
+        // (the diff audit's finding): a refusal flash or a clipboard
+        // notice used to mask the Retry/Update chips for its whole
+        // beat — the affordance the user was reaching for would vanish
+        // mid-click and return. The text flashes; the chip stays.
+        var base = hintBaseState()
         if (root.emojiPickRefused)
             return { text: UiStrings.tr("hint.pickRefused", root.uiLang),
-                accent: true }
+                accent: true, action: base.action }
         if (root.refusedHint !== "")
             // The general transient channel (flashRefused): the newest
             // refusal or one-shot notice, already translated by its
             // caller.
-            return { text: root.refusedHint, accent: true }
+            return { text: root.refusedHint, accent: true, action: base.action }
         if (root.clipboardContentGone)
             return {
                 text: UiStrings.tr("hint.clipboardGone", root.uiLang),
-                accent: true
+                accent: true,
+                action: base.action
             }
+        return base
+    }
+
+    // Everything the transients above may momentarily cover: the
+    // lifecycle states, the standing save-failure notice, or nothing.
+    function hintBaseState() {
         if (keyboard.lifecycleKind === "incompatible")
             return {
                 text: UiStrings.tr("hint.needsUpdate", root.uiLang),
@@ -1829,6 +1858,12 @@ Item {
         } else if (done.action === "cancelled") {
             console.warn("[oskar] emoji paste chord refused or aborted;"
                 + " no usage recorded (the clipboard keeps the pick)")
+            // Same silence class the round has been closing, one layer
+            // down (the diff audit's finding): the direct pick, the
+            // queue caps and the paste chip all flash their refusals —
+            // a paste-mode pick whose chord never dispatched must not
+            // be the one click that vanishes without a word.
+            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
         }
         startNextEmojiTxn()
     }
@@ -1927,7 +1962,7 @@ Item {
             if (root.configurationError) return
             if (exitCode !== 0 || exitStatus !== 0) {
                 console.warn("[oskar] could not create", root.configDir, "- configuration not saved")
-                root.saveFailedNotice = true
+                root.saveFailedMark(root.configPath)
                 return
             }
             writePrivateFile(root.configPath,
@@ -1944,7 +1979,7 @@ Item {
             if (root.stateError) return
             if (exitCode !== 0 || exitStatus !== 0) {
                 console.warn("[oskar] could not create", root.stateDir, "- state not saved")
-                root.saveFailedNotice = true
+                root.saveFailedMark(root.statePath)
                 return
             }
             writePrivateFile(root.statePath,
@@ -1969,9 +2004,10 @@ Item {
         onExited: (exitCode, exitStatus) => {
             if (root.privateWriteInFlight
                     && exitCode === 0 && exitStatus === 0) {
-                // The first save that lands clears the standing notice —
-                // what the controls show is on disk again.
-                root.saveFailedNotice = false
+                // This PATH's newest save landed — the controls' shown
+                // state is on disk again (and only this path is vouched
+                // for; the other channel's failure stands).
+                root.saveFailedLanded(root.privateWriteInFlight.path)
             }
             if ((exitCode !== 0 || exitStatus !== 0) && root.privateWriteInFlight) {
                 console.warn("[oskar] private write failed (exit " + exitCode
@@ -1998,8 +2034,9 @@ Item {
                     // The retry failed too: the newest config/state is
                     // NOT on disk and every control already shows it —
                     // the flows round's finding: a failed save must not
-                    // lie. The notice stands until a save lands.
-                    root.saveFailedNotice = true
+                    // lie. This path's notice stands until this path's
+                    // save lands.
+                    root.saveFailedMark(root.privateWriteInFlight.path)
                 }
             }
             root.privateWriteInFlight = null

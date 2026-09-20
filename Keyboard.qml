@@ -2139,6 +2139,29 @@ Item {
                                 sendCommandUnchecked("up " + lockedPositions[u])
                             sendCommandUnchecked("mods 0")
                             root.inputReady = false
+                        } else if (reply === "err bad group") {
+                            // The ceiling refusal (ticket 31) answers a
+                            // command the session queue holds an entry
+                            // for, and an entry settled by no `configured`
+                            // reply ORPHANS the queue: settled() stays
+                            // false forever, and with it — since §80's
+                            // never-stopping timer — the panel never
+                            // leaves the 2 s repair cadence: a permanent
+                            // hello → keyboards → compositor pipeline →
+                            // configure cycle every two seconds, ~86k
+                            // process spawns a day on a battery laptop,
+                            // until a socket rebuild or a shell restart.
+                            // The settle-held-group window (§53) makes it
+                            // reachable: a group legal for the old map,
+                            // refused by a layout list that shrank inside
+                            // the window. Failed clean like the compile
+                            // refusal, MINUS its modifier lift: this
+                            // refusal happens before any install or
+                            // drain, so a lock the panel shows is a lock
+                            // the device still holds — nothing to lift,
+                            // nothing to re-assert.
+                            root.session = Session.reduce(root.session,
+                                { type: "configureFailed" })
                         } else if (reply === "err unknown command") {
                             // Protocol 5 rewrote every text/text-unicode
                             // refusal into `text-err …`, settled by the arm
