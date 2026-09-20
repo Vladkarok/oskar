@@ -8,7 +8,6 @@ import qs.Ui
 import "ClipboardPaste.js" as ClipboardPaste
 import "PasteFlow.js" as PasteFlow
 import "Config.js" as ConfigFile
-import "EmojiCatalog.js" as Catalog
 import "EmojiPage.js" as EmojiGrid
 import "InputProfile.js" as InputProfile
 import "LanguageControl.js" as LanguageControl
@@ -3431,7 +3430,7 @@ Item {
             onEmojiChosen: function (entry, applyTone) {
                 var delivered = applyTone
                     ? EmojiGrid.entryForTone(entry, root.emojiSkinTone,
-                        Catalog.entries()) : entry
+                        EmojiGrid.allEntries()) : entry
                 // Ticket 42: while the search is armed the overlay holds
                 // keyboard focus, and a delivery must land in the client
                 // that focus returns to — so the arm drops BEFORE the

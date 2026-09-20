@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import qs.Commons
-import "EmojiCatalog.js" as Catalog
 import "EmojiPage.js" as EmojiGrid
 import "UiStrings.js" as UiStrings
 
@@ -78,9 +77,9 @@ Rectangle {
         usageSnapshotRecords, gridColumnCount)
     readonly property var usageSections: ({
         frequent: EmojiGrid.recordsToEntries(usageRecordSections.frequent,
-            Catalog.entries()),
+            EmojiGrid.allEntries()),
         recent: EmojiGrid.recordsToEntries(usageRecordSections.recent,
-            Catalog.entries())
+            EmojiGrid.allEntries())
     })
 
     // A blank query — spaces included, since a lone separator is not a term
@@ -130,7 +129,7 @@ Rectangle {
             emojiRoot.tonePickerOpen = false
             emojiRoot.searchArmed = true
             emojiRoot.activeGroup = emojiRoot.usageRecords.length > 0
-                ? "__usage__" : Catalog.groups()[0]
+                ? "__usage__" : EmojiGrid.allGroups()[0]
             emojiRoot.usageSnapshotRecords = EmojiGrid.usageViewOnOpen(
                 emojiRoot.usageRecords)
             // Ticket 42: the page opens armed, so the key scope takes the
@@ -543,7 +542,7 @@ Rectangle {
 
             Repeater {
                 model: [{ value: "__usage__", label: "🕘" }].concat(
-                    EmojiGrid.tabs(Catalog.groups()))
+                    EmojiGrid.tabs(EmojiGrid.allGroups()))
 
                 Rectangle {
                     property string groupValue: modelData.value
@@ -620,11 +619,11 @@ Rectangle {
                 // capped at searchLimit after modifier families collapse, so
                 // a broad term still fills the viewport with distinct tiles.
                 model: emojiRoot.searching
-                    ? EmojiGrid.visibleEntries(Catalog.search(emojiRoot.query, 0),
-                        Catalog.entries(), emojiRoot.searchLimit)
+                    ? EmojiGrid.visibleEntries(EmojiGrid.searchEverything(emojiRoot.query),
+                        EmojiGrid.allEntries(), emojiRoot.searchLimit)
                     : emojiRoot.activeGroup === "__usage__"
                         ? emojiRoot.usageSections.recent
-                        : EmojiGrid.groupEntries(Catalog.entries(), emojiRoot.activeGroup)
+                        : EmojiGrid.groupEntries(EmojiGrid.allEntries(), emojiRoot.activeGroup)
                 // The gap lives inside the cell pitch; each delegate gives
                 // the trailing gap back as its own margin.
                 cellWidth: emojiRoot.cellSize + emojiRoot.gridGap

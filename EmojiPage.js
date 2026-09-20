@@ -1,5 +1,29 @@
 .pragma library
 
+// The merged shelf seam (§85): one place answers "everything pickable" —
+// the generated catalogue plus the hand-curated text-glyph shelf (the
+// owner's bare-BMP classics: heart, smiling face, star). The shelf is a
+// THIRD tab, before the animals, per the owner's placement; its entries
+// are lone BMP scalars, so the delivery route sends every one of them as
+// a direct keysym tap into any client — the fast lane, pinned in the
+// suites.
+.import "EmojiCatalog.js" as Catalog
+.import "TextGlyphs.js" as TextGlyphs
+
+function allEntries() {
+    return Catalog.entries().concat(TextGlyphs.entries())
+}
+
+function allGroups() {
+    var groups = Catalog.groups().slice()
+    groups.splice(2, 0, TextGlyphs.GROUP)
+    return groups
+}
+
+function searchEverything(query) {
+    return Catalog.search(query, 0).concat(TextGlyphs.search(query))
+}
+
 // Pure logic behind the panel's own emoji page (ticket 24). The suites
 // cannot load QML (decisions §36), so everything the page computes — the
 // tab model over the catalogue's groups, the group slice the grid shows,
