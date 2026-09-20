@@ -2445,3 +2445,29 @@ Three findings; the first is the opening cut of the approved seams plan:
   documented private posture existed only in prose. `install -d -m 700`
   plus a post-save `chmod 600`, umask-independent, healing existing
   installs on their first save (the owner's were healed by hand).
+
+## 72. PasteFlow: the paste lifecycle is a module, and the agent audit earned its keep
+
+The plan's second cut (after ShareQueue): the paste orchestration —
+busy-gate, region boundary, ordered cancellation — left the QML glue
+and became PasteFlow.js, a four-phase lifecycle (idle → dispatching →
+paced/awaiting → idle) whose cancel answers an ordered program the glue
+executes. Rounds seven through nine's semantics are its transitions;
+five host tests hold the overlaps.
+
+The owner asked for a second, independent pass before shipping, and it
+found a blocker both of the author's own reviews missed: the paste chip
+calls with no callback, and the direct path entered `awaiting`
+unconditionally while `settleChordThroughHelper(null)` returns early —
+nothing armed, no guard timer, no exit. One paste-chip click into any
+non-wine window would have bricked every later paste for the session.
+The paced path had guarded `done && success` all along; the direct path
+now does the same — a callback-less paste is fire-and-forget, the gate
+reopening when the writes return. Two smaller tightenings from the same
+audit: the tick's empty-lines arm routes through the one exit, and the
+cancel's defensive dispatching answer no longer disturbs a live region
+ledger.
+
+The audit's own lesson, recorded with the author's: the suite tests the
+module, not the composition — the blocker lived exactly in that gap,
+and a second reader reading the composition cold is what caught it.

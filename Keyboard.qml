@@ -17,6 +17,7 @@ import "SocketWatch.js" as SocketWatch
 import "ClipboardPaste.js" as ClipboardPaste
 import "ChordAcks.js" as ChordAcks
 import "ShareQueue.js" as ShareQueue
+import "PasteFlow.js" as PasteFlow
 import "LanguageControl.js" as LanguageControl
 
 Item {
@@ -1296,6 +1297,10 @@ Item {
     // chord waits at a time (the transaction serializes them) behind a
     // guard timer a silent helper cannot wedge.
     property var chordAcks: ChordAcks.initial()
+    // The paste lifecycle (PasteFlow.js): one paste at a time, the
+    // busy-gate and the ordered cancellation as data. The timer and
+    // socket machinery stays here; the invariant lives there.
+    property var pasteFlow: PasteFlow.initial()
     // Which modifiers were locked when the chord computed its lines: a
     // mid-chord event that changes the held world (a configure draining
     // the device, a releaseAll) invalidates the remaining lines, and the
@@ -1308,7 +1313,10 @@ Item {
         onTriggered: () => {
             if (!root.pastePacing) return
             if (root.pastePacedLines.length === 0) {
-                root.pastePacing = false
+                // Unreachable today (dispatch commits with lines or fails),
+                // but the invariant stays local: every paced exit is
+                // finishPacedPaste, so the flow can never outlive the flag.
+                finishPacedPaste(false)
                 return
             }
             if (!root.inputReady || !root.pasteChordAssumptionsHold()) {
@@ -1350,10 +1358,13 @@ Item {
         root.pastePacing = false
         var done = root.pastePaceDone
         root.pastePaceDone = null
-        if (done && success)
+        if (done && success) {
+            root.pasteFlow = PasteFlow.awaiting(root.pasteFlow)
             settleChordThroughHelper(done)
-        else if (done)
-            done(false)
+        } else {
+            root.pasteFlow = PasteFlow.failed(root.pasteFlow)
+            if (done) done(false)
+        }
     }
 
     // Route a dispatched chord's success through the helper's reply to its
@@ -1366,8 +1377,10 @@ Item {
     }
 
     // The chord's own final line was answered: `ok` is success, anything
-    // else — an err — is a failed chord, and both spend the slot.
+    // else — an err — is a failed chord, and both spend the slot. The
+    // lifecycle closes with the verdict, whichever way it came.
     function chordAckCompleted(done, success) {
+        root.pasteFlow = PasteFlow.verdictDone(root.pasteFlow)
         chordAckGuard.stop()
         if (done) done(success)
     }
@@ -1377,6 +1390,7 @@ Item {
     function chordAckTimedOut() {
         var done = root.chordAcks.chordDone
         root.chordAcks = ChordAcks.chordSettled(root.chordAcks)
+        root.pasteFlow = PasteFlow.verdictDone(root.pasteFlow)
         chordAckGuard.stop()
         if (done) done(false)
     }
@@ -1412,15 +1426,15 @@ Item {
     function pasteCurrent(wmClass, completed) {
         var done = completed || null
         var cls = String(wmClass || "")
-        // One chord at a time, and a second click must not touch the
-        // first's tracking (round nine): chordStart used to reset the
-        // region and every recorded error just because the paste chip
-        // was clicked mid-chord — a running failure turned success the
-        // moment its final ok arrived. Refused clean, nothing reset.
-        if (root.pastePacing || root.chordAcks.chordDone !== null) {
+        // One paste at a time (PasteFlow owns the gate; round nine's
+        // finding was this check living beside a chordStart that reset
+        // the running chord's tracking): refused clean, nothing touched.
+        var begun = PasteFlow.begin(root.pasteFlow)
+        if (begun.refuse) {
             if (done) done(false)
             return false
         }
+        root.pasteFlow = begun.state
         var chord = Modifiers.pasteChordForClass(cls)
         console.log("[oskar] paste chord for", cls === "" ? "(unknown class)" : cls,
             "->", (chord.ctrl ? "Ctrl+" : "") + (chord.shift ? "Shift+" : "")
@@ -1447,9 +1461,12 @@ Item {
                 // is not ready: nothing was dispatched and nothing will
                 // complete.
                 root.pastePacing = false
+                root.pasteFlow = PasteFlow.failed(root.pasteFlow)
                 if (done) done(false)
                 return false
             }
+            root.pasteFlow = PasteFlow.paced(root.pasteFlow,
+                root.pastePacedLines.length)
             root.pastePaceAllLines = root.pastePacedLines.slice()
             root.pastePaceSent = 0
             root.pastePaceDone = done
@@ -1467,14 +1484,24 @@ Item {
             if (!sendCommandUnchecked(line)) wrote = false
         })
         if (sent === 0 || !wrote) {
+            root.pasteFlow = PasteFlow.failed(root.pasteFlow)
             if (done) done(false)
             return false
         }
         // Success is the helper's acknowledgement of the final line, not
         // the write returning (the review's third round): the next emoji
         // must not replace the clipboard before the paste events have at
-        // least reached the compositor.
-        settleChordThroughHelper(done)
+        // least reached the compositor. WITHOUT a callback there is
+        // nothing to arm and no guard would ever run — awaiting would
+        // wedge the gate forever (the agent audit's blocker: one
+        // paste-chip click bricked every later paste). Fire-and-forget
+        // reopens the gate when the writes return, as it always did.
+        if (done) {
+            root.pasteFlow = PasteFlow.awaiting(root.pasteFlow)
+            settleChordThroughHelper(done)
+        } else {
+            root.pasteFlow = PasteFlow.failed(root.pasteFlow)
+        }
         return true
     }
 

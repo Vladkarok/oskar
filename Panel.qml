@@ -6,6 +6,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "ClipboardPaste.js" as ClipboardPaste
+import "PasteFlow.js" as PasteFlow
 import "Config.js" as ConfigFile
 import "EmojiCatalog.js" as Catalog
 import "EmojiPage.js" as EmojiGrid
@@ -1481,17 +1482,17 @@ Item {
         emojiPublishVerifyTimer.stop()
         if (emojiClipboardVerify.running)
             killProcessGroup(emojiClipboardVerify)
-        // A paced chord mid-flight dies with its transaction (round
-        // nine): the tick timer kept running after a mode-flip cancel,
-        // sending the V press onto a Ctrl the cancelled chord still
-        // held. The abort compensates what the sent prefix pressed and
-        // releases the world.
-        if (keyboard.pastePacing) keyboard.abortPacedPaste()
-        // The cancelled pick's chord wait dies with it too (round seven):
-        // a dispatched chord cannot be un-dispatched, but its ARMED
-        // verdict must not survive the cancel and later complete
-        // whichever pick owns the machine by then.
-        if (keyboard.chordAcks.chordDone) keyboard.chordAckTimedOut()
+        // The cancellation is a PROGRAM the lifecycle module answers
+        // (round nine kept the ordering in prose): abort the pacer
+        // first — its own path compensates the sent prefix and releases
+        // the world — then clear the armed verdict. Dispatching cannot
+        // be interleaved from outside; the module's defensive answer
+        // releases everything anyway.
+        var cancel = PasteFlow.cancel(keyboard.pasteFlow)
+        keyboard.pasteFlow = cancel.state
+        if (cancel.abortPacer) keyboard.abortPacedPaste()
+        if (cancel.clearWait && keyboard.chordAcks.chordDone)
+            keyboard.chordAckTimedOut()
     }
 
     function finishEmojiPublishVerify(seq, served) {
