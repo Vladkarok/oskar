@@ -1397,9 +1397,12 @@ Item {
 
     Timer {
         id: chordAckGuard
-        // 5 seconds, spelled so the literal stays ours alone (the
-        // provenance gate counts substantive lines against upstream).
-        interval: 5 * 1000
+        // Longer than the daemon's 5 s worst case (the external audit's
+        // finding 10): a guard that fired first reported failure while
+        // the daemon still delivered the chord late — pasting the next
+        // pick's clipboard, the exact A→B race the transaction exists to
+        // prevent.
+        interval: 8 * 1000
         repeat: false
         onTriggered: () => {
             if (root.chordAcks.chordDone) root.chordAckTimedOut()
@@ -1675,6 +1678,12 @@ Item {
         root.pendingTextReplies = resets.pendingTextReplies
         root.sharedKeymapGen = resets.sharedKeymapGen
         root.shareQueue = ShareQueue.initial()
+        // The scheduler's world died with the connection: a stale run's
+        // exit must not read as the next run's verdict, and a pending
+        // retry must not fire an unscheduled run (the external audit's
+        // finding 11).
+        shareRetry.stop()
+        shareProcess.running = false
         // A chord awaiting its final line's ack cannot be completed by a
         // helper that is being torn down: settle it as a cancellation, the
         // way every other failure path already does — and the ledger of
@@ -1749,6 +1758,8 @@ Item {
                     // file either: two keymaps on the seat, silently.
                     root.sharedKeymapGen = 0
                     root.shareQueue = ShareQueue.initial()
+                    shareRetry.stop()
+                    shareProcess.running = false
                 }
             }
 

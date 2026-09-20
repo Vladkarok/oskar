@@ -616,6 +616,16 @@ Item {
 
     function pasteCurrentContent() {
         if (!root.pasteEnabled) return
+        // While an emoji pick owns the clipboard (the external audit's
+        // finding 7), a chip click pastes whatever the clipboard holds —
+        // mid-transaction — and the fire-and-forget chord reopens the
+        // paste gate for a second paste behind it. Refuse; the queue
+        // drains in milliseconds.
+        if (root.emojiTxnState.phase !== "idle") {
+            console.warn("[oskar] paste chip refused: an emoji pick owns"
+                + " the clipboard")
+            return
+        }
         // R2: one target determination before any delivery choice. A
         // panel-local input — the colour field, or the emoji page whose
         // search every key is typing into while it is open — takes the
@@ -641,15 +651,25 @@ Item {
     // arrival guard now refuses exactly that.
     function currentPasteTarget() {
         if (root.emojiSearchActive) return "emoji-search"
-        if (root.hexEditing) return "colour:" + root.hexEditField
+        if (root.hexEditing)
+            return "colour:" + (root.customEditorField !== "" ? "editor" : "popover")
+                + ":" + root.hexEditField
         return "external-client"
     }
+
+    // A click that waited out the local read's kill window (the external
+    // audit's finding 9): the retired exit re-drives it with the very
+    // target the click captured.
+    property string localReadQueuedTarget: ""
 
     function startLocalClipboardRead(target) {
         // A kill from the previous read's watchdog may still be in flight:
         // its late output is refused by sequence, but the Process object
         // is not reusable until that exit lands (the probe's own rule).
-        if (localClipboardRead.retiring) return
+        if (localClipboardRead.retiring) {
+            root.localReadQueuedTarget = target
+            return
+        }
         var started = ClipboardPaste.readStart(root.clipboardReadState, target)
         root.clipboardReadState = started.state
         if (started.action !== "read") return
@@ -695,13 +715,18 @@ Item {
             root.clipboardRefreshQueued = true
             return
         }
+        if (clipboardTypes.running) {
+            // Kill ONLY (the external audit's finding 6): re-arming
+            // inline raced the killed child's exit — the restart could be
+            // consumed as the retired one and the new-sequence probe
+            // never ran. The retired exit re-drives through the queue.
+            clipboardTypes.retiring = true
+            root.clipboardRefreshQueued = true
+            killProcessGroup(clipboardTypes)
+            return
+        }
         root.clipboardSeq += 1
         clipboardTypes.seq = root.clipboardSeq
-        if (clipboardTypes.running) {
-            clipboardTypes.retiring = true
-            killProcessGroup(clipboardTypes)
-            clipboardTypes.running = false
-        }
         clipboardTypes.running = true
     }
 
@@ -721,12 +746,14 @@ Item {
             root.clipboardRefreshQueued = true
             return
         }
-        clipboardText.seq = seq
         if (clipboardText.running) {
+            // Kill only — the retired exit re-drives (finding 6).
             clipboardText.retiring = true
+            root.clipboardRefreshQueued = true
             killProcessGroup(clipboardText)
-            clipboardText.running = false
+            return
         }
+        clipboardText.seq = seq
         clipboardText.running = true
     }
 
@@ -1337,6 +1364,11 @@ Item {
         onExited: {
             localClipboardRead.didStart = false
             localClipboardRead.retiring = false
+            if (root.localReadQueuedTarget !== "") {
+                var queued = root.localReadQueuedTarget
+                root.localReadQueuedTarget = ""
+                startLocalClipboardRead(queued)
+            }
         }
     }
 
@@ -1474,7 +1506,13 @@ Item {
             }
         }
         onExited: {
-            emojiClipboardVerify.retiring = false
+            if (emojiClipboardVerify.retiring) {
+                emojiClipboardVerify.retiring = false
+                // The kill's requester re-arms through us (finding 6):
+                // the txn's own timer restarts the verify when the
+                // Process is reusable again.
+                emojiPublishVerifyTimer.restart()
+            }
         }
     }
 
@@ -1491,12 +1529,14 @@ Item {
                 emojiPublishVerifyTimer.restart()
                 return
             }
-            emojiClipboardVerify.seq = root.emojiTxnState.seq
             if (emojiClipboardVerify.running) {
+                // Kill only (finding 6): the retired exit re-arms the
+                // timer; no inline restart racing the killed child.
                 emojiClipboardVerify.retiring = true
                 killProcessGroup(emojiClipboardVerify)
-                emojiClipboardVerify.running = false
+                return
             }
+            emojiClipboardVerify.seq = root.emojiTxnState.seq
             emojiClipboardVerify.running = true
             emojiVerifyWatchdog.restart()
         }
@@ -1772,25 +1812,49 @@ Item {
     // racing a Process restart (round thirteen's note on the shared
     // writer).
     property var privateWriteQueue: []
+    // The in-flight write (path, payload, and whether a failure already
+    // requeued it once — the external audit's finding 12: a failed write
+    // was only logged, and the newest config/state was dropped until the
+    // next save happened to land).
+    property var privateWriteInFlight: null
     Process {
         id: privateWriter
         command: []
         onExited: (exitCode, exitStatus) => {
-            if (exitCode !== 0 || exitStatus !== 0)
-                console.warn("[oskar] private write failed (exit " + exitCode + ")")
+            if ((exitCode !== 0 || exitStatus !== 0) && root.privateWriteInFlight) {
+                console.warn("[oskar] private write failed (exit " + exitCode
+                    + ")" + (root.privateWriteInFlight.retried ? " — again" : ", retrying"))
+                if (!root.privateWriteInFlight.retried) {
+                    var retry = {
+                        path: root.privateWriteInFlight.path,
+                        payload: root.privateWriteInFlight.payload,
+                        retried: true
+                    }
+                    var queue = root.privateWriteQueue.filter(function (entry) {
+                        return entry.path !== retry.path
+                    })
+                    queue.push(retry)
+                    root.privateWriteQueue = queue
+                }
+            }
+            root.privateWriteInFlight = null
             for (var i = 0; i < root.privateWriteQueue.length; i++) {
                 var next = root.privateWriteQueue[i]
                 root.privateWriteQueue = root.privateWriteQueue.slice(0, i)
                     .concat(root.privateWriteQueue.slice(i + 1))
-                runPrivateWrite(next.path, next.payload)
+                runPrivateWrite(next.path, next.payload, next.retried === true)
                 return
             }
         }
     }
 
-    function runPrivateWrite(path, payload) {
+    function runPrivateWrite(path, payload, retried) {
+        root.privateWriteInFlight = {
+            path: path, payload: payload, retried: retried === true
+        }
         privateWriter.command = ["bash", "-c",
             "umask 077; t=\"$1.tmp.$$\"; "
+            + "trap 'rm -f \"$t\"' EXIT; "
             + "printf %s \"$2\" > \"$t\" && chmod 600 \"$t\" && mv -f \"$t\" \"$1\"",
             "oskar-private-write", path, payload]
         privateWriter.running = true
@@ -1805,7 +1869,7 @@ Item {
             root.privateWriteQueue = queue
             return
         }
-        runPrivateWrite(path, payload)
+        runPrivateWrite(path, payload, false)
     }
 
     // Resolves the freedesktop sound theme's file for the click and transcodes

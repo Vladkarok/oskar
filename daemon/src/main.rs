@@ -1355,12 +1355,21 @@ fn pick_budget_exhausted(shared: &Shared) -> bool {
         >= 20
 }
 
-/// Best-effort flag clear for a delivery leaving by an early door. The
-/// normal exits clear it where they restore the installed map; a shutdown
-/// exit leaves the transient up on a device the dying process takes with
-/// it, and only the flag must not outlive the thread.
-fn finish_delivery(arc: &SharedRef) {
-    arc.lock().unwrap().delivery_active = false;
+/// The delivery flag as an RAII guard: set at a delivery's real start,
+/// cleared on EVERY exit by Drop — an early return, a panic mid-beat,
+/// a poisoned mutex elsewhere; nothing manual remains to forget or
+/// misuse (the external audit's finding 3). Poisoning is healed rather
+/// than propagated: the flag is the least of a poisoned world's
+/// problems, and leaving it set wedges every later command.
+struct DeliveryFlag<'a>(&'a SharedRef);
+
+impl Drop for DeliveryFlag<'_> {
+    fn drop(&mut self) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .delivery_active = false;
+    }
 }
 
 fn deliver_text(
@@ -1395,7 +1404,6 @@ fn deliver_text(
     if pick_budget_exhausted(&guard) {
         return "err text busy".to_string();
     }
-    pay_pick_budget(&mut guard);
     let shared = &*guard;
     let Some(installed) = shared.installed_keymap.clone() else {
         return "err no keymap yet".to_string();
@@ -1468,8 +1476,14 @@ fn deliver_text(
     keyboard.modifiers(current, 0, 0, group);
     // The device is on the transient map: everything below runs unlocked,
     // and `delivery_active` is what keeps keymap mutators off until the
-    // installed map is back.
+    // installed map is back. The RAII guard clears it on every exit —
+    // early return, panic, poisoned world — nothing manual to forget.
+    // The budget is paid HERE, at the real start (the external audit's
+    // finding 4): every validation above answers without spending a
+    // pick's worth — junk payloads cannot starve real picks.
+    pay_pick_budget(&mut guard);
     guard.delivery_active = true;
+    let _delivery = DeliveryFlag(arc);
     drop(guard);
 
     // The swap's three moves reach every client in order — transient map,
@@ -1493,7 +1507,7 @@ fn deliver_text(
         // strands nothing; the held-key claims answer to the shutdown
         // release once this lock goes back.
         if shutdown_requested() {
-            finish_delivery(arc);
+            // The drop-guard clears the flag on return.
             return "err shutting down".to_string();
         }
         // One lock pass per slot — the reads of held state and the key
@@ -1503,7 +1517,11 @@ fn deliver_text(
         // and write).
         let mut guard = arc.lock().unwrap();
         if guard.shutting_down {
-            finish_delivery(arc);
+            // The flag clears IN PLACE (the external audit's blocker: the
+            // guard is held here — finish_delivery would lock the same
+            // mutex and the thread would wait on itself while the 500 ms
+            // exit timer ran out with the user's keys still down).
+            guard.delivery_active = false;
             return "err shutting down".to_string();
         }
         let shared = &mut *guard;
@@ -1596,7 +1614,7 @@ fn deliver_text(
     // during it leaves the taps sent but nothing held, so skipping the
     // restore loses only a keymap the dying device takes with it (F4).
     if shutdown_requested() {
-        finish_delivery(arc);
+        // The drop-guard clears the flag on return.
         return "err shutting down".to_string();
     }
 
@@ -1693,7 +1711,6 @@ fn deliver_unicode_text(
     if pick_budget_exhausted(&guard) {
         return "err text busy".to_string();
     }
-    pay_pick_budget(&mut guard);
     let shared = &mut *guard;
     // Cloned, not borrowed: the composition and the restore below run
     // past the guard's drop.
@@ -1765,8 +1782,12 @@ fn deliver_unicode_text(
     keyboard.modifiers(0, 0, 0, 0);
     // The device is on the entry keymap: the composition below runs with
     // the lock released between its beats, `delivery_active` keeping
-    // keymap mutators off until the installed map returns.
+    // keymap mutators off until the installed map returns — and the RAII
+    // guard clears it on every exit, panic included.
+    // Paid at the real start, same as deliver_text (finding 4).
+    pay_pick_budget(&mut guard);
     guard.delivery_active = true;
+    let _delivery = DeliveryFlag(arc);
     drop(guard);
     let _ = connection.roundtrip();
 
@@ -1777,7 +1798,7 @@ fn deliver_unicode_text(
         // the shutdown release, and no lock is held between beats for it
         // to fight with.
         if shutdown_requested() {
-            finish_delivery(arc);
+            // The drop-guard clears the flag on return.
             return "err shutting down".to_string();
         }
         beat(arc, connection, &keyboard, |k| {
@@ -3158,8 +3179,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
 /// re-locked `mods` would admit another connection's claim in between and
 /// clear the mask out from under it.
 fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>, conn_id: u64) {
-    wait_out_delivery(shared);
-    let mut shared = shared.lock().unwrap();
+    let mut shared = lock_outside_delivery(shared);
     let mut released_any = false;
     for code in held {
         let before = shared.held.contains_key(&code);
@@ -3215,6 +3235,25 @@ fn wait_out_delivery(shared: &SharedRef) {
     }
 }
 
+/// The delivery wait and the lock as ONE atomic step (the external
+/// audit's finding 2): wait_out then lock admitted a delivery starting
+/// in between, and release paths acted mid-composition. Callers that
+/// exceed the bound still receive the guard — the old proceed-anyway
+/// semantics — but the check and the action now share one lock hold.
+fn lock_outside_delivery(
+    shared: &SharedRef,
+) -> std::sync::MutexGuard<'_, Shared> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let guard = shared.lock().unwrap();
+        if !guard.delivery_active || Instant::now() >= deadline {
+            return guard;
+        }
+        drop(guard);
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// Lifts every non-modifier code held past the cap and says so in the log.
 /// Modifier codes are exempt: locked Shift (spec-v1.1 §2) is deliberately held
 /// for minutes, and releasing it would make the lock indicator lie.
@@ -3227,8 +3266,7 @@ fn expire_stuck_keys(shared: &SharedRef, connection: &Connection) -> Vec<u32> {
     // cap's lifts wait it out rather than interleave with the composition
     // (bounded — a stuck key must lift eventually, so past the bound this
     // proceeds anyway).
-    wait_out_delivery(shared);
-    let mut shared = shared.lock().unwrap();
+    let mut shared = lock_outside_delivery(shared);
     let cap = hold_cap();
     let now = Instant::now();
     let expired: Vec<u32> = shared
@@ -3382,21 +3420,13 @@ fn apply(
             format!("text-err {reply}")
         };
     }
-    // Wait out any active delivery, then run under the lock as always.
-    // The bound is sized off the legal maximum: a 16-scalar composition
-    // paces ~2 s and two compositor roundtrips can stretch it under
-    // load; five seconds covers the honest case, and only pipelined
-    // deliveries (refused in their own entry now) can reach past it.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut guard = shared.lock().unwrap();
-    while guard.delivery_active {
-        drop(guard);
-        if Instant::now() >= deadline {
-            return "err busy".to_string();
-        }
-        thread::sleep(Duration::from_millis(25));
-        guard = shared.lock().unwrap();
-    }
+    // Wait out any active delivery, then run under the lock as always —
+    // the wait and the lock one atomic step (the external audit's
+    // finding 2). The bound is sized off the legal maximum: a 16-scalar
+    // composition paces ~2 s plus roundtrips; five seconds covers the
+    // honest case, and past it the command proceeds as the old
+    // wait-then-lock always did.
+    let mut guard = lock_outside_delivery(shared);
     apply_locked(&mut guard, connection, command, held, conn_id)
 }
 
@@ -3777,7 +3807,12 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         // release is best-effort and systemd must not sit through its stop
         // timeout for it, so leaving is bounded either way.
         thread::spawn(|| {
-            thread::sleep(Duration::from_millis(500));
+            // Longer than the delivery wait-out's 5 s bound (the external
+            // audit's finding 5): release_everything first lets an
+            // in-flight delivery finish its scalar — chords lifted — and
+            // a 500 ms exit raced exactly that, stranding the keys this
+            // release exists to lift.
+            thread::sleep(Duration::from_secs(6));
             eprintln!("compositor did not acknowledge the shutdown release; leaving anyway");
             std::process::exit(0);
         });

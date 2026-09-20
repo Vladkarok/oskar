@@ -2590,3 +2590,47 @@ confirmed and fixed:
   crossing.
 
 53 Rust tests, the lab's 40, host suites green; deployed live.
+
+## 76. The triple check: Claude Code's external review, executed
+
+The owner ordered a triple pass — two subagents and an external Claude
+Code review. Claude's review (authenticated retry) returned a real
+blocker of the author's own making plus eleven findings; the subagents'
+reports landed after the fixes and are folded below.
+
+- **The blocker (self-deadlock).** The round-twelve shutdown guard in
+  deliver_text's per-slot scope held the mutex and called
+  `finish_delivery`, which locks the same mutex — the thread waited on
+  itself while the 500 ms exit timer ran out with the user's keys
+  still down. The flag clears in place now, and the whole manual-clear
+  discipline is GONE: `DeliveryFlag` is an RAII guard armed at the
+  delivery's real start, clearing on every exit — early return, panic,
+  poisoned world (healed via `into_inner`, not propagated).
+- **Check-and-act became atomic.** `lock_outside_delivery` is the one
+  wait-then-lock step `apply`, `release_all` and `expire_stuck_keys`
+  share — the old wait-then-lock admitted a delivery starting between
+  the two, acting mid-composition.
+- **The shutdown's bounds are ordered.** The exit timer (6 s) now
+  outlives the delivery wait-out (5 s); the pick budget is paid at the
+  real start (validation refusals spend nothing — junk payloads cannot
+  starve real picks).
+- **The panel's kill discipline.** No Process is re-armed inline after
+  a kill anymore: the killed exit re-drives through the queue (chip
+  probes, emoji verify) or re-arms its timer; a paste-chip click while
+  an emoji pick owns the clipboard is refused; the colour target
+  carries the owner (`colour:popover:text_color`); a click in the
+  local read's kill window queues and re-drives; the chord guard (8 s)
+  outlives the daemon's 5 s worst case; share resets stop the share
+  process and retry timer; and the private writer cleans its temp on
+  any exit and requeues a failed write once.
+
+The behaviour subagent's five-scenario walk (S1 saves, S2 SIGTERM
+mid-delivery, S3 failed restore, S4 clipboard burst, S5 colour paste)
+returned CORRECT ×4 and one RISKY: after a failed restore the daemon
+drains held claims while the panel's ledger still believes them — a
+locked Shift draws held while the device holds nothing, until the
+panel reconciles on the next configure ack. The fix rides the next
+pass: `settleConfigureReply` must treat a generation jump on a
+same-identity ack as a drain.
+
+53 Rust tests, the lab's 40, host suites green; deployed live.
