@@ -71,9 +71,23 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
         panel_canary) env_var="OSK_PANEL_CANARY_LIVE=1" ;;
         restart_settle) env_var="OSK_RESTART_SETTLE_LIVE=1" ;;
       esac
+      # The live signature is PROBED, not guessed (2026-09-21, twice in
+      # one session the legs died at `lifecycle: starting` because
+      # `ls -t | head -1` grabbed a corpse: interrupted leg runs leave
+      # dead sig dirs behind, and the live session's dir can be the
+      # OLDEST of the bunch). Newest-first, but only a signature whose
+      # socket actually answers hyprctl counts; none answering is a lab
+      # without a session — loud, not a fake run.
       if ssh "$LAB" "cd ~/oskar \
           && export XDG_RUNTIME_DIR=/run/user/\$(id -u) \
-          && export HYPRLAND_INSTANCE_SIGNATURE=\$(ls -t \$XDG_RUNTIME_DIR/hypr | head -1) \
+          && sig=\$(for s in \$(ls -t \$XDG_RUNTIME_DIR/hypr 2>/dev/null); do \
+                timeout 2 hyprctl -i \"\$s\" version >/dev/null 2>&1 \
+                  && { echo \"\$s\"; break; }; \
+              done) \
+          && { [ -n \"\$sig\" ] || { \
+                echo 'no live Hyprland signature in the lab — is the session up?'; \
+                exit 1; }; } \
+          && export HYPRLAND_INSTANCE_SIGNATURE=\$sig \
           && export WAYLAND_DISPLAY=wayland-1 \
           && env $env_var python3 tools/integration/$leg.py" \
           >"$WALL_TMP/$leg.log" 2>&1; then
