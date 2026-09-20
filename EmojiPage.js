@@ -360,21 +360,15 @@ function keysymGood(clientClass) {
 //                    manually for ZCode, now automatic for the payloads
 //                    the typed routes cannot guarantee.
 function deliveryRoute(emoji, clientClass) {
-    var text = String(emoji || "")
-    // Count the scalars and watch for an astral one, walking surrogate
-    // pairs as the single scalar they are.
-    var scalars = 0
-    var astral = false
-    for (var i = 0; i < text.length; ) {
-        var point = text.codePointAt(i)
-        scalars += 1
-        if (point > 0xFFFF) astral = true
-        i += point > 0xFFFF ? 2 : 1
-    }
-    // A lone BMP scalar rides the keysym route everywhere; anything
-    // richer — astral, or multi-scalar: a tone modifier, a ZWJ family,
-    // a keycap composition — needs a channel that can carry a sequence.
-    if (scalars === 1 && !astral) return "text"
+    // (§90: the payload walk is gone with its lone-BMP rule — "a lone
+    // BMP scalar rides the keysym route everywhere" was faith, not
+    // evidence, and the owner's live report broke on exactly that: his
+    // Electron build repeats the FIRST glyph for every later pick, its
+    // keymap table caching the first transient it ever saw — the lab's
+    // electron43 does not, which is why no leg caught it. The keysym
+    // route now serves only the clients PROVEN to read it — §40's
+    // discipline restored: no Chromium-family build ever sees the
+    // transient-keymap route.)
     if (keysymGood(clientClass)) return "text"
     if (needsUnicodeEntry(clientClass)) return "text-unicode"
     return "clipboard"

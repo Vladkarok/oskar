@@ -29,17 +29,40 @@ QtObject {
             }
         })
 
-        T.test("every glyph routes 'text' into any client whatsoever", function () {
+        T.test("glyphs route by CLIENT proof, never by payload faith (§90)", function () {
+            // The owner's live report killed §84's first rule ("a lone
+            // BMP scalar rides the keysym route everywhere"): his
+            // Electron build repeats the FIRST glyph for every later
+            // pick — its keymap table caches the first transient. The
+            // keysym route serves only the PROVEN clients; §40's
+            // discipline — no Chromium-family build sees a transient
+            // keymap — holds for every payload, glyphs included.
             var entries = TextGlyphs.entries()
-            var classes = ["zcode", "org.telegram.desktop", "brave-browser",
-                "foot", "", "com.rtosta.zapzap", "viber"]
-            for (var i = 0; i < entries.length; i++) {
-                for (var c = 0; c < classes.length; c++) {
-                    var route = Page.deliveryRoute(entries[i].emoji, classes[c])
-                    T.equal(route, "text",
-                        entries[i].emoji + " into " + classes[c]
-                            + " routed " + route)
+            var byClass = {
+                "foot": "text",
+                "com.rtosta.zapzap": "text",
+                "brave-browser": "text-unicode",
+                "com.anthropic.Claude": "text-unicode",
+                "zcode": "clipboard",
+                "org.telegram.desktop": "clipboard",
+                "viber": "clipboard",
+                "": "clipboard"
+            }
+            for (var c in byClass) {
+                // Every glyph, same route — the payload no longer
+                // buys anyone the keysym route.
+                for (var i = 0; i < entries.length; i++) {
+                    T.equal(Page.deliveryRoute(entries[i].emoji, c),
+                        byClass[c],
+                        entries[i].emoji + " into " + c)
                 }
+                // And the invariant beyond glyphs: no unlisted client
+                // is EVER handed the transient route, whatever the
+                // payload — the emoji twins included.
+                T.equal(Page.deliveryRoute("\u2665\uFE0F", c), byClass[c],
+                    "the twin into " + c)
+                T.equal(Page.deliveryRoute("\uD83D\uDC4D", c), byClass[c],
+                    "an astral single into " + c)
             }
         })
 
@@ -187,10 +210,10 @@ QtObject {
                     T.equal(toned.emoji, textView[i].emoji,
                         textView[i].emoji + " under a tone resolved to "
                             + toned.emoji)
-                    T.equal(Page.deliveryRoute(toned.emoji, "zcode"), "text",
+                    T.equal(Page.deliveryRoute(toned.emoji, "foot"), "text",
                         textView[i].emoji + " routed off the fast lane")
                     T.equal(Page.deliveryRoute(toned.emoji,
-                        "org.telegram.desktop"), "text")
+                        "com.rtosta.zapzap"), "text")
                 }
             }
             T.equal(twinned >= 15, true,

@@ -309,11 +309,15 @@ QtObject {
             var heart = "\u2665"                     // BMP single
             var keycap = "3\uFE0F\u20E3"             // BMP multi
 
-            // A lone BMP scalar rides the keysym route EVERYWHERE —
-            // even into classes nobody has ever heard of.
-            T.equal(Page.deliveryRoute(heart, "zcode"), "text")
-            T.equal(Page.deliveryRoute(heart, "org.telegram.desktop"), "text")
-            T.equal(Page.deliveryRoute(heart, ""), "text")
+            // §90 killed the lone-BMP-everywhere rule (the owner's
+            // live report: his Electron repeats the first glyph — the
+            // keysym route is for PROVEN clients only): a lone BMP
+            // scalar rides keysym nowhere unproven.
+            T.equal(Page.deliveryRoute(heart, "zcode"), "clipboard")
+            T.equal(Page.deliveryRoute(heart, "org.telegram.desktop"),
+                "clipboard")
+            T.equal(Page.deliveryRoute(heart, ""), "clipboard")
+            T.equal(Page.deliveryRoute(heart, "foot"), "text")
 
             // Keysym-good clients take the keysym route for anything —
             // terminals (the lab's foot/x11cat legs) and ZapZap (the

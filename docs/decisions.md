@@ -3145,3 +3145,41 @@ zero-poison round: under the owner's standing order the cycle rests
 here, the stop-rule streak holds its first clean point, and the next
 fresh external round — whenever the owner calls it — chases the
 second.
+
+## 90. The owner's second live report: the glyph that would not change
+
+After the loop's clean exit, the owner reported what he had found
+BEFORE the review rounds ran: the new glyphs type only the FIRST one
+clicked — every later click prints that same first glyph, across page
+reopens. The rounds never saw it: reviewers read code, the lab's
+Electron fixture (electron43) handles successive plain-text
+transients byte-exactly — REPRODUCED NEGATIVE in the nested session —
+so the daemon and the route are sound where they were proven, and the
+breakage lives in the owner's actual Electron build (its Ozone
+keymap table caches the first transient it sees per keycode; the
+tree's own KeyboardLayout.js:284 had already documented that table's
+habits).
+
+The root was §84's first rule — "a lone BMP scalar rides the keysym
+route EVERYWHERE" — written on faith. No lab leg had ever sent PLAIN
+`text` into an Electron client, because §40 routed every
+Chromium-family class to the composition route from day one; §84's
+table handed them the transient route for glyphs, a combination with
+zero evidence behind it. The rule is gone: the keysym route serves
+only the PROVEN clients (foot/x11cat by lab legs, zapzap by the
+owner's acceptance); entry-good classes keep the composition; every
+unlisted class — zcode, telegram, viber, the unnamed — gets the
+byte-exact clipboard transaction for ANY payload, glyphs included.
+§40's discipline restored whole: no Chromium-family build ever sees a
+transient keymap.
+
+The pins flipped with the table (the fast lane is keysymGood-only;
+the invariant now says no unlisted client is EVER handed the
+transient route, whatever the payload). The costs, honestly: glyphs
+into zcode/telegram now replace the clipboard like every other pick
+there (the documented contract), and lose the instant tap — the
+clipboard transaction's sub-second is the price of correctness
+against client builds the panel cannot see.
+
+55 Rust tests, 21 host suites, the wall's canary (15) and
+restart-settle (8) — green; deployed live for the owner to verify.
