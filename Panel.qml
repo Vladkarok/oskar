@@ -621,7 +621,7 @@ Item {
         // search every key is typing into while it is open — takes the
         // paste itself; only a panel with no local input delivers the
         // chord to the focused client behind it.
-        var target = ClipboardPaste.pasteTarget(root.hexEditing, root.emojiSearchActive)
+        var target = currentPasteTarget()
         if (target !== "external-client") {
             root.startLocalClipboardRead(target)
             root.refreshClipboardPreview()
@@ -635,6 +635,16 @@ Item {
     // blocks on a dead owner serves this read, so a watchdog force-kills
     // it, and an answer arriving for a target that closed or was replaced
     // inserts nothing.
+    // The paste/read target with FIELD identity (round thirteen's P2):
+    // "colour field" alone let a delayed paste started for key
+    // background land in text colour when focus moved mid-read — the
+    // arrival guard now refuses exactly that.
+    function currentPasteTarget() {
+        if (root.emojiSearchActive) return "emoji-search"
+        if (root.hexEditing) return "colour:" + root.hexEditField
+        return "external-client"
+    }
+
     function startLocalClipboardRead(target) {
         // A kill from the previous read's watchdog may still be in flight:
         // its late output is refused by sequence, but the Process object
@@ -652,7 +662,7 @@ Item {
         // The target is re-derived at arrival by the same determination
         // the click made; readExited refuses a mismatch for us.
         var result = ClipboardPaste.readExited(root.clipboardReadState, seq,
-            ClipboardPaste.pasteTarget(root.hexEditing, root.emojiSearchActive))
+            currentPasteTarget())
         root.clipboardReadState = result.state
         if (result.action !== "insert") return
         localClipboardReadWatchdog.stop()
@@ -670,13 +680,21 @@ Item {
         clipboardGoneTimer.restart()
     }
 
+    // Set when a refresh had to wait a retiring probe out (round
+    // thirteen's P2): the retired exit re-drives it, so a burst of
+    // clipboard changes never leaves the chip stale-hidden.
+    property bool clipboardRefreshQueued: false
+
     function refreshClipboardPreview() {
         // The probe's own rule (the local read has had it since its
         // audit): a kill is in flight — the Process object is not
         // reusable until that exit lands, and retagging its seq now
         // would let the DEAD run's exit apply stale clipboard bytes
-        // under the new sequence. Skip; the watch fires again.
-        if (clipboardTypes.retiring) return
+        // under the new sequence. Queue; the retired exit re-drives.
+        if (clipboardTypes.retiring) {
+            root.clipboardRefreshQueued = true
+            return
+        }
         root.clipboardSeq += 1
         clipboardTypes.seq = root.clipboardSeq
         if (clipboardTypes.running) {
@@ -699,7 +717,10 @@ Item {
         root.clipboardKind = ConfigFile.pasteChipKind(kind, "", false)
         root.clipboardPreview = ""
         if (kind !== "text") return
-        if (clipboardText.retiring) return
+        if (clipboardText.retiring) {
+            root.clipboardRefreshQueued = true
+            return
+        }
         clipboardText.seq = seq
         if (clipboardText.running) {
             clipboardText.retiring = true
@@ -1326,7 +1347,7 @@ Item {
         onTriggered: () => {
             var result = ClipboardPaste.readTimedOut(root.clipboardReadState,
                 localClipboardRead.seq,
-                ClipboardPaste.pasteTarget(root.hexEditing, root.emojiSearchActive))
+                currentPasteTarget())
             root.clipboardReadState = result.state
             if (result.action === "ignore") return
             if (result.action === "gone") root.markClipboardContentGone()
@@ -1369,7 +1390,15 @@ Item {
             // finding — the chip showed A while the clipboard held B).
             var wasRetired = clipboardTypes.retiring
             clipboardTypes.retiring = false
-            if (wasRetired) return
+            if (wasRetired) {
+                // The refresh that waited this kill out runs now, with a
+                // fresh sequence and a reusable Process (round 13).
+                if (root.clipboardRefreshQueued) {
+                    root.clipboardRefreshQueued = false
+                    refreshClipboardPreview()
+                }
+                return
+            }
             root.applyClipboardTypes(clipboardTypesOut.text, clipboardTypes.seq, exitCode)
         }
     }
@@ -1389,7 +1418,13 @@ Item {
         onExited: function (exitCode) {
             var wasRetired = clipboardText.retiring
             clipboardText.retiring = false
-            if (wasRetired) return
+            if (wasRetired) {
+                if (root.clipboardRefreshQueued) {
+                    root.clipboardRefreshQueued = false
+                    refreshClipboardPreview()
+                }
+                return
+            }
             root.applyClipboardText(clipboardTextOut.text, clipboardText.seq,
                 exitCode === 0)
         }
@@ -1710,7 +1745,7 @@ Item {
                 console.warn("[oskar] could not create", root.configDir, "- configuration not saved")
                 return
             }
-            writePrivateFile(root.configFile.path,
+            writePrivateFile(root.configPath,
                 ConfigFile.serializeOverrides(root.userOverrides))
         }
     }
@@ -1726,26 +1761,51 @@ Item {
                 console.warn("[oskar] could not create", root.stateDir, "- state not saved")
                 return
             }
-            writePrivateFile(root.stateFile.path,
+            writePrivateFile(root.statePath,
                 ConfigFile.serializeState(root.geometryState))
         }
     }
 
+    // One writer, one queue: a save arriving mid-write replaces its own
+    // target's queued entry (newest wins per file) and the exit drains
+    // the queue — overlapping config/state saves coalesce instead of
+    // racing a Process restart (round thirteen's note on the shared
+    // writer).
+    property var privateWriteQueue: []
     Process {
         id: privateWriter
         command: []
         onExited: (exitCode, exitStatus) => {
             if (exitCode !== 0 || exitStatus !== 0)
                 console.warn("[oskar] private write failed (exit " + exitCode + ")")
+            for (var i = 0; i < root.privateWriteQueue.length; i++) {
+                var next = root.privateWriteQueue[i]
+                root.privateWriteQueue = root.privateWriteQueue.slice(0, i)
+                    .concat(root.privateWriteQueue.slice(i + 1))
+                runPrivateWrite(next.path, next.payload)
+                return
+            }
         }
     }
 
-    function writePrivateFile(path, payload) {
+    function runPrivateWrite(path, payload) {
         privateWriter.command = ["bash", "-c",
             "umask 077; t=\"$1.tmp.$$\"; "
             + "printf %s \"$2\" > \"$t\" && chmod 600 \"$t\" && mv -f \"$t\" \"$1\"",
             "oskar-private-write", path, payload]
         privateWriter.running = true
+    }
+
+    function writePrivateFile(path, payload) {
+        if (privateWriter.running) {
+            var queue = root.privateWriteQueue.filter(function (entry) {
+                return entry.path !== path
+            })
+            queue.push({ path: path, payload: payload })
+            root.privateWriteQueue = queue
+            return
+        }
+        runPrivateWrite(path, payload)
     }
 
     // Resolves the freedesktop sound theme's file for the click and transcodes

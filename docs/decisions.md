@@ -2553,3 +2553,40 @@ half-truths:
 53 Rust tests, the lab's 40, host suites green; deployed live. The
 stop-rule stands: this round found blockers, the counter waits for two
 CLEAN ones.
+
+## 75. Round thirteen: the external round returns
+
+Five findings from the external reviewer on the round-twelve tree, all
+confirmed and fixed:
+
+- **Saves were dead (P1).** The private writer's round-twelve rewiring
+  referenced `root.configFile.path` — a FileView id dressed as a root
+  property, undefined at runtime; settings and state silently never
+  saved. The real `root.configPath`/`root.statePath` again, and the
+  shared writer grew a per-target queue: a save arriving mid-write
+  replaces its own file's queued entry and the exit drains the queue —
+  overlapping config/state saves coalesce instead of racing.
+- **Shutdown could strand a chord (P1).** The round-twelve beat guard
+  skipped a beat's writes on shutdown — including Ctrl/Shift RELEASES,
+  which unicode compositions do not claim-track and the final release
+  cannot know about. Beats always write now; the loop's per-scalar
+  check exits at the next boundary (chord lifted), and
+  release_everything WAITS the delivery out before queueing the final
+  release — the old under-lock serialization, restored as an explicit
+  wait.
+- **A doubly-failed restore lies (P2).** The generation bump alone let
+  a later unchanged configure short-circuit to success without ever
+  re-uploading the map the device lost. The restore failure now voids
+  the install's IDENTITY (config and kb_file_mark cleared): every
+  later configure takes the full path until one restores.
+- **A retiring probe ate the refresh (P2).** A clipboard change landing
+  in the retiring window was dropped, and the chip hid for good. The
+  retired exit re-drives a queued refresh — bursts never leave the
+  chip stale.
+- **A delayed paste could cross colour fields (P2).** The read's target
+  said only "colour field"; a paste started for key background landed
+  in text colour when focus moved mid-read. The target carries the
+  field's identity (`colour:<field>`) and the arrival guard refuses the
+  crossing.
+
+53 Rust tests, the lab's 40, host suites green; deployed live.

@@ -1614,10 +1614,17 @@ fn deliver_text(
         if upload_keymap(&keyboard, &installed).is_err()
             && upload_keymap(&keyboard, &installed).is_err()
         {
+            // The generation bump alone was not enough (round thirteen's
+            // P2): an unchanged configure then short-circuited to success
+            // without ever re-uploading the map the device lost. Voiding
+            // the install's IDENTITY makes every later configure take the
+            // full path — compile, upload, restore — until one succeeds.
             guard.caps_gen += 1;
+            guard.config = None;
+            guard.kb_file_mark = None;
             eprintln!(
                 "text: typed, but the installed keymap did not go back up; \
-                 caps generation invalidated — the panel will re-sync"
+                 install invalidated — the next configure restores"
             );
             let _ = connection.flush();
             return "err keymap".to_string();
@@ -1647,11 +1654,11 @@ fn beat(
 ) {
     {
         let _guard = arc.lock().unwrap();
-        // Past the shutdown's final release nothing may press (F4): the
-        // beat writes nothing, the loop's own check exits soon after.
-        if shutdown_requested() {
-            return;
-        }
+        // The beat ALWAYS writes (round thirteen's P1: skipping a beat on
+        // shutdown skipped a Ctrl/Shift RELEASE — unicode chords are not
+        // claim-tracked, so the shutdown release could not cover them).
+        // The loop's own per-scalar check exits at the next boundary,
+        // chord lifted, and release_everything waits the delivery out.
         body(keyboard);
     }
     let _ = connection.flush();
@@ -1837,10 +1844,15 @@ fn deliver_unicode_text(
         if upload_keymap(&keyboard, &installed).is_err()
             && upload_keymap(&keyboard, &installed).is_err()
         {
+            // The same voiding as deliver_text's restore failure: the
+            // identity goes, so no configure can short-circuit past a
+            // device left on the entry keymap (round thirteen's P2).
             guard.caps_gen += 1;
+            guard.config = None;
+            guard.kb_file_mark = None;
             eprintln!(
                 "text-unicode: typed, but cannot restore the installed \
-                 keymap; caps generation invalidated — the panel will re-sync"
+                 keymap; install invalidated — the next configure restores"
             );
             let _ = connection.flush();
             return "err keymap".to_string();
@@ -3299,12 +3311,20 @@ fn shutdown_signal_set() -> libc::sigset_t {
 ///
 /// Returns the codes it lifted, so the caller can say what happened rather
 /// than claim a release that had nothing to release.
-fn release_everything(shared: &SharedRef, connection: &Connection) -> Vec<u32> {
-    let mut shared = shared.lock().unwrap();
+fn release_everything(shared_arc: &SharedRef, connection: &Connection) -> Vec<u32> {
+    let mut shared = shared_arc.lock().unwrap();
     // Close the command gate under the same lock used by every command. Once
     // it opens again for a client thread the final release has already been
     // queued, and that thread can only receive `err shutting down`.
     shared.shutting_down = true;
+    // An in-flight delivery finishes its CURRENT scalar (chord lifted,
+    // mask zeroed — beats always write) and exits at the next boundary;
+    // only then is the final release queued. Waiting here is what keeps
+    // the unlockable pacing from stranding a mid-chord Ctrl the held-key
+    // release cannot know about (round thirteen's P1).
+    drop(shared);
+    wait_out_delivery(shared_arc);
+    let mut shared = shared_arc.lock().unwrap();
     let Some(keyboard) = shared.keyboard.clone() else {
         return Vec::new();
     };
