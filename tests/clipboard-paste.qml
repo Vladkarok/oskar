@@ -10,13 +10,24 @@ QtObject {
             // types into the search — so the chip's paste must land there
             // too. On the old code this determination did not exist and the
             // chord went to the focused external client.
-            T.equal(ClipboardPaste.pasteTarget(false, true), "emoji-search")
+            T.equal(ClipboardPaste.pasteTargetFor(true, false, "", false), "emoji-search")
         })
 
-        T.test("target precedence: colour field, then search, then client", function () {
-            T.equal(ClipboardPaste.pasteTarget(true, false), "colour-field")
-            T.equal(ClipboardPaste.pasteTarget(true, true), "colour-field")
-            T.equal(ClipboardPaste.pasteTarget(false, false), "external-client")
+        T.test("target precedence: armed search, then a field with its whole identity", function () {
+            T.equal(ClipboardPaste.pasteTargetFor(false, true, "textColor", false),
+                "colour:popover:textColor")
+            // The surface rides with the field: the custom editor and the
+            // popover can both edit textColor, and a read started in one
+            // must not land in the other (rounds 13-14).
+            T.equal(ClipboardPaste.pasteTargetFor(false, true, "textColor", true),
+                "colour:editor:textColor")
+            T.equal(ClipboardPaste.pasteTargetFor(false, false, "", false),
+                "external-client")
+            // The armed search wins over a live field (opening a field
+            // disarms the search, so both-active is not a real state —
+            // stated rather than assumed).
+            T.equal(ClipboardPaste.pasteTargetFor(true, true, "textColor", false),
+                "emoji-search")
         })
 
         T.test("a local read inserts while its target still stands", function () {

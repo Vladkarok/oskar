@@ -13,12 +13,20 @@
 // lands in whichever panel-local input is active — the colour field, or
 // the emoji page whose search the keys are typing into while it is open —
 // and only a panel with no local input delivers the chord to the focused
-// client. The colour field wins if both are somehow active: the page
-// replaces the card on open, so the pair is a state the panel does not
+// client. The armed search wins if both are somehow active: opening a
+// field disarms the search, so the pair is a state the panel does not
 // produce, and the precedence is stated rather than assumed.
-function pasteTarget(hexEditing, emojiOpen) {
-    if (hexEditing) return "colour-field"
-    if (emojiOpen) return "emoji-search"
+//
+// The colour target carries the WHOLE identity (rounds 13-14): the
+// surface that owns the field — popover or the custom editor, which can
+// both be editing `textColor` — and the field itself. A read started for
+// one surface's field must not land in another's when focus moves
+// mid-read; the arrival guard refuses exactly that.
+function pasteTargetFor(emojiArmed, hexEditing, hexField, customEditorOpen) {
+    if (emojiArmed) return "emoji-search"
+    if (hexEditing)
+        return "colour:" + (customEditorOpen ? "editor" : "popover")
+            + ":" + hexField
     return "external-client"
 }
 

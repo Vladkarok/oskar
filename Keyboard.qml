@@ -577,15 +577,27 @@ Item {
     /// keycap facts computed from the superseded install (decisions §23).
     function settleConfigureReply(gen) {
         // The FIFO head is the transaction this reply settles; the session
-        // pops the same entry, so capture its facts first.
+        // pops the same entry, so capture its facts first — the previous
+        // acknowledged generation too, before the reduce consumes it.
         var entry = session.queue.length > 0 ? session.queue[0] : null
+        var previousGen = session.ackedGen
         session = Session.reduce(session, { type: "configureAck", gen: gen })
         // The ack is the truthful moment the helper's world — group
         // included — matches the panel's; persist it for the restart
         // fallback (LayoutDevices).
         root.groupConfirmed(session.group)
         if (!entry) return
-        if (!entry.changed) return
+        // A GENERATION JUMP on a same-identity ack means the helper took
+        // the FULL path behind the panel's back — the voided-install
+        // repair after a failed restore (the behaviour audit's RISKY): it
+        // drained every held claim and zeroed the mask, and a ledger that
+        // still believes them draws a locked Shift over a device holding
+        // nothing. The jump IS the drain, whatever the entry promised.
+        // (previousGen 0 is the first ack of a session — its entry is
+        // `changed` by construction, so the jump check adds nothing.)
+        var drained = entry.changed
+            || (previousGen !== 0 && gen !== previousGen)
+        if (!drained) return
         modifierState = Modifiers.reduce(modifierState,
             { type: "configureDrain", stamp: entry.seq }).state
     }

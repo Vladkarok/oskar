@@ -2634,3 +2634,31 @@ pass: `settleConfigureReply` must treat a generation jump on a
 same-identity ack as a drain.
 
 53 Rust tests, the lab's 40, host suites green; deployed live.
+
+## 77. The cold-diff subagent folds in; the triple check closes
+
+The cold-diff subagent's report cross-checked cleanly against Claude
+Code's: its blocker (the self-deadlock) and findings 3/4/5 were the
+same defects, already fixed and deployed by the Claude pass. Its
+remainders are now closed too:
+
+- The paste-target rule came HOME to ClipboardPaste.js as
+  `pasteTargetFor(emojiArmed, editing, field, customEditorOpen)` — the
+  surface-and-field identity the panel supplies facts to, with its
+  precedence stated and suite-held (the rule had drifted into Panel.qml
+  untested, and the module's old generic function was production-dead
+  with a test asserting the superseded shape).
+- The behaviour audit's RISKY is fixed at the panel: a GENERATION JUMP
+  on a same-identity configure ack IS a drain — the voided-install
+  repair ran the full path behind the panel's back, lifted every held
+  claim and zeroed the mask, and the modifier ledger now drains with it
+  instead of drawing a locked Shift over a device holding nothing.
+- The two stale shutdown comments (the round-ten lock-held world, the
+  "already queued" claim false during the wait window) now describe the
+  machinery that exists; the writer's drain loop says the FIFO head it
+  is.
+
+53 Rust tests, host suites green, deployed live. The cold-diff
+subagent's own note stands as the closing line of this round: the
+review of the review of the review found nothing the second reviewer
+missed.

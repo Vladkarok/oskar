@@ -3300,17 +3300,18 @@ fn expire_stuck_keys(shared: &SharedRef, connection: &Connection) -> Vec<u32> {
 /// away underneath one.
 const SHUTDOWN_SIGNALS: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
 
-/// Set the moment the sigwait thread wakes, before it goes anywhere near the
-/// shared lock (F4). A text delivery holds that lock across its paced sleeps
-/// — a Chromium-route family is ~750 ms — while the shutdown release waits on
-/// it for at most 500 ms and then leaves anyway, destroying the virtual
-/// keyboard mid-chord: Hyprland does not lift a destroyed device's presses
-/// (ticket 17), so the composition's Ctrl or Shift would stay down on the
-/// seat for the rest of the session. The deliveries therefore poll this flag
-/// between their steps and abort inside one pacing beat (~a scalar), handing
-/// the lock back so the ordinary release-and-roundtrip path answers for the
-/// device. Atomic and lock-free precisely because the setter must not need
-/// the lock the reader is holding.
+/// Set the moment the sigwait thread wakes, before it goes anywhere near
+/// the shared lock (F4; rounds 11-14 reshaped what reads it): deliveries
+/// pace with the lock RELEASED between beats, so the shutdown's release
+/// no longer waits them out for the lock — it waits the DELIVERY out
+/// (`wait_out_delivery`, 5 s) while the in-flight scalar finishes with
+/// its chord lifted and the mask zeroed. The flag itself stays atomic
+/// and lock-free because the setter must not need any lock the readers
+/// hold: the per-scalar checks (and the entry scopes) read it between
+/// their own locked steps and exit at the boundary, and a compositor
+/// that never answers is bounded by the 6 s exit timer, not by this
+/// flag's timing. Hyprland does not lift a destroyed device's presses
+/// (ticket 17) — that is why every one of these bounds exists.
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 fn shutdown_requested() -> bool {
@@ -3351,9 +3352,11 @@ fn shutdown_signal_set() -> libc::sigset_t {
 /// than claim a release that had nothing to release.
 fn release_everything(shared_arc: &SharedRef, connection: &Connection) -> Vec<u32> {
     let mut shared = shared_arc.lock().unwrap();
-    // Close the command gate under the same lock used by every command. Once
-    // it opens again for a client thread the final release has already been
-    // queued, and that thread can only receive `err shutting down`.
+    // Close the command gate under the same lock used by every command.
+    // From this instant a client thread can only receive `err shutting
+    // down` (the final release itself is queued AFTER the delivery wait
+    // below — the gate closes first precisely so nothing new starts
+    // while that wait runs).
     shared.shutting_down = true;
     // An in-flight delivery finishes its CURRENT scalar (chord lifted,
     // mask zeroed — beats always write) and exits at the next boundary;

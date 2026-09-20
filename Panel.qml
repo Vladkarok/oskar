@@ -650,11 +650,12 @@ Item {
     // background land in text colour when focus moved mid-read — the
     // arrival guard now refuses exactly that.
     function currentPasteTarget() {
-        if (root.emojiSearchActive) return "emoji-search"
-        if (root.hexEditing)
-            return "colour:" + (root.customEditorField !== "" ? "editor" : "popover")
-                + ":" + root.hexEditField
-        return "external-client"
+        // The RULE lives in ClipboardPaste.js with its suite (the cold
+        // audit's finding 7: it had drifted here, untested); the panel
+        // supplies only the live facts.
+        return ClipboardPaste.pasteTargetFor(root.emojiSearchActive,
+            root.hexEditing, root.hexEditField,
+            root.customEditorField !== "")
     }
 
     // A click that waited out the local read's kill window (the external
@@ -1838,12 +1839,12 @@ Item {
                 }
             }
             root.privateWriteInFlight = null
-            for (var i = 0; i < root.privateWriteQueue.length; i++) {
-                var next = root.privateWriteQueue[i]
-                root.privateWriteQueue = root.privateWriteQueue.slice(0, i)
-                    .concat(root.privateWriteQueue.slice(i + 1))
+            // The queue's HEAD runs next (FIFO; the cold audit's cosmetic —
+            // it was a loop that could only ever take the first entry).
+            if (root.privateWriteQueue.length > 0) {
+                var next = root.privateWriteQueue[0]
+                root.privateWriteQueue = root.privateWriteQueue.slice(1)
                 runPrivateWrite(next.path, next.payload, next.retried === true)
-                return
             }
         }
     }
