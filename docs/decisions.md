@@ -3118,3 +3118,30 @@ same glyph, same route, harmless.
 
 55 Rust tests, 21 host suites, the wall's canary (15) and
 restart-settle (8) — green; deployed live.
+
+## 89. Round eight comes back clean: the loop's exit
+
+The autonomous loop's eighth round: Claude Code on Opus — SAFE TO
+SHIP, nothing but a stale comment; the adversarial diff audit — ZERO
+poisons, two niggles, one live-with. The magnitude curve the campaign
+predicted held to the end: 34 families → 22 glyphs → one wine-only
+lane → two refinements.
+
+- The fifth lane's gate narrowed to exactly the chip-owned flows
+  (`&& txn idle` is load-bearing: the txn's OWN chord was already
+  serialized by its queue — refusing there too converted queued picks
+  into lost clicks; a chip chord can never coexist with a live txn,
+  so no lane reopens).
+- The latent sixth lane closed: `pasteCurrent` without a callback used
+  to return the flow to idle the instant the writes returned — the
+  wl-copy race reborn for any future caller following a stale comment
+  that invited exactly that call. Every dispatched chord awaits now;
+  a missing callback settles as a failure, not a silent pass.
+- The search contract comment reworded to what §88 actually ships.
+
+55 Rust tests, 21 host suites, the wall's canary (15) and
+restart-settle (8) — green; deployed live. This is the loop's first
+zero-poison round: under the owner's standing order the cycle rests
+here, the stop-rule streak holds its first clean point, and the next
+fresh external round — whenever the owner calls it — chases the
+second.

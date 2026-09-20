@@ -1647,8 +1647,15 @@ Item {
         // a txn — the txn machine never saw it), and this pick's very
         // first act is wl-copy replacing what that chord is about to
         // paste. Refuse visibly, the sub-second window closes.
-        if (keyboard.pastePacing
-                || keyboard.pasteFlow.phase !== "idle") {
+        // "txn idle" is load-bearing (§89): the txn's OWN chord is
+        // already serialized by the txn machine's queue — refusing
+        // here too converted queued picks into lost clicks. A chip
+        // chord can never coexist with a live txn (the chip refuses
+        // on the txn phase), so this narrows the gate to exactly the
+        // chip-owned flows without reopening the lane.
+        if ((keyboard.pastePacing
+                || keyboard.pasteFlow.phase !== "idle")
+                && root.emojiTxnState.phase === "idle") {
             root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
             return
         }

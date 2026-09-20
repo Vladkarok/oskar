@@ -616,7 +616,7 @@ Rectangle {
                 // No query: the active group's slice, catalogue order kept.
                 // A query: the catalogue's ranked search across every
                 // group — the tabs name a group, the search names an emoji —
-                // capped at searchLimit after modifier families collapse, so
+                // capped at 3x searchLimit raw on the catalogue side, glyphs whole, so
                 // a broad term still fills the viewport with distinct tiles.
                 model: emojiRoot.searching
                     ? EmojiGrid.visibleEntries(

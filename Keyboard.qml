@@ -1339,8 +1339,10 @@ Item {
     // chord, after every line is accepted by the socket writer for an
     // immediate one, and synchronously with false on any refusal (already
     // pacing, a held key, an unready input, a dead socket mid-pace). The
-    // emoji page records usage only from a real completion; the paste
-    // chip still calls without one, unchanged.
+    // emoji page records usage only from a real completion; every
+    // caller passes one (§89: the chip and the txn both do, and a
+    // missing callback settles as a failure rather than a silent
+    // pass).
     property bool pastePacing: false
     property var pastePacedLines: []
     // The full chord and how much of it went out, so an abort can owe the
@@ -1489,7 +1491,14 @@ Item {
     }
 
     function pasteCurrent(wmClass, completed) {
-        var done = completed || null
+        // Every dispatched chord awaits its verdict (§89): a
+        // callback-less call used to return the flow to idle the
+        // instant the writes returned — the wl-copy-vs-in-flight-V
+        // race the fifth lane was closed against, reborn for any
+        // future caller following the old comment. There is no such
+        // caller today (the chip and the txn both pass callbacks); a
+        // missing one now settles as a failure, not a silent pass.
+        var done = completed || function () {}
         var cls = String(wmClass || "")
         // One paste at a time (PasteFlow owns the gate; round nine's
         // finding was this check living beside a chordStart that reset
