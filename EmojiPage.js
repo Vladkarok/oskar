@@ -21,11 +21,13 @@ function allGroups() {
 }
 
 function searchEverything(query, limit) {
-    // The catalogue side is capped at the page's own limit; the shelf's
-    // hits ride after it WHOLE (§86: concatenating uncapped-then-capping
-    // starved every glyph past broad terms' flood — "no" buried ✗ at
-    // position 100 of a 64 cap).
-    var cap = limit > 0 ? limit : 0
+    // The catalogue side is capped with COLLAPSE HEADROOM (§88: a raw
+    // cap of the page's own limit left tone families eating up to six
+    // raw hits per tile — broad "hand"/"person" queries filled the
+    // viewport with ~20 distinct of 64); the shelf's hits ride after it
+    // WHOLE (§86: concatenating uncapped-then-capping starved every
+    // glyph past broad terms' flood).
+    var cap = limit > 0 ? limit * 3 : 0
     return Catalog.search(query, cap).concat(TextGlyphs.search(query))
 }
 

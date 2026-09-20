@@ -3086,3 +3086,35 @@ both guards at once and only proved the forward direction.
 
 55 Rust tests, 21 host suites, the wall's canary (15) and
 restart-settle (8) — green; deployed live.
+
+## 88. The fifth lane, and the pin that pinned itself
+
+Round 7 (autonomous): Claude Code on Opus returned its second SAFE
+TO SHIP of the streak with one magnitude niggle; the diff auditor
+found the fifth serialization lane — the one class this campaign
+keeps minting. The paste CHIP's paced chord (wine/proton classes,
+panel-paced, never a txn) owned the clipboard unopposed: a
+clipboard-routed pick's first act is wl-copy replacing what the
+chord's remaining V was about to paste — one of the two clicks
+corrupted, either way. `pickViaClipboard` refuses on
+`pastePacing || pasteFlow non-idle` now, visibly, like every lane.
+The complete lane table, finally symmetric: direct↔txn, direct↔chip
+chord, clipboard↔direct, clipboard-mode↔direct, clipboard↔chip chord.
+
+The auditor also caught the §87 pin pinning itself: the Text-tab
+equality compared an already-collapsed slice against its own
+re-collapse — twin-to-twin, vacuous; only its group arm was live.
+Asserted against the RAW shelf now, plus a search-identity pin (the
+search path's mirror symptom is vanishing, not twin-drawing — dedup
+drops the substituted shelf tile silently). Opus's magnitude niggle
+fixed with it: the raw search cap gained 3x collapse headroom
+(broad "hand"/"person" queries were filling the viewport with ~20
+distinct of 64 — tone families eating six raw hits per tile).
+
+LIVE-WITH extended: the twelve byte-identical zodiac also dedup out
+of search against their catalogue twins, and a shared usage string
+resolves to the shelf's metadata (recordsToEntries last-wins) —
+same glyph, same route, harmless.
+
+55 Rust tests, 21 host suites, the wall's canary (15) and
+restart-settle (8) — green; deployed live.

@@ -1642,6 +1642,16 @@ Item {
     }
 
     function pickViaClipboard(emoji) {
+        // The fifth serialization lane (§88): the paste CHIP's own
+        // paced/awaiting chord owns the clipboard right now (it is not
+        // a txn — the txn machine never saw it), and this pick's very
+        // first act is wl-copy replacing what that chord is about to
+        // paste. Refuse visibly, the sub-second window closes.
+        if (keyboard.pastePacing
+                || keyboard.pasteFlow.phase !== "idle") {
+            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
+            return
+        }
         // Ticket 56: the client class is derived ONCE, here at the pick —
         // the click's own moment, the same derivation the direct route
         // uses for its unicode-entry decision — and rides the payload

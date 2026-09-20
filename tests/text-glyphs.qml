@@ -126,19 +126,43 @@ QtObject {
                         "a shelf entry substituted onto " + groups[g])
                 }
             }
-            // The Text tab itself passes through AS ITSELF, per tile —
-            // §87's mirror poison: the length survived the twin
-            // substitution (each glyph maps to a distinct twin, no
-            // dedup), so only emoji equality catches the rewrite.
+            // The Text tab itself passes through AS ITSELF, asserted
+            // against the RAW SHELF (§88's pin fix: the §87 draft
+            // re-collapsed an already-collapsed slice — twin-to-twin
+            // comparison, vacuous; only its group arm was live).
+            var shelf = TextGlyphs.entries()
             var textSlice = Page.groupEntries(merged, "Text")
             var textView = Page.visibleEntries(textSlice, merged, 0)
-            T.equal(textView.length, TextGlyphs.entries().length)
+            T.equal(textView.length, shelf.length)
             for (var t = 0; t < textView.length; t++) {
-                T.equal(textView[t].emoji, textSlice[t].emoji,
-                    "Text tile " + textSlice[t].emoji
+                T.equal(textView[t].emoji, shelf[t].emoji,
+                    "Text tile " + shelf[t].emoji
                         + " came out as " + textView[t].emoji)
                 T.equal(textView[t].group, "Text")
             }
+        })
+
+        T.test("search keeps the shelf's identity, not its twin's (§88)", function () {
+            // The search path's mirror symptom is VANISHING, not
+            // twin-drawing: a substituted glyph dedups against the
+            // catalogue twin already seen. The pin asserts the shelf's
+            // own tile survives the collapse per identity.
+            var view = Page.visibleEntries(
+                Page.searchEverything("heart", 64),
+                Page.allEntries(), 0)
+            var sawShelfHeart = false
+            for (var i = 0; i < view.length; i++) {
+                if (view[i].group === "Text" && view[i].emoji === "\u2665") {
+                    sawShelfHeart = true
+                }
+                if (view[i].emoji === "\u2665") {
+                    T.equal(view[i].group, "Text",
+                        "the bare heart survived as "
+                            + view[i].group)
+                }
+            }
+            T.equal(sawShelfHeart, true,
+                "the shelf's heart vanished from the search view")
         })
 
         T.test("a twinned glyph survives the whole pick flow (§87's mirror)", function () {
@@ -185,8 +209,11 @@ QtObject {
                 if (results[r].group === "Text") fromShelf++
                 else fromCatalog++
             }
-            T.equal(fromCatalog <= 8, true,
-                "catalogue side capped at the limit, got " + fromCatalog)
+            // The catalogue side is capped WITH COLLAPSE HEADROOM (§88:
+            // raw cap = 3x the page limit — tone families eat up to six
+            // raw hits per distinct tile).
+            T.equal(fromCatalog <= 8 * 3, true,
+                "catalogue side capped at 3x the limit, got " + fromCatalog)
             // "a" matches shelf keywords (arrow, sun...) — they ride
             // whole past the cap.
             T.equal(fromShelf > 0, true,
