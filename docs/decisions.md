@@ -2471,3 +2471,48 @@ ledger.
 The audit's own lesson, recorded with the author's: the suite tests the
 module, not the composition — the blocker lived exactly in that gap,
 and a second reader reading the composition cold is what caught it.
+
+## 73. Round eleven: two cold auditors, the daemon's long-held lock
+
+The owner's cold-audit pass — two agents, panel and daemon — returned a
+SAFE-to-ship panel with four small finds and a NOT-safe daemon with two
+blockers, both the same disease the rounds kept circling: work done under
+the shared lock that should never have held it.
+
+- **The panel finds, fixed:** killed clipboard probes applied their stale
+  bytes under the new sequence (the chip showed A while the clipboard
+  held B) — every kill-restart process now carries the local read's
+  retiring discipline; the emoji verify's late stream could verify the
+  wrong pick (same fix); a relayout nudge arriving mid-chain was dropped
+  instead of queued (ticket 30's symptom lived in that window); and the
+  private 600/600 landed after the fact — saves now go through one
+  umask-077 temp+rename, private at creation, no window.
+- **Blocker: the keycode span.** A 60-byte keymap declaring a keycode
+  near u32::MAX made the keycap walk iterate ~9 s of CPU under the lock
+  per configure — the panel could not even reconnect (its hello blocked
+  past the handshake window). Both compile doors refuse keymaps beyond
+  4096 now (stock evdev tops at 709), which is what bounds the span
+  walk; a text-level named-keys walk was tried and reverted —
+  include-based keymaps carry no declarations to parse.
+- **Blocker: pacing under the lock.** A delivery's sleeps held the lock
+  ~2 s per command; a pipelining connection kept it held indefinitely
+  and every keystroke lagged behind it. Deliveries now run lock-free
+  between beats with a `delivery_active` flag; every other command,
+  plus the stuck-key cap and disconnect releases, waits the delivery out
+  (bounded), and hello was never blocked to begin with.
+- **Riding the same pass:** transient keymap uploads pay a looser
+  20-per-10s budget; identical reconfigures skip the ceiling compile
+  (the installed map's own count is the ceiling that fits it) and
+  compile ATTEMPTS pay the churn budget, failed parses included; a
+  failed restore retries once and then invalidates the install's
+  generation so the panel re-syncs; a departing connection only zeroes
+  the modifier mask if it actually lifted something; empty lines answer
+  `err empty` (the one-reply invariant has no silent case); a refused
+  post-handshake hello never de-negotiates; the key-drain stamps like
+  every other release; and a failed client spawn drops the client
+  instead of exit(70) past every release path.
+
+The lab suite grew with it: 40 tests, the new one holding the
+empty-line answer. The harness's own newline append collided with the
+new honest reply — the batch test taught the harness not to manufacture
+empty lines it did not mean to send.

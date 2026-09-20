@@ -20,13 +20,13 @@ import "harness.js" as T
 
 QtObject {
     Component.onCompleted: {
-        T.test("the table ships exactly three complete languages", function () {
-            T.deepEqual(UiStrings.LANGUAGES, ["en", "ru", "uk"])
+        T.test("the table ships exactly four complete languages", function () {
+            T.deepEqual(UiStrings.LANGUAGES, ["en", "ru", "uk", "it"])
             var ids = UiStrings.ids()
             T.equal(ids.length > 60, true)
             for (var i = 0; i < ids.length; i++) {
                 var entry = UiStrings.STRINGS[ids[i]]
-                T.deepEqual(Object.keys(entry).sort(), ["en", "ru", "uk"],
+                T.deepEqual(Object.keys(entry).sort(), ["en", "it", "ru", "uk"],
                     "id " + ids[i])
                 for (var l = 0; l < UiStrings.LANGUAGES.length; l++) {
                     var text = entry[UiStrings.LANGUAGES[l]]

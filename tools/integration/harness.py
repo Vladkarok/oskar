@@ -80,7 +80,14 @@ class Client:
 
     def send(self, command):
         """Write one protocol line, return the helper's reply."""
-        self._stream.write(command + "\n")
+        # The newline rides ONLY when the caller did not terminate: the
+        # batch tests deliberately write many complete lines in one call,
+        # and a blindly appended newline would be a bare empty line —
+        # which the helper answers (one reply per command, empties
+        # included), shifting every read after it by one.
+        if not command.endswith("\n"):
+            command += "\n"
+        self._stream.write(command)
         self._stream.flush()
         return self._stream.readline().strip()
 
@@ -121,7 +128,14 @@ class Client:
         window needs the write to not consume the reply first — the replies
         stay queued in order for read_reply.
         """
-        self._stream.write(command + "\n")
+        # The newline rides ONLY when the caller did not terminate: the
+        # batch tests deliberately write many complete lines in one call,
+        # and a blindly appended newline would be a bare empty line —
+        # which the helper answers (one reply per command, empties
+        # included), shifting every read after it by one.
+        if not command.endswith("\n"):
+            command += "\n"
+        self._stream.write(command)
         self._stream.flush()
 
     def read_line(self):

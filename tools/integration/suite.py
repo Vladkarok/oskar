@@ -433,6 +433,16 @@ def protocol_mismatch_is_refused(helper, keyboard):
 # where one operation overlaps another on the same socket.
 
 
+@test("even an empty line answers exactly one reply")
+def empty_line_answers(suite_helper, keyboard):
+    client = suite_helper.connect()
+    client.write_unread("\n")
+    if client.read_line() != "err empty":
+        raise Failure("a bare empty line did not answer err empty")
+    client.expect("ping", "pong")
+    client.close()
+
+
 @test("nothing executes before a completed hello, and a refused version never opens the door")
 def pre_handshake_gate(helper, keyboard):
     raw = helper.connect(negotiate=False)

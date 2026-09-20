@@ -671,9 +671,20 @@ Item {
     }
 
     function refreshClipboardPreview() {
+        // The probe's own rule (the local read has had it since its
+        // audit): a kill is in flight — the Process object is not
+        // reusable until that exit lands, and retagging its seq now
+        // would let the DEAD run's exit apply stale clipboard bytes
+        // under the new sequence. Skip; the watch fires again.
+        if (clipboardTypes.retiring) return
         root.clipboardSeq += 1
         clipboardTypes.seq = root.clipboardSeq
-        restartProcessGroup(clipboardTypes)
+        if (clipboardTypes.running) {
+            clipboardTypes.retiring = true
+            killProcessGroup(clipboardTypes)
+            clipboardTypes.running = false
+        }
+        clipboardTypes.running = true
     }
 
     function applyClipboardTypes(text, seq, exitCode) {
@@ -688,8 +699,14 @@ Item {
         root.clipboardKind = ConfigFile.pasteChipKind(kind, "", false)
         root.clipboardPreview = ""
         if (kind !== "text") return
+        if (clipboardText.retiring) return
         clipboardText.seq = seq
-        restartProcessGroup(clipboardText)
+        if (clipboardText.running) {
+            clipboardText.retiring = true
+            killProcessGroup(clipboardText)
+            clipboardText.running = false
+        }
+        clipboardText.running = true
     }
 
     function applyClipboardText(text, seq, exitOk) {
@@ -830,6 +847,11 @@ Item {
     // the whole chain — a failed probe must not write anything, or it
     // would clobber a nonzero user setting with 0.
     property bool relayoutBusy: false
+    // A nudge that arrived mid-chain is QUEUED, not dropped (the
+    // cold-audit's finding: a rapid open-close-open left the zone-add
+    // nudge skipped and tiled windows under the strip until the next
+    // toggle): the chain re-runs from its own restore exit.
+    property bool relayoutPending: false
     Timer {
         id: relayoutKickoff
         interval: 150
@@ -869,6 +891,10 @@ Item {
                 relayoutRestore.restart()
             } else {
                 root.relayoutBusy = false
+                if (root.relayoutPending) {
+                    root.relayoutPending = false
+                    nudgeHyprlandRelayout()
+                }
             }
         }
     }
@@ -885,7 +911,10 @@ Item {
 
     function nudgeHyprlandRelayout() {
         if (root.mode !== "docked") return
-        if (root.relayoutBusy) return
+        if (root.relayoutBusy) {
+            root.relayoutPending = true
+            return
+        }
         root.relayoutBusy = true
         relayoutKickoff.restart()
     }
@@ -1328,12 +1357,19 @@ Item {
     Process {
         id: clipboardTypes
         property int seq: 0
+        property bool retiring: false
         command: ["setsid", "bash", "-c", "wl-paste --list-types | head -c 4096"]
         stdout: StdioCollector {
             id: clipboardTypesOut
             waitForEnd: true
         }
         onExited: function (exitCode) {
+            // A retired exit is the KILLED run's: its bytes describe a
+            // clipboard the seq has already moved past (the cold-audit's
+            // finding — the chip showed A while the clipboard held B).
+            var wasRetired = clipboardTypes.retiring
+            clipboardTypes.retiring = false
+            if (wasRetired) return
             root.applyClipboardTypes(clipboardTypesOut.text, clipboardTypes.seq, exitCode)
         }
     }
@@ -1341,6 +1377,7 @@ Item {
     Process {
         id: clipboardText
         property int seq: 0
+        property bool retiring: false
         // head caps the stream (the security audit): a malicious clipboard
         // owner cannot balloon the shell's memory through the collector —
         // SIGPIPE closes wl-paste past the bound.
@@ -1350,6 +1387,9 @@ Item {
             waitForEnd: true
         }
         onExited: function (exitCode) {
+            var wasRetired = clipboardText.retiring
+            clipboardText.retiring = false
+            if (wasRetired) return
             root.applyClipboardText(clipboardTextOut.text, clipboardText.seq,
                 exitCode === 0)
         }
@@ -1385,14 +1425,21 @@ Item {
     Process {
         id: emojiClipboardVerify
         property int seq: 0
+        property bool retiring: false
         // head caps the stream (the security audit): a malicious clipboard
         // owner cannot balloon the shell's memory through the collector —
         // SIGPIPE closes wl-paste past the bound.
         command: ["setsid", "bash", "-c", "wl-paste --no-newline | head -c 65536"]
         stdout: StdioCollector {
             waitForEnd: true
-            onStreamFinished: root.finishEmojiPublishVerify(
-                emojiClipboardVerify.seq, this.text)
+            onStreamFinished: {
+                if (emojiClipboardVerify.retiring) return
+                root.finishEmojiPublishVerify(
+                    emojiClipboardVerify.seq, this.text)
+            }
+        }
+        onExited: {
+            emojiClipboardVerify.retiring = false
         }
     }
 
@@ -1401,8 +1448,21 @@ Item {
         interval: 60
         repeat: false
         onTriggered: () => {
+            // A kill in flight: the late stream of the DEAD run must not
+            // verify the live transaction's pick (the cold-audit's
+            // second finding — a premature chord). Wait it out; the
+            // interval is short and the exit lands in a round or two.
+            if (emojiClipboardVerify.retiring) {
+                emojiPublishVerifyTimer.restart()
+                return
+            }
             emojiClipboardVerify.seq = root.emojiTxnState.seq
-            restartProcessGroup(emojiClipboardVerify)
+            if (emojiClipboardVerify.running) {
+                emojiClipboardVerify.retiring = true
+                killProcessGroup(emojiClipboardVerify)
+                emojiClipboardVerify.running = false
+            }
+            emojiClipboardVerify.running = true
             emojiVerifyWatchdog.restart()
         }
     }
@@ -1633,10 +1693,16 @@ Item {
     // 700/600 is now enforced on create AND repaired on every save —
     // umask-independent, and an existing 755/644 install is healed the
     // first time the panel saves into it.
+    // Private by permission, not by hope (round ten) — and private AT
+    // CREATION, not after the fact (the cold audit's fourth finding:
+    // FileView's atomic rename lands at umask and a later chmod left a
+    // world-readable window, or a crash inside it left 644 forever).
+    // The dir is install -d -m 700; every save goes through one
+    // umask-077 temp+rename, 600 by construction.
     Process {
         id: configDirMaker
         command: ["bash", "-c",
-            "install -d -m 700 \"$1\" && chmod 700 \"$1\"", "oskar-config-dir",
+            "install -d -m 700 \"$1\"", "oskar-config-dir",
             root.configDir]
         onExited: (exitCode, exitStatus) => {
             if (root.configurationError) return
@@ -1644,17 +1710,15 @@ Item {
                 console.warn("[oskar] could not create", root.configDir, "- configuration not saved")
                 return
             }
-            configFile.setText(ConfigFile.serializeOverrides(root.userOverrides))
-            Quickshell.execDetached(["bash", "-c",
-                "f=\"$1\"; [[ -f \"$f\" ]] && chmod 600 \"$f\"",
-                "oskar-config-perms", root.configFile.path])
+            writePrivateFile(root.configFile.path,
+                ConfigFile.serializeOverrides(root.userOverrides))
         }
     }
 
     Process {
         id: stateDirMaker
         command: ["bash", "-c",
-            "install -d -m 700 \"$1\" && chmod 700 \"$1\"", "oskar-state-dir",
+            "install -d -m 700 \"$1\"", "oskar-state-dir",
             root.stateDir]
         onExited: (exitCode, exitStatus) => {
             if (root.stateError) return
@@ -1662,11 +1726,26 @@ Item {
                 console.warn("[oskar] could not create", root.stateDir, "- state not saved")
                 return
             }
-            stateFile.setText(ConfigFile.serializeState(root.geometryState))
-            Quickshell.execDetached(["bash", "-c",
-                "f=\"$1\"; [[ -f \"$f\" ]] && chmod 600 \"$f\"",
-                "oskar-state-perms", root.stateFile.path])
+            writePrivateFile(root.stateFile.path,
+                ConfigFile.serializeState(root.geometryState))
         }
+    }
+
+    Process {
+        id: privateWriter
+        command: []
+        onExited: (exitCode, exitStatus) => {
+            if (exitCode !== 0 || exitStatus !== 0)
+                console.warn("[oskar] private write failed (exit " + exitCode + ")")
+        }
+    }
+
+    function writePrivateFile(path, payload) {
+        privateWriter.command = ["bash", "-c",
+            "umask 077; t=\"$1.tmp.$$\"; "
+            + "printf %s \"$2\" > \"$t\" && chmod 600 \"$t\" && mv -f \"$t\" \"$1\"",
+            "oskar-private-write", path, payload]
+        privateWriter.running = true
     }
 
     // Resolves the freedesktop sound theme's file for the click and transcodes

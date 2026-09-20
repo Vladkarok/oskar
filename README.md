@@ -38,7 +38,13 @@ matters is `docs/decisions.md`.
 | `Keyboard.qml` | key grid, layout tracking, socket client |
 | `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
 | `EmojiPage.qml`, `EmojiCatalog.js` | the panel's own emoji page over the keys; catalogue generated from vendored Unicode data (`third_party/emoji/`) |
-| `ClipboardPaste.js` | the paste chip's target rule (colour field, emoji search, external client) |
+| `ClipboardPaste.js` | the emoji delivery transaction and the paste chip's target rule (colour field, emoji search, external client) |
+| `ChordAcks.js` | reply correlation: every command one queue slot, every reply pops it — the paste chord's verdict is its own final line's ack |
+| `PasteFlow.js` | the paste lifecycle: busy-gate, dispatch region, ordered cancellation |
+| `ShareQueue.js` | the keymap-share scheduler: one share run at a time, the pending generation consumed on success |
+| `LanguageControl.js` | the language control's shapes and the chooser's entries; languages named in their own language |
+| `LayoutDevices.js` | which keyboard the panel reads its layout from, and which ones the language button moves |
+| `SettleGuard.js` | the post-reconnect echo window: which uncommanded group flips to follow |
 | `HoverTooltip.qml` | one shared hover tooltip for ambiguous icon controls |
 | `ModifierReducer.js` | the modifier state machine (pure, tested) |
 | `Config.js` | maintained defaults plus override/state validation and serialization |
@@ -163,8 +169,8 @@ or read your keymap.
 
 Honest edges: root can do what root always can (no same-user tool
 draws that line); the daemon trusts its same-user callers on a line
-protocol (hardening candidates live in docs/audit-2026-09-13.md item
-7); there is no network listener, no telemetry, no accounts — the
+protocol (the same-user trust boundary is documented in
+SECURITY.md; there is no network listener, no telemetry, no accounts — the
 vision document calls the product a system utility and means it.
 
 ## Languages
@@ -172,14 +178,14 @@ vision document calls the product a system utility and means it.
 One product, four languages, each with a job:
 
 - **QML** (the Quickshell panel) — what the panel is and where it draws.
-- **JavaScript** (sixteen pure modules beside the QML) — every decision
+- **JavaScript** (twenty pure modules beside the QML) — every decision
   the panel makes: what each keycap types, which modifiers a
   hold-column pick needs, how the emoji search ranks, whether the panel
-  follows a layout-group change. Pure, stateless, and covered by 446
+  follows a layout-group change. Pure, stateless, and covered by 559
   offscreen test cases — the repo's main regression net.
 - **Rust** (the `oskar-daemon` helper) — everything at the seat: it
   compiles and mirrors the XKB keymap, owns the virtual keyboard, and
-  speaks the versioned socket protocol. 45 unit tests.
+  speaks the versioned socket protocol. 52 unit tests.
 - **Python and one C file** (`tools/integration/`) — not part of the
   product: the lab harness that drives a real panel with real pointer
   events inside a throwaway VM, and a tiny Wayland client that spies on

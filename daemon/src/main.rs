@@ -201,6 +201,13 @@ impl XkbConfig {
 /// panel draws caps for it — the two agreeing with each other and with
 /// nothing the user can see.
 ///
+/// The highest keycode this helper will ever walk. Stock evdev tops out
+/// at 709; xkbcommon accepts keycodes to 4294967294 and a hostile 60-byte
+/// keymap declaring one pinned the shared lock for ~9 s of pure iteration
+/// per configure (round eleven's blocker) — the gate refuses such maps at
+/// both compile doors, and the keycap walk iterates NAMED keys only.
+const MAX_SANE_KEYCODE: u32 = 4096;
+
 /// The largest `kb_file` this helper will ever read. The 2026-09-19 audit:
 /// the mark and the compile each read the whole file, unbounded, under the
 /// shared lock — a huge file exhausted memory and a FIFO blocked the
@@ -277,6 +284,9 @@ fn custom_keymap_group_count_bytes(bytes: &[u8]) -> Option<usize> {
         xkb::KEYMAP_FORMAT_TEXT_V1,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )?;
+    if keymap.max_keycode().raw() > MAX_SANE_KEYCODE {
+        return None;
+    }
     Some(keymap.num_layouts() as usize)
 }
 
@@ -335,6 +345,9 @@ fn compile_keymap_with(config: &XkbConfig, kb_file_bytes: Option<&[u8]>) -> Opti
             xkb::KEYMAP_FORMAT_TEXT_V1,
             xkb::KEYMAP_COMPILE_NO_FLAGS,
         )?;
+        if keymap.max_keycode().raw() > MAX_SANE_KEYCODE {
+            return None;
+        }
         let compiled = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
         // A user's own kb_file that somehow already carries the block is
         // taken as it stands: extending it again would put a second copy of
@@ -1305,16 +1318,29 @@ fn build_text_keymap(
 /// cover both), so none are spent there. Pick wall time is tens of
 /// milliseconds — ~55ms with the default settle against ~7-20ms of
 /// compile-and-plan work at settle zero.
+/// Best-effort flag clear for a delivery leaving by an early door. The
+/// normal exits clear it where they restore the installed map; a shutdown
+/// exit leaves the transient up on a device the dying process takes with
+/// it, and only the flag must not outlive the thread.
+fn finish_delivery(arc: &SharedRef) {
+    arc.lock().unwrap().delivery_active = false;
+}
+
 fn deliver_text(
-    shared: &Shared,
+    arc: &SharedRef,
     connection: &Connection,
-    keyboard: &ZwpVirtualKeyboardV1,
     payload: &str,
 ) -> String {
     let scalars = match text_scalars(payload) {
         Ok(scalars) => scalars,
         Err(reply) => return reply,
     };
+    // The plan, the transient build and its upload run under the lock;
+    // everything after — the roundtrip, the taps, the settle — runs with
+    // it released, `delivery_active` holding keymap mutators off (round
+    // eleven's blocker: these sleeps used to hold it for the whole pick).
+    let mut guard = arc.lock().unwrap();
+    let shared = &*guard;
     let Some(installed) = shared.installed_keymap.clone() else {
         return "err no keymap yet".to_string();
     };
@@ -1373,14 +1399,22 @@ fn deliver_text(
     let group = shared.group;
     let base = shared.modifier_mask();
     let mut current = base;
+    let Some(keyboard) = shared.keyboard.clone() else {
+        return "err no virtual keyboard".to_string();
+    };
 
-    if let Err(error) = upload_keymap(keyboard, &transient) {
+    if let Err(error) = upload_keymap(&keyboard, &transient) {
         eprintln!("text: cannot upload the transient keymap: {error}");
         return "err keymap".to_string();
     }
     // The keymap event reset the client's group (§35); put it back, under
     // the mask the device still holds, before anything is tapped.
     keyboard.modifiers(current, 0, 0, group);
+    // The device is on the transient map: everything below runs unlocked,
+    // and `delivery_active` is what keeps keymap mutators off until the
+    // installed map is back.
+    guard.delivery_active = true;
+    drop(guard);
 
     // The swap's three moves reach every client in order — transient map,
     // taps, installed map back — because ordering on one connection is
@@ -1403,8 +1437,13 @@ fn deliver_text(
         // strands nothing; the held-key claims answer to the shutdown
         // release once this lock goes back.
         if shutdown_requested() {
+            finish_delivery(arc);
             return "err shutting down".to_string();
         }
+        // One lock pass per slot — the reads of held state and the key
+        // writes it drives — and no sleep inside one.
+        let mut guard = arc.lock().unwrap();
+        let shared = &mut *guard;
         let wanted = level5.1
             | if slot.level == 6 || slot.level == 8 {
                 shift.1
@@ -1469,6 +1508,7 @@ fn deliver_text(
             current |= bit;
             keyboard.modifiers(current, 0, 0, group);
         }
+        drop(guard);
     }
 
     // The settle, and the one measured mechanism this pick rests on. The
@@ -1493,19 +1533,34 @@ fn deliver_text(
     // during it leaves the taps sent but nothing held, so skipping the
     // restore loses only a keymap the dying device takes with it (F4).
     if shutdown_requested() {
+        finish_delivery(arc);
         return "err shutting down".to_string();
     }
 
     // The installed keymap goes back through the one upload path, and the
     // group rides home on the closing modifiers request. `current` is `base`
     // again by construction; when nothing was held, that is the
-    // `modifiers(0, 0, 0, group)` §35's reset is compensated with.
-    if let Err(error) = upload_keymap(keyboard, &installed) {
-        eprintln!("text: typed, but the installed keymap did not go back up: {error}");
-        let _ = connection.flush();
-        return "err keymap".to_string();
+    // `modifiers(0, 0, 0, group)` §35's reset is compensated with. One
+    // retry, and a failure after it invalidates the install's facts
+    // (caps_gen bumped): the device types through whatever survived while
+    // the panel's facts describe a map that is no longer there — the
+    // generation counter exists to make exactly that detectable.
+    {
+        let mut guard = arc.lock().unwrap();
+        guard.delivery_active = false;
+        if upload_keymap(&keyboard, &installed).is_err()
+            && upload_keymap(&keyboard, &installed).is_err()
+        {
+            guard.caps_gen += 1;
+            eprintln!(
+                "text: typed, but the installed keymap did not go back up; \
+                 caps generation invalidated — the panel will re-sync"
+            );
+            let _ = connection.flush();
+            return "err keymap".to_string();
+        }
+        keyboard.modifiers(current, 0, 0, group);
     }
-    keyboard.modifiers(current, 0, 0, group);
     let _ = connection.flush();
     eprintln!(
         "text: delivered {} scalar(s) in {:.1}ms",
@@ -1518,10 +1573,26 @@ fn deliver_text(
 /// Chromium's editor insertion still narrows a printable key event to one
 /// UTF-16 unit. Its Linux Unicode-entry composition path preserves the scalar;
 /// the panel selects this route only for Chromium-family clients.
-fn deliver_unicode_text(
-    shared: &Shared,
+/// One composition beat: the device writes under a brief lock (they are
+/// microseconds), the flush and the pacing sleep run with it released —
+/// round eleven's blocker was exactly these sleeps under a held lock.
+fn beat(
+    arc: &SharedRef,
     connection: &Connection,
     keyboard: &ZwpVirtualKeyboardV1,
+    body: impl FnOnce(&ZwpVirtualKeyboardV1),
+) {
+    {
+        let _guard = arc.lock().unwrap();
+        body(keyboard);
+    }
+    let _ = connection.flush();
+    thread::sleep(Duration::from_millis(10));
+}
+
+fn deliver_unicode_text(
+    arc: &SharedRef,
+    connection: &Connection,
     payload: &str,
 ) -> String {
     use xkbcommon::xkb;
@@ -1530,7 +1601,14 @@ fn deliver_unicode_text(
         Ok(scalars) => scalars,
         Err(reply) => return reply,
     };
-    let Some(installed) = shared.installed_keymap.as_ref() else {
+    // Plan and entry-keymap upload under the lock; the composition's
+    // beats below sleep with it released (round eleven's blocker), the
+    // `delivery_active` flag holding keymap mutators off for the pick.
+    let mut guard = arc.lock().unwrap();
+    let shared = &mut *guard;
+    // Cloned, not borrowed: the composition and the restore below run
+    // past the guard's drop.
+    let Some(installed) = shared.installed_keymap.clone() else {
         return "err no keymap yet".to_string();
     };
 
@@ -1580,10 +1658,13 @@ fn deliver_unicode_text(
         }
     }
     let held: Vec<u32> = shared.held.keys().copied().collect();
+    let Some(keyboard) = shared.keyboard.clone() else {
+        return "err no virtual keyboard".to_string();
+    };
     for held_code in &held {
         keyboard.key(stamp(), *held_code, 0);
     }
-    if let Err(error) = upload_keymap(keyboard, &entry_keymap) {
+    if let Err(error) = upload_keymap(&keyboard, &entry_keymap) {
         eprintln!("text-unicode: cannot upload the ASCII entry keymap: {error}");
         for held_code in &held {
             keyboard.key(stamp(), *held_code, 1);
@@ -1593,37 +1674,43 @@ fn deliver_unicode_text(
         return "err keymap".to_string();
     }
     keyboard.modifiers(0, 0, 0, 0);
+    // The device is on the entry keymap: the composition below runs with
+    // the lock released between its beats, `delivery_active` keeping
+    // keymap mutators off until the installed map returns.
+    guard.delivery_active = true;
+    drop(guard);
     let _ = connection.roundtrip();
 
     for scalar in scalars {
         // Shutdown beats the pacing, not the other way round (F4): each
         // scalar ends with Ctrl up and the mask zeroed, so leaving here
-        // strands nothing at the device — the held-key claims in
-        // `shared.held` answer to the shutdown release, which could not
-        // take this lock while the composition slept under it.
+        // strands nothing at the device — the held-key claims answer to
+        // the shutdown release, and no lock is held between beats for it
+        // to fight with.
         if shutdown_requested() {
+            finish_delivery(arc);
             return "err shutting down".to_string();
         }
-        keyboard.key(stamp(), ctrl, 1);
-        keyboard.modifiers(ctrl_mask, 0, 0, 0);
-        let _ = connection.flush();
-        thread::sleep(Duration::from_millis(10));
-        keyboard.key(stamp(), shift, 1);
-        keyboard.modifiers(ctrl_mask | shift_mask, 0, 0, 0);
-        let _ = connection.flush();
-        thread::sleep(Duration::from_millis(10));
-        keyboard.key(stamp(), u_key, 1);
-        keyboard.key(stamp(), u_key, 0);
-        let _ = connection.flush();
-        thread::sleep(Duration::from_millis(10));
-        keyboard.key(stamp(), shift, 0);
-        keyboard.modifiers(ctrl_mask, 0, 0, 0);
-        let _ = connection.flush();
-        thread::sleep(Duration::from_millis(10));
-        keyboard.key(stamp(), ctrl, 0);
-        keyboard.modifiers(0, 0, 0, 0);
-        let _ = connection.flush();
-        thread::sleep(Duration::from_millis(10));
+        beat(arc, connection, &keyboard, |k| {
+            k.key(stamp(), ctrl, 1);
+            k.modifiers(ctrl_mask, 0, 0, 0);
+        });
+        beat(arc, connection, &keyboard, |k| {
+            k.key(stamp(), shift, 1);
+            k.modifiers(ctrl_mask | shift_mask, 0, 0, 0);
+        });
+        beat(arc, connection, &keyboard, |k| {
+            k.key(stamp(), u_key, 1);
+            k.key(stamp(), u_key, 0);
+        });
+        beat(arc, connection, &keyboard, |k| {
+            k.key(stamp(), shift, 0);
+            k.modifiers(ctrl_mask, 0, 0, 0);
+        });
+        beat(arc, connection, &keyboard, |k| {
+            k.key(stamp(), ctrl, 0);
+            k.modifiers(0, 0, 0, 0);
+        });
         for digit in format!("{:x}", scalar as u32).bytes() {
             let name = match digit {
                 b'0' => "AE10",
@@ -1645,28 +1732,42 @@ fn deliver_unicode_text(
                 _ => unreachable!(),
             };
             let position = code(name).expect("validated above");
-            keyboard.key(stamp(), position, 1);
-            keyboard.key(stamp(), position, 0);
-            let _ = connection.flush();
-            thread::sleep(Duration::from_millis(10));
+            beat(arc, connection, &keyboard, |k| {
+                k.key(stamp(), position, 1);
+                k.key(stamp(), position, 0);
+            });
         }
-        keyboard.key(stamp(), enter, 1);
-        keyboard.key(stamp(), enter, 0);
-        let _ = connection.flush();
-        thread::sleep(Duration::from_millis(10));
+        beat(arc, connection, &keyboard, |k| {
+            k.key(stamp(), enter, 1);
+            k.key(stamp(), enter, 0);
+        });
     }
     // Enter commits the last scalar before the installed keymap returns.
     // The roundtrip keeps the restore from racing the composition consumer.
     let _ = connection.roundtrip();
-    if let Err(error) = upload_keymap(keyboard, installed) {
-        eprintln!("text-unicode: typed, but cannot restore the installed keymap: {error}");
-        let _ = connection.flush();
-        return "err keymap".to_string();
+    {
+        // Restore under the lock, flag first. One retry, and a failure
+        // after it invalidates the install's facts (caps_gen bumped) so
+        // the panel re-syncs — the counter exists to make the divergence
+        // this would otherwise hide detectable.
+        let mut guard = arc.lock().unwrap();
+        guard.delivery_active = false;
+        if upload_keymap(&keyboard, &installed).is_err()
+            && upload_keymap(&keyboard, &installed).is_err()
+        {
+            guard.caps_gen += 1;
+            eprintln!(
+                "text-unicode: typed, but cannot restore the installed \
+                 keymap; caps generation invalidated — the panel will re-sync"
+            );
+            let _ = connection.flush();
+            return "err keymap".to_string();
+        }
+        for held_code in &held {
+            keyboard.key(stamp(), *held_code, 1);
+        }
+        keyboard.modifiers(guard.modifier_mask(), 0, 0, guard.group);
     }
-    for held_code in &held {
-        keyboard.key(stamp(), *held_code, 1);
-    }
-    keyboard.modifiers(shared.modifier_mask(), 0, 0, shared.group);
     let _ = connection.flush();
     "ok".to_string()
 }
@@ -1857,6 +1958,13 @@ fn keycap_facts_for_groups(keymap: &str) -> Vec<String> {
     let groups = compiled.num_layouts();
     let mut per_group = vec![String::new(); groups as usize];
 
+    // The span walk itself is safe ONLY behind the compile gates: a map
+    // that reached here has max_keycode at most MAX_SANE_KEYCODE (4096 —
+    // stock evdev tops at 709), so this loop is bounded small. The gates
+    // refuse anything bigger precisely because this loop would not be
+    // (round eleven's blocker — and a text-level named-keys walk was tried
+    // and reverted: include-based keymaps carry no declarations to read).
+    debug_assert!(compiled.max_keycode().raw() <= MAX_SANE_KEYCODE);
     for raw in compiled.min_keycode().raw()..=compiled.max_keycode().raw() {
         let code = xkb::Keycode::from(raw);
         let Some(name) = compiled.key_get_name(code) else {
@@ -1979,6 +2087,16 @@ struct Shared {
     /// release, and a claim is what authorizes a release.
     held: std::collections::HashMap<u32, Hold>,
     uploads: std::collections::VecDeque<Instant>,
+    /// True while a text delivery paces with the lock RELEASED between its
+    /// beats (round eleven's blocker: the sleeps used to hold it for ~2 s
+    /// per command). Every other command waits the delivery out in apply()
+    /// before running — the same serialization the lock used to give, minus
+    /// the stalls.
+    delivery_active: bool,
+    /// Transient keymap uploads (text picks) under a looser budget than
+    /// installs: a legit panel picks at human speed, a pipelining client
+    /// is throttled at the compositor's expense instead of untethered.
+    text_uploads: std::collections::VecDeque<Instant>,
 }
 
 impl Shared {
@@ -2043,18 +2161,9 @@ impl Shared {
             self.config = Some(config.clone());
             return true;
         }
-        let now = Instant::now();
-        while self
-            .uploads
-            .front()
-            .is_some_and(|at| now.duration_since(*at) > Duration::from_secs(10))
-        {
-            self.uploads.pop_front();
-        }
-        if self.uploads.len() >= 4 {
-            eprintln!("refusing excessive keymap reconfiguration");
-            return false;
-        }
+        // The churn budget is paid by apply's configure gate, before any
+        // compile attempt — counting it here again would double-bill every
+        // changed configure.
         let Some(text) = compile_keymap_with(config, file_bytes.as_deref()) else {
             eprintln!("cannot compile requested XKB configuration");
             return false;
@@ -2064,7 +2173,7 @@ impl Shared {
         };
         if self.ready {
             for (code, _) in self.held.drain() {
-                keyboard.key(0, code, 0);
+                keyboard.key(stamp(), code, 0);
             }
             keyboard.modifiers(0, 0, 0, self.group);
         }
@@ -2090,7 +2199,6 @@ impl Shared {
         publish_keymap(&text);
         self.ready = !self.codes.is_empty();
         self.config = Some(config.clone());
-        self.uploads.push_back(now);
         eprintln!(
             "keymap compiled for '{}' ({} bytes)",
             config.layouts,
@@ -2347,7 +2455,9 @@ fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let meta = std::fs::metadata(&dir)?;
     if meta.uid() != nix_uid() || (meta.mode() & 0o077) != 0 {
         return Err(format!(
-            "runtime dir {:?} is uid {} mode {:o}; expected uid {} and no              group/other bits — refusing to serve from a directory we do              not solely own",
+            "runtime dir {:?} is uid {} mode {:o}; expected uid {} and no \
+             group/other bits — refusing to serve from a directory we do \
+             not solely own",
             dir,
             meta.uid(),
             meta.mode() & 0o777,
@@ -2607,8 +2717,10 @@ fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
             })
             .is_err()
         {
-            eprintln!("cannot spawn socket client worker");
-            std::process::exit(70);
+            // The client is dropped, never the helper (round eleven's
+            // finding 10): exit(70) skipped every release path a live
+            // connection's keys still depended on.
+            eprintln!("cannot spawn socket client worker; dropping the client");
         }
     }
 }
@@ -2831,6 +2943,11 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             };
             let line = line_str.trim();
             if line.is_empty() {
+                // Even this answers one line (round eleven's finding 7):
+                // the reply-per-command invariant has no silent case, and
+                // the correlation queue on the other end pops on it.
+                let _ = write_reply(&mut out, "err empty",
+                    reply_bound(handshaked, connected_at.elapsed()));
                 continue;
             }
             // `hello` reports more than "the process is up": a keyboard without a
@@ -2858,7 +2975,10 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                     write_dead = true;
                     break;
                 }
-                handshaked = matches!(hello, Ok(wanted) if wanted == PROTOCOL_VERSION);
+                // Set, never cleared (round eleven's finding 8): a
+                // post-handshake wrong-version hello is a protocol
+                // confusion, not a de-negotiation.
+                handshaked |= matches!(hello, Ok(wanted) if wanted == PROTOCOL_VERSION);
                 continue;
             }
             // Protocol negotiation is a gate, not a suggestion (round
@@ -2930,8 +3050,11 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
 /// re-locked `mods` would admit another connection's claim in between and
 /// clear the mask out from under it.
 fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>, conn_id: u64) {
+    wait_out_delivery(shared);
     let mut shared = shared.lock().unwrap();
+    let mut released_any = false;
     for code in held {
+        let before = shared.held.contains_key(&code);
         apply_locked(
             &mut shared,
             connection,
@@ -2939,8 +3062,13 @@ fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>, conn
             None,
             conn_id,
         );
+        released_any |= before;
     }
-    if shared.held.is_empty() {
+    // The mask is zeroed only when THIS connection's departure actually
+    // lifted something (round eleven's finding 6): a manual `mods <mask>`
+    // carries no claim, and a connection that held nothing used to wipe a
+    // survivor's mask on its way out.
+    if released_any && shared.held.is_empty() {
         apply_locked(&mut shared, connection, Command::Mods(0), None, conn_id);
     }
 }
@@ -2963,6 +3091,22 @@ fn hold_deadline(shared: &SharedRef, conn_id: u64) -> Option<Instant> {
         .min()
 }
 
+/// Bounded wait for an active delivery: polls until it finishes or the
+/// bound passes, then lets the caller proceed regardless — a stuck key or
+/// a disconnecting client must not wedge behind a pick forever.
+fn wait_out_delivery(shared: &SharedRef) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if !shared.lock().unwrap().delivery_active {
+            return;
+        }
+        if Instant::now() >= deadline {
+            return;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// Lifts every non-modifier code held past the cap and says so in the log.
 /// Modifier codes are exempt: locked Shift (spec-v1.1 §2) is deliberately held
 /// for minutes, and releasing it would make the lock indicator lie.
@@ -2971,6 +3115,11 @@ fn hold_deadline(shared: &SharedRef, conn_id: u64) -> Option<Instant> {
 /// key once, so lifting it means dropping every claim on it. Returns the codes
 /// it released so the caller can forget them too.
 fn expire_stuck_keys(shared: &SharedRef, connection: &Connection) -> Vec<u32> {
+    // A delivery pacing between its beats owns the device's keymap; the
+    // cap's lifts wait it out rather than interleave with the composition
+    // (bounded — a stuck key must lift eventually, so past the bound this
+    // proceeds anyway).
+    wait_out_delivery(shared);
     let mut shared = shared.lock().unwrap();
     let cap = hold_cap();
     let now = Instant::now();
@@ -3092,19 +3241,65 @@ fn apply(
     held: Option<&mut Vec<u32>>,
     conn_id: u64,
 ) -> String {
-    let text_command = matches!(&command, Command::Text(_) | Command::UnicodeText(_));
-    let mut shared = shared.lock().unwrap();
-    let reply = apply_locked(&mut shared, connection, command, held, conn_id);
-    if !text_command {
-        return reply;
+    // Deliveries are hoisted out of the lock (round eleven's blocker): a
+    // pick paces for hundreds of milliseconds between beats, and the sleeps
+    // used to hold the shared lock — a pipelining connection kept it for
+    // ~2 s per command and every other client, hello included, queued
+    // behind it. The deliveries now sleep lock-free with `delivery_active`
+    // set; everything else waits that flag out first (bounded), then runs
+    // under the lock exactly as before — the same serialization the lock
+    // used to give, minus the stalls.
+    if matches!(&command, Command::Text(_) | Command::UnicodeText(_)) {
+        let reply = {
+            let mut guard = shared.lock().unwrap();
+            // The pick budget: one transient keymap upload per delivery,
+            // twenty per ten seconds — a legit panel cannot reach it, a
+            // pipeliner is throttled at the compositor's expense instead
+            // of unbounded (round eleven's finding 3).
+            let now = Instant::now();
+            while guard
+                .text_uploads
+                .front()
+                .is_some_and(|at| now.duration_since(*at) > Duration::from_secs(10))
+            {
+                guard.text_uploads.pop_front();
+            }
+            if guard.text_uploads.len() >= 20 {
+                "err text busy".to_string()
+            } else {
+                guard.text_uploads.push_back(now);
+                drop(guard);
+                match &command {
+                    Command::Text(payload) => deliver_text(shared, connection, payload),
+                    Command::UnicodeText(payload) => {
+                        deliver_unicode_text(shared, connection, payload)
+                    }
+                    _ => unreachable!("the match is on the same binding"),
+                }
+            }
+        };
+        return if reply == "ok" {
+            "text-ok".to_string()
+        } else if let Some(reason) = reply.strip_prefix("err ") {
+            format!("text-err {reason}")
+        } else {
+            format!("text-err {reply}")
+        };
     }
-    if reply == "ok" {
-        "text-ok".to_string()
-    } else if let Some(reason) = reply.strip_prefix("err ") {
-        format!("text-err {reason}")
-    } else {
-        format!("text-err {reply}")
+    // Wait out any active delivery, then run under the lock as always.
+    // Three seconds exceeds any single delivery's pacing; only a hostile
+    // pairing of pipelined deliveries can reach the refusal.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut guard = shared.lock().unwrap();
+    while guard.delivery_active {
+        drop(guard);
+        if Instant::now() >= deadline {
+            return "err busy".to_string();
+        }
+        thread::sleep(Duration::from_millis(25));
+        guard = shared.lock().unwrap();
     }
+    apply_locked(&mut guard, connection, command, held, conn_id)
 }
 
 fn apply_locked(
@@ -3157,7 +3352,36 @@ fn apply_locked(
                 None => return "err cannot configure keymap".to_string(),
             }
         };
-        let group_ceiling = if config.kb_file.is_empty()
+        // An unchanged keymap skips the ceiling compile entirely (round
+        // eleven's finding 4): identical reconfigures — group flips — used
+        // to pay a full file compile under the lock each, at no rate cap.
+        // The installed map's own group count is the ceiling that fits it.
+        let mark = kb_file_bytes.as_deref().map(hash_bytes);
+        let unchanged = shared.config.as_ref().is_some_and(|c| c.same_keymap(config))
+            && shared.kb_file_mark == mark;
+        if !unchanged {
+            // Compile ATTEMPTS pay the churn budget here, before any work
+            // (round eleven's finding 4): a file engineered to fail late
+            // in parse used to burn the full compile cost at no cap, and
+            // only successful installs were ever counted. install_config's
+            // own accounting is retired in favour of this one gate.
+            let now = Instant::now();
+            while shared
+                .uploads
+                .front()
+                .is_some_and(|at| now.duration_since(*at) > Duration::from_secs(10))
+            {
+                shared.uploads.pop_front();
+            }
+            if shared.uploads.len() >= 4 {
+                eprintln!("refusing excessive keymap reconfiguration");
+                return "err cannot configure keymap".to_string();
+            }
+            shared.uploads.push_back(now);
+        }
+        let group_ceiling = if unchanged {
+            shared.caps_per_group.len().max(1)
+        } else if config.kb_file.is_empty()
             || is_published_keymap(&config.kb_file)
         {
             declared_group_count(&config.layouts)
@@ -3187,15 +3411,6 @@ fn apply_locked(
     };
     if !shared.ready {
         return "err no keymap yet".to_string();
-    }
-
-    // A `text` payload is refused for what it is before any device state is
-    // consulted: an empty or oversized string is the panel's bug, not a
-    // reason to report the keymap.
-    if let Command::Text(ref payload) | Command::UnicodeText(ref payload) = command {
-        if let Err(reply) = text_scalars(payload) {
-            return reply;
-        }
     }
 
     // Held-key bookkeeping below mutates `shared`, so drop the borrow the
@@ -3315,11 +3530,8 @@ fn apply_locked(
         // goes back before the reply. It runs under the caller's lock like
         // every arm here, which is what makes a pick atomic — a second
         // `text` queues behind the first.
-        Command::Text(ref payload) => {
-            return deliver_text(shared, connection, &keyboard, payload);
-        }
-        Command::UnicodeText(ref payload) => {
-            return deliver_unicode_text(shared, connection, &keyboard, payload);
+        Command::Text(_) | Command::UnicodeText(_) => {
+            unreachable!("hoisted to apply: deliveries run lock-free")
         }
         Command::Configure(_) => unreachable!("handled above"),
     }
@@ -5416,6 +5628,27 @@ mod tests {
     }
 
     // ---- the review's third round ----
+
+    #[test]
+    fn a_keycode_beyond_the_sane_range_is_refused_at_every_gate() {
+        // Round eleven's blocker: a 60-byte keymap declaring a keycode near
+        // u32::MAX made the keycap walk iterate for seconds under the
+        // shared lock. Both compile doors refuse it now.
+        let sane = fixture_keymap("us,ua", "");
+        let hostile = sane.replace(
+            "<ESC> = 9;",
+            "<ZZZZ> = 2147483647;\n\t<ESC> = 9;",
+        );
+        assert!(hostile.contains("<ZZZZ> = 2147483647;"));
+        assert_eq!(
+            custom_keymap_group_count_bytes(hostile.as_bytes()),
+            None,
+            "the ceiling compile refuses the huge keycode"
+        );
+        // The walk itself only ever visits NAMED keys: a map that declares
+        // none answers no facts, in bounded time by construction.
+        assert_eq!(keycap_facts_for_groups("xkb_keymap {}"), Vec::<String>::new());
+    }
 
     #[test]
     fn a_custom_keymaps_groups_come_from_the_compiled_map() {
