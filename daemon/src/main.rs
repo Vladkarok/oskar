@@ -1856,12 +1856,11 @@ fn deliver_unicode_text(
     // The roundtrip keeps the restore from racing the composition consumer.
     let _ = connection.roundtrip();
     {
-        // Restore under the lock, flag first. One retry, and a failure
-        // after it invalidates the install's facts (caps_gen bumped) so
-        // the panel re-syncs — the counter exists to make the divergence
-        // this would otherwise hide detectable.
+        // Restore under the lock; the flag clears only at the Drop
+        // guard (a manual clear here left a gap where a second
+        // delivery's set was cleared by THIS delivery's drop — the
+        // liveability triage's finding 3).
         let mut guard = arc.lock().unwrap();
-        guard.delivery_active = false;
         if upload_keymap(&keyboard, &installed).is_err()
             && upload_keymap(&keyboard, &installed).is_err()
         {

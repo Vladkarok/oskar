@@ -691,6 +691,14 @@ Item {
             Session.luaQuote(Session.publishedKeymapPath(
                 Quickshell.env("XDG_RUNTIME_DIR")))]
         onExited: (code, status) => {
+            // A run the scheduler no longer owns (a connection reset
+            // stopped it) exits as a no-op — the triage's finding 2:
+            // the handler used to count it as a failed attempt and
+            // restart the very retries the reset had cancelled.
+            if (!root.shareQueue.running) {
+                attempts = 0
+                return
+            }
             var ok = code === 0 && status === 0
             var done = ShareQueue.runFinished(root.shareQueue, ok)
             root.shareQueue = done.state

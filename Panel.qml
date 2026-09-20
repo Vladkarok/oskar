@@ -1509,10 +1509,12 @@ Item {
         onExited: {
             if (emojiClipboardVerify.retiring) {
                 emojiClipboardVerify.retiring = false
-                // The kill's requester re-arms through us (finding 6):
-                // the txn's own timer restarts the verify when the
-                // Process is reusable again.
-                emojiPublishVerifyTimer.restart()
+                // The kill's requester re-arms through us — but only for
+                // a transaction that still wants a verify (the triage's
+                // finding 6: an aborted txn's stray restart ran one
+                // refused wl-paste for nothing).
+                if (root.emojiTxnState.phase === "publishing")
+                    emojiPublishVerifyTimer.restart()
             }
         }
     }
@@ -1826,16 +1828,23 @@ Item {
                 console.warn("[oskar] private write failed (exit " + exitCode
                     + ")" + (root.privateWriteInFlight.retried ? " — again" : ", retrying"))
                 if (!root.privateWriteInFlight.retried) {
-                    var retry = {
-                        path: root.privateWriteInFlight.path,
-                        payload: root.privateWriteInFlight.payload,
-                        retried: true
+                    // Retry ONLY when no newer save for this path is
+                    // already queued (the liveability triage's finding 1:
+                    // the requeue used to drop the newer entry and push
+                    // the failed write's STALE payload — older data could
+                    // win on disk).
+                    var hasNewer = false
+                    for (var q = 0; q < root.privateWriteQueue.length; q++)
+                        if (root.privateWriteQueue[q].path
+                                === root.privateWriteInFlight.path)
+                            hasNewer = true
+                    if (!hasNewer) {
+                        root.privateWriteQueue.push({
+                            path: root.privateWriteInFlight.path,
+                            payload: root.privateWriteInFlight.payload,
+                            retried: true
+                        })
                     }
-                    var queue = root.privateWriteQueue.filter(function (entry) {
-                        return entry.path !== retry.path
-                    })
-                    queue.push(retry)
-                    root.privateWriteQueue = queue
                 }
             }
             root.privateWriteInFlight = null
