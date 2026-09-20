@@ -378,6 +378,13 @@ fn compile_keymap_with(config: &XkbConfig, kb_file_bytes: Option<&[u8]>) -> Opti
         options,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )?;
+    // The same keycode gate as the file doors (round twelve's blocker):
+    // the RMLVO branch resolves the user's own ~/.config/xkb includes,
+    // and a planted keycodes file brought maximum = 2000000000 through
+    // this door — resurrecting the span-walk DoS the file gates closed.
+    if keymap.max_keycode().raw() > MAX_SANE_KEYCODE {
+        return None;
+    }
     Some(with_reserved_symbols(
         keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1),
     ))
@@ -1318,6 +1325,36 @@ fn build_text_keymap(
 /// cover both), so none are spent there. Pick wall time is tens of
 /// milliseconds — ~55ms with the default settle against ~7-20ms of
 /// compile-and-plan work at settle zero.
+/// The transient-upload budget, paid at the delivery's real start (round
+/// twelve's finding 7: a refused payload used to consume a pick's worth).
+fn pay_pick_budget(shared: &mut Shared) {
+    let now = Instant::now();
+    while shared
+        .text_uploads
+        .front()
+        .is_some_and(|at| now.duration_since(*at) > Duration::from_secs(10))
+    {
+        shared.text_uploads.pop_front();
+    }
+    if shared.text_uploads.len() >= 20 {
+        // The caller checks the count BEFORE calling (refuse shape); the
+        // push happens here so every paid budget is an actually-started
+        // delivery.
+    }
+    shared.text_uploads.push_back(now);
+}
+
+/// Whether the pick budget has room for one more delivery.
+fn pick_budget_exhausted(shared: &Shared) -> bool {
+    let now = Instant::now();
+    shared
+        .text_uploads
+        .iter()
+        .filter(|at| now.duration_since(**at) <= Duration::from_secs(10))
+        .count()
+        >= 20
+}
+
 /// Best-effort flag clear for a delivery leaving by an early door. The
 /// normal exits clear it where they restore the installed map; a shutdown
 /// exit leaves the transient up on a device the dying process takes with
@@ -1340,6 +1377,25 @@ fn deliver_text(
     // it released, `delivery_active` holding keymap mutators off (round
     // eleven's blocker: these sleeps used to hold it for the whole pick).
     let mut guard = arc.lock().unwrap();
+    // The entry contract (round twelve's audit of round eleven): this one
+    // continuous locked scope is the serialization point. A delivery
+    // already active refuses (deliveries serialize with EACH OTHER — the
+    // flag used to be write-only here and two picks interleaved their
+    // key events on one device); a shutdown in progress answers the
+    // invariant every other command obeys (the final release has been
+    // queued, nothing may press after it); and the pick budget is paid
+    // only now that the delivery actually starts — a refused payload no
+    // longer starves real picks.
+    if guard.shutting_down {
+        return "err shutting down".to_string();
+    }
+    if guard.delivery_active {
+        return "err text busy".to_string();
+    }
+    if pick_budget_exhausted(&guard) {
+        return "err text busy".to_string();
+    }
+    pay_pick_budget(&mut guard);
     let shared = &*guard;
     let Some(installed) = shared.installed_keymap.clone() else {
         return "err no keymap yet".to_string();
@@ -1441,8 +1497,15 @@ fn deliver_text(
             return "err shutting down".to_string();
         }
         // One lock pass per slot — the reads of held state and the key
-        // writes it drives — and no sleep inside one.
+        // writes it drives — and no sleep inside one. The shutdown check
+        // is INSIDE the lock, atomic with the writes (round twelve's
+        // finding 3: outside it, the release interleaved between check
+        // and write).
         let mut guard = arc.lock().unwrap();
+        if guard.shutting_down {
+            finish_delivery(arc);
+            return "err shutting down".to_string();
+        }
         let shared = &mut *guard;
         let wanted = level5.1
             | if slot.level == 6 || slot.level == 8 {
@@ -1584,6 +1647,11 @@ fn beat(
 ) {
     {
         let _guard = arc.lock().unwrap();
+        // Past the shutdown's final release nothing may press (F4): the
+        // beat writes nothing, the loop's own check exits soon after.
+        if shutdown_requested() {
+            return;
+        }
         body(keyboard);
     }
     let _ = connection.flush();
@@ -1605,6 +1673,20 @@ fn deliver_unicode_text(
     // beats below sleep with it released (round eleven's blocker), the
     // `delivery_active` flag holding keymap mutators off for the pick.
     let mut guard = arc.lock().unwrap();
+    // The same entry contract as deliver_text (round twelve's audit):
+    // one continuous locked scope that serializes against any other
+    // delivery, answers the shutdown invariant, and pays the pick budget
+    // only on a real start.
+    if guard.shutting_down {
+        return "err shutting down".to_string();
+    }
+    if guard.delivery_active {
+        return "err text busy".to_string();
+    }
+    if pick_budget_exhausted(&guard) {
+        return "err text busy".to_string();
+    }
+    pay_pick_budget(&mut guard);
     let shared = &mut *guard;
     // Cloned, not borrowed: the composition and the restore below run
     // past the guard's drop.
@@ -1763,8 +1845,13 @@ fn deliver_unicode_text(
             let _ = connection.flush();
             return "err keymap".to_string();
         }
+        // Only codes that still carry a claim (round twelve's finding 4):
+        // a >3s wait_out expiry let the cap or a disconnect lift claims
+        // mid-composition, and re-pressing those stranded them forever.
         for held_code in &held {
-            keyboard.key(stamp(), *held_code, 1);
+            if guard.held.contains_key(held_code) {
+                keyboard.key(stamp(), *held_code, 1);
+            }
         }
         keyboard.modifiers(guard.modifier_mask(), 0, 0, guard.group);
     }
@@ -2708,19 +2795,24 @@ fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
         }
         let shared = Arc::clone(&shared);
         let connection = connection.clone();
-        let clients = Arc::clone(&clients);
-        if thread::Builder::new()
-            .name("osk-client".into())
-            .spawn(move || {
-                handle_client(stream, shared, connection);
-                clients.fetch_sub(1, Ordering::AcqRel);
-            })
-            .is_err()
-        {
+        let spawned = {
+            let clients = Arc::clone(&clients);
+            thread::Builder::new()
+                .name("osk-client".into())
+                .spawn(move || {
+                    handle_client(stream, shared, connection);
+                    clients.fetch_sub(1, Ordering::AcqRel);
+                })
+                .is_err()
+        };
+        if spawned {
             // The client is dropped, never the helper (round eleven's
             // finding 10): exit(70) skipped every release path a live
-            // connection's keys still depended on.
+            // connection's keys still depended on — and the slot the
+            // failed spawn never returned is four failures from a
+            // permanent lockout (round twelve's finding 5).
             eprintln!("cannot spawn socket client worker; dropping the client");
+            clients.fetch_sub(1, Ordering::AcqRel);
         }
     }
 }
@@ -2946,8 +3038,12 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 // Even this answers one line (round eleven's finding 7):
                 // the reply-per-command invariant has no silent case, and
                 // the correlation queue on the other end pops on it.
-                let _ = write_reply(&mut out, "err empty",
-                    reply_bound(handshaked, connected_at.elapsed()));
+                if !write_reply(&mut out, "err empty",
+                    reply_bound(handshaked, connected_at.elapsed()))
+                {
+                    write_dead = true;
+                    break;
+                }
                 continue;
             }
             // `hello` reports more than "the process is up": a keyboard without a
@@ -3095,7 +3191,7 @@ fn hold_deadline(shared: &SharedRef, conn_id: u64) -> Option<Instant> {
 /// bound passes, then lets the caller proceed regardless — a stuck key or
 /// a disconnecting client must not wedge behind a pick forever.
 fn wait_out_delivery(shared: &SharedRef) {
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if !shared.lock().unwrap().delivery_active {
             return;
@@ -3250,33 +3346,13 @@ fn apply(
     // under the lock exactly as before — the same serialization the lock
     // used to give, minus the stalls.
     if matches!(&command, Command::Text(_) | Command::UnicodeText(_)) {
-        let reply = {
-            let mut guard = shared.lock().unwrap();
-            // The pick budget: one transient keymap upload per delivery,
-            // twenty per ten seconds — a legit panel cannot reach it, a
-            // pipeliner is throttled at the compositor's expense instead
-            // of unbounded (round eleven's finding 3).
-            let now = Instant::now();
-            while guard
-                .text_uploads
-                .front()
-                .is_some_and(|at| now.duration_since(*at) > Duration::from_secs(10))
-            {
-                guard.text_uploads.pop_front();
-            }
-            if guard.text_uploads.len() >= 20 {
-                "err text busy".to_string()
-            } else {
-                guard.text_uploads.push_back(now);
-                drop(guard);
-                match &command {
-                    Command::Text(payload) => deliver_text(shared, connection, payload),
-                    Command::UnicodeText(payload) => {
-                        deliver_unicode_text(shared, connection, payload)
-                    }
-                    _ => unreachable!("the match is on the same binding"),
-                }
-            }
+        // The budget, serialization and shutdown checks live in the
+        // deliveries' own entry scopes now (round twelve's audit) — paid
+        // at a real start, atomic with the delivery_active flag.
+        let reply = match &command {
+            Command::Text(payload) => deliver_text(shared, connection, payload),
+            Command::UnicodeText(payload) => deliver_unicode_text(shared, connection, payload),
+            _ => unreachable!("the guard matched a text command"),
         };
         return if reply == "ok" {
             "text-ok".to_string()
@@ -3287,9 +3363,11 @@ fn apply(
         };
     }
     // Wait out any active delivery, then run under the lock as always.
-    // Three seconds exceeds any single delivery's pacing; only a hostile
-    // pairing of pipelined deliveries can reach the refusal.
-    let deadline = Instant::now() + Duration::from_secs(3);
+    // The bound is sized off the legal maximum: a 16-scalar composition
+    // paces ~2 s and two compositor roundtrips can stretch it under
+    // load; five seconds covers the honest case, and only pipelined
+    // deliveries (refused in their own entry now) can reach past it.
+    let deadline = Instant::now() + Duration::from_secs(5);
     let mut guard = shared.lock().unwrap();
     while guard.delivery_active {
         drop(guard);

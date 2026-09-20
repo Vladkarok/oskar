@@ -2516,3 +2516,40 @@ The lab suite grew with it: 40 tests, the new one holding the
 empty-line answer. The harness's own newline append collided with the
 new honest reply — the batch test taught the harness not to manufacture
 empty lines it did not mean to send.
+
+## 74. Round twelve: the audit of the audit
+
+The owner's stop-test pass — an adversarial agent on the round-eleven
+diff itself — returned NOT SAFE, and both blockers were the round's own
+half-truths:
+
+- **Deliveries did not serialize with each other.** `delivery_active`
+  was write-only in the delivery paths: two connections' picks
+  interleaved key events on one device, one restore landed mid-other's
+  composition, and a configure slipped between the other's beats. Both
+  deliveries now open with ONE continuous locked scope that is the
+  serialization point — refuse when a delivery is active, answer the
+  shutdown invariant, pay the pick budget only at a real start (a
+  refused payload no longer starves real picks).
+- **The keycode gate missed the RMLVO door.** The agent demonstrated a
+  planted ~/.config/xkb include compiling maximum = 2000000000 through
+  the ungated branch, resurrecting the span-walk DoS. The gate now
+  stands on all three compile doors. The file-door test holds; the
+  RMLVO fixture from the live demo did not reproduce in-suite (the
+  rules-file shape would not resolve past stock evdev), recorded here
+  honestly — the gate is one identical check at every door that
+  compiles.
+- Riding the same pass: text commands re-join the shutdown gate (entry
+  scopes and INSIDE the beats, atomic with their writes — a press could
+  previously land after the final release); the unicode re-press only
+  re-presses codes that still carry a claim (a >3s wait-out expiry let
+  the cap lift claims mid-composition, stranding presses forever); a
+  failed client spawn returns its slot (four failures were a permanent
+  lockout); the empty-line reply failure drops the connection like
+  every other reply; and the busy bound is sized off the legal maximum
+  delivery (5 s — the old 3 s sat ~1.5× over a legit 16-scalar pick
+  under load).
+
+53 Rust tests, the lab's 40, host suites green; deployed live. The
+stop-rule stands: this round found blockers, the counter waits for two
+CLEAN ones.
