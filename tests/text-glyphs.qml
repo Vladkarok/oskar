@@ -99,6 +99,56 @@ QtObject {
             T.equal(TextGlyphs.search("qqqqzzzz").length, 0)
         })
 
+        T.test("the shelf never hijacks a catalogue family (§86's poison 1)", function () {
+            // THE VIEW THE USER SEES: the page draws each group tab as
+            // the catalogue's own slice passed through visibleEntries
+            // with the merged table. The §86 bug was exactly here — a
+            // bare glyph winning the family key rewrote the twin's TILE
+            // (monochrome render) and its PICK (bare bytes). Pin: no
+            // entry of any catalogue slice ever comes out as a
+            // different string, and no glyph substitutes onto a
+            // non-Text tab. (The first draft of this pin asserted
+            // groupEntries and caught nothing — written-after-the-fix
+            // tautology, caught by negative-testing the guard away.)
+            var catalog = Catalog.entries()
+            var merged = Page.allEntries()
+            var groups = Catalog.groups()
+            for (var g = 0; g < groups.length; g++) {
+                var slice = Page.groupEntries(catalog, groups[g])
+                var view = Page.visibleEntries(slice, merged, 0)
+                T.equal(view.length, slice.length,
+                    groups[g] + " lost tiles to the family collapse")
+                for (var i = 0; i < view.length; i++) {
+                    T.equal(view[i].emoji, slice[i].emoji,
+                        groups[g] + " tile " + slice[i].emoji
+                            + " was rewritten to " + view[i].emoji)
+                    T.equal(view[i].group, slice[i].group,
+                        "a shelf entry substituted onto " + groups[g])
+                }
+            }
+            // The Text tab itself passes through untouched too.
+            var textSlice = Page.groupEntries(merged, "Text")
+            var textView = Page.visibleEntries(textSlice, merged, 0)
+            T.equal(textView.length, TextGlyphs.entries().length)
+        })
+
+        T.test("no tone ever applies to a glyph (§86's poison 2)", function () {
+            // The real pick flow tones BEFORE it routes; the invariant
+            // must hold at that step, not on the raw entry.
+            var tones = ["", "\u{1F3FB}", "\u{1F3FC}", "\u{1F3FD}",
+                "\u{1F3FE}", "\u{1F3FF}"]
+            var glyphs = TextGlyphs.entries()
+            var all = Page.allEntries()
+            for (var i = 0; i < glyphs.length; i++) {
+                for (var t = 0; t < tones.length; t++) {
+                    var resolved = Page.entryForTone(glyphs[i], tones[t], all)
+                    T.equal(resolved.emoji, glyphs[i].emoji,
+                        glyphs[i].emoji + " under a tone resolved to "
+                            + resolved.emoji)
+                }
+            }
+        })
+
         Qt.exit(T.report("text glyphs"))
     }
 }

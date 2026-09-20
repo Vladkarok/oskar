@@ -2997,3 +2997,54 @@ nested 40 (one GPU-flaked Electron leg passed on retry) — green.
 Committed locally; push and deploy wait for the owner's word. The
 stop-rule counter stays at zero — this round's finding was the
 owner's, not the reviewers'.
+
+## 86. The shelf's own round: the family it almost stole
+
+The owner took the feature live ("давай попробуем") and granted the
+standing order the campaign had been circling: review rounds run
+AUTONOMOUSLY after each piece of work, until they stop finding serious
+problems. Round 5 ran on the routing fix and the shelf together — and
+all three reviewers converged on the same two poisons, both in the
+day-old shelf code, the campaign's pattern holding to the last:
+
+- **The shelf hijacked 34 catalogue families.** `toneFamilyKey`
+  strips U+FE0F, so a bare glyph and its emoji-presentation twin
+  (♥ vs ♥️) share a family key; `familyBases` wrote last-wins and
+  `allEntries` concatenated the shelf AFTER the catalogue — so five
+  tabs redrew monochrome and DELIVERED bare scalars where the user
+  picked emoji, the coloured forms unreachable. Fixed twice over
+  (both guards load-bearing, proven so by negative-testing the pins:
+  breaking one leaves the other holding): `familyBases` never lets a
+  shelf entry join a family and writes first-wins; `visibleEntries`
+  never substitutes a Text-group base onto a catalogue tile. The pin
+  drives the page's REAL view path — the first draft of the pin
+  asserted the wrong function, stayed green on the broken tree, and
+  was caught by the §84 discipline: BREAK THE FIX, WATCH THE PIN GO
+  RED.
+- **✌ under a selected skin tone delivered ✌🏽.** The tone step runs
+  BEFORE routing; `entryForTone` resolved the shelf glyph's family
+  key into the catalogue's toned victory hands — the tile drew the
+  glyph, the pick went out astral on the clipboard route. The shelf's
+  own fast-lane pin was tautological (it pinned deliveryRoute on the
+  raw glyph, never the toned pick path). Fixed: `entryForTone`
+  returns Text entries unchanged; the pin now tones every glyph under
+  every tone before asserting.
+- Riding: the two delivery routes serialize across the route boundary
+  now (a clipboard pick and a direct glyph pick could interleave into
+  one window — order inverted, or the glyph typed with the paced
+  chord's Ctrl held; refuse VISIBLY, the paste chip's own rule, both
+  directions); the Text tab got its icon (♥) and the icon pin
+  re-pointed at the merged groups (it iterated the catalogue's and
+  stayed green through the fallback); glyph search results ride after
+  the capped catalogue side WHOLE (broad terms starved them past the
+  limit); the suit pairs renamed to CLDR's filled-gets-the-plain-name;
+  the dead searchPlaceholder rule deleted with its tests.
+- LIVE-WITH: twelve zodiac glyphs byte-identical to catalogue entries
+  (both tabs, one usage key — harmless); the empty-usage tab shows a
+  blank body; ghost usage records can occupy frequent slots invisibly
+  after a regeneration; tofu-on-stock-fonts stays client-side (all
+  108 resolve on the owner's machine).
+
+55 Rust tests, 21 host suites, the wall's canary (15) and
+restart-settle (8) — green; deployed live. The stop-rule counter
+stays at zero, but the round ran itself.

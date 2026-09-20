@@ -20,8 +20,13 @@ function allGroups() {
     return groups
 }
 
-function searchEverything(query) {
-    return Catalog.search(query, 0).concat(TextGlyphs.search(query))
+function searchEverything(query, limit) {
+    // The catalogue side is capped at the page's own limit; the shelf's
+    // hits ride after it WHOLE (§86: concatenating uncapped-then-capping
+    // starved every glyph past broad terms' flood — "no" buried ✗ at
+    // position 100 of a 64 cap).
+    var cap = limit > 0 ? limit : 0
+    return Catalog.search(query, cap).concat(TextGlyphs.search(query))
 }
 
 // Pure logic behind the panel's own emoji page (ticket 24). The suites
@@ -41,7 +46,8 @@ var CATEGORY_ICONS = {
     "Activities": "⚽",
     "Objects": "💡",
     "Symbols": "🔣",
-    "Flags": "🏁"
+    "Flags": "🏁",
+    "Text": "\u2665"
 }
 
 var SKIN_TONES = [
@@ -79,7 +85,16 @@ function toneFamilyKey(sequence) {
 function familyBases(entries) {
     var bases = {}
     for (var i = 0; i < entries.length; i++) {
-        if (!hasTone(entries[i].emoji))
+        // The text-glyph shelf NEVER joins a family (§86, all three
+        // reviewers of the shelf's own round): toneFamilyKey strips the
+        // variation selector, so a bare glyph and its emoji twin share a
+        // key — and a glyph winning the key would redraw the twin's tab
+        // monochrome and deliver the bare scalar where the user picked
+        // the emoji. First (catalogue) write wins; glyphs pass through
+        // unmatched in both directions.
+        if (String(entries[i].group) === "Text") continue
+        if (!hasTone(entries[i].emoji)
+                && bases[toneFamilyKey(entries[i].emoji)] === undefined)
             bases[toneFamilyKey(entries[i].emoji)] = entries[i]
     }
     return bases
@@ -96,7 +111,8 @@ function visibleEntries(entries, catalog, limit) {
     for (var i = 0; i < entries.length; i++) {
         var entry = entries[i]
         var key = toneFamilyKey(entry.emoji)
-        var visible = bases[key] || entry
+        var base = bases[key]
+        var visible = base && String(base.group) !== "Text" ? base : entry
         var identity = visible.emoji
         if (seen[identity]) continue
         seen[identity] = true
@@ -113,6 +129,11 @@ function visibleEntries(entries, catalog, limit) {
 function entryForTone(entry, tone, catalog) {
     var selected = String(tone || "")
     if (selected === "" || hasTone(entry.emoji)) return entry
+    // A text glyph has no tones and borrows none (§86): ✌ on the shelf
+    // shares its family key with the catalogue's toned victory hands,
+    // and resolving the selector would deliver ✌🏽 — a different
+    // character on a different route — from a tile that drew the glyph.
+    if (String(entry.group) === "Text") return entry
     var key = toneFamilyKey(entry.emoji)
     var bases = familyBases(catalog)
     if (!bases[key]) return entry
@@ -242,12 +263,6 @@ function searchKeyAction(event) {
 // (the owner's 2026-09-13 call): ua draws Пошук, ru Поиск, everything
 // else the English Search. Keyed by the xkb layout CODE the panel already
 // knows, so a custom code falls through to English rather than guessing.
-function searchPlaceholder(layoutCode) {
-    var code = String(layoutCode || "").toLowerCase()
-    if (code === "ua") return "Пошук"
-    if (code === "ru") return "Поиск"
-    return "Search"
-}
 
 // The tone picker's names, localized (ticket 52): SKIN_TONES keeps its
 // English label as the data fallback (the field contract is pinned to

@@ -46,13 +46,18 @@ QtObject {
             T.equal(Page.categoryIcon("Smileys & Emotion"), "😀")
             T.equal(Page.categoryIcon("People & Body"), "👋")
             T.equal(Page.categoryIcon("Flags"), "🏁")
-            var tabs = Page.tabs(groups)
-            for (var i = 0; i < tabs.length; i++) {
-                if (tabs[i].label === "•") {
-                    T.fail("group " + tabs[i].value + " has no icon")
+            // The MERGED group list (§86): the pin used to iterate the
+            // catalogue's own groups and stayed green while the Text
+            // shelf's tab fell to the bullet fallback.
+            var merged = Page.tabs(Page.allGroups())
+            T.equal(merged.length, groups.length + 1)
+            for (var i = 0; i < merged.length; i++) {
+                if (merged[i].label === "•") {
+                    T.fail("group " + merged[i].value + " has no icon")
                     return
                 }
             }
+            T.equal(Page.categoryIcon("Text"), "\u2665")
             T.equal(true, true)
         })
 
@@ -506,18 +511,6 @@ QtObject {
         // modelData.name off whatever its model carries, and the usage
         // sections read emoji/count/lastUsed off the store's records. A
         // rename in any builder must break this suite, not the page.
-        T.test("the search placeholder speaks the active layout's language", function () {
-            // The owner's 2026-09-13 call: the word under the field follows
-            // the layout he types in — Пошук on ua, Поиск on ru, Search
-            // elsewhere; an unknown or missing code falls through rather
-            // than guess.
-            T.equal(Page.searchPlaceholder("ua"), "Пошук")
-            T.equal(Page.searchPlaceholder("ru"), "Поиск")
-            T.equal(Page.searchPlaceholder("us"), "Search")
-            T.equal(Page.searchPlaceholder("de"), "Search")
-            T.equal(Page.searchPlaceholder(""), "Search")
-            T.equal(Page.searchPlaceholder(undefined), "Search")
-        })
         T.test("skin-tone entries carry exactly the three fields the tone picker reads", function () {
             // The last unpinned EmojiPage family (ticket 40 review): the
             // picker delegate reads value (active check + the chosen

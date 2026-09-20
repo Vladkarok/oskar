@@ -123,17 +123,6 @@ QtObject {
             T.deepEqual(UiStrings.languageChoices(["de"]), ["auto", "en"])
         })
 
-        T.test("the shipped placeholder is the table's first word", function () {
-            // Ticket 36's function stays the precedent and the fallback;
-            // the table must not drift from what already shipped.
-            var codes = ["ua", "ru", "us", "de", "", undefined]
-            for (var i = 0; i < codes.length; i++) {
-                T.equal(Page.searchPlaceholder(codes[i]),
-                    UiStrings.tr("emoji.searchPlaceholder",
-                        UiStrings.languageFor(codes[i], "auto")),
-                    "code " + codes[i])
-            }
-        })
 
         T.test("every translation keeps the English arity of its placeholders", function () {
             // A ru string that lost its %1 stays non-empty and used to pass

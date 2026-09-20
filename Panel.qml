@@ -1672,6 +1672,12 @@ Item {
     property bool directPickBusy: false
 
     function pickViaDirect(emoji, unicodeEntry) {
+        // The other half of the cross-route gate: a clipboard
+        // transaction mid-flight owns the window (see onEmojiChosen).
+        if (root.emojiTxnState.phase !== "idle") {
+            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
+            return
+        }
         if (root.directPickBusy) {
             if (root.directPickQueue.length >= 3) {
                 console.warn("[oskar] direct pick refused: three already"
@@ -3463,8 +3469,26 @@ Item {
                 // and split skin tones in Telegram.
                 var route = EmojiGrid.deliveryRoute(delivered.emoji,
                     root.focusedClientClass())
+                // One pick in flight per window, across BOTH routes
+                // (§86, the round's third convergence): the two queues
+                // never knew about each other, so a clipboard pick and a
+                // direct glyph pick could interleave into the same
+                // client — order inverted, or the glyph typed with the
+                // paced chord's Ctrl still held at the device. The
+                // paste chip's own rule, applied to picks: refuse
+                // VISIBLY, the windows are sub-second.
                 if (route === "clipboard") {
+                    if (root.directPickBusy) {
+                        root.flashRefused(UiStrings.tr("hint.pickFailed",
+                            root.uiLang))
+                        return
+                    }
                     root.pickViaClipboard(delivered.emoji)
+                    return
+                }
+                if (root.emojiTxnState.phase !== "idle") {
+                    root.flashRefused(UiStrings.tr("hint.pickFailed",
+                        root.uiLang))
                     return
                 }
                 root.pickViaDirect(delivered.emoji, route === "text-unicode")

@@ -55,7 +55,7 @@ Rectangle {
     property bool searchArmed: true
     // The active xkb layout code, wired from the panel: the placeholder
     // word speaks the language the owner is typing in (Пошук/Поиск/
-    // Search — EmojiGrid.searchPlaceholder).
+    // Search — UiStrings.tr("emoji.searchPlaceholder", emojiRoot.uiLang)).
     property string layoutCode: ""
     // The effective profile's hover-tooltip rule (ticket 62), wired from
     // the panel: in touch, possibly-synthesized hover never names
@@ -619,8 +619,10 @@ Rectangle {
                 // capped at searchLimit after modifier families collapse, so
                 // a broad term still fills the viewport with distinct tiles.
                 model: emojiRoot.searching
-                    ? EmojiGrid.visibleEntries(EmojiGrid.searchEverything(emojiRoot.query),
-                        EmojiGrid.allEntries(), emojiRoot.searchLimit)
+                    ? EmojiGrid.visibleEntries(
+                        EmojiGrid.searchEverything(emojiRoot.query,
+                            emojiRoot.searchLimit),
+                        EmojiGrid.allEntries(), 0)
                     : emojiRoot.activeGroup === "__usage__"
                         ? emojiRoot.usageSections.recent
                         : EmojiGrid.groupEntries(EmojiGrid.allEntries(), emojiRoot.activeGroup)
