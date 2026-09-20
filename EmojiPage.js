@@ -280,6 +280,59 @@ function needsUnicodeEntry(clientClass) {
     return /(chrom|chrome|brave|edge|electron|codex|chatgpt|openai|claude|slack|discord)/.test(name)
 }
 
+// Clients PROVEN to read the transient-keymap keysym route byte-exactly,
+// astral scalars and multi-scalar sequences included: the lab's real
+// foot and X11 legs pin it for terminals (which also reject the
+// Ctrl+Shift+U composition outright — for them this is the only route
+// that types), and ZapZap by the owner's own acceptance.
+function keysymGood(clientClass) {
+    var name = String(clientClass || "").toLowerCase()
+    return /(foot|kitty|alacritty|konsole|terminal|xterm|wezterm|ghostty|x11cat|zapzap)/.test(name)
+}
+
+// The delivery route for a direct-mode pick (§84, the owner's live
+// report after §83: private-use tofu into every Electron app the class
+// regex could not name — zcode narrows U+1F44D to U+F44D — and a split
+// skin-tone in Telegram, the modifier arriving as its own key event and
+// no Qt text stack recombining it). The three channels' own correctness
+// is pinned in the lab against real clients; THIS table is the seam
+// none of those tests could see: which client gets which channel.
+//
+//   "text"         — the transient-keymap keysym route: byte-exact for
+//                    a BMP single scalar into anything, and for
+//                    everything into the keysym-good list.
+//   "text-unicode" — Chromium's Ctrl+Shift+U composition for the
+//                    needsUnicodeEntry classes (the hex flies visibly
+//                    before it commits — the owner's Claude/Brave
+//                    report — but the clipboard is never touched).
+//   "clipboard"    — publish the exact sequence and paste it:
+//                    byte-exact into anything with a working paste
+//                    chord, at the documented cost of replacing the
+//                    clipboard — the same contract the owner chose
+//                    manually for ZCode, now automatic for the payloads
+//                    the typed routes cannot guarantee.
+function deliveryRoute(emoji, clientClass) {
+    var text = String(emoji || "")
+    // Count the scalars and watch for an astral one, walking surrogate
+    // pairs as the single scalar they are.
+    var scalars = 0
+    var astral = false
+    for (var i = 0; i < text.length; ) {
+        var point = text.codePointAt(i)
+        scalars += 1
+        if (point > 0xFFFF) astral = true
+        i += point > 0xFFFF ? 2 : 1
+    }
+    // A lone BMP scalar rides the keysym route everywhere; anything
+    // richer — astral, or multi-scalar: a tone modifier, a ZWJ family,
+    // a keycap composition — needs a channel that can carry a sequence.
+    if (scalars === 1 && !astral) return "text"
+    if (keysymGood(clientClass)) return "text"
+    if (needsUnicodeEntry(clientClass)) return "text-unicode"
+    return "clipboard"
+}
+
+
 function usageAfterSuccess(records, emoji) {
     var out = []
     var sequence = 0

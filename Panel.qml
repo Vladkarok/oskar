@@ -3456,9 +3456,19 @@ Item {
                 // simply vanished). Same order and cap as the clipboard
                 // mode's transaction queue: three may wait, the fourth
                 // is refused OUT LOUD, and a pick's own completion
-                // starts the next.
-                root.pickViaDirect(delivered.emoji,
-                    EmojiGrid.needsUnicodeEntry(root.focusedClientClass()))
+                // starts the next. The ROUTE is the pure table's call
+                // (§84, the owner's live report): which of the three
+                // channels can carry THIS payload into THIS client —
+                // the old binary choice landed private-use tofu in
+                // every Electron app the class regex could not name
+                // and split skin tones in Telegram.
+                var route = EmojiGrid.deliveryRoute(delivered.emoji,
+                    root.focusedClientClass())
+                if (route === "clipboard") {
+                    root.pickViaClipboard(delivered.emoji)
+                    return
+                }
+                root.pickViaDirect(delivered.emoji, route === "text-unicode")
             }
             onSkinToneChosen: function (tone) { root.chooseEmojiSkinTone(tone) }
             onDismissed: root.emojiOpen = false

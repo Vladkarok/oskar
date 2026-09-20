@@ -2951,3 +2951,49 @@ restart-settle (8), the nested 40 — green on the fixed tree. Committed
 locally; push and deploy wait for the owner's word. The stop-rule
 counter stays at zero: one poison — but the external leg is finally,
 verifiably clean.
+
+## 84. The owner's live report: tofu in ZCode, a split tone in Telegram
+
+Four review rounds found nine poisons between them; the tenth finding
+of the week was the owner's, at his desk, and it questioned the whole
+ceremony: a skin-toned emoji split into base-plus-tone-square in
+Telegram, private-use tofu squares into ZCode — while Claude desktop
+and Brave showed the composition's hex flying before it committed
+(the entry route working, loudly). Why did no test see it? Because the
+lab pins each ROUTE against real clients (foot, an X11 GTK client, an
+Electron probe — "skin tone arrived byte-exact" is green and true),
+while the ROUTE CHOICE was a class regex whose pins were a tautology:
+they verified the matcher matches what it matches, and nothing in any
+suite knows that `zcode` is an Electron build. The seam between the
+route tests and the routing was held by nobody.
+
+Both symptoms traced to §40's known defect, one step further out:
+Chromium narrows astral keysyms to char16 (U+1F44D arrives as U+F44D,
+private-use tofu), and the entry-route regex cannot enumerate the
+world's Electron window classes — `zcode` matches nothing. Telegram
+(Qt) took the keysym route and its text stack does not recombine an
+emoji modifier delivered as its own key event.
+
+The route is a pure table now (EmojiPage.deliveryRoute), pinned
+against the owner's ACTUAL hyprctl class list:
+
+- A lone BMP scalar rides the keysym route everywhere.
+- Keysym-good clients — terminals (the lab's foot/x11cat legs;
+  they also reject Ctrl+Shift+U outright) and ZapZap (the owner's
+  recorded acceptance, now a route instead of a footnote) — take the
+  keysym route for any payload.
+- Entry-good classes (the §40 regex) keep text-unicode.
+- Everything else — the classes no list can enumerate — gets the
+  BYTE-EXACT CLIPBOARD TRANSACTION automatically for the payloads the
+  typed routes cannot guarantee: astral scalars, tone pairs, ZWJ
+  families, BMP multi-scalar compositions. The same contract the
+  owner chose manually for ZCode ("clipboard compatibility"), now the
+  default where it is the only channel that cannot lie. The
+  clipboard-replacement cost is the documented price.
+
+55 Rust tests, all host suites (the route pins ride the emoji-page
+suite), clippy, the wall's canary (15) and restart-settle (8), the
+nested 40 (one GPU-flaked Electron leg passed on retry) — green.
+Committed locally; push and deploy wait for the owner's word. The
+stop-rule counter stays at zero — this round's finding was the
+owner's, not the reviewers'.

@@ -289,6 +289,51 @@ QtObject {
             T.equal(Page.needsUnicodeEntry("x11cat"), false)
         })
 
+        T.test("the delivery route table answers the owner's real classes", function () {
+            // §84, the owner's live report (2026-09-21): a toned emoji
+            // split into base-plus-tone-square in Telegram, and
+            // private-use tofu into ZCode — every Electron app the
+            // entry-route regex could not name took the keysym route,
+            // and Chromium narrows its astral keysyms to char16
+            // (U+1F44D arrives as U+F44D). The classes below are the
+            // owner's ACTUAL seat, read from hyprctl — the pins hold
+            // the world-knowledge the matcher alone never had.
+            var thumbsUp = "\uD83D\uDC4D"            // astral single
+            var toned = thumbsUp + "\uD83C\uDFFD"    // astral pair
+            var family = "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67"
+            var heart = "\u2665"                     // BMP single
+            var keycap = "3\uFE0F\u20E3"             // BMP multi
+
+            // A lone BMP scalar rides the keysym route EVERYWHERE —
+            // even into classes nobody has ever heard of.
+            T.equal(Page.deliveryRoute(heart, "zcode"), "text")
+            T.equal(Page.deliveryRoute(heart, "org.telegram.desktop"), "text")
+            T.equal(Page.deliveryRoute(heart, ""), "text")
+
+            // Keysym-good clients take the keysym route for anything —
+            // terminals (the lab's foot/x11cat legs) and ZapZap (the
+            // owner's acceptance, made a route).
+            T.equal(Page.deliveryRoute(toned, "foot"), "text")
+            T.equal(Page.deliveryRoute(family, "foot"), "text")
+            T.equal(Page.deliveryRoute(toned, "com.rtosta.zapzap"), "text")
+
+            // Entry-good classes keep the Unicode composition — the
+            // owner confirmed it working live (Claude desktop, Brave:
+            // the hex flies, then commits).
+            T.equal(Page.deliveryRoute(thumbsUp, "brave-browser"), "text-unicode")
+            T.equal(Page.deliveryRoute(toned, "com.anthropic.claude"), "text-unicode")
+            T.equal(Page.deliveryRoute(family, "chatgpt"), "text-unicode")
+
+            // Everything else — the classes no list can enumerate —
+            // gets the byte-exact clipboard transaction for the
+            // payloads the typed routes cannot guarantee: astral
+            // singles, tone pairs, ZWJ families, BMP multi-scalars.
+            T.equal(Page.deliveryRoute(thumbsUp, "zcode"), "clipboard")
+            T.equal(Page.deliveryRoute(toned, "org.telegram.desktop"), "clipboard")
+            T.equal(Page.deliveryRoute(family, "viber"), "clipboard")
+            T.equal(Page.deliveryRoute(keycap, "zcode"), "clipboard")
+        })
+
         T.test("successful usage ranks, deduplicates and evicts deterministically", function () {
             var records = []
             records = Page.usageAfterSuccess(records, "😁")
