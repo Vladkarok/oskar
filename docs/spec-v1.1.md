@@ -49,19 +49,12 @@ the reasons; this file records required behaviour.
   page is searched with the keyboard's own keys, in every configured
   layout, and never covers the keys (the settings card's rule, §5).
   Choosing an entry delivers it to the focused client through the helper —
-  once. The default delivery is typing, never the clipboard: ordinary
-  clients use the `text` transient-keymap route; known Chromium-family
-  clients use the helper's `text-unicode` Linux Unicode-entry route
-  because Chromium otherwise narrows supplementary-plane characters to
-  U+Fxxx after receiving the correct keysym (decisions §40). (2026-09-12
-  amendment, ticket 28: an explicit user mode adds a third route —
-  clipboard compatibility, which publishes the exact picked sequence and
-  sends the paste chord, for the clients that drop both typed routes
-  (ZCode). It replaces the clipboard with the pick, is chosen from the
-  page's header, never runs by default, and never applies to ordinary
-  keys; decisions §42. 2026-09-13 audit fix: the route is one serialized
-  transaction — a pick while another is unfinished queues behind it, and
-  usage, search settle and close-after-pick happen only at the chord's
+  once, by the ONE channel (§91's supersession of this section's original
+  delivery clause, ticket 28 and decisions §39/§40/§42): the pick
+  publishes its exact sequence to the clipboard, verifies the read, and
+  sends the client's paste chord as one serialized transaction — a pick
+  while another is unfinished queues behind it, and usage, search settle
+  and close-after-pick happen only at the chord's
   real completion; decisions §44.) (2026-09-09
   amendment, ticket 24 step 5: the cap no longer launches a picker, and the
   external-picker machinery — the courtesy move, the managed session, the
@@ -302,7 +295,9 @@ Normal installation and development provisioning enable and start
 systemd crash restart policy remains authoritative.
 
 The panel distinguishes starting/configuring, unavailable, incompatible and
-ready states without adding a heartbeat or status poll. While not ready,
+ready states with no status VERB on the protocol — liveness is proved by
+traffic: the panel's never-stopping probe speaks every 15 s at quiescence
+(§80), and a negotiated connection silent for 60 s is dropped (§82). While not ready,
 input-producing caps are disabled; Close, Settings, mode, size, Caps and Fn
 remain usable. A compact friendly header notice names
 `oskar.service`, does not resize the keyboard, and disappears after the

@@ -3299,3 +3299,34 @@ the adversarial auditor three poisons on the §91/§92 diff:
 
 44 Rust tests, 21 host suites, clippy, the wall's canary (15) and
 restart-settle (8), the nested 32 — green; deployed live.
+
+## 94. Triage round two: the honesty pass that no-matched its own honesty pass
+
+Round two of the loop: Opus SAFE TO SHIP (three stale-comment
+niggles), the auditor two poisons — both doc-honesty, and the second
+one exquisite: §93's claimed CONTEXT/spec-v1.1 refresh had silently
+no-matched exactly as §91's SECURITY.md edit had, the fix for the
+class committing the class. And the daemon's own protocol header —
+the file §93 edited — still advertised the deleted verbs, with the
+§91 deletion's orphaned paragraph fragments welded mid-sentence onto
+the caps entry and `text-ok`/`text-err` listed among the replies.
+
+All of it landed for real this time, with the no-match lesson
+institutionalized: every doc edit now asserts its pattern matched
+(the python replaces carry asserts; a silent no-op cannot recur
+quietly). CONTEXT's glossary defines Pick and the clipboard
+transaction (the Text-route/Unicode-entry entries replaced);
+spec-v1.1's delivery clause is superseded in place with the §93
+serialization semantics and its "no heartbeat" claim corrected to the
+probe-and-drop reality; the daemon header's reply list matches the
+parser; the v5 module-doc line; three live tool scripts swept to
+hello 6 (keymap-recovery, package-test, lvl5-probe — the v6 bump had
+missed them and would have false-red the recovery choreography);
+uninstall's orphan warning gates on the registration's existence and
+words its claim conditionally, and the sibling registration compare
+is canonicalized like §93's CLI compare (the same symlink class one
+line above it); README's test counts re-derived (44 / 503); the churn
+guard's 138 fossil; Panel's orphaned delivery-mode comment and
+TextGlyphs' fast-lane header.
+
+44 Rust tests, 21 host suites, clippy — green. The loop continues.

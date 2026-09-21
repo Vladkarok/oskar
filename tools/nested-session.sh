@@ -255,7 +255,7 @@ status=$?
 #   The budget keeps triple headroom for guest variance.
 #
 # A feedback loop
-# grows at ~190 pairs per second (the incident above), so 138 still fails
+# grows at ~190 pairs per second (the incident above), so any real loop still fails
 # closed on the churn this guard exists to catch.
 after_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 rebuilds=$((after_xkb - before_xkb))

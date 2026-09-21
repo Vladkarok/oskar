@@ -80,7 +80,7 @@ cap_for() {
   # hello rides the same connection (round eight): the helper gates
   # every command behind a completed handshake, and a bare caps query
   # answers "err hello first" — the first reply line is the hello's.
-  { printf 'hello 5\ncaps 0 %s\n' "$1" | timeout 2 socat -t1 - \
+  { printf 'hello 6\ncaps 0 %s\n' "$1" | timeout 2 socat -t1 - \
     UNIX-CONNECT:"$RUNTIME_DIR/control.sock" 2>/dev/null |
     python3 -c '
 import sys
@@ -96,7 +96,7 @@ print(first[1:] if first[:1] == "t" else first)
 }
 
 hello() {
-  { printf 'hello 5\n' | timeout 2 socat -t1 - UNIX-CONNECT:"$RUNTIME_DIR/control.sock" 2>/dev/null |
+  { printf 'hello 6\n' | timeout 2 socat -t1 - UNIX-CONNECT:"$RUNTIME_DIR/control.sock" 2>/dev/null |
     head -n1; } || true
 }
 
@@ -134,7 +134,7 @@ phase_run() {
   # assertions otherwise race the service's own start.
   local settle=20
   while ((settle-- > 0)); do
-    if [[ "$(hello)" == "hello 5" ]]; then break; fi
+    if [[ "$(hello)" == "hello 6" ]]; then break; fi
     sleep 0.5
   done
   command -v xkbcli >/dev/null || { sudo pacman -Sy --noconfirm libxkbcommon >/dev/null; }
@@ -169,7 +169,7 @@ phase_run() {
   kill -9 "$oldpid"
   sleep 2
   check "$(get_kbfile)" "$PUBLISHED" "SIGKILL left the compositor on the published keymap"
-  check "$(hello)" "hello 5" "the helper survived the shell's death"
+  check "$(hello)" "hello 6" "the helper survived the shell's death"
   systemctl --user restart oskar.service
   sleep 2
   check "$(cat "$SIDECAR" 2>/dev/null | tr -d '\n')" "$CUSTOM" \
@@ -188,7 +188,7 @@ phase_run() {
   # source on the new handshake whatever systemd did to the runtime dir.
   systemctl --user restart oskar.service
   sleep 3
-  check "$(hello)" "hello 5" "the helper restarted in the same session"
+  check "$(hello)" "hello 6" "the helper restarted in the same session"
   local after
   after="$(wait_for sidecar3 "$CUSTOM" sidecar_value)"
   check "$after" "$CUSTOM" "the sidecar converged back after the helper restart"

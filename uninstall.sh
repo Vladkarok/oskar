@@ -14,7 +14,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 reg="$HOME/.config/omarchy/plugins/io.github.vladkarok.oskar"
 
-if [[ "$(readlink -f "$reg" 2>/dev/null || true)" == "$here" ]]; then
+if [[ "$(readlink -f "$reg" 2>/dev/null || true)" == "$(readlink -f "$here")" ]]; then
   bash "$here/bin/oskar" teardown
 else
   echo "uninstall.sh: registration does not point at this checkout; leaving the live install alone" >&2
@@ -38,9 +38,9 @@ elif [[ -e "$cli" || -e "$HOME/.local/libexec/oskar-daemon"
     || -e "$HOME/.config/systemd/user/oskar.service" ]]; then
   echo "uninstall.sh: the shared helper/service/CLI belong to another install${cli_owner:+ ($cli_owner)}${cli_owner:+ or to a checkout that is gone}; leaving them in place" >&2
   echo "uninstall.sh: this checkout's files are gone with the checkout itself" >&2
-  reg_owner="$(readlink -f "$reg" 2>/dev/null || true)"
-  if [[ -n "$reg_owner" ]]; then
-    echo "uninstall.sh: note — the registration at $reg_owner relied on the shared unit this checkout installed; after a reboot its service will be absent until that checkout runs its own install again" >&2
+  if [[ -e "$reg" || -L "$reg" ]]; then
+    reg_owner="$(readlink -f "$reg" 2>/dev/null || true)"
+    echo "uninstall.sh: note — the registration at ${reg_owner:-$reg} relied on the shared unit; whichever checkout owns it must run its own install again before the next reboot or its service will be absent" >&2
   fi
 else
   echo "Source install already absent. Config and state preserved."

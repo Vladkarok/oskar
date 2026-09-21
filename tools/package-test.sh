@@ -51,7 +51,7 @@ summary() {
 SOCKET="${XDG_RUNTIME_DIR:-$HOME/.run}/oskar/control.sock"
 
 hello() {
-  { printf 'hello 5\n' |
+  { printf 'hello 6\n' |
     timeout 2 socat -t1 - UNIX-CONNECT:"$SOCKET" 2>/dev/null | head -n1; } || true
 }
 
@@ -62,7 +62,7 @@ hello_until_ready() {
   local reply="" tries=20
   while ((tries-- > 0)); do
     reply="$(hello)"
-    if [[ "$reply" == "hello 5" ]]; then break; fi
+    if [[ "$reply" == "hello 6" ]]; then break; fi
     sleep 0.5
   done
   printf '%s' "$reply"
@@ -269,7 +269,7 @@ phase_protocol() {
   done
   [[ -S "$sock" ]] && ok "socket present" || no "socket missing"
   reply="$(hello_until_ready)"
-  [[ "$reply" == "hello 5" ]] && ok "protocol hello ok" || no "hello reply: $reply"
+  [[ "$reply" == "hello 6" ]] && ok "protocol hello ok" || no "hello reply: $reply"
   local rc1=0 rc2=0
   omarchy-shell shell toggle "$PLUGIN_ID" || rc1=$?
   sleep 2
@@ -296,7 +296,7 @@ phase_upgrade() {
   systemctl --user --quiet is-active oskar.service \
     && ok "helper active after upgrade" || no "helper down after upgrade"
   reply="$(hello_until_ready)"
-  [[ "$reply" == "hello 5" ]] && ok "protocol ok after upgrade" || no "hello reply: $reply"
+  [[ "$reply" == "hello 6" ]] && ok "protocol ok after upgrade" || no "hello reply: $reply"
   summary
 }
 
@@ -368,7 +368,7 @@ phase_coldboot() {
   systemctl --user --quiet is-active oskar.service \
     && ok "helper active after cold boot" || no "helper down after cold boot"
   reply="$(hello_until_ready)"
-  [[ "$reply" == "hello 5" ]] && ok "protocol ok after cold boot" || no "hello reply: $reply"
+  [[ "$reply" == "hello 6" ]] && ok "protocol ok after cold boot" || no "hello reply: $reply"
   [[ "$(readlink -f "$REG")" == /usr/share/oskar/plugin ]] \
     && ok "registration intact" || no "registration lost on boot"
   omarchy-shell shell toggle "$PLUGIN_ID" && sleep 2 \

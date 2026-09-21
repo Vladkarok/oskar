@@ -41,17 +41,7 @@
 //!                     character text), `x<keysym>` (a symbol that produces no
 //!                     character) or `n` (no symbol at this level). Without a
 //!                     position list every named key is answered.
-//!                     24): a transient variant of the installed keymap
-//!                     carrying them on levels five to eight of letter
-//!                     positions is uploaded, tapped, and the installed keymap
-//!                     uploaded back — exactly two keymap events per pick on
-//!                     the focused client and none at any other time, with the
-//!                     group restored by re-sending modifiers because a
-//!                     keymap event resets it (decisions §35, §37).
-//!                     deliver through Chromium's Linux Ctrl+Shift+U
-//!                     composition path; the panel selects this only for a
-//!                     known Chromium-family focused client (decisions §40).
-//! Replies are `ok`, `text-ok`, `text-err <reason>`, `hello <n>`,
+//! Replies are `ok`, `hello <n>`,
 //! `configured<TAB><generation>`, `pong`,
 //! `keyboards<TAB>name...`, `caps<TAB><generation><TAB><group><TAB><records>`,
 //! or `err <reason>`.
@@ -60,9 +50,11 @@
 //! It is what the panel correlates its keycap facts against: a same-keymap
 //! reconfigure keeps the generation (the installed keymap did not change), a
 //! changed one bumps it, so a facts reply computed from a superseded keymap is
-//! detectable and discardable. The panel and the helper moved to protocol
-//! version 5 together, which is what keeps an updated panel and an installed
-//! old helper from ever negotiating the new reply shapes (decisions §23).
+//! detectable and discardable. The panel and the helper move protocol
+//! versions together, which is what keeps an updated panel and an
+//! installed old helper from ever negotiating the wrong reply shapes
+//! (decisions §23; version 6 — the typed delivery verbs are gone, a v5
+//! peer is a reinstall).
 //!
 //! Key repeat belongs to the compositor: a press is `down`, a release is `up`,
 //! and nothing here or in the panel repeats anything. What the helper does add

@@ -185,7 +185,7 @@ One product, four languages, each with a job:
   offscreen test cases — the repo's main regression net.
 - **Rust** (the `oskar-daemon` helper) — everything at the seat: it
   compiles and mirrors the XKB keymap, owns the virtual keyboard, and
-  speaks the versioned socket protocol. 52 unit tests.
+  speaks the versioned socket protocol. 44 unit tests.
 - **Python and one C file** (`tools/integration/`) — not part of the
   product: the lab harness that drives a real panel with real pointer
   events inside a throwaway VM, and a tiny Wayland client that spies on

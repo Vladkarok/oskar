@@ -139,7 +139,9 @@ _Avoid_: picker session, picker window, the picker
 
 **Pick**:
 One emoji choice on the emoji page, delivered to the previously focused
-client exactly once through a text route — never through the clipboard.
+client by the clipboard transaction (§91: the one channel — publish the
+exact sequence, verify, paste), at the documented cost of replacing the
+clipboard.
 
 **Skin tone**:
 The emoji page's selected tone, persisted as state (`emoji_skin_tone`),
@@ -147,18 +149,13 @@ not a user override. Tone-capable families occupy one tile; delivery
 resolves to an existing exact catalogue sequence.
 _Avoid_: tone override, tone setting
 
-**Text route**:
-The helper's transient-keymap delivery of a text string (decisions §39).
-Ordinary keys type through the installed keymap; a pick uploads a
-transient keymap for the length of the delivery and restores the
-installed one after.
-_Avoid_: clipboard synthesis, per-keystroke spawn
-
-**Unicode-entry route**:
-The Chromium-family variant of text delivery (`text-unicode`) that types
-Ctrl+Shift+U hex composition; its short visible `U+…` preedit is expected,
-not a defect.
-_Avoid_: the hex hack, Chromium workaround
+**Clipboard transaction**:
+The one delivery channel (§91 — decisions §39/§40's typed routes are
+historical): the pick publishes its exact sequence to the clipboard,
+verifies the read, and sends the client's paste chord. The helper's
+acknowledgement proves the chord reached the compositor, not that the
+destination consumed the paste (decisions §63's stated residual).
+_Avoid_: clipboard synthesis, per-keystroke spawn, delivery mode
 
 ### Settings
 
