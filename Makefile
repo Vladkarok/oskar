@@ -17,7 +17,7 @@
 HELPER := daemon/target/release/oskar-daemon
 DESTDIR ?=
 
-PLUGIN_RUNTIME := Panel.qml BarWidget.qml Keyboard.qml HelperLink.qml PasteChords.qml PrivateSaves.qml KeyboardLayout.js \
+PLUGIN_RUNTIME := Panel.qml BarWidget.qml Keyboard.qml HelperLink.qml PasteChords.qml PrivateSaves.qml EmojiDelivery.qml KeyboardLayout.js \
 	KeyboardSession.js ModifierReducer.js Config.js Theme.qml \
 	CursorPolicy.js CursorPolicy.qml LayoutDevices.js SettleGuard.js \
 	EmojiPage.qml EmojiPage.js EmojiCatalog.js TextGlyphs.js \

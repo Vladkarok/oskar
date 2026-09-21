@@ -170,6 +170,7 @@ QtObject {
         // (async XHR; the runner's event loop spins until each lands) and
         // the suite reports after the last one.
         var files = ["Panel.qml", "BarWidget.qml", "Keyboard.qml",
+            "EmojiDelivery.qml",
             "CursorPolicy.qml", "EmojiPage.qml", "HoverTooltip.qml",
             "KeyClickSound.qml", "Theme.qml", "SettingsPopover.qml",
             "SettingsColorRow.qml", "SettingsColorEditor.qml",

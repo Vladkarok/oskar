@@ -636,7 +636,7 @@ Item {
         // drains in milliseconds. The refusal is decided — its VISIBILITY
         // is the flows round's finding: a chip that draws enabled and
         // clicks dead is the silence class.
-        if (root.emojiTxnState.phase !== "idle") {
+        if (emojiDelivery.emojiTxnState.phase !== "idle") {
             console.warn("[oskar] paste chip refused: an emoji pick owns"
                 + " the clipboard")
             root.flashRefused(UiStrings.tr("hint.pasteBusy", root.uiLang))
@@ -839,7 +839,10 @@ Item {
         // beat — the affordance the user was reaching for would vanish
         // mid-click and return. The text flashes; the chip stays.
         var base = hintBaseState()
-        if (root.emojiPickRefused)
+        // The queue-cap flash's flag lives in the delivery component
+        // (the structural split's step four); the hint table is still
+        // its one reader.
+        if (emojiDelivery.emojiPickRefused)
             return { text: UiStrings.tr("hint.pickRefused", root.uiLang),
                 accent: true, action: base.action }
         if (root.refusedHint !== "")
@@ -1595,163 +1598,45 @@ Item {
         onTriggered: root.clipboardContentGone = false
     }
 
-    // Emoji delivery through the clipboard (the one channel, §91).
-    // The transaction lives in the pure ClipboardPaste.txn* machine;
-    // these are only its processes and timers. One pick owns the
-    // clipboard and its paste chord END TO END: a pick accepted while
-    // another is unfinished queues in order, so a queued payload never
-    // replaces the clipboard owner an unfinished paste still depends on,
-    // and usage/settle/close fire only from the chord's real completion
-    // (audit 2026-09-13 — the old code recorded success the instant the
-    // paste was dispatched). The publisher stays alive as the selection
-    // owner — killing it would recreate ticket 25's dead-owner behaviour;
-    // the next pick replaces it, which is replacement, not loss. The
-    // pick's payload is what replaces the clipboard.
-    property var emojiTxnState: ClipboardPaste.txnInitial()
+    // Emoji delivery through the clipboard (§91's one channel): the
+    // transaction's processes, timers and verdict arms live in
+    // EmojiDelivery.qml (the structural split's step four) — the pure
+    // machine stays ClipboardPaste.txn*. The panel keeps what a pick is
+    // ABOUT: the dispatch facts below (the class derivation at the
+    // click), the refusal flashing (flashRefused, the machinery the
+    // verdict arms call back through), the usage recording and the
+    // delivered pick's settle and close (onPickSettled) — while the
+    // txn's own state stays readable under its own name for the paste
+    // chip's gate (pasteCurrentContent above) and the hint line's
+    // queue-cap flash (hintState above).
+    EmojiDelivery {
+        id: emojiDelivery
 
-    Process {
-        id: emojiClipboardPublish
-        command: []
-    }
+        // The txn's translated refusals name their language here.
+        uiLang: root.uiLang
+        // §79's one visible-refusal channel, handed down: the verdict
+        // arms flash exactly where the monolith flashed.
+        flashRefused: (text, ms) => root.flashRefused(text, ms)
+        // The retiring discipline's kill — the panel's own helper.
+        killProcessGroup: (proc) => root.killProcessGroup(proc)
+        // The §88 lane facts, from the keyboard's frozen surface.
+        pastePacing: keyboard.pastePacing
+        pasteFlow: keyboard.pasteFlow
+        // The txn's chord goes through keyboard.pasteCurrent with its
+        // completed callback (§89 — the chordSeq discipline rides in
+        // the delivery's own closure).
+        pasteChordStart: (wmClass, done) => keyboard.pasteCurrent(wmClass, done)
 
-    Process {
-        id: emojiClipboardVerify
-        property int seq: 0
-        property bool retiring: false
-        // head caps the stream (the security audit): a malicious clipboard
-        // owner cannot balloon the shell's memory through the collector —
-        // SIGPIPE closes wl-paste past the bound.
-        command: ["setsid", "bash", "-c", "wl-paste --no-newline | head -c 65536"]
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                if (emojiClipboardVerify.retiring) return
-                root.finishEmojiPublishVerify(
-                    emojiClipboardVerify.seq, this.text)
-            }
+        // The delivered pick's verdict: usage, the search settle and
+        // the close-after-pick read, in the monolith's order — the
+        // three panel-side effects the completed arm ran inline.
+        onPickSettled: function (emoji) {
+            root.recordEmojiSuccess(emoji)
+            // Ticket 29's flow: the keys go back to the chat the emoji
+            // landed in.
+            root.emojiPickSettled()
+            if (root.emojiCloseAfterPick) root.emojiOpen = false
         }
-        onExited: {
-            if (emojiClipboardVerify.retiring) {
-                emojiClipboardVerify.retiring = false
-                // The kill's requester re-arms through us — but only for
-                // a transaction that still wants a verify (the triage's
-                // finding 6: an aborted txn's stray restart ran one
-                // refused wl-paste for nothing).
-                if (root.emojiTxnState.phase === "publishing")
-                    emojiPublishVerifyTimer.restart()
-            }
-        }
-    }
-
-    Timer {
-        id: emojiPublishVerifyTimer
-        interval: 60
-        repeat: false
-        onTriggered: () => {
-            // A kill in flight: the late stream of the DEAD run must not
-            // verify the live transaction's pick (the cold-audit's
-            // second finding — a premature chord). Wait it out; the
-            // interval is short and the exit lands in a round or two.
-            if (emojiClipboardVerify.retiring) {
-                emojiPublishVerifyTimer.restart()
-                return
-            }
-            if (emojiClipboardVerify.running) {
-                // Kill only (finding 6): the retired exit re-arms the
-                // timer; no inline restart racing the killed child.
-                emojiClipboardVerify.retiring = true
-                killProcessGroup(emojiClipboardVerify)
-                return
-            }
-            emojiClipboardVerify.seq = root.emojiTxnState.seq
-            emojiClipboardVerify.running = true
-            emojiVerifyWatchdog.restart()
-        }
-    }
-
-    // A clipboard owner that never finishes its read stalls the verify
-    // forever (the review's third round): bounded like every other read,
-    // the stalled run is group-killed and the pick drops — loudly, with
-    // the queue handed over. Sequence-guarded, so a late wakeup for a
-    // verify the machine has already left changes nothing.
-    Timer {
-        id: emojiVerifyWatchdog
-        interval: 3000
-        repeat: false
-        onTriggered: () => {
-            var timedOut = ClipboardPaste.txnVerifyTimedOut(root.emojiTxnState,
-                emojiClipboardVerify.seq)
-            root.emojiTxnState = timedOut.state
-            if (timedOut.action !== "drop") return
-            killProcessGroup(emojiClipboardVerify)
-            console.warn("[oskar] emoji verify stalled — pick dropped,"
-                + " the clipboard keeps whatever it holds")
-            // §87: a dropped pick is the user's click vanishing — the
-            // same silence the chord refusal used to be. Flash it.
-            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
-            startNextEmojiTxn()
-        }
-    }
-
-    function pickViaClipboard(emoji) {
-        // The fifth serialization lane (§88): the paste CHIP's own
-        // paced/awaiting chord owns the clipboard right now (it is not
-        // a txn — the txn machine never saw it), and this pick's very
-        // first act is wl-copy replacing what that chord is about to
-        // paste. Refuse visibly, the sub-second window closes.
-        // "txn idle" is load-bearing (§89): the txn's OWN chord is
-        // already serialized by the txn machine's queue — refusing
-        // here too converted queued picks into lost clicks. A chip
-        // chord can never coexist with a live txn (the chip refuses
-        // on the txn phase), so this narrows the gate to exactly the
-        // chip-owned flows without reopening the lane.
-        if ((keyboard.pastePacing
-                || keyboard.pasteFlow.phase !== "idle")
-                && root.emojiTxnState.phase === "idle") {
-            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
-            return
-        }
-        // Ticket 56: the client class is derived ONCE, here at the pick —
-        // the click's own moment, the same derivation the paste chord's
-        // shape table keys on — and rides the payload
-        // through publish, verify and chord. The old shape re-derived it
-        // when the verify landed, and that second opinion could disagree
-        // with the click's (the IME matrix's kitty cell: the chord landed
-        // wine-shaped, no Shift, no "paste chord for kitty" line) because
-        // focus and the lastClientClass fallback both move under a
-        // transaction that spans hundreds of milliseconds. One derivation,
-        // one table — the arrival dispatches for the class stored here.
-        var picked = ClipboardPaste.txnPick(root.emojiTxnState, emoji,
-            root.focusedClientClass())
-        root.emojiTxnState = picked.state
-        if (picked.action === "queued") {
-            console.log("[oskar] emoji pick queued behind an unfinished paste")
-            return
-        }
-        if (picked.action === "refused") {
-            console.warn("[oskar] emoji pick refused: empty payload")
-            return
-        }
-        if (picked.action === "refused-full") {
-            console.warn("[oskar] emoji pick refused: three already queued"
-                + " behind an unfinished paste")
-            // The same visible refusal every refused click since the
-            // flows review's N1 has had: silence is the trust killer.
-            root.emojiPickRefused = true
-            emojiPickRefuseTimer.restart()
-            return
-        }
-        beginEmojiPublish(emoji)
-    }
-
-    // The visible refusal (P2's other half): an accent flash on the hint
-    // line, auto-cleared after the clipboard-gone notice's own beat.
-    property bool emojiPickRefused: false
-    Timer {
-        id: emojiPickRefuseTimer
-        interval: 1500
-        repeat: false
-        onTriggered: root.emojiPickRefused = false
     }
 
     // One transient channel for refused clicks and one-shot notices —
@@ -1786,93 +1671,6 @@ Item {
             root.flashRefused(UiStrings.tr("hint.shareFailed", root.uiLang),
                 4000)
         }
-    }
-
-
-    // The effects of one accepted pick: replace the clipboard owner, then
-    // verify. Called for the first pick and for every pick the queue
-    // hands over — never for a pick still waiting its turn.
-    function beginEmojiPublish(emoji) {
-        if (emojiClipboardPublish.running)
-            emojiClipboardPublish.running = false
-        emojiClipboardPublish.command = ["wl-copy", "--foreground", "--", emoji]
-        emojiClipboardPublish.running = true
-        emojiPublishVerifyTimer.restart()
-    }
-
-    function finishEmojiPublishVerify(seq, served) {
-        var result = ClipboardPaste.txnServed(root.emojiTxnState, seq, served)
-        root.emojiTxnState = result.state
-        if (result.action === "stale") return
-        // A real answer disarms the watchdog: only a read that never
-        // finishes is the watchdog's to judge.
-        emojiVerifyWatchdog.stop()
-        if (result.action === "retry") {
-            emojiPublishVerifyTimer.restart()
-            return
-        }
-        if (result.action === "drop") {
-            console.warn("[oskar] emoji clipboard publication not confirmed;"
-                + " pick dropped, no chord sent")
-            // §87: the drop is the click vanishing — flash, don't
-            // journal.
-            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
-            startNextEmojiTxn()
-            return
-        }
-        // "chord": the transaction owns the paste. Usage, search settle
-        // and close-after-pick wait for the chord's real completion — a
-        // paced wine chord is still draining line by line when dispatch
-        // returns, and a refusal (a busy pacer, an unready helper, a
-        // socket that died mid-chord) is reported to the callback instead
-        // of passing unnoticed. The emoji stays published; if the chord
-        // never completes, manual Ctrl+V remains possible.
-        //
-        // Ticket 56: the chord is derived for the class the PICK carried
-        // (result.state.clientClass) — never re-derived from whoever holds
-        // focus by the time the clipboard transaction landed.
-        //
-        // The completion carries the transaction's seq, captured HERE:
-        // a cancelled pick's late reply must land stale, not complete
-        // whichever pick owns the machine by then (round seven).
-        var chordSeq = result.state.seq
-        keyboard.pasteCurrent(result.state.clientClass, function (success) {
-            finishEmojiChord(chordSeq, success)
-        })
-    }
-
-    // The chord's verdict. Only a real completion records usage, settles
-    // the search and closes the page; a cancellation leaves all three
-    // alone. A completion arriving for a cancelled transaction (only
-    // the tests cancel now — the delivery-mode flip that once did this
-    // is §91 history) lands as "ignore" or "stale" and records
-    // nothing, then the queue — empty after a cancel — hands over nothing.
-    function finishEmojiChord(seq, success) {
-        var done = ClipboardPaste.txnChordDone(root.emojiTxnState, seq, success)
-        root.emojiTxnState = done.state
-        if (done.action === "completed") {
-            recordEmojiSuccess(done.emoji)
-            // Ticket 29's flow: the keys go back to the chat the emoji
-            // landed in.
-            emojiPickSettled()
-            if (root.emojiCloseAfterPick) root.emojiOpen = false
-        } else if (done.action === "cancelled") {
-            console.warn("[oskar] emoji paste chord refused or aborted;"
-                + " no usage recorded (the clipboard keeps the pick)")
-            // Same silence class the round has been closing, one layer
-            // down (the diff audit's finding): the queue caps and the
-            // paste chip flash their refusals — a pick whose chord
-            // never dispatched must not be the one click that vanishes
-            // without a word.
-            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
-        }
-        startNextEmojiTxn()
-    }
-
-    function startNextEmojiTxn() {
-        var next = ClipboardPaste.txnNext(root.emojiTxnState)
-        root.emojiTxnState = next.state
-        if (next.action === "publish") beginEmojiPublish(next.emoji)
     }
 
     // Reports {"x": n, "y": n} in compositor coordinates, which is the same
@@ -3334,7 +3132,14 @@ Item {
                 // chose the byte-exact channel for every pick, and the
                 // transaction's own queue serializes them (three wait,
                 // the fourth refuses out loud).
-                root.pickViaClipboard(delivered.emoji)
+                // Ticket 56: the class is derived ONCE, here at the
+                // click — request() takes it as a fact of the pick and
+                // never re-derives (the derivation now runs ahead of
+                // the delivery's §88 gate: same click, same live focus,
+                // an idempotent refresh of the same memory the event
+                // stream keeps).
+                emojiDelivery.request(delivered.emoji,
+                    root.focusedClientClass())
             }
             onSkinToneChosen: function (tone) { root.chooseEmojiSkinTone(tone) }
             onDismissed: root.emojiOpen = false
