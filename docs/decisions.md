@@ -3592,3 +3592,35 @@ never mutate).
 All suites, qmllint, the packaging gate, the wall's canary (15) and
 restart-settle (8) — green after every step; deployed live. The
 remaining calm candidates: the settings layer, the grid delegates.
+
+## 106. The split's second half: the settings layer and the hold menu
+
+Steps five and six, same discipline (assertion-checked moves, battery
++ wall + nested green, deployed live after each):
+
+- **SettingsLayer.qml** (Panel 3154→3043): the layer's boxes (the
+  leftover/band/emoji-place derivations), the input mask, the dismiss
+  area, the popover and colour-editor hosting. The PanelWindow itself
+  stayed — only a window holds the surface flags and the focus
+  contract; the mask travels as a Region property and Quickshell
+  re-applies it on the same object's internal changes (the mechanism
+  proven against ProxyWindowBase's polish path, not assumed). The
+  layer's facts ride a `panel` reference, not mirrored properties —
+  the dismiss area WRITES emojiOpen and a mirror would fork the
+  write.
+- **HoldMenu.qml** (Keyboard 3333→3184): ticket 37's column popup —
+  the catch area, the card, the entry delegates with their dwell
+  underline affordance. The dwell MACHINE stayed (typing paths); only
+  the menu-owned affordance moved, riding three callbacks. The menu's
+  hit areas never observed the pointer source (pre-split parity) and
+  still do not — a deliberate non-change recorded here so it is not
+  "fixed" into existence later.
+
+The audit's verdict on both: zero poisons — the mask's liveness, the
+resize ordering (Qt delivers the resize before widthChanged, the
+boxes are fresh), the open()-bool contract, and the coordinate parity
+all proven; four doc niggles closed by this entry. The split stands
+at six seams: Keyboard 3727→3184, Panel 3475→3043. What remains of
+the monoliths is genuinely cohesive (the grid + typing in Keyboard;
+the window + chrome + pick dispatch in Panel); further carving is
+diminishing returns unless a future feature asks for it.
