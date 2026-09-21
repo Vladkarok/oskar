@@ -491,7 +491,7 @@ def own_socket_or_die():
             client = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
             client.settimeout(3)
             client.connect(path)
-            client.sendall(b"hello 5\n")
+            client.sendall(b"hello 6\n")
             reply = client.recv(200)
             client.close()
             return reply.startswith(b"hello")
@@ -973,7 +973,7 @@ def _flush_oracle():
            "s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n"
            "s.settimeout(3)\n"
            "s.connect('/run/user/1000/oskar/control.sock')\n"
-           "s.sendall(b'hello 5\\n'); s.recv(200)\n"
+           "s.sendall(b'hello 6\\n'); s.recv(200)\n"
            "s.sendall(b'down RTRN\\n'); s.recv(100)\n"
            "s.sendall(b'up RTRN\\n'); s.recv(100)\n"
            "s.close()\n"

@@ -149,7 +149,7 @@ class Daemon:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(5)
         client.connect(self.socket_path)
-        client.sendall(f"hello 5\n".encode())
+        client.sendall(f"hello 6\n".encode())
         self._read_reply(client, "hello")
         client.sendall(f"caps {group} {' '.join(positions)}\n".encode())
         reply = self._read_reply(client, "caps")

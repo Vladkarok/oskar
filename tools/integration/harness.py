@@ -34,7 +34,7 @@ DEVICE_PREFIX = "hl-virtual-keyboard"
 
 # The protocol this harness speaks; the daemon gates every command
 # behind a completed matching hello.
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
 
 # Each compile the helper performs writes one of these.
 COMPILE_MARK = "keymap compiled for"

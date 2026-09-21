@@ -12,11 +12,12 @@ import "harness.js" as T
 
 QtObject {
     Component.onCompleted: {
-        T.test("every glyph is a lone BMP scalar — the fast lane holds", function () {
-            // §85's whole point: these picks ride the keysym route into
-            // EVERY client (no clipboard, no composition). A glyph that
-            // regresses to astral or multi-scalar silently becomes a
-            // clipboard pick in half the world — this pin is the tripwire.
+        T.test("every glyph is a lone BMP scalar — one character, no sequence", function () {
+            // §85's data contract (§91 renamed the consequence): the
+            // shelf draws simple one-character glyphs; a regression to
+            // astral or multi-scalar would render as sequences in fonts
+            // and split the shelf's identity promises — this pin is the
+            // tripwire.
             var entries = TextGlyphs.entries()
             T.equal(entries.length > 80, true,
                 "the shelf carries a real selection, got " + entries.length)

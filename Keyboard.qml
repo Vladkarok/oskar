@@ -1537,7 +1537,10 @@ Item {
             position: chord.position
         }
         if (Modifiers.usesWinePasteChord(cls.toLowerCase())) {
-            root.pastePacing = true
+            // The flag arms AFTER the opening dispatch (§93, the audit's
+            // poison): it stands guard against events that arrive while
+            // the paste DRAINS — arming it before would make the paste's
+            // own {type: "paste"} event the first thing the gate aborts.
             root.pastePacedLines = []
             applyModifierEvent(event, function (line) {
                 root.pastePacedLines.push(line)
@@ -1546,11 +1549,11 @@ Item {
                 // The reducer refused (a key press is pending) or input
                 // is not ready: nothing was dispatched and nothing will
                 // complete.
-                root.pastePacing = false
                 root.pasteFlow = PasteFlow.failed(root.pasteFlow)
                 if (done) done(false)
                 return false
             }
+            root.pastePacing = true
             root.pasteFlow = PasteFlow.paced(root.pasteFlow,
                 root.pastePacedLines.length)
             root.pastePaceAllLines = root.pastePacedLines.slice()
@@ -2162,12 +2165,14 @@ Item {
                             sendCommandUnchecked("mods 0")
                             root.inputReady = false
                         } else if (reply === "err unknown command") {
-                            // Protocol 5 rewrote every text/text-unicode
-                            // refusal answered by its own err arm
-                            // above; `err unknown command` is the one
-                            // refusal any verb can still earn, and it says
-                            // the installed helper predates this panel's
-                            // verbs — status-only, never a typing gate.
+                            // Version 6 (§91) deleted the typed delivery
+                            // verbs; this refusal now says the two sides
+                            // disagree about the command set one way or
+                            // the other — a v5 helper predates the
+                            // deletion, a peer panel sent a verb it should
+                            // not have. Status-only either way, never a
+                            // typing gate: the handshake's version check
+                            // is the compatibility contract.
                             console.warn("[oskar] helper refused a command:", reply)
                         } else {
                             // An unrecognized reply can only be protocol

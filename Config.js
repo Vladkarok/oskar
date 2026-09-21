@@ -73,9 +73,6 @@ function maintainerDefaults() {
         followTheme: true,
         emojiCloseAfterPick: false,
         emojiPageSize: "medium",
-        // Ticket 28: typing is the default delivery (decisions §39/§40);
-        // clipboard compatibility is the explicit user's choice for the
-        // clients that drop it — never a silent swap.
         // The Super cap says what the key is (ticket 22): the Omarchy glyph
         // stops being the unconditional drawing and becomes one chosen mark.
         // Sparse-store semantics mean this key never appears in the file

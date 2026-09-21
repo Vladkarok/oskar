@@ -658,24 +658,6 @@ var STRINGS = {
         uk: "Очистити пошук",
         it: "Cancella la ricerca"
     },
-    "emoji.delivery.clipboardAccess": {
-        en: "Delivery: clipboard compatibility",
-        ru: "Доставка: совместимость с буфером",
-        uk: "Доставка: сумісність із буфером",
-        it: "Consegna: compatibilità appunti"
-    },
-    "emoji.delivery.typing": {
-        en: "Delivery: typing",
-        ru: "Доставка: ввод",
-        uk: "Доставка: введення",
-        it: "Consegna: digitazione"
-    },
-    "emoji.delivery.clipboardTip": {
-        en: "Delivery: clipboard (replaces the clipboard)",
-        ru: "Доставка: через буфер (заменяет его содержимое)",
-        uk: "Доставка: через буфер (замінює його вміст)",
-        it: "Consegna: via appunti (ne sostituisce il contenuto)"
-    },
     "emoji.chooseTone": {
         en: "Choose skin tone",
         ru: "Выбрать тон кожи",

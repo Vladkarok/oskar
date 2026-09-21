@@ -11,8 +11,9 @@ Two independent adversarial audits (different labs, both with tree
 access) converged: **needs-hardening, core sound**. The full findings
 and their fixes live in the commits of 2026-09-18; the shape:
 
-**What held up under audit** — no XKB injection (text payloads become
-numeric keysyms, capped and re-proved against the compiled map); no
+**What held up under audit** — no XKB injection (configure payloads
+are compiled under keycode and cleanliness gates and re-proved against
+the compiled map; the typed-payload keysym engine is gone with §91); no
 shell interpolation on any clipboard path (argv arrays throughout); a
 strict allowlist config parser with prototype-pollution defense; an
 offline, checksum-gated emoji generator; no root, setuid, udev rules,
@@ -40,9 +41,11 @@ daemon's own sloppy writes.
   while the socket stayed alive (the panel reported the helper
   healthy). Fixed with an ABSOLUTE 5-second connect-to-`hello`
   deadline (a renewable timeout evicted no one — the cross-round's
-  catch) and a loud `err too many clients` on refusal. Post-handshake
-  idle connections are indistinguishable from the real panel and stay
-  by design.
+  catch) and a loud `err too many clients` on refusal. A post-handshake
+  connection silent for 60 s is dropped through the ordinary release
+  path (§82): the panel's never-stopping probe speaks every 15 s and
+  never trips it; a hung same-user client cannot park a slot for the
+  process lifetime.
 - **Socket-directory pre-bind impersonation** — the daemon refuses to
   serve from any runtime directory it does not solely own (uid +
   0700 asserted at start; explicit mode on create). Residual, stated

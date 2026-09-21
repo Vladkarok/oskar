@@ -28,7 +28,7 @@ fi
 # service mid-flight.
 cli="$HOME/.local/bin/oskar"
 cli_owner="$(readlink -f "$cli" 2>/dev/null || true)"
-if [[ "$cli_owner" == "$here/bin/oskar" ]]; then
+if [[ "$cli_owner" == "$(readlink -f "$here/bin/oskar")" ]]; then
   rm -f "$HOME/.config/systemd/user/oskar.service"
   rm -f "$HOME/.local/libexec/oskar-daemon"
   rm -f "$cli"
@@ -36,8 +36,12 @@ if [[ "$cli_owner" == "$here/bin/oskar" ]]; then
   echo "Source install removed. Config and state preserved."
 elif [[ -e "$cli" || -e "$HOME/.local/libexec/oskar-daemon"
     || -e "$HOME/.config/systemd/user/oskar.service" ]]; then
-  echo "uninstall.sh: the shared helper/service/CLI belong to another install${cli_owner:+ ($cli_owner)}; leaving them in place" >&2
+  echo "uninstall.sh: the shared helper/service/CLI belong to another install${cli_owner:+ ($cli_owner)}${cli_owner:+ or to a checkout that is gone}; leaving them in place" >&2
   echo "uninstall.sh: this checkout's files are gone with the checkout itself" >&2
+  reg_owner="$(readlink -f "$reg" 2>/dev/null || true)"
+  if [[ -n "$reg_owner" ]]; then
+    echo "uninstall.sh: note — the registration at $reg_owner relied on the shared unit this checkout installed; after a reboot its service will be absent until that checkout runs its own install again" >&2
+  fi
 else
   echo "Source install already absent. Config and state preserved."
 fi

@@ -3259,3 +3259,43 @@ resumes per the standing order.
 
 44 Rust tests, 21 host suites, clippy, the wall's canary (15) and
 restart-settle (8), the nested 32 — green; deployed live.
+
+## 93. The triage loop, round one: the gate that shot its own paste
+
+The owner pasted a fresh external review (two P2s: typing under a
+paced paste sends shortcuts; uninstall gutted a neighbour install)
+and ordered the triage loop until clean. Both P2s fixed and deployed
+(§92's commit), then round one of the loop ran — Opus SAFE TO SHIP
+(after noticing the prompt's routing premise was already deleted),
+the adversarial auditor three poisons on the §91/§92 diff:
+
+- **The §92 gate aborted every wine paste at birth.** `pasteCurrent`
+  armed `pastePacing` BEFORE dispatching the chord's own opening
+  event — and `{type: "paste"}` is not always-live, so the new gate
+  saw the paste itself as the intruder: locked Shift silently
+  released before the chord planned around it, the pending-press
+  refusal bypassed, the one-paste busy-gate dead. The flag arms
+  AFTER the opening dispatch now (§93): the guard is for events that
+  arrive while the paste DRAINS.
+- **The protocol version never moved when the command set did.**
+  §91 deleted text/text-unicode with PROTOCOL_VERSION still 5 — a v5
+  panel against the new helper passes the hello gate and fails every
+  pick; doctor compares 5-to-5 and calls it agreement. Version 6 on
+  both sides (daemon, panel, harness, suite's 54 literals, bin/oskar,
+  the canary probe), with the version comments stating what 6 means:
+  the typed verbs are gone, a v5 peer is a reinstall.
+- **The promised SECURITY.md refresh silently no-matched** — the
+  commit message and decision record claimed it; the diff had no
+  SECURITY.md. Landed for real this time (60-second negotiated idle;
+  the retired keysym engine), with asserts so a doc edit cannot
+  silently no-op again.
+- Niggles: orientation/CONTEXT/spec-v1.1 protocol-and-route text
+  refreshed to the one-channel world; EmojiPage/Config/Keyboard stale
+  comments; UiStrings' dead delivery keys deleted; the text-glyphs
+  pin retitled to its data contract; the nested churn budget
+  re-derived for the §91 suite (142 → 114, observed 28-30); uninstall
+  canonicalizes both sides of the ownership compare and warns when
+  the trio's removal orphans another registration's unit.
+
+44 Rust tests, 21 host suites, clippy, the wall's canary (15) and
+restart-settle (8), the nested 32 — green; deployed live.

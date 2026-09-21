@@ -78,7 +78,7 @@ CONFIGURE_CAPSLOCK_CANCEL = (
 @test("startup inventory reports a positively identified physical keyboard")
 def startup_keyboard_inventory(helper, keyboard):
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     reply = client.send("keyboards")
     if not reply.startswith("keyboards\t"):
         raise Failure(f"expected a keyboard inventory, got {reply!r}")
@@ -99,7 +99,7 @@ def three_group_cycling(helper, keyboard):
     # taken at the end proves cycling recompiled nothing (spec-v1 §3.3: group
     # switching is never a recompile).
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     gen = client.configure(THREE_GROUP)
     keyboard.expect_group(0)
     # Both protocol paths the panel drives, in the order a cycle moves
@@ -130,7 +130,7 @@ def facts_match_typed_output(helper, keyboard):
     # both groups of the owner's setup. The caps the panel will draw are
     # only honest if THIS holds.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     gen = client.configure(CONFIGURE)
     keyboard.expect_group(1)
     client.expect("group 0", "ok")
@@ -214,7 +214,7 @@ def group_follows_protocol(helper, keyboard):
     # without a client, so every typing operation asserts it first: what is
     # proven is the group the tap actually ran under, not a final state.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     gen = client.configure(CONFIGURE)
     keyboard.expect_group(1)
     client.expect("tap AD01", "ok")
@@ -238,7 +238,7 @@ def out_of_range_groups_fail_closed(helper, keyboard):
     # no device state change, no recompile, and the previously installed
     # generation intact.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     gen = client.configure(CONFIGURE)  # us,ua — two groups, group 1
     keyboard.expect_group(1)
     # A configure naming a group the map cannot carry. A different model,
@@ -267,7 +267,7 @@ def release_crosses_the_unready_window(helper, keyboard):
     # Shift's lift would never go out at all. The helper sees exactly:
     # configure (reply unread), then `up`, with no readiness wait between.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     client.configure(CONFIGURE)
     client.expect("down AD01", "ok")
     # The claim is observable before the window: a tap may not lift it.
@@ -301,7 +301,7 @@ def survives_mid_chord_disconnect(helper, keyboard):
     dying.close()
 
     fresh = helper.connect()
-    fresh.expect("hello 5", "hello 5")
+    fresh.expect("hello 6", "hello 6")
     fresh.expect("tap AD01", "ok")
     fresh.close()
 
@@ -349,7 +349,7 @@ def modifiers_reach_the_client(helper, keyboard):
     # `modifiers` request and not from watching key events. Only a client
     # reading characters can tell the two apart.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     # us,ua is still installed from the claims test; group 0 is `us`, and a
     # `group` command is not a compile, so the churn count below is untouched.
     client.expect("group 0", "ok")
@@ -421,10 +421,10 @@ def protocol_mismatch_is_refused(helper, keyboard):
     # test: the gate exists so a mismatched panel never reaches one, and a
     # compile here would put the churn count below in a lie.
     client = helper.connect()
-    client.expect("hello 3", "err protocol 5 required, helper needs reinstall")
+    client.expect("hello 3", "err protocol 6 required, helper needs reinstall")
     # The refusal names the version, not the connection: the same socket
     # speaking the current version is greeted normally.
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     client.close()
 
 
@@ -450,11 +450,11 @@ def pre_handshake_gate(helper, keyboard):
     raw.expect("keyboards", "err hello first")
     # A wrong version is REFUSED, not negotiated: the door stays shut.
     reply = raw.send("hello 4")
-    if reply != "err protocol 5 required, helper needs reinstall":
+    if reply != "err protocol 6 required, helper needs reinstall":
         raise Failure(f"hello 4: {reply!r}")
     raw.expect("ping", "err hello first")
     # The matching hello opens it, on the same connection.
-    raw.expect("hello 5", "hello 5")
+    raw.expect("hello 6", "hello 6")
     raw.expect("ping", "pong")
     raw.close()
 
@@ -618,7 +618,7 @@ def facts_carry_generation(helper, keyboard):
     # cap is the thing that keeps a compile loop from freezing a desktop.
     time.sleep(11)
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     gen = client.configure(THREE_GROUP)
     if client.caps(0, ["AD01"])["gen"] != gen:
         raise Failure("caps reply did not carry the acknowledged generation")
@@ -644,7 +644,7 @@ CONFIGURE_VARIANT = "configure\tevdev\tpc105\tus,us\t,euro\t\t\t0"
 @test("a repeated layout with distinct variants answers per-variant facts")
 def variant_facts(helper, keyboard):
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     gen = client.configure(CONFIGURE_VARIANT)
     keyboard.expect_group(0)
     plain = client.caps(0, ["AE05"])["by_position"]["AE05"]
@@ -702,7 +702,7 @@ def shift_capitalises_under_capslock_cancel(helper, keyboard):
     time.sleep(11)
 
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     client.configure(CONFIGURE_CAPSLOCK_CANCEL)
     keyboard.expect_group(0)
 
@@ -726,7 +726,7 @@ def cap_releases_a_stuck_key(helper, keyboard):
     # has — so the release cannot come from the panel and cannot come from a
     # heartbeat, because there is none.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     client.expect("down AD01", "ok")
     # `tap` on a held code is refused, which is how the claim is observable
     # from out here without reading the helper's internals.
@@ -746,7 +746,7 @@ def cap_exempts_modifiers(helper, keyboard):
     # visible here: after twice the cap the modifier is still claimed, and a
     # client still reads a capital.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
 
     target = TypingTarget()
     try:
@@ -778,7 +778,7 @@ def disconnect_releases_a_hold(helper, keyboard):
     # claim rules already lift everything a connection holds when its socket
     # closes, well before the cap would.
     dying = helper.connect()
-    dying.expect("hello 5", "hello 5")
+    dying.expect("hello 6", "hello 6")
     dying.expect("down AD01", "ok")
     dying.close()
     # The release happens on the dying connection's own thread when its read
@@ -787,7 +787,7 @@ def disconnect_releases_a_hold(helper, keyboard):
     time.sleep(0.5)
 
     fresh = helper.connect()
-    fresh.expect("hello 5", "hello 5")
+    fresh.expect("hello 6", "hello 6")
     # Free immediately, not fifteen seconds later: the disconnect did it.
     fresh.expect("tap AD01", "ok")
     fresh.close()
@@ -851,7 +851,7 @@ def repeat_belongs_to_the_compositor(helper, keyboard):
     # config, so whatever that provokes cannot disturb the compile counts
     # above.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     keyboard.expect_group(0)
 
     held = 1.2
@@ -893,7 +893,7 @@ def refused_configure_never_drains(helper, keyboard):
     # drain-before-failure ordering (an upload failure) is not reachable from
     # outside the compositor and is covered by the reducer seam instead.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     # A configure whose kb_file cannot be read fails to compile, and
     # install_config refuses BEFORE it would drain anything — the
     # deterministic never-drained ordering.
@@ -922,7 +922,7 @@ def refused_configure_never_drains(helper, keyboard):
     # connection: the helper released the old one's holds at its close, which
     # is exactly the world the ordering re-establishes.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     client.expect("down LFSH", "ok")
     client.expect("down AD01", "ok")
     client.expect("configure\tevdev\tpc105\tus\t\t\t/nonexistent-keymap\t0",
@@ -947,7 +947,7 @@ def facts_match_xwayland_output(helper, keyboard):
     # XWayland for it. Last in the file: it configures one more keymap, so
     # everything above asserts on its own compile counts.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     gen = client.configure(CONFIGURE)
     keyboard.expect_group(1)
     facts = client.caps(1, ["AD01"])
@@ -1000,7 +1000,7 @@ def reserved_symbols_are_layout_independent(helper, keyboard):
     # Nothing here installs a fixture keymap. The configure is the ordinary
     # one every other test uses, so what is asserted is what ships.
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     gen = client.configure(CONFIGURE)
     keyboard.expect_group(1)
 
@@ -1101,7 +1101,7 @@ def reserved_symbols_are_layout_independent(helper, keyboard):
     client.close()
     # Left on the group the tests after this one expect.
     restore = helper.connect()
-    restore.expect("hello 5", "hello 5")
+    restore.expect("hello 6", "hello 6")
     restore.configure(CONFIGURE)
     keyboard.expect_group(1)
     restore.close()
@@ -1117,7 +1117,7 @@ def reserved_symbols_reach_electron(helper, keyboard):
     position and Electron reports both the glyph and a real DomCode.
     """
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     client.configure(CONFIGURE_GROUP0)
     published = share_published_keymap()
     if not published.endswith("/oskar/keymap.xkb"):
@@ -1195,7 +1195,7 @@ def reserved_symbols_reach_electron(helper, keyboard):
 def focus_keeps_one_keymap_and_group(helper, keyboard):
     """Decisions §35 at the public Wayland/compositor boundary."""
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     client.configure(CONFIGURE)
     share_published_keymap()
     client.expect("group 1", "ok")
@@ -1415,7 +1415,7 @@ def custom_keymap_content_refresh(helper, keyboard):
 
     line = f"configure\tevdev\tpc105\t\t\t\t{path}\t0"
     client = helper.connect()
-    client.expect("hello 5", "hello 5")
+    client.expect("hello 6", "hello 6")
     target = TypingTarget()
     try:
         write("us")
@@ -1503,7 +1503,7 @@ def shutdown_releases_a_hold(helper, keyboard):
     target = TypingTarget()
     try:
         client = helper.connect()
-        client.expect("hello 5", "hello 5")
+        client.expect("hello 6", "hello 6")
         client.expect("down RTRN", "ok")
         # Long enough for the compositor's repeat delay to elapse, so the key
         # really is repeating when the helper is stopped. Without this the

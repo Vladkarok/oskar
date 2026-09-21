@@ -42,7 +42,7 @@ REGISTRATION="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 USER_UNIT="$HOME/.config/systemd/user/$UNIT"
 SOURCE_HELPER="$HOME/.local/libexec/oskar-daemon"
 SOCKET="${XDG_RUNTIME_DIR:-$HOME/.run}/oskar/control.sock"
-PROTOCOL_VERSION="5"
+PROTOCOL_VERSION="6"
 
 # The pre-rename world (ticket 59): every name the product carried
 # before it settled on oskar. setup and upgrade migrate it away, teardown

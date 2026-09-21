@@ -41,7 +41,6 @@
 //!                     character text), `x<keysym>` (a symbol that produces no
 //!                     character) or `n` (no symbol at this level). Without a
 //!                     position list every named key is answered.
-//!   text <utf8>       deliver the string's codepoints as typed keys (ticket
 //!                     24): a transient variant of the installed keymap
 //!                     carrying them on levels five to eight of letter
 //!                     positions is uploaded, tapped, and the installed keymap
@@ -49,7 +48,6 @@
 //!                     the focused client and none at any other time, with the
 //!                     group restored by re-sending modifiers because a
 //!                     keymap event resets it (decisions §35, §37).
-//!   text-unicode <utf8>
 //!                     deliver through Chromium's Linux Ctrl+Shift+U
 //!                     composition path; the panel selects this only for a
 //!                     known Chromium-family focused client (decisions §40).
@@ -96,7 +94,12 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 /// `text`, it is selected automatically for Chromium-family clients, so an
 /// updated panel must fail the hello gate against an older helper instead of
 /// accepting clicks that can only earn `err unknown command`.
-const PROTOCOL_VERSION: u32 = 5;
+/// Version 6 (§91): the typed delivery verbs (`text`, `text-unicode`)
+/// and their `text-ok`/`text-err` replies are GONE — every emoji pick
+/// rides the clipboard; the protocol is configure/caps/keyboards/group/
+/// mods/down/up/tap/ping/hello. A v5 panel still sending text verbs
+/// fails loudly per line instead of silently mistyping.
+const PROTOCOL_VERSION: u32 = 6;
 
 /// How long a non-modifier code may stay held before the helper lifts it
 /// (spec-v1 §6). Fifteen seconds of held backspace is about six hundred
@@ -3842,10 +3845,10 @@ mod tests {
         // F6: the handshake is a gate, not a default. A bare hello, trailing
         // words, or a non-numeric version word is a malformed hello — an
         // err protocol answer — and only `hello <u32>` negotiates.
-        assert_eq!(parse_hello("hello 5"), Some(Ok(5)));
+        assert_eq!(parse_hello("hello 6"), Some(Ok(6)));
         assert_eq!(parse_hello("hello 0"), Some(Ok(0)));
         assert_eq!(parse_hello("hello"), Some(Err(())));
-        assert_eq!(parse_hello("hello 5 extra"), Some(Err(())));
+        assert_eq!(parse_hello("hello 6 extra"), Some(Err(())));
         assert_eq!(parse_hello("hello garbage"), Some(Err(())));
         assert_eq!(parse_hello("hello -1"), Some(Err(())));
         // Not hello lines at all: the verb parser owns them.

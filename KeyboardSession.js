@@ -33,7 +33,10 @@
 /// reply and the generation on `configured`; the hello gate refuses a
 /// pairing of old and new before any configure is sent, which is what lets
 /// both sides change reply shapes in one release.
-var PROTOCOL_VERSION = 5
+// Version 6 (§91): the typed delivery verbs are gone from the helper —
+// every emoji pick rides the clipboard transaction. A helper that still
+// answers 5 predates the deletion and is a reinstall, not a peer.
+var PROTOCOL_VERSION = 6
 
 function initial() {
     return {
