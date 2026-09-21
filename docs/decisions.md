@@ -3551,8 +3551,11 @@ consumers — the MouseArea clamp reading w/h, the module reading all
 four — fed from the one shape), and the write-back is null-guarded
 (a degenerate bounds skips the clamp and still saves; the next open
 re-clamps through centreRestore). The on-state chrome pinned in the
-emoji-page suite (the strip's two hand-carried copies held together:
-+20 units + one spacing at every preset), the off-only restatement
+emoji-page suite (+20 units + one spacing at every preset — round
+three then caught r2's first pin comparing the formula against
+itself and rewrote it as an independently restated chrome sum; a
+suite-side restatement, the page's own two copies remain unheld by
+any test, the standing no-load limit), the off-only restatement
 marked.
 
 All suites, the wall — green; deployed live.

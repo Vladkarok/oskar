@@ -25,13 +25,16 @@ QtObject {
         return chrome + rows * (cell + gap) - gap
     }
 
-    // The ON-state chrome (the triage round's pin): enabling the drag
-    // strip grows the natural height by exactly stripHeight (20 units)
-    // plus one contentSpacing (7) — the two hand-carried copies in the
-    // page (naturalPageHeight and the grid subtraction) held together
-    // here so they cannot drift apart silently.
+    // The ON-state chrome, restated INDEPENDENTLY (the round-three
+    // finding killed r2's tautology — it compared the off formula
+    // against itself plus constants): five column children, four gaps,
+    // the strip's 20 and its own spacing. This is a suite-side
+    // restatement, NOT a load of the page's own two copies (nothing
+    // loads EmojiPage.qml — the header's standing limit): it pins the
+    // arithmetic contract the page's copies must both carry.
     function naturalPageHeightDragOn(cell, gap, rows) {
-        return naturalPageHeight(cell, gap, rows) + 20 + 7
+        var chrome = 2 * 10 + 28 + 1 + 24 + 20 + 4 * 7
+        return chrome + rows * (cell + gap) - gap
     }
 
     function naturalPageWidth(cell, gap, columns) {
@@ -410,9 +413,8 @@ QtObject {
                 var cell = 42
                 var gap = 4
                 var capacity = Page.pageCapacity(preset)
-                // The on-state height grows by exactly the strip's own
-                // pin (stripHeight + one spacing) at every preset —
-                // the two hand-carried copies in the page cannot drift.
+                // The on-state height against the independently
+                // restated chrome (not the off formula plus itself).
                 T.equal(naturalPageHeightDragOn(cell, gap, capacity.rows),
                     naturalPageHeight(cell, gap, capacity.rows) + 20 + 7)
                 var natural = {
