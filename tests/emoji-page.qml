@@ -15,11 +15,23 @@ import "harness.js" as T
 QtObject {
     // The page's chrome restated: page margins 2x10, the header row's 28,
     // a 1px hairline, one 24-high icon-tab row, and 7-space gaps between the
-    // column's four children.
+    // column's four children. OFF-STATE ONLY (the default): the drag
+    // strip's term exists solely under emoji_drag and is NOT modelled
+    // here — the on-state natural height is pageChrome() + stripHeight()
+    // + one more spacing, pinned by the drag-strip case below.
     // Only the grid cells carry the size preset's scale.
     function naturalPageHeight(cell, gap, rows) {
         var chrome = 2 * 10 + 28 + 1 + 24 + 3 * 7
         return chrome + rows * (cell + gap) - gap
+    }
+
+    // The ON-state chrome (the triage round's pin): enabling the drag
+    // strip grows the natural height by exactly stripHeight (20 units)
+    // plus one contentSpacing (7) — the two hand-carried copies in the
+    // page (naturalPageHeight and the grid subtraction) held together
+    // here so they cannot drift apart silently.
+    function naturalPageHeightDragOn(cell, gap, rows) {
+        return naturalPageHeight(cell, gap, rows) + 20 + 7
     }
 
     function naturalPageWidth(cell, gap, columns) {
@@ -398,6 +410,11 @@ QtObject {
                 var cell = 42
                 var gap = 4
                 var capacity = Page.pageCapacity(preset)
+                // The on-state height grows by exactly the strip's own
+                // pin (stripHeight + one spacing) at every preset —
+                // the two hand-carried copies in the page cannot drift.
+                T.equal(naturalPageHeightDragOn(cell, gap, capacity.rows),
+                    naturalPageHeight(cell, gap, capacity.rows) + 20 + 7)
                 var natural = {
                     w: naturalPageWidth(cell, gap, capacity.columns),
                     h: naturalPageHeight(cell, gap, capacity.rows)

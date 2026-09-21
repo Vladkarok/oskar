@@ -1212,13 +1212,17 @@ Item {
         // page overhanging — release would then remember an off-visible
         // centre and leave the page parked there until the next open.
         // The write-back heals this release and the saved centre alike.
-        var topLeft = emojiPage.dragBounds
-            ? SettingsPlacement.clampedTopLeft(
-                { x: emojiPage.x, y: emojiPage.y },
-                { w: emojiPage.width, h: emojiPage.height },
-                emojiPage.dragBounds)
-            : null
-        if (topLeft.x !== emojiPage.x || topLeft.y !== emojiPage.y) {
+        // Null-guarded (same finding): a degenerate or absent bounds
+        // skips the clamp and still saves — the next open re-clamps
+        // through centreRestore against whatever the visible area is
+        // by then.
+        var topLeft = SettingsPlacement.clampedTopLeft(
+            { x: emojiPage.x, y: emojiPage.y },
+            { w: emojiPage.width, h: emojiPage.height },
+            emojiPage.dragBounds || { x: 0, y: 0,
+                w: settingsLayer.width, h: settingsLayer.height })
+        if (topLeft && (topLeft.x !== emojiPage.x
+                || topLeft.y !== emojiPage.y)) {
             emojiPage.x = topLeft.x
             emojiPage.y = topLeft.y
         }
@@ -3416,7 +3420,12 @@ Item {
             // the LAYER, not the leftover: free placement may cover the
             // keyboard band.
             dragEnabled: root.emojiDrag
-            dragBounds: ({ w: settingsLayer.width, h: settingsLayer.height })
+            // x/y included (the triage round's poison): the placement
+            // module's validBox refuses a bounds without them, and the
+            // MouseArea clamp reads only w/h — both consumers fed from
+            // the one shape.
+            dragBounds: ({ x: 0, y: 0,
+                w: settingsLayer.width, h: settingsLayer.height })
             onDragSettled: root.rememberEmojiPosition()
             onWidthChanged: root.applyEmojiPosition()
             onHeightChanged: root.applyEmojiPosition()

@@ -3537,3 +3537,22 @@ triage-looped).
 
 All suites, qmllint, the packaging gate, the wall — green; deployed
 live for the owner's hand.
+
+## 104. The emoji-drag loop, rounds two and three: the fix that broke its own feature
+
+Round two caught a real one: the overhang fix from round one threw a
+TypeError on EVERY drag settle — dragBounds carried no x/y (the
+placement module's validBox refuses such a box, clampedTopLeft
+answered null) and the write-back dereferenced null.x. Persistence
+never ran; the feature saved nothing at runtime, and no suite could
+see it (no test loads Panel.qml — the wiring-blind spot the campaign
+keeps meeting). Both links fixed: the bounds carry x/y (both its
+consumers — the MouseArea clamp reading w/h, the module reading all
+four — fed from the one shape), and the write-back is null-guarded
+(a degenerate bounds skips the clamp and still saves; the next open
+re-clamps through centreRestore). The on-state chrome pinned in the
+emoji-page suite (the strip's two hand-carried copies held together:
++20 units + one spacing at every preset), the off-only restatement
+marked.
+
+All suites, the wall — green; deployed live.
