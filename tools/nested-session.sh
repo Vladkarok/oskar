@@ -223,7 +223,7 @@ status=$?
 # Xwayland where the old derivation counted nothing. Each Xwayland keymap
 # load logs one xkbcomp ERROR-REPORT pair on this guest — Xwayland warns on
 # the extended map whatever it compiles — and the typing legs pass, so the
-# reports are warnings, not failures. 16 x 2 = 32, + 1 = 34.
+# reports are warnings, not failures. 16 x 2 = 32, + 1 pair (2 lines) = 34.
 #
 # If this number has to move again, re-derive it: count the identity changes,
 # not the maps.

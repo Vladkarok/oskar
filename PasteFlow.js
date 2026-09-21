@@ -57,14 +57,15 @@ function failed(state) {
     return { phase: "idle" }
 }
 
-/// The verdict arrived — by the ledger's drain, the guard timer, a
-/// dying connection or a cancellation. Idempotent: a second verdict
+/// The verdict arrived — by the ledger's drain, the guard timer or a
+/// dying connection. Idempotent: a second verdict
 /// (the guard racing the drain) changes nothing.
 function verdictDone(state) {
     return { phase: "idle" }
 }
 
-/// A cancellation (mode flip, teardown). The ANSWER is an ordered
+/// A cancellation (§91 history: production callers are gone; the
+/// tests pin the semantics for any future cancel path). The ANSWER is an ordered
 /// program: abort the pacer first — its own path owes the device its
 /// compensations and releases — then clear the armed verdict wait.
 /// Dispatching cannot be cancelled from outside (its block is atomic in

@@ -1725,7 +1725,7 @@ Item {
         emojiPublishVerifyTimer.restart()
     }
 
-     function finishEmojiPublishVerify(seq, served) {
+    function finishEmojiPublishVerify(seq, served) {
         var result = ClipboardPaste.txnServed(root.emojiTxnState, seq, served)
         root.emojiTxnState = result.state
         if (result.action === "stale") return
@@ -1768,9 +1768,9 @@ Item {
 
     // The chord's verdict. Only a real completion records usage, settles
     // the search and closes the page; a cancellation leaves all three
-    // alone. A completion arriving for a cancelled transaction (a
-    // cancel arrived mid-chord — the delivery-mode flip that once did
-    // this is §91 history) lands as "ignore" or "stale" and records
+    // alone. A completion arriving for a cancelled transaction (only
+    // the tests cancel now — the delivery-mode flip that once did this
+    // is §91 history) lands as "ignore" or "stale" and records
     // nothing, then the queue — empty after a cancel — hands over nothing.
     function finishEmojiChord(seq, success) {
         var done = ClipboardPaste.txnChordDone(root.emojiTxnState, seq, success)

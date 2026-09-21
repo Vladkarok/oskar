@@ -231,9 +231,12 @@ function txnNext(state) {
     return { state: next, action: "publish", emoji: pick.emoji }
 }
 
-// A mode flip or teardown: the running pick and everything queued die.
-// A chord already dispatching cannot be un-dispatched; its late completion
-// lands on the idle machine as "ignore" and records nothing.
+// Cancel the running pick and everything queued (§91 history: the
+// delivery-mode flip and the teardown caller are gone — this is
+// test-pinned semantics now, kept so a future cancel path inherits a
+// proven machine). A chord already dispatching cannot be
+// un-dispatched; its late completion lands on the idle machine as
+// "ignore" and records nothing.
 function txnCancel(state) {
     if (state.phase === "idle" && state.queue.length === 0)
         return { state: state, action: "ignore" }

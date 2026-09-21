@@ -3446,3 +3446,26 @@ tools/ joined the sweep scope — no round had mopped it.
 
 44 Rust tests, 21 QML suites (501), clippy, the wall, the nested 32
 (green under the 102 gate) — green; deployed live.
+
+## 100. Triage round eight: the callee docs, the dead branch, the exit that isn't yet
+
+The curve refuses to die on its own: 10, 10, 5, 5, 3, 4 — round
+eight went one layer into the CALLEES of the deleted caller:
+txnCancel and PasteFlow.cancel, whose only production caller (the
+mode flip) §91 deleted and whose docs still sold the flip and a
+teardown path that never existed — marked as test-pinned semantics
+kept for any future cancel path (deleting them would delete the
+seq-guard pins). The test narration's surviving "mode flipped";
+the five-space indent r7's cut left; the ancestor derivation's
+"+1" that reads as 33.
+
+And one real code find, the round's substance: fd5a980's
+`|| function () {}` made pasteCurrent's fire-and-forget else branch
+UNREACHABLE while two adjacent comments described it two different
+wrong ways ("fire-and-forget, as it always did" / "settles as a
+failure"). The dead branch deleted; both comments now tell the one
+true thing: a missing callback is a no-op report, the flow still
+awaits the verdict, the gate can neither silently reopen nor wedge.
+
+44 Rust tests, 21 QML suites (501), clippy, the wall — green;
+deployed live.

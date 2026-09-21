@@ -315,9 +315,9 @@ QtObject {
         })
 
         T.test("a chord completing after a cancel records no usage", function () {
-            // The mode flipped while the chord was mid-dispatch: the
-            // transaction is dead, so its late completion — successful or
-            // not — must land as nothing.
+            // The transaction was cancelled mid-dispatch: it is
+            // dead, so its late completion — successful or not —
+            // must land as nothing.
             var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(), "😀")
             var served = ClipboardPaste.txnServed(started.state,
                 started.state.seq, "😀")

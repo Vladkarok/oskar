@@ -1509,7 +1509,8 @@ Item {
         // race the fifth lane was closed against, reborn for any
         // future caller following the old comment. There is no such
         // caller today (the chip and the txn both pass callbacks); a
-        // missing one now settles as a failure, not a silent pass.
+        // missing one is a no-op report and the flow still awaits the
+        // verdict.
         var done = completed || function () {}
         var cls = String(wmClass || "")
         // One paste at a time (PasteFlow owns the gate; round nine's
@@ -1580,17 +1581,13 @@ Item {
         // Success is the helper's acknowledgement of the final line, not
         // the write returning (the review's third round): the next emoji
         // must not replace the clipboard before the paste events have at
-        // least reached the compositor. WITHOUT a callback there is
-        // nothing to arm and no guard would ever run — awaiting would
-        // wedge the gate forever (the agent audit's blocker: one
-        // paste-chip click bricked every later paste). Fire-and-forget
-        // reopens the gate when the writes return, as it always did.
-        if (done) {
-            root.pasteFlow = PasteFlow.awaiting(root.pasteFlow)
-            settleChordThroughHelper(done)
-        } else {
-            root.pasteFlow = PasteFlow.failed(root.pasteFlow)
-        }
+        // least reached the compositor. `done` is always a function (the
+        // §89 default): a missing callback is a NO-OP REPORT — the flow
+        // still awaits the verdict and the guard still runs, so the gate
+        // can never silently reopen (the agent audit's blocker) and can
+        // never wedge on an unarmed wait either.
+        root.pasteFlow = PasteFlow.awaiting(root.pasteFlow)
+        settleChordThroughHelper(done)
         return true
     }
 
