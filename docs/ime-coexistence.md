@@ -3,7 +3,7 @@
 Measured 2026-09-14 in the lab guest (testprod, Hyprland 0.56.2,
 Quickshell 0.3.1, qt6-base 6.11.2, 1280x800) against host HEAD `61931ac`
 (`~/oskar` synced + built; the hosted real `Panel.qml` through the
-ticket-48 frame technique with `emoji_delivery: clipboard` pre-armed,
+ticket-48 frame technique with `emoji_delivery: clipboard` pre-armed (pre-§91 setting, since deleted — every pick is the clipboard transaction now),
 because the packaged panel is 0.1.0-2, pre-dwell-era, and the lab's
 config file must exist at panel boot to be read). fcitx5 5.1.22 with
 `fcitx5-chinese-addons` (pinyin) added to the default group

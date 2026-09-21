@@ -3393,3 +3393,24 @@ claim must name only those). Swept with per-edit verification:
 
 44 Rust tests, 21 QML suites (501), clippy, the wall's canary (15)
 and restart-settle (8) — green; deployed live.
+
+## 97. Triage round five: narrowing to citations, and the gate line the prose edit almost ate
+
+Round five: five poisons, all citation residue — §96's ime-coexistence
+mark never landed (the batch-claim class again), release_everything
+still narrated a delivery wait and in-flight scalars, MAX_LINE's
+generosity case cited the deleted verb, orientation's refreshed block
+pointed at a snapshot that doesn't exist and a backup branch nobody
+has. All fixed with per-edit verification; the churn journal's dates
+and marks straightened; config's mangled indentation.
+
+And one near-miss the compiler caught: rewriting release_everything's
+prose dropped the `shutting_down = true` assignment itself — the
+comment surgery removed the line the comment described. Clippy's
+unused-mut was the smoke: the fix re-scoped the gate set into its own
+lock block and the 44 tests (which pin the shutdown gate) stayed
+green. Lesson folded into the discipline: when a comment rewrite
+touches a block whose code is one line, diff the CODE lines too.
+
+44 Rust tests, 21 QML suites (501), clippy, the wall — green;
+deployed live.

@@ -18,9 +18,9 @@ QtObject {
                 sound: false,
                 followTheme: true,
                 // Omarchy 4.0.2's own default emoji picker (2026-09-05).
-                        emojiCloseAfterPick: false,
+                emojiCloseAfterPick: false,
                 emojiPageSize: "medium",
-                                // The Super cap says what the key is (ticket 22).
+                // The Super cap says what the key is (ticket 22).
                 superMark: "word",
                 // Ticket 50: dwell-to-type is off until the user opts in.
                 dwellEnabled: false,

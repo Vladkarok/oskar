@@ -2001,8 +2001,9 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         // active newline-free stream grew `pending` without bound inside
         // a single read_line call, and MemoryMax plus StartLimitBurst
         // turned that into a permanent lockout a keyboard user cannot
-        // type their way out of). 4 KiB is generous (a maximal
-        // 16-scalar `text` is tens of bytes); one chunk is one buffer
+        // type their way out of). 4 KiB is generous (the longest live
+        // line — a configure naming a kb_file path plus its layouts —
+        // is a few hundred bytes); one chunk is one buffer
         // fill, so `pending` is bounded by cap + 8 KiB whatever the
         // sender's pace. Overflow answers once and closes.
         const MAX_LINE: usize = 4096;
@@ -2308,18 +2309,15 @@ fn shutdown_signal_set() -> libc::sigset_t {
 /// Returns the codes it lifted, so the caller can say what happened rather
 /// than claim a release that had nothing to release.
 fn release_everything(shared_arc: &SharedRef, connection: &Connection) -> Vec<u32> {
-    let mut shared = shared_arc.lock().unwrap();
-    // Close the command gate under the same lock used by every command.
-    // From this instant a client thread can only receive `err shutting
-    // down` (the final release itself is queued AFTER the delivery wait
-    // below — the gate closes first precisely so nothing new starts
-    // while that wait runs).
-    shared.shutting_down = true;
-    // An in-flight delivery finishes its CURRENT scalar (chord lifted,
-    // mask zeroed — beats always write) and exits at the next boundary;
-    // only then is the final release queued — nothing new starts while
-    // the release round-trips, because the gate is already closed.
-    drop(shared);
+    // Close the command gate under the lock used by every command. From
+    // this instant a client thread can only receive `err shutting down`;
+    // a command already under the lock completes or is refused, and
+    // nothing new starts while the release round-trips — the gate closes
+    // first precisely so the release is the last writer.
+    {
+        let mut shared = shared_arc.lock().unwrap();
+        shared.shutting_down = true;
+    }
     let mut shared = shared_arc.lock().unwrap();
     let Some(keyboard) = shared.keyboard.clone() else {
         return Vec::new();

@@ -247,7 +247,7 @@ status=$?
 #   = 40, + 2 (one startup-variance pair) = 74.
 #
 # Re-derived 2026-09-21 for the §91 suite: the THIRTEEN typed picks the
-# 2026-09-11 derivation counted are GONE with the delivery legs (every
+# pre-§91 derivation counted are GONE with the delivery legs (every
 # emoji pick rides the clipboard now; the helper uploads no transient
 # keymap for picks at all). The remaining churn is the identity-change
 # budget above plus the stop test's respawned helper (one startup and
