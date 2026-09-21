@@ -3559,3 +3559,36 @@ any test, the standing no-load limit), the off-only restatement
 marked.
 
 All suites, the wall — green; deployed live.
+
+## 105. The split begins: four seams out of the two monoliths
+
+The owner's word ("сплитить будем?"). Four extractions landed, each
+its own commit, battery green, wall green, deployed live — behaviour
+byte-identical by assertion-checked moves (every block diffed against
+the pre-step file; the few adapted lines enumerated in each commit):
+
+- **HelperLink.qml** (Keyboard 3727→3543): the socket lifecycle —
+  loader/Socket, hello and the never-stopping probe, path-check,
+  rebuild, the write choke's transport half. The reply INTERPRETATION
+  stayed in Keyboard (it is keyboard state).
+- **PasteChords.qml** (→3287): the chord machinery — pasteCurrent,
+  the wine pacer, assumptions, abort, the 8 s guard. The ChordAcks
+  ledger keeps ONE home (Keyboard): the child holds a bound read half
+  and writes back through setChordAcks — a local var would have
+  severed the binding at the first chordStart and forked the queue.
+- **PrivateSaves.qml** (Panel 3475→3349): the dir makers, the
+  umask-077 writer, the queue, the per-path save-failure ledger.
+- **EmojiDelivery.qml** (→3154): the whole pick transaction —
+  publish/verify/watchdog/queue/chord verdicts. One signal out
+  (pickSettled) carries the monolith's three-effect completion atomically.
+
+The audit's verdict on the four seams: zero poisons; the seams'
+contracts documented at both ends; three doc niggles fixed with this
+entry (the handoff's "later" line, orientation's piece map, and the
+purity invariant made explicit at HelperLink's binding — the bound
+facts are fresh only because ChordAcks/Session transitions reassign,
+never mutate).
+
+All suites, qmllint, the packaging gate, the wall's canary (15) and
+restart-settle (8) — green after every step; deployed live. The
+remaining calm candidates: the settings layer, the grid delegates.
