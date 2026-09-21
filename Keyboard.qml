@@ -1504,6 +1504,10 @@ Item {
         // SocketWatch's reconnect decision reads four keyboard facts;
         // bound here because the ledgers they summarise are the
         // keyboard's, not the transport's.
+        // The bound facts are fresh only because ChordAcks/Session
+        // transitions REASSIGN (never mutate in place) — a var-property
+        // binding cannot see a sub-property mutation. The modules'
+        // suites pin that purity; break it and probeHold stales silently.
         inputReady: root.inputReady
         sessionSettled: Session.settled(root.session)
         pastePacing: pasteChords.pastePacing
