@@ -228,13 +228,14 @@ status=$?
 # If this number has to move again, re-derive it: count the identity changes,
 # not the maps.
 #
+# (The derivation journal from here to the 2026-09-21 re-derivation is
+# pre-§91 history, kept for the measurement method; the re-derivation is
+# the living one.)
 # Re-derived 2026-09-10 for ticket 24's text-pick legs (foot delivery, x11cat
 # delivery, and the §35 invariant across a pick). A `text` pick uploads the
 # transient keymap and then the installed one back to the helper's own
 # virtual keyboard: two seat keymap loads that change NO identity — the
 # installed map ends where it started — but each costs one Xwayland
-# (The journal below is the pre-§91 derivation, kept as history; the
-# 2026-09-21 re-derivation further down is the living one.)
 # ERROR-REPORT pair on this guest, measured in isolation (2 picks: baseline
 # 4 lines, then 10, then 14). Five picks in the suite, so the uploads alone
 # are 5 x 2 pairs x 2 lines = 20. Measured whole-suite costs wobble around
@@ -247,7 +248,7 @@ status=$?
 #   = 40, + 2 (one startup-variance pair) = 74.
 #
 # Re-derived 2026-09-21 for the §91 suite: the THIRTEEN typed picks the
-# pre-§91 derivation counted are GONE with the delivery legs (every
+# deleted 2026-09-11 stage-C derivation counted are GONE with the legs (every
 # emoji pick rides the clipboard now; the helper uploads no transient
 # keymap for picks at all). The remaining churn is the identity-change
 # budget above plus the stop test's respawned helper (one startup and

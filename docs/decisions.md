@@ -3408,9 +3408,23 @@ And one near-miss the compiler caught: rewriting release_everything's
 prose dropped the `shutting_down = true` assignment itself — the
 comment surgery removed the line the comment described. Clippy's
 unused-mut was the smoke: the fix re-scoped the gate set into its own
-lock block and the 44 tests (which pin the shutdown gate) stayed
-green. Lesson folded into the discipline: when a comment rewrite
+lock block and the 44 tests stayed green — none of them pins the
+gate (the integration suite's stop legs are its only exercise). Lesson folded into the discipline: when a comment rewrite
 touches a block whose code is one line, diff the CODE lines too.
 
 44 Rust tests, 21 QML suites (501), clippy, the wall — green;
 deployed live.
+
+## 98. Triage round six: the residue narrows to citations and the record's own claims
+
+Round six: five poisons — three last citations of the deleted direct
+mode (Keyboard's "two residual resets" against code that resets one;
+Panel's two flasher citations), and two of round five's own mintings
+(§97 claimed the 44 tests "pin the shutdown gate" — none does, the
+integration stop legs are its only exercise; the journal's "pre-§91
+derivation" collided with the visible five-pick block when the
+thirteen-pick one it meant lives only in git). All fixed; the journal
+mark moved to its own lines above the block; the module count
+re-derived (twenty-one).
+
+44 Rust tests, 21 QML suites (501), clippy, the wall — green.

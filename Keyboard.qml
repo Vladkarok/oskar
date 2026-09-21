@@ -1737,10 +1737,8 @@ Item {
         // FIFO and write into the dying socket.
         root.inputReady = false
         // Ticket 54: a lying socket never runs the disconnect arm, so the
-        // rebuild carries that arm's two residual resets itself — the
-        // text-reply FIFO (a stale head would be settled by a post-
-        // recovery reply, the wrong answer for the wrong request) and
-        // the compositor share generation (a restarted daemon can repeat
+        // rebuild carries that arm's one residual reset itself — the
+        // compositor share generation (a restarted daemon can repeat
         // the stale one and the once-per-generation guard would skip a
         // re-share). SocketWatch owns the ledger, pinned by its suite.
         var resets = SocketWatch.rebuildResets({

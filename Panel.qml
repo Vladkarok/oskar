@@ -1660,8 +1660,8 @@ Item {
         if (picked.action === "refused-full") {
             console.warn("[oskar] emoji pick refused: three already queued"
                 + " behind an unfinished paste")
-            // The same visible refusal the direct mode's queue has (the
-            // flows review's N1): silence is the trust killer.
+            // The same visible refusal every refused click since the
+            // flows review's N1 has had: silence is the trust killer.
             root.emojiPickRefused = true
             emojiPickRefuseTimer.restart()
             return
@@ -1810,10 +1810,10 @@ Item {
             console.warn("[oskar] emoji paste chord refused or aborted;"
                 + " no usage recorded (the clipboard keeps the pick)")
             // Same silence class the round has been closing, one layer
-            // down (the diff audit's finding): the direct pick, the
-            // queue caps and the paste chip all flash their refusals —
-            // a paste-mode pick whose chord never dispatched must not
-            // be the one click that vanishes without a word.
+            // down (the diff audit's finding): the queue caps and the
+            // paste chip flash their refusals — a pick whose chord
+            // never dispatched must not be the one click that vanishes
+            // without a word.
             root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
         }
         startNextEmojiTxn()
