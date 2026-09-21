@@ -22,7 +22,7 @@ var MODE_FLOATING = "floating"
 var SUPER_MARKS = ["word", "omarchy", "windows", "macos", "penguin"]
 var EMOJI_SKIN_TONES = ["", "🏻", "🏼", "🏽", "🏾", "🏿"]
 // Ticket 52: the UI's language. "auto" follows the active layout (the
-// shipped searchPlaceholder mapping); en/ru/uk pin it. One list here so
+// shipped searchPlaceholder mapping); en/ru/uk/it pin it, offered when the seat carries the layout. One list here so
 // validation, the popover's segments and the tests cannot disagree —
 // the SUPER_MARKS rule.
 // "it" joined with the Italian vocabulary (2026-09-20); the value space

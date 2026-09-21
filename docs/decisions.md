@@ -3469,3 +3469,22 @@ awaits the verdict, the gate can neither silently reopen nor wedge.
 
 44 Rust tests, 21 QML suites (501), clippy, the wall — green;
 deployed live.
+
+## 101. Triage round ten: the vocabulary exhausted, the contracts behind it
+
+The curve: 10, 10, 5, 5, 3, 4, 4, 4, 2 — and round ten's two
+poisons were NOT §91 citations at all: the deleted-vocabulary sweep
+is genuinely exhausted (the auditor sampled 18 hits, all marked or
+live referents). What remains is the class BEHIND the vocabulary —
+contract prose staled by later behaviour changes nobody updated:
+UiStrings' header still promised the settings row pins all four
+languages unconditionally (ticket 61 made offering seat-conditional
+three days later), and the transaction-contract doc sold ticket-28's
+dispatch-timing for `completed` (a220a48 moved both paths to the
+helper's ack — the file even states the correction forty lines
+below). Both fixed with their true contracts; the two "en/ru/uk pin
+it" residues beside them; the handoff's loop line current.
+
+The method note for whatever hunts next: grep-for-deleted-vocabulary
+cannot find this class — find the behaviour-changing commits and read
+the contract docs beside them.

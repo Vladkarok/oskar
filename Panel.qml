@@ -149,7 +149,7 @@ Item {
     property bool dwellEnabled: maintainedDefaults.dwellEnabled
     property int dwellDelayMs: maintainedDefaults.dwellDelayMs
     // The UI's language (ticket 52): "auto" follows the active layout,
-    // en/ru/uk pin it. `uiLang` is the resolved two-letter answer every
+    // en/ru/uk/it pin it, offered when the seat carries the layout. `uiLang` is the resolved two-letter answer every
     // tr() call site reads — override over layout, English for anything
     // we do not ship, the searchPlaceholder rule generalised.
     property string uiLanguage: maintainedDefaults.uiLanguage

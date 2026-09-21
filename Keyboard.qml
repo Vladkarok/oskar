@@ -1347,10 +1347,11 @@ Item {
     //
     // Ticket 28's transaction contract (audit 2026-09-13): a paste is no
     // longer fire-and-forget. The optional `completed` callback fires
-    // exactly once — after the final paced line is dispatched for a wine
-    // chord, after every line is accepted by the socket writer for an
-    // immediate one, and synchronously with false on any refusal (already
-    // pacing, a held key, an unready input, a dead socket mid-pace). The
+    // exactly once — on the helper's acknowledgement of the chord's
+    // final line, both paths (the review's third round: success is the
+    // counterpart answering, not the write returning), and
+    // synchronously with false on any refusal (already pacing, a held
+    // key, an unready input, a dead socket mid-pace). The
     // emoji page records usage only from a real completion; every
     // caller passes one (§89: the chip and the txn both do — a missing
     // one is a no-op report and the flow still awaits the verdict).

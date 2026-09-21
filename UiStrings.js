@@ -11,8 +11,9 @@
 // The language is the ACTIVE LAYOUT with an override on top — the
 // searchPlaceholder mechanism (EmojiPage.js, ticket 36) generalised:
 // "auto" (the default) answers uk for a ua layout, ru for ru, English
-// for everything else, and the settings row pins en/ru/uk/it regardless of
-// the layout. A language we do not ship reads as English rather than a
+// for everything else; the settings row pins a language only when the
+// seat carries its layout (ticket 61: Auto and English always,
+// ru/uk/it appear only when installed). A language we do not ship reads as English rather than a
 // guess, exactly like the placeholder always did for a custom code.
 //
 // The table is data and fails loudly: an id that is absent or empty
