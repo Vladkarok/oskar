@@ -232,7 +232,8 @@ function txnNext(state) {
 }
 
 // Cancel the running pick and everything queued (§91 history: the
-// delivery-mode flip and the teardown caller are gone — this is
+// delivery-mode flip — the only caller txnCancel ever had — is gone,
+// and the old doc's "teardown" caller never existed; this is
 // test-pinned semantics now, kept so a future cancel path inherits a
 // proven machine). A chord already dispatching cannot be
 // un-dispatched; its late completion lands on the idle machine as

@@ -2,7 +2,7 @@
 
 // The UI string table (ticket 52): every word the panel draws as chrome —
 // tooltips, accessible names, settings labels and hints, status lines —
-// lives here behind an id, carried in the three languages we ship. The
+// lives here behind an id, carried in the four languages we ship. The
 // panel's QML holds no English of its own; what it draws is
 // UiStrings.tr(id, lang). Keymap-derived text (cap glyphs, layout titles,
 // the catalogue's emoji names) is data, not chrome, and never passes
@@ -11,7 +11,7 @@
 // The language is the ACTIVE LAYOUT with an override on top — the
 // searchPlaceholder mechanism (EmojiPage.js, ticket 36) generalised:
 // "auto" (the default) answers uk for a ua layout, ru for ru, English
-// for everything else, and the settings row pins en/ru/uk regardless of
+// for everything else, and the settings row pins en/ru/uk/it regardless of
 // the layout. A language we do not ship reads as English rather than a
 // guess, exactly like the placeholder always did for a custom code.
 //

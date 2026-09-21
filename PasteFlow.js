@@ -14,7 +14,8 @@
 // - The caller marks `chordStart` on the correlation ledger between
 //   `begin` and the first send — the region belongs to the whole
 //   dispatch, not its last line (round eight).
-// - `cancel` answers WHAT to do and in which order: abort the pacer
+// - `cancel` answers WHAT to do and in which order (§91 history:
+//   test-pinned now — see its mark): abort the pacer
 //   first (its own path compensates the sent prefix and releases the
 //   world — round nine's timer kept pressing V onto a held Ctrl),
 //   then clear the armed verdict wait (round seven's late-reply hole).

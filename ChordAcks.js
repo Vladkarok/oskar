@@ -127,7 +127,8 @@ function replyReceived(state, ok) {
 }
 
 // The verdict arrived by another path (the guard timer, a dying
-// connection, a cancellation): the wait ends, the region ends with it,
+// connection; a cancellation too — §91 history, the tests only): the
+// wait ends, the region ends with it,
 // and the queue keeps draining on its own.
 function chordSettled(state) {
     return {

@@ -636,8 +636,9 @@ Item {
         if (!root.pasteEnabled) return
         // While an emoji pick owns the clipboard (the external audit's
         // finding 7), a chip click pastes whatever the clipboard holds —
-        // mid-transaction — and the fire-and-forget chord reopens the
-        // paste gate for a second paste behind it. Refuse; the queue
+        // mid-transaction — and the chord (fire-and-forget in the era
+        // of that finding) reopened the paste gate for a second paste
+        // behind it. Refuse; the queue
         // drains in milliseconds. The refusal is decided — its VISIBILITY
         // is the flows round's finding: a chip that draws enabled and
         // clicks dead is the silence class.

@@ -1352,9 +1352,8 @@ Item {
     // immediate one, and synchronously with false on any refusal (already
     // pacing, a held key, an unready input, a dead socket mid-pace). The
     // emoji page records usage only from a real completion; every
-    // caller passes one (§89: the chip and the txn both do, and a
-    // missing callback settles as a failure rather than a silent
-    // pass).
+    // caller passes one (§89: the chip and the txn both do — a missing
+    // one is a no-op report and the flow still awaits the verdict).
     property bool pastePacing: false
     property var pastePacedLines: []
     // The full chord and how much of it went out, so an abort can owe the
