@@ -80,6 +80,7 @@ untouched while the panel keeps the last valid runtime value.
 | `sound` | `true` \| `false` | `false` |
 | `follow_theme` | `true` \| `false` | `true` |
 | `emoji_close_after_pick` | `true` \| `false` | `false` |
+| `emoji_drag` | `true` \| `false` | `false` — the page opens centred and still; on, it grows a drag strip and its position is remembered |
 | `emoji_page_size` | `medium` \| `large` \| `x-large` | `medium` |
 | `super_mark` | `word` \| `omarchy` \| `windows` \| `macos` \| `penguin` | `word` |
 | `key_radius` | whole-pixel integer ≥ 0, 0–24 relative to M | `8` |
