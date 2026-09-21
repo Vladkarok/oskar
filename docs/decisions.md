@@ -3409,7 +3409,8 @@ prose dropped the `shutting_down = true` assignment itself — the
 comment surgery removed the line the comment described. Clippy's
 unused-mut was the smoke: the fix re-scoped the gate set into its own
 lock block and the 44 tests stayed green — none of them pins the
-gate (the integration suite's stop legs are its only exercise). Lesson folded into the discipline: when a comment rewrite
+gate (the integration stop legs exercise its SETTER; the err reply
+itself is asserted nowhere). Lesson folded into the discipline: when a comment rewrite
 touches a block whose code is one line, diff the CODE lines too.
 
 44 Rust tests, 21 QML suites (501), clippy, the wall — green;
@@ -3428,3 +3429,20 @@ mark moved to its own lines above the block; the module count
 re-derived (twenty-one).
 
 44 Rust tests, 21 QML suites (501), clippy, the wall — green.
+
+## 99. Triage round seven: three citations deeper, and the loop's own honesty
+
+The curve runs 10, 10, 5, 5, 3 — every poison since r3 the same
+class, found one layer deeper each time. Round seven's three:
+Panel's "(mode flipped mid-chord)" narrating the deleted flip (and
+`cancelEmojiPublish`, whose only caller WAS that flip — the dead
+function deleted with its citation); smoke-daemon's export for a
+respawn leg §91 deleted; and the LIVING churn derivation carrying
+the deleted leg's "+4 respawn" addend (re-derived: 32+2=34, gate
+102, observed 28-30). Niggles: §97's gate-coverage claim tightened
+to the truth (the stop legs exercise the setter; the err reply is
+asserted nowhere), the clipboard-paste repro narration de-modded.
+tools/ joined the sweep scope — no round had mopped it.
+
+44 Rust tests, 21 QML suites (501), clippy, the wall, the nested 32
+(green under the 102 gate) — green; deployed live.

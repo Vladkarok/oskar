@@ -251,10 +251,10 @@ status=$?
 # deleted 2026-09-11 stage-C derivation counted are GONE with the legs (every
 # emoji pick rides the clipboard now; the helper uploads no transient
 # keymap for picks at all). The remaining churn is the identity-change
-# budget above plus the stop test's respawned helper (one startup and
-# one configure upload, two pairs) and one startup-variance pair:
+# budget above plus one startup-variance pair (the mid-delivery stop
+# respawn that once added two more pairs went with §91's legs):
 #
-#   32 + 4 + 2 = 38; observed on this guest 30 green (§91's run).
+#   32 + 2 = 34; observed on this guest 28-30 green (§91's runs).
 #   The budget keeps triple headroom for guest variance.
 #
 # A feedback loop
@@ -263,7 +263,7 @@ status=$?
 after_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 rebuilds=$((after_xkb - before_xkb))
 echo "--- exited with $status; compositor keymap rebuilds during run: $rebuilds ---"
-if (( rebuilds > 114 )); then
+if (( rebuilds > 102 )); then
     echo "unsafe keymap churn detected" >&2
     exit 1
 fi

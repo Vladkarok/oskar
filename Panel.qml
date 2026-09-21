@@ -1725,33 +1725,7 @@ Item {
         emojiPublishVerifyTimer.restart()
     }
 
-    function cancelEmojiPublish(reason) {
-        var cancelled = ClipboardPaste.txnCancel(root.emojiTxnState)
-        if (cancelled.action === "dropped")
-            console.warn("[oskar] emoji paste transaction cancelled:", reason)
-        root.emojiTxnState = cancelled.state
-        // The cancelled transaction's read and timers die with it (the
-        // review's fourth round): a stalled verify left alive outlives the
-        // machine that owned it, and the watchdog — correctly seeing no
-        // live transaction — would leave the process running.
-        emojiVerifyWatchdog.stop()
-        emojiPublishVerifyTimer.stop()
-        if (emojiClipboardVerify.running)
-            killProcessGroup(emojiClipboardVerify)
-        // The cancellation is a PROGRAM the lifecycle module answers
-        // (round nine kept the ordering in prose): abort the pacer
-        // first — its own path compensates the sent prefix and releases
-        // the world — then clear the armed verdict. Dispatching cannot
-        // be interleaved from outside; the module's defensive answer
-        // releases everything anyway.
-        var cancel = PasteFlow.cancel(keyboard.pasteFlow)
-        keyboard.pasteFlow = cancel.state
-        if (cancel.abortPacer) keyboard.abortPacedPaste()
-        if (cancel.clearWait && keyboard.chordAcks.chordDone)
-            keyboard.chordAckTimedOut()
-    }
-
-    function finishEmojiPublishVerify(seq, served) {
+     function finishEmojiPublishVerify(seq, served) {
         var result = ClipboardPaste.txnServed(root.emojiTxnState, seq, served)
         root.emojiTxnState = result.state
         if (result.action === "stale") return
@@ -1794,8 +1768,9 @@ Item {
 
     // The chord's verdict. Only a real completion records usage, settles
     // the search and closes the page; a cancellation leaves all three
-    // alone. A completion arriving for a cancelled transaction (mode
-    // flipped mid-chord) lands as "ignore" or "stale" and records
+    // alone. A completion arriving for a cancelled transaction (a
+    // cancel arrived mid-chord — the delivery-mode flip that once did
+    // this is §91 history) lands as "ignore" or "stale" and records
     // nothing, then the queue — empty after a cancel — hands over nothing.
     function finishEmojiChord(seq, success) {
         var done = ClipboardPaste.txnChordDone(root.emojiTxnState, seq, success)

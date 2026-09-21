@@ -30,9 +30,6 @@ fi
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 daemon="$root/daemon/target/release/oskar-daemon"
-# The suite's mid-delivery stop test respawns the helper after the mid-hold
-# test has stopped it; it needs the binary path to do that.
-export OSK_DAEMON="$daemon"
 
 # A binary older than the source it came from is the quietest way to spend a
 # nested run proving nothing: the suite takes the prebuilt helper as it finds

@@ -506,8 +506,8 @@ QtObject {
         })
 
         T.test("a cancelled chord's late verdict cannot complete the next pick", function () {
-            // Round seven's reproduction: A's chord dispatched, the mode
-            // flipped (cancel), B started and reached ITS pasting — and
+            // Round seven's reproduction: A's chord dispatched, was
+            // cancelled mid-flight, B started and reached ITS pasting — and
             // A's delayed reply still said "pasting" and recorded B as
             // successful mid-dispatch. The verdict now carries the seq it
             // was armed for; a verdict that names another transaction is
