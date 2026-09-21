@@ -85,19 +85,16 @@ Item {
     // `holdCap`/`holdDelegate` stand while the hold is pending (timer
     // running); the menu carries its own baked copies, because the grid
     // the delegate lives in can rebuild under a standing menu and the
-    // menu's pick must still name the position that was held.
+    // menu's pick must still name the position that was held. The
+    // menu's copies live in HoldMenu.qml (the structural split's step
+    // six); these two forward its surface under the names the hosted
+    // keyboard's integration leg probes (tools/integration/
+    // hold_column.py reads holdMenuOpen and holdMenuEntries, and calls
+    // pickHoldEntry and closeHoldMenu).
     property var holdCap: null
     property Item holdDelegate: null
-    property bool holdMenuOpen: false
-    property var holdMenuCap: null
-    property Item holdMenuDelegate: null
-    property var holdMenuEntries: []
-    // The held cap's geometry in root coordinates, mapped once at open:
-    // the menu positions itself from these, not from a delegate that a
-    // row rebuild may have destroyed.
-    property real holdMenuCapX: 0
-    property real holdMenuCapTop: 0
-    property real holdMenuCapBottom: 0
+    readonly property bool holdMenuOpen: holdMenu.menuOpen
+    readonly property var holdMenuEntries: holdMenu.entries
 
     // ---- dwell-to-type (ticket 50) ----
     //
@@ -2026,7 +2023,7 @@ Item {
             releaseKey()
             return true
         }
-        return holdMenuOpen && holdMenuDelegate === delegate
+        return holdMenuOpen && holdMenu.delegate === delegate
     }
 
     /// A deferred hold that lost its grab: nothing was ever down, so
@@ -2034,7 +2031,7 @@ Item {
     /// press-typing cap leaves — and a menu that had opened folds with
     /// the hold that opened it.
     function cancelCapHold(delegate) {
-        if (holdDelegate !== delegate && holdMenuDelegate !== delegate)
+        if (holdDelegate !== delegate && holdMenu.delegate !== delegate)
             return false
         clearCapHold()
         closeHoldMenu()
@@ -2046,29 +2043,19 @@ Item {
     /// (facts changed under the hold) — a release then still types, which
     /// is as close to "behaves exactly as today" as a deferred press can
     /// come, and no character was typed by the hold itself either way.
+    /// The baking is HoldMenu's open(); the hold is cleared only when a
+    /// menu actually opened.
     function openHoldMenu() {
         if (!holdCap || !holdDelegate) {
             clearCapHold()
             return
         }
-        var entries = capHoldColumn(holdCap)
-        if (entries.length === 0) return
-        var point = holdDelegate.mapToItem(root, 0, 0)
-        holdMenuCap = holdCap
-        holdMenuDelegate = holdDelegate
-        holdMenuEntries = entries
-        holdMenuCapX = point.x + holdDelegate.width / 2
-        holdMenuCapTop = point.y
-        holdMenuCapBottom = point.y + holdDelegate.height
-        holdMenuOpen = true
-        clearCapHold()
+        if (holdMenu.open(holdCap, holdDelegate))
+            clearCapHold()
     }
 
     function closeHoldMenu() {
-        holdMenuOpen = false
-        holdMenuCap = null
-        holdMenuDelegate = null
-        holdMenuEntries = []
+        holdMenu.close()
     }
 
     /// One menu entry, typed through the same exact-level chord the &123
@@ -2079,7 +2066,7 @@ Item {
     /// pick, and the release lifts everything the press wrapped — the
     /// reducer owns the whole shape, nothing here re-derives it.
     function pickHoldEntry(entry) {
-        var cap = holdMenuCap
+        var cap = holdMenu.cap
         closeHoldMenu()
         if (!cap || !entry) return
         // The deep defence is applyModifierEvent's own gate; this guard
@@ -3160,174 +3147,38 @@ Item {
         onTriggered: root.dwellTick()
     }
 
-    // ---- the hold column's menu (ticket 37) ----
-    //
-    // Card-local, like ticket 35's chooser (commit 86a57b7's lesson): the
-    // panel window's input mask is the card rect, so the menu lives
-    // INSIDE the keyboard's own bounds — above it in z, over the held
-    // cap's column. The catch area underneath eats every press that is
-    // not on the menu itself: one click anywhere else dismisses without
-    // typing, and no cap underneath can start a press of its own while
-    // the menu stands.
-    MouseArea {
-        anchors { fill: parent }
-        enabled: root.holdMenuOpen
-        z: 4
-        onClicked: root.closeHoldMenu()
-    }
-
-    Rectangle {
+    // The hold column's menu (ticket 37) — the card, its catch area
+    // and its entry delegates, in HoldMenu.qml (the structural split's
+    // step six). Card-local, like ticket 35's chooser: the panel
+    // window's input mask is the card rect, so the component fills the
+    // keyboard's own bounds and stands over the held cap's column.
+    HoldMenu {
         id: holdMenu
+        anchors { fill: parent }
 
-        visible: root.holdMenuOpen
-        z: 5
+        // The resolved tokens the card and its entries draw with.
+        cellGap: root.cellGap
+        capRowHeight: root.capRowHeight
+        capCorner: root.capCorner
+        keyBorderWidth: root.keyBorderWidth
+        popupsBackground: root.theme.popupsBackground
+        capEdge: root.capEdge
+        hoverFill: root.hoverFill
+        textDim: root.textDim
+        inkMain: root.inkMain
+        glyphTypeface: root.glyphTypeface
+        capGlyphSize: root.capGlyphSize
+        inputReady: root.inputReady
 
-        // Above the held cap when the column fits there, below it when it
-        // does not (a row-0 hold has no room above), and never outside
-        // the keyboard's rect — that is what keeps the menu inside the
-        // card, i.e. inside the input mask, docked or floating. Anchors
-        // are baked at open (openHoldMenu); like the language chooser,
-        // the menu does not follow a card dragged under it.
-        readonly property real aboveY: root.holdMenuCapTop - height - root.cellGap
-        readonly property real belowY: root.holdMenuCapBottom + root.cellGap
-        x: Math.max(root.cellGap,
-            Math.min(root.holdMenuCapX - width / 2,
-                parent.width - width - root.cellGap))
-        y: Math.max(root.cellGap,
-            Math.min(aboveY >= root.cellGap ? aboveY : belowY,
-                parent.height - height - root.cellGap))
-        width: menuList.childrenRect.width + root.cellGap * 2
-        height: menuList.childrenRect.height + root.cellGap * 2
-        radius: root.capCorner
-        color: root.theme.popupsBackground
-        border.color: root.capEdge
-        // The cap edge's own width, unqualified like the tokens the cap
-        // delegates read — and not the upstream sketch's border line.
-        border.width: keyBorderWidth
-
-        // The hover shield (ticket 50 review): the menu's padding and
-        // the gaps between entries accept HOVER, not just presses, so a
-        // resting pointer cannot fall through onto the caps hidden
-        // underneath — dwell was the first hover-action and weaponized
-        // that fall-through, typing characters the user could not see.
-        // The entries' own hit areas sit above this shield (declared
-        // later inside the Column).
-        MouseArea {
-            anchors { fill: parent }
-            hoverEnabled: true
-            // Swallow hover; a press on the padding still closes (the
-            // catch area's everywhere-outside contract, kept local).
-            onClicked: root.closeHoldMenu()
-        }
-
-        Column {
-            id: menuList
-            anchors {
-                top: parent.top
-                topMargin: root.cellGap
-                horizontalCenter: parent.horizontalCenter
-            }
-            spacing: root.cellGap / 2
-
-            Repeater {
-                model: root.holdMenuEntries
-
-                Rectangle {
-                    id: entryCard
-                    property var entry: modelData
-                    // The same disabled treatment the caps keep: an entry
-                    // that could not type draws dim and refuses its click,
-                    // and no click sound plays for it.
-                    readonly property bool gated: !root.inputReady
-                    width: root.capRowHeight
-                    height: Math.round(root.capRowHeight * 0.8)
-                    radius: root.capCorner
-                    color: entryHit.containsMouse && !gated
-                        ? root.hoverFill : "transparent"
-
-                    // The dwell affordance's two handles, the caps' own
-                    // (ticket 50, slice two): start grows the foot
-                    // underline over the rest's delay, stop snaps it
-                    // away — methods rather than bindings for the same
-                    // reason the caps' are (restart on every arm, die
-                    // instantly on every cancel).
-                    function startDwellFill(delay) {
-                        entryDwellUnderline.visible = true
-                        entryDwellFillAnim.duration = Math.max(1, delay)
-                        entryDwellFillAnim.restart()
-                    }
-                    function stopDwellFill() {
-                        entryDwellFillAnim.stop()
-                        entryDwellUnderline.width = 0
-                        entryDwellUnderline.visible = false
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: entry.text
-                        color: gated ? root.textDim : root.inkMain
-                        font.family: root.glyphTypeface
-                        font.pixelSize: root.capGlyphSize
-                    }
-
-                    // The dwell progress affordance (ticket 50, slice
-                    // two): the caps' own underline in the caps' own
-                    // register — textDim ink, a hint of opacity, never
-                    // an accent fill — because it is the same PROGRESS
-                    // the caps promise: it exists only while a rest is
-                    // live and vanishes the instant the rest ends,
-                    // picked, cancelled or left.
-                    Rectangle {
-                        id: entryDwellUnderline
-                        visible: false
-                        width: 0
-                        height: Math.max(2,
-                            Math.round(root.cellGap * 0.45))
-                        radius: height / 2
-                        anchors {
-                            horizontalCenter: parent.horizontalCenter
-                            bottom: parent.bottom
-                            bottomMargin: Math.round(root.cellGap * 0.35)
-                        }
-                        color: root.textDim
-                        opacity: 0.8
-                    }
-                    NumberAnimation {
-                        id: entryDwellFillAnim
-                        target: entryDwellUnderline
-                        property: "width"
-                        from: 0
-                        to: entryCard.width - root.cellGap
-                        easing.type: Easing.Linear
-                    }
-
-                    MouseArea {
-                        id: entryHit
-                        anchors { fill: parent }
-                        hoverEnabled: true
-                        Accessible.role: Accessible.Button
-                        Accessible.name: entry.text
-                        // A physical press supersedes the rest (the caps'
-                        // own rule): dwell and click never double-pick.
-                        // The click path itself is unchanged — a click
-                        // still picks instantly, gate first.
-                        onPressed: root.dwellReset()
-                        onCanceled: root.dwellReset()
-                        // The dwell path's entry arm (ticket 50, slice
-                        // two): the hit area's own bounds decide the
-                        // rest; moving between entries re-targets (the
-                        // enter supersedes), the gap crossing is the
-                        // shield's, and a leave cancels — the machine's
-                        // rules, entry edition.
-                        onEntered: root.dwellEnterEntry(entry, entryCard)
-                        onExited: root.dwellLeave(entryCard)
-                        onClicked: {
-                            if (gated) return
-                            root.pickHoldEntry(entry)
-                        }
-                    }
-                }
-            }
-        }
+        // The column facts (capHoldColumn), so the menu's content and
+        // the caps' corner dot read one lookup.
+        columnFor: (cap) => root.capHoldColumn(cap)
+        // The pick's dispatch to typing — the chord is the keyboard's.
+        pickEntry: (entry) => root.pickHoldEntry(entry)
+        // The dwell machine's entry arm: the machine and the fire path
+        // are the keyboard's; only the menu's affordance moved.
+        dwellEnterEntry: (entry, delegate) => root.dwellEnterEntry(entry, delegate)
+        dwellLeave: (delegate) => root.dwellLeave(delegate)
+        dwellReset: () => root.dwellReset()
     }
 }
