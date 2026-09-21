@@ -451,33 +451,6 @@ QtObject {
             T.equal(Session.parseCapsReply("caps\t1\t0\t\u001Ftq"), null)
         })
 
-        // ---- text delivery: the command's one wire shape (ticket 24) ----
-
-        T.test("a text line is the verb, one space, the payload verbatim", function () {
-            T.equal(Session.textLine("👍"), "text 👍")
-            // Spaces ride in the payload: the helper takes the whole rest
-            // of the line, it does not split a word list.
-            T.equal(Session.textLine("a b"), "text a b")
-            // Multi-codepoint sequences — ZWJ joiners, variation selectors,
-            // tag characters — pass through untouched, which is the whole
-            // point of carrying a catalogue entry's emoji string.
-            var zwj = "🙂‍↔️"
-            T.equal(Session.textLine(zwj), "text " + zwj)
-            T.equal(Session.textLine("🇺🇦"), "text 🇺🇦")
-        })
-
-        T.test("a payload the line protocol cannot carry is refused", function () {
-            // Empty: the helper would read a bare "text", which its parse
-            // does not recognize as a command at all.
-            T.equal(Session.textLine(""), "")
-            T.equal(Session.textLine(null), "")
-            T.equal(Session.textLine(undefined), "")
-            // A newline is the frame separator: one command per line, so a
-            // payload carrying one is not one delivery. Nothing the
-            // catalogue holds can be these; the guard is the protocol's.
-            T.equal(Session.textLine("a\nb"), "")
-            T.equal(Session.textLine("\n"), "")
-        })
 
         // Ticket 06: the compositor's kb_file is compared to the published
         // keymap by exact identity, never by substring — an unrelated user

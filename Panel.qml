@@ -214,9 +214,6 @@ Item {
         console.log("[oskar] input profile: touch events observed "
             + "(auto resolves to touch until the panel hides)")
     }
-    // Emoji delivery mode (ticket 28): "direct" types the pick through the
-    // helper; "clipboard" publishes the exact sequence and sends the paste
-    // chord — the owner's choice for Chromium-family clients (ZCode).
     // Colour-field entry (spec-v1.1 §5) and the armed emoji search
     // (ticket 42) — the panel's only TWO sanctioned keyboard-focus
     // exceptions, both on the settings overlay, never at once. False
@@ -1064,7 +1061,6 @@ Item {
         root.setOverride("superMark", mark)
     }
 
-    // The emoji delivery mode (ticket 28): setSuperMark's shape. Flipping
     // ---- which output, and where on it (spec-v1 §7) ----
     //
     // Both modes open on the monitor the pointer is on and then stay there
@@ -1642,8 +1638,8 @@ Item {
             return
         }
         // Ticket 56: the client class is derived ONCE, here at the pick —
-        // the click's own moment, the same derivation the direct route
-        // uses for its unicode-entry decision — and rides the payload
+        // the click's own moment, the same derivation the paste chord's
+        // shape table keys on — and rides the payload
         // through publish, verify and chord. The old shape re-derived it
         // when the verify landed, and that second opinion could disagree
         // with the click's (the IME matrix's kitty cell: the chord landed

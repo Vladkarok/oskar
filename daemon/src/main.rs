@@ -82,7 +82,7 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 /// reinstalling the helper says so instead of failing silently. Version 4 adds
 /// the keycap-facts reply and the generation on `configured`; the panel learned
 /// both in the same release, so the version gate is what keeps the pair honest.
-/// Version 5 adds `text-unicode`: unlike ticket 24's initially additive
+/// Version 5 (HISTORICAL) added `text-unicode`: unlike ticket 24's initially additive
 /// `text`, it is selected automatically for Chromium-family clients, so an
 /// updated panel must fail the hello gate against an older helper instead of
 /// accepting clicks that can only earn `err unknown command`.
@@ -1186,13 +1186,6 @@ struct Shared {
     /// installed keymap (see `keycap_facts_for_groups`). Rebuilt exactly when
     /// `caps_gen` is bumped, so a `caps` request compiles nothing.
     caps_per_group: Vec<String>,
-    /// The exact text installed at the device, kept as the single source for
-    /// a `text` pick's transient keymap (ticket 24): the transient variant is
-    /// built from THIS, never from a recompile of the configure's RMLVO, so a
-    /// custom keymap edited at its own path (ticket 06) stays the keymap the
-    /// pick types through. Replaced on every changed-keymap install; a
-    /// same-keymap reconfigure leaves it alone.
-    installed_keymap: Option<String>,
     /// Which compiled layout is active.
     group: u32,
     config: Option<XkbConfig>,
@@ -1323,7 +1316,6 @@ impl Shared {
             config.layouts,
             text.len()
         );
-        self.installed_keymap = Some(text);
         self.ready
     }
 }
@@ -1774,9 +1766,9 @@ fn parse(line: &str) -> Option<Command> {
     let verb = parts.next()?;
     let raw = parts.next()?;
     // Fixed-arity verbs take exactly one argument (F6): a third word is a
-    // malformed line, not a silently truncated one. The variable-arity and
-    // free-text verbs (`caps`, `text`, `text-unicode`, `configure`) are
-    // peeled off above with their own rules.
+    // malformed line, not a silently truncated one. The variable-arity
+    // verb (`caps`) and the tab-separated `configure` are peeled off
+    // above with their own rules.
     if parts.next().is_some() {
         return None;
     }
@@ -2362,14 +2354,9 @@ fn apply(
     held: Option<&mut Vec<u32>>,
     conn_id: u64,
 ) -> String {
-    // Deliveries are hoisted out of the lock (round eleven's blocker): a
-    // pick paces for hundreds of milliseconds between beats, and the sleeps
-    // used to hold the shared lock — a pipelining connection kept it for
-    // ~2 s per command and every other client, hello included, queued
-    // behind it. The deliveries now sleep lock-free with `delivery_active`
-    // set; everything else waits that flag out first (bounded), then runs
-    // under the lock exactly as before — the same serialization the lock
-    // used to give, minus the stalls.
+    // Every command runs under the lock (the typed deliveries that once
+    // paced lock-free between beats are gone with §91); the lock is held
+    // only for bounded work — compiles pay the churn budget at the gate.
     let mut guard = shared.lock().unwrap();
     apply_locked(&mut guard, connection, command, held, conn_id)
 }

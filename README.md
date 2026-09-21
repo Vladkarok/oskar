@@ -181,7 +181,7 @@ One product, four languages, each with a job:
 - **JavaScript** (twenty pure modules beside the QML) — every decision
   the panel makes: what each keycap types, which modifiers a
   hold-column pick needs, how the emoji search ranks, whether the panel
-  follows a layout-group change. Pure, stateless, and covered by 559
+  follows a layout-group change. Pure, stateless, and covered by 503
   offscreen test cases — the repo's main regression net.
 - **Rust** (the `oskar-daemon` helper) — everything at the seat: it
   compiles and mirrors the XKB keymap, owns the virtual keyboard, and
@@ -244,7 +244,8 @@ Notes from the survey:
 - **Typed-into consumers, verified**: native Wayland clients (foot),
   XWayland windows (wine/Proton get the paced plain Ctrl+V paste), and
   Chromium-family editors (Electron receives supplementary-plane emoji
-  byte-exact through the Unicode-entry route). Other toolkits are
+  byte-exact through the clipboard transaction — the one channel, §91).
+  Other toolkits are
   untested.
 - **Language coupling**: any number of configured XKB layouts; typing
   and the caps follow the compositor's layout state in both directions.

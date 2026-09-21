@@ -76,7 +76,7 @@ function readTimedOut(state, seq, target) {
     }
 }
 
-// Ticket 28's delivery transaction (audit 2026-09-13): one pick owns the
+// The delivery transaction (ticket 28, §91's one channel): one pick owns the
 // clipboard and its paste chord end to end. A pick accepted while another
 // is unfinished queues IN ORDER — a queued payload must never replace the
 // clipboard owner an unfinished paste still depends on (the audit's A→B
@@ -94,7 +94,7 @@ function readTimedOut(state, seq, target) {
 //
 // Ticket 56: a pick carries the CLIENT CLASS it was clicked for, from the
 // click to its chord. The class is derived once, at the pick — the click's
-// own moment, the same derivation the direct route already uses — and the
+// own moment, the same derivation the paste chord's shape table uses — and the
 // arrival dispatches with the carried value. The old shape re-derived the
 // class when the verify landed, and that second opinion could disagree
 // with the click's (the IME matrix's kitty cell: the chord arrived

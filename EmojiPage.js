@@ -4,9 +4,8 @@
 // the generated catalogue plus the hand-curated text-glyph shelf (the
 // owner's bare-BMP classics: heart, smiling face, star). The shelf is a
 // THIRD tab, before the animals, per the owner's placement; its entries
-// are lone BMP scalars, so the delivery route sends every one of them as
-// a direct keysym tap into any client — the fast lane, pinned in the
-// suites.
+// are lone BMP scalars — one character, no sequences — delivered by the
+// clipboard transaction like every pick (§91: the one channel).
 .import "EmojiCatalog.js" as Catalog
 .import "TextGlyphs.js" as TextGlyphs
 
@@ -141,7 +140,7 @@ function entryForTone(entry, tone, catalog) {
     // A text glyph has no tones and borrows none (§86): ✌ on the shelf
     // shares its family key with the catalogue's toned victory hands,
     // and resolving the selector would deliver ✌🏽 — a different
-    // character on a different route — from a tile that drew the glyph.
+    // character than the tile drew.
     if (String(entry.group) === "Text") return entry
     var key = toneFamilyKey(entry.emoji)
     var bases = familyBases(catalog)

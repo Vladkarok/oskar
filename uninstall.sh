@@ -33,14 +33,18 @@ if [[ "$cli_owner" == "$(readlink -f "$here/bin/oskar")" ]]; then
   rm -f "$HOME/.local/libexec/oskar-daemon"
   rm -f "$cli"
   systemctl --user daemon-reload
+  if [[ -e "$reg" || -L "$reg" ]] \
+      && [[ "$(readlink -f "$reg" 2>/dev/null || true)" != "$(readlink -f "$here")" ]]; then
+    echo "uninstall.sh: note — the registration at $(readlink -f "$reg" 2>/dev/null || echo "$reg") relied on the shared unit just removed; that checkout must run its own install again before the next reboot or its service will be absent" >&2
+  fi
   echo "Source install removed. Config and state preserved."
 elif [[ -e "$cli" || -e "$HOME/.local/libexec/oskar-daemon"
     || -e "$HOME/.config/systemd/user/oskar.service" ]]; then
   echo "uninstall.sh: the shared helper/service/CLI belong to another install${cli_owner:+ ($cli_owner)}${cli_owner:+ or to a checkout that is gone}; leaving them in place" >&2
   echo "uninstall.sh: this checkout's files are gone with the checkout itself" >&2
-  if [[ -e "$reg" || -L "$reg" ]]; then
-    reg_owner="$(readlink -f "$reg" 2>/dev/null || true)"
-    echo "uninstall.sh: note — the registration at ${reg_owner:-$reg} relied on the shared unit; whichever checkout owns it must run its own install again before the next reboot or its service will be absent" >&2
+  if [[ "$(readlink -f "$reg" 2>/dev/null || true)" == "$(readlink -f "$here")" ]] \
+      && [[ -L "$reg" ]]; then
+    echo "uninstall.sh: the registration is a stale symlink to this checkout; remove it with: rm '$reg'" >&2
   fi
 else
   echo "Source install already absent. Config and state preserved."

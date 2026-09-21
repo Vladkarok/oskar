@@ -10,8 +10,8 @@
 // bare one is not), so this shelf is hand-curated and the generator
 // never touches it. Entry shape is the catalogue's own (search,
 // recents and usage work unchanged); no tone variants — a glyph has
-// none. The suite pins the fast-lane invariant: every entry is a
-// lone BMP scalar and therefore routes "text" everywhere.
+// none. The suite pins the data contract: every entry is a lone BMP
+// scalar — one character, no sequence.
 
 var GROUP = "Text"
 

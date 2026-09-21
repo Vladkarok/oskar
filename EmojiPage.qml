@@ -30,7 +30,6 @@ Rectangle {
     property var usageRecords: []
     property string skinTone: ""
     property bool tonePickerOpen: false
-    // Ticket 28's delivery mode, shown by the header's clipboard toggle.
 
     // Overlay size the page may occupy. Placement (leftover centre) is
     // applied by the panel as x/y; this only feeds the clamp below.

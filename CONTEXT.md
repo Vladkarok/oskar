@@ -28,14 +28,14 @@ _Avoid_: layout config, xkb config
 **Keymap**:
 The compiled xkb keymap holding every layout as a group, extended by the
 helper's reserved symbol block. One identity is installed per `configure`;
-a group switch installs nothing, and a text delivery swaps a transient
-keymap only for the length of the delivery and restores it (decisions §39).
+a group switch installs nothing. (§91 deleted the transient text
+delivery with its swap; a pick never touches the keymap.)
 _Avoid_: layout file, keyboard map, the one keymap
 
 **Churn**:
 Repeated keymap recompilation by the compositor. Bounded per cause, not by
-one session-wide number: each configure-identity change and each transient
-text swap costs its counted compiles, and a group switch costs none. The
+one session-wide number: each configure-identity change costs its counted
+compiles, and a group switch costs none (picks compile nothing — §91). The
 nested harness derives its ceiling from the identities the suite installs,
 never from the last observed count.
 _Avoid_: rebuild loop, thrashing, the storm

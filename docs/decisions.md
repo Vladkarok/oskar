@@ -3330,3 +3330,37 @@ guard's 138 fossil; Panel's orphaned delivery-mode comment and
 TextGlyphs' fast-lane header.
 
 44 Rust tests, 21 host suites, clippy — green. The loop continues.
+
+## 95. Triage round three: nine poisons of one class
+
+Round three went whole-tree and found the class everywhere: the
+deleted delivery machinery still sold as current — and §94's own
+record claimed two fixes that had half-no-matched (the Panel orphan
+existed TWICE and the replace hit neither; README's 559→503 replace
+missed its actual wording). The honesty pass needed the honesty pass.
+
+Swept with asserted replaces, every one:
+- README: 503 test cases (the truth), the Electron route line now
+  names the clipboard transaction.
+- The session handoff's helper bullet describes the post-§91 daemon
+  (no delivery flag, no transient uploads; hold-cap deadlines, the
+  60 s idle, the v6 deletion) — and its §80-§90 round stack is
+  compressed to one paragraph per its own no-stacking charter.
+- CONTEXT's Keymap and Churn entries: picks compile nothing.
+- Panel/EmojiPage/EmojiPage.qml/TextGlyphs/text-glyphs suite: the
+  last five "fast lane"/"delivery mode"/"direct route" citations now
+  describe the one channel and the data contract.
+- The panel library's `textLine()` — a wire-shape builder for the
+  deleted verb, kept green by five test assertions — deleted with
+  its test section (the regression net was actively pinning dead
+  protocol).
+- Daemon: the parse() free-text comment, apply()'s prehistoric
+  delivery rationale, the dead write-only `installed_keymap` field
+  (§91 left it behind), and the v5 history line marked HISTORICAL.
+- uninstall: the orphan note fires only when something was actually
+  removed, and the stale-symlink corner says what to rm.
+- ClipboardPaste/package-notes/PKGBUILD: provenance citations and
+  the fossil mode name.
+
+44 Rust tests, 21 host suites, clippy, the wall's canary (15) and
+restart-settle (8) — green; deployed live.

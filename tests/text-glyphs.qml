@@ -1,6 +1,6 @@
 // The text-glyph shelf (§85): the owner's bare-BMP classics in the
 // picker. Two contracts live here: every glyph is a LONE BMP scalar (so
-// the delivery route taps it directly into any client — the fast lane),
+// one character, no sequence — the shelf's data shape),
 // and the merge seam places the shelf as the THIRD tab, before the
 // animals, over the full merged catalogue. Run with tools/run-tests.sh
 // — no compositor, no display.
