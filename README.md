@@ -91,8 +91,10 @@ untouched while the panel keeps the last valid runtime value.
 | `border_color` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#5a5a5a` |
 
 `state.json` contains the floating placement as `center` — the card centre in
-output-local coordinates — or `null`, bounded emoji usage continuity, and the
-emoji skin-tone selection (state, not an override).
+output-local coordinates — or `null`, the emoji page's dragged position as
+`emoji_center` (written when `emoji_drag` is on; kept across setting flips),
+bounded emoji usage continuity, and the emoji skin-tone selection (state, not
+an override).
 Restores rederive
 the top-left from that centre, clamped only enough to keep the complete card
 on its output (the deterministic anchor of spec-v1.1 §4), so a saved

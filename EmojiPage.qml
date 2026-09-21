@@ -9,7 +9,9 @@ import "UiStrings.js" as UiStrings
 // (spec-v1.1 §5): the panel places it at leftover centre through
 // SettingsPlacement, clamps it inside the leftover strip, and the keyboard
 // band is never part of either — the keys stay on screen and clickable
-// underneath, which is the point. Grid cells size from tokens and the
+// underneath, which is the point. (With `emoji_drag` on — §103 — the
+// page grows a drag strip, moves freely and MAY cover the band; the
+// clamp is the visible overlay, not the leftover.) Grid cells size from tokens and the
 // keyboard's uiScale; whatever content does not fit scrolls inside the page.
 //
 // The keyboard's own caps feed the query while the page stands — searchMode

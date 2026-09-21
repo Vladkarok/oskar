@@ -1206,6 +1206,22 @@ Item {
     // settings layer, one output at a time, and the release keeps
     // whatever the clamp left in this one.
     function rememberEmojiPosition() {
+        // Re-clamp BEFORE saving (the triage round's finding): the drag
+        // axis bounds apply on pointer moves, so a geometry change that
+        // landed while the pointer stood still mid-drag can leave the
+        // page overhanging — release would then remember an off-visible
+        // centre and leave the page parked there until the next open.
+        // The write-back heals this release and the saved centre alike.
+        var topLeft = emojiPage.dragBounds
+            ? SettingsPlacement.clampedTopLeft(
+                { x: emojiPage.x, y: emojiPage.y },
+                { w: emojiPage.width, h: emojiPage.height },
+                emojiPage.dragBounds)
+            : null
+        if (topLeft.x !== emojiPage.x || topLeft.y !== emojiPage.y) {
+            emojiPage.x = topLeft.x
+            emojiPage.y = topLeft.y
+        }
         var center = {
             x: emojiPage.x + emojiPage.width / 2,
             y: emojiPage.y + emojiPage.height / 2

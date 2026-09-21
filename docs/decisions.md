@@ -3502,3 +3502,38 @@ by the exit round); CI's comment said 16 suites. All fixed; the
 languageFor doc; vm-handoff's snapshot marked. The r9/r10 claims
 that no-matched are the record's own lesson — the handoff line is
 now written by the same commit that appends the decision entry.
+
+## 103. The emoji picker learns to move
+
+The owner's ask: the emoji page draggable, with a setting (default
+off = exactly today's computed centring), the strip drawn with the
+keyboard card's own three-state line grammar. The ticket rode the
+board flow (.scratch/emoji-drag, implemented by a subagent, then
+triage-looped).
+
+- The three-state line (rest / press-grab / carried — the owner's
+  2026-09-18 sketch) is ONE component now (DragLine.qml), consumed
+  by the keyboard card's bar and the emoji strip: parity by
+  construction, not copy-paste.
+- `emoji_drag` (boolean, default false): the off state is
+  byte-for-byte the baseline — no strip slot (Column skips
+  invisible), no height change, and a previously saved centre is
+  gated out of off-placement entirely.
+- ON: the strip sits above the search header (a drag never touches
+  the armed search — the strip consumes its press); the drag clamp
+  is the VISIBLE OVERLAY, not the leftover — free means the page may
+  cover the keyboard band (the spec's "never covers the keys"
+  clause amended with exactly this exception). Release persists the
+  page's CENTRE beside the card's own (`emoji_center`, kept across
+  setting flips and row resets — flipping back on restores where the
+  hand left it); open restores clamped into the CURRENT visible
+  area; no centre yet → the old centre-in-leftover.
+- The triage round's findings fixed with it: both stale "never
+  covers" contracts (spec + the page's own header), README's table
+  row and state field, and the settle path re-clamps before saving
+  (a geometry change landing while the pointer stood still mid-drag
+  could park the page overhanging — the write-back heals the release
+  and the saved centre together).
+
+All suites, qmllint, the packaging gate, the wall — green; deployed
+live for the owner's hand.

@@ -47,8 +47,10 @@ the reasons; this file records required behaviour.
   place and never changes panel height or the docked exclusive zone.
 - The emoji cap displays `☺` and opens the panel's own emoji page. The
   page is searched with the keyboard's own keys, in every configured
-  layout, and never covers the keys (the settings card's rule, §5).
-  Choosing an entry delivers it to the focused client through the helper —
+  layout, and never covers the keys (the settings card's rule, §5) —
+  unless `emoji_drag` is on (§103): the page then grows a drag strip,
+  moves freely and MAY cover the band, clamped only to the visible
+  overlay. Choosing an entry delivers it to the focused client through the helper —
   once, by the ONE channel (§91's supersession of this section's original
   delivery clause, ticket 28 and decisions §39/§40/§42): the pick
   publishes its exact sequence to the clipboard, verifies the read, and
