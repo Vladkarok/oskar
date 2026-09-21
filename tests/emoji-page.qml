@@ -17,8 +17,8 @@ QtObject {
     // a 1px hairline, one 24-high icon-tab row, and 7-space gaps between the
     // column's four children. OFF-STATE ONLY (the default): the drag
     // strip's term exists solely under emoji_drag and is NOT modelled
-    // here — the on-state natural height is pageChrome() + stripHeight()
-    // + one more spacing, pinned by the drag-strip case below.
+    // here — the on-state height is naturalPageHeight(...) + 20 + 7,
+    // held by the on-state assertion inside the preset test below.
     // Only the grid cells carry the size preset's scale.
     function naturalPageHeight(cell, gap, rows) {
         var chrome = 2 * 10 + 28 + 1 + 24 + 3 * 7
