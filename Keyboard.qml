@@ -1298,6 +1298,19 @@ Item {
             || event.type === "release"
             || event.type === "releaseAll")
         if (!inputReady && !alwaysLive) return
+        // A paced paste owns the device while it drains (the external
+        // round's P2): a key dispatched under its held Ctrl is a
+        // shortcut out the door — Ctrl+Q — and the pacer's own
+        // assumptions check could only see the conflict at its NEXT
+        // tick, after the damage. Any other event aborts the paste
+        // SYNCHRONOUSLY first, so the user's key lands on a
+        // compensated, released world. The abort's own compensating
+        // releaseAll is always-live and cannot re-enter this gate; a
+        // bare release is harmless to let through (the next tick's
+        // lock-set comparison already covers drift).
+        if (root.pastePacing && !alwaysLive) {
+            root.abortPacedPaste()
+        }
         var dropRestore = event.type === "release" && Session.hasDrainAhead(session)
         // No speculative settle here, deliberately: a release that runs
         // before the outstanding configure's reply must leave the reducer

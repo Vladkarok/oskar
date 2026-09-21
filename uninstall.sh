@@ -20,9 +20,24 @@ else
   echo "uninstall.sh: registration does not point at this checkout; leaving the live install alone" >&2
 fi
 
-rm -f "$HOME/.config/systemd/user/oskar.service"
-rm -f "$HOME/.local/libexec/oskar-daemon"
-rm -f "$HOME/.local/bin/oskar"
-systemctl --user daemon-reload
-
-echo "Source install removed. Config and state preserved."
+# Ownership before removal (the external round's P2): the helper binary,
+# the unit and the CLI symlink are SHARED paths — whichever checkout
+# installed LAST owns them. The CLI symlink is the honest marker (each
+# install writes it and it names its checkout's bin/oskar); removing the
+# trio while another checkout owns it would gut that install's live
+# service mid-flight.
+cli="$HOME/.local/bin/oskar"
+cli_owner="$(readlink -f "$cli" 2>/dev/null || true)"
+if [[ "$cli_owner" == "$here/bin/oskar" ]]; then
+  rm -f "$HOME/.config/systemd/user/oskar.service"
+  rm -f "$HOME/.local/libexec/oskar-daemon"
+  rm -f "$cli"
+  systemctl --user daemon-reload
+  echo "Source install removed. Config and state preserved."
+elif [[ -e "$cli" || -e "$HOME/.local/libexec/oskar-daemon"
+    || -e "$HOME/.config/systemd/user/oskar.service" ]]; then
+  echo "uninstall.sh: the shared helper/service/CLI belong to another install${cli_owner:+ ($cli_owner)}; leaving them in place" >&2
+  echo "uninstall.sh: this checkout's files are gone with the checkout itself" >&2
+else
+  echo "Source install already absent. Config and state preserved."
+fi

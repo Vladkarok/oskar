@@ -3225,3 +3225,37 @@ clipboard.
 restart-settle (8), the nested 32 — green; deployed live. The
 shrink the owner asked for at last: −3032 lines, and the entire
 §76-§88 delivery-concurrency defect class structurally gone.
+
+## 92. The external round's two P2s: the shortcut under the chord, the uninstall that gutted a neighbour
+
+A fresh external review (the owner pasted it) found two P2s and two
+stale-doc spots; both P2s fixed and deployed, then the triage loop
+resumes per the standing order.
+
+- **Typing during a Wine/Proton paced paste sent shortcuts.** The
+  paced chord holds Ctrl at the device while ordinary caps stayed
+  enabled; a Q click dispatched immediately as Ctrl+Q, and the pacer's
+  assumptions check could only see the conflict at its NEXT tick —
+  after the damage. (The §88 auditor had adjudicated this window as
+  §28's accepted abort contract; the reviewer was right that
+  "detected late" and "prevented" are different claims.) Fixed at the
+  one writer: `applyModifierEvent` aborts the paced paste
+  SYNCHRONOUSLY before dispatching any non-always-live event — the
+  user's key lands on a compensated, released world, and the abort's
+  own compensating releaseAll is always-live and cannot re-enter the
+  gate.
+- **Uninstalling an old checkout gutted another installation.** The
+  script checked registration ownership before the teardown but
+  removed the SHARED helper/service/CLI unconditionally. The CLI
+  symlink is the honest ownership marker (each install writes it and
+  it names its checkout's bin/oskar): the trio is removed only when
+  it points at this checkout; otherwise the files stay and the script
+  says whose they are.
+- Docs refreshed with them: README no longer describes the removed
+  delivery routes (the one clipboard channel, with the §63 ack
+  residual stated precisely); SECURITY.md documents the 60-second
+  negotiated-idle drop instead of claiming idle connections stay
+  indefinitely.
+
+44 Rust tests, 21 host suites, clippy, the wall's canary (15) and
+restart-settle (8), the nested 32 — green; deployed live.

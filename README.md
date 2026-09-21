@@ -211,7 +211,7 @@ layout; most ship their own layout lists that only their own key switches.
 | Caps follow the system layout | both directions — switch with the physical shortcut and the caps follow; switch from the panel and the physical keyboard follows | partial, one-way, ibus-coupled | Qt Virtual Keyboard's own layout lists | its own layout files | static keycap sets | own definitions |
 | What is drawn is what is typed | yes, including non-Latin and per-group variants, proven byte-exact | within GNOME's input stack | within Qt's stack | within Phosh | — | X11 only |
 | XWayland / wine-Proton | proven (paced paste chord) | — | — | — | types, no layout coupling | X11 only |
-| Chromium/Electron emoji | proven (Unicode-entry route; clipboard mode for the rest) | — | — | — | — | — |
+| Chromium/Electron emoji | proven (byte-exact clipboard transaction — the one channel every pick uses) | — | — | — | — | — |
 | Host | Omarchy (Hyprland + Quickshell), Wayland | GNOME (mutter/ibus) | Plasma 6.6+, input-method-v1 | Phosh | wlroots mobile shells | X11 |
 | State (2026) | active | active | new (Feb 2026) | squeekboard replaced by Stevia in postmarketOS | active | abandoned |
 
@@ -325,9 +325,12 @@ follows `configure`/`group` commands with an assertion before every tap
 leaves the helper serving, and the multi-client claim rules (foreign
 releases refused, a shared press surviving one claim's release, taps
 refusing to lift a claim, a re-claim after a keymap swap re-pressing). VM
-integration legs also verify byte-exact delivery in native Wayland, XWayland
-and Electron consumers; visual feel and real-host application behavior remain
-owner-acceptance work.
+integration legs verify the protocol and keymap seams; every emoji pick
+is delivered by the clipboard transaction (§91 — the typed delivery
+routes are gone), whose helper ack proves the chord reached the
+compositor, not that the destination consumed the paste — that residual
+is stated in decisions §63. Visual feel and real-host application
+behavior remain owner-acceptance work.
 
 ```sh
 cd daemon && cargo test
