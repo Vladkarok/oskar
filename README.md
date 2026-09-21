@@ -181,7 +181,7 @@ One product, four languages, each with a job:
 - **JavaScript** (twenty pure modules beside the QML) — every decision
   the panel makes: what each keycap types, which modifiers a
   hold-column pick needs, how the emoji search ranks, whether the panel
-  follows a layout-group change. Pure, stateless, and covered by 503
+  follows a layout-group change. Pure, stateless, and covered by 501
   offscreen test cases — the repo's main regression net.
 - **Rust** (the `oskar-daemon` helper) — everything at the seat: it
   compiles and mirrors the XKB keymap, owns the virtual keyboard, and

@@ -28,8 +28,8 @@
 // returns null and the panel treats the reply as unresolved, never as an
 // empty level it might silently draw over.
 
-/// Bumped with the helper's PROTOCOL_VERSION. Version 5 adds the
-/// Chromium-specific `text-unicode` delivery command; version 4 added `caps`
+/// Bumped with the helper's PROTOCOL_VERSION. Version 5 (HISTORICAL)
+/// added the Chromium-specific `text-unicode` delivery command; version 4 added `caps`
 /// reply and the generation on `configured`; the hello gate refuses a
 /// pairing of old and new before any configure is sent, which is what lets
 /// both sides change reply shapes in one release.

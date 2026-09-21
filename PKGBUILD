@@ -36,7 +36,7 @@ license=(MIT)
 # The product is Omarchy-only by scope decision: `omarchy` is provided by
 # Omarchy's own packages (omarchy/omarchy-dev). The panel host and the
 # compositor it reads layouts from are hard requirements, as are the
-# clipboard tools the paste chip and the compatibility emoji route
+# clipboard tools the paste chip and every emoji pick's transaction
 # execute, and the library the helper links.
 depends=(omarchy hyprland quickshell qt6-declarative jq wl-clipboard
   libxkbcommon gcc-libs glibc)

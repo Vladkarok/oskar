@@ -1520,7 +1520,7 @@ Item {
         onTriggered: root.clipboardContentGone = false
     }
 
-    // Emoji delivery through the clipboard (ticket 28, "clipboard" mode).
+    // Emoji delivery through the clipboard (the one channel, §91).
     // The transaction lives in the pure ClipboardPaste.txn* machine;
     // these are only its processes and timers. One pick owns the
     // clipboard and its paste chord END TO END: a pick accepted while
@@ -1531,8 +1531,7 @@ Item {
     // paste was dispatched). The publisher stays alive as the selection
     // owner — killing it would recreate ticket 25's dead-owner behaviour;
     // the next pick replaces it, which is replacement, not loss. The
-    // pick's payload is what the mode REPLACES the clipboard with
-    // (spec-v1.1 §1): text only, stated in the toggle's tooltip.
+    // pick's payload is what replaces the clipboard.
     property var emojiTxnState: ClipboardPaste.txnInitial()
 
     Process {

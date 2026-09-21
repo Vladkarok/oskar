@@ -53,8 +53,8 @@ Both worlds never coexist silently — see `setup --migrate-source`.
 ## Dependency contract
 
 Hard: `omarchy` (the shell this panel is built for), `hyprland`,
-`quickshell`, `jq`, `wl-clipboard` (the paste chip and the
-clipboard-compatibility emoji route execute `wl-copy`/`wl-paste`),
+`quickshell`, `jq`, `wl-clipboard` (the paste chip and every emoji
+pick's clipboard transaction execute `wl-copy`/`wl-paste`),
 `libxkbcommon` (the helper links it), `gcc-libs`, `glibc`. Optional:
 `qt6-multimedia` and `ffmpeg` together provide the key-click sound.
 

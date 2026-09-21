@@ -2317,9 +2317,8 @@ fn release_everything(shared_arc: &SharedRef, connection: &Connection) -> Vec<u3
     shared.shutting_down = true;
     // An in-flight delivery finishes its CURRENT scalar (chord lifted,
     // mask zeroed — beats always write) and exits at the next boundary;
-    // only then is the final release queued. Waiting here is what keeps
-    // the unlockable pacing from stranding a mid-chord Ctrl the held-key
-    // release cannot know about (round thirteen's P1).
+    // only then is the final release queued — nothing new starts while
+    // the release round-trips, because the gate is already closed.
     drop(shared);
     let mut shared = shared_arc.lock().unwrap();
     let Some(keyboard) = shared.keyboard.clone() else {
@@ -2730,18 +2729,14 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         if unsafe { libc::sigwait(&set, &mut received) } != 0 {
             return;
         }
-        // Before anything that can block: the deliveries poll this between
-        // their paced steps and abort within one beat, so the release below
-        // wins the race with the 500 ms guard instead of racing it.
         // The release waits on the compositor, and a compositor that is
         // itself going away (the `PartOf=` teardown) may never answer. The
         // release is best-effort and systemd must not sit through its stop
         // timeout for it, so leaving is bounded either way.
         thread::spawn(|| {
-            // Longer than the delivery wait-out's 5 s bound (the external
-            // audit's finding 5): release_everything first lets an
-            // in-flight delivery finish its scalar — chords lifted — and
-            // a 500 ms exit raced exactly that, stranding the keys this
+            // Generous against the release's own compositor round-trips:
+            // every path under it is bounded well inside this, and an exit
+            // that raced a live round-trip could strand the very keys the
             // release exists to lift.
             thread::sleep(Duration::from_secs(6));
             eprintln!("compositor did not acknowledge the shutdown release; leaving anyway");

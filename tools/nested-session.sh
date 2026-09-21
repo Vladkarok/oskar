@@ -233,6 +233,8 @@ status=$?
 # transient keymap and then the installed one back to the helper's own
 # virtual keyboard: two seat keymap loads that change NO identity — the
 # installed map ends where it started — but each costs one Xwayland
+# (The journal below is the pre-§91 derivation, kept as history; the
+# 2026-09-21 re-derivation further down is the living one.)
 # ERROR-REPORT pair on this guest, measured in isolation (2 picks: baseline
 # 4 lines, then 10, then 14). Five picks in the suite, so the uploads alone
 # are 5 x 2 pairs x 2 lines = 20. Measured whole-suite costs wobble around

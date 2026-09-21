@@ -3364,3 +3364,32 @@ Swept with asserted replaces, every one:
 
 44 Rust tests, 21 host suites, clippy, the wall's canary (15) and
 restart-settle (8) — green; deployed live.
+
+## 96. Triage round four: the honesty pass needed the honesty pass again
+
+Round four: ten poisons, all the deleted-machinery class — and §95's
+own batch had died midway on an assert, leaving its packaging edits
+unexecuted while the commit message claimed them (the atomic-claim
+lesson: a batch that dies has landed exactly what it printed, and a
+claim must name only those). Swept with per-edit verification:
+
+- The packaging fossils (PKGBUILD, package-notes) landed — actually,
+  this time, grep-verified.
+- Panel's live transaction header: the mode name, the
+  "what the mode REPLACES" semantics, and the citation of a tooltip
+  that no longer exists.
+- Daemon: release_everything's delivery-wait prose and the sigwait
+  thread's 5-second wait-out rationale — both narrating machinery
+  §91 deleted; the exit timer re-justified against what it actually
+  bounds (compositor round-trips).
+- README's count re-derived by counting (501 — §95's own deletions
+  had already staled its 503); the handoff's 53/559+/40 fossil trio;
+  the handoff's fast-lane line past-tensed; its open list rewritten
+  (the mid-edit splice, the stale commit range); orientation's state
+  block refreshed in place with its history marked; the v5 line in
+  KeyboardSession marked HISTORICAL like its daemon twin; the
+  ime-coexistence procedure's dead setting marked pre-§91; the churn
+  guard's old journal marked superseded; config test's orphan.
+
+44 Rust tests, 21 QML suites (501), clippy, the wall's canary (15)
+and restart-settle (8) — green; deployed live.
