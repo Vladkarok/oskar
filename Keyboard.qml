@@ -1692,25 +1692,11 @@ Item {
         serviceIncompatible: serviceIncompatible,
         capsFactsFailed: capsFactsFailed
     })
-    // Set when the socket reaches `connected`, consumed by the hello reply:
-    // only a genuinely new connection may reset device-held modifier state,
-    // never the repair timer's re-hello of a live one. See the hello handler.
-    property bool socketReconnected: false
-    // The hello watchdog's ledger (ticket 47): a hello was written and
-    // nothing has arrived from the helper since. `connected` alone cannot
-    // be trusted to say the pipe is alive — a peer-closed quickshell
-    // Socket can keep reporting true (observed live twice: the owner's
-    // original note in the error handler below, and the install-from-zero
-    // stranger's whole session) — so liveness is proved by traffic, and a
-    // hello outstanding past SocketWatch.HELLO_STALE_MS rebuilds the
-    // socket whatever `connected` claims. Cleared by every arriving line,
-    // by a disconnect, and by the rebuild itself (the hello belonged to
-    // the object being torn down).
-    property bool helloInFlight: false
-    property real helloSentAt: 0
-    // Root-scope alias because the component's own id does not reach the
-    // functions out here.
-    property QtObject daemonSocket: helperLoader.item
+    // The live socket object, aliased from the transport component: the
+    // integration legs probe it by this name on the hosted keyboard
+    // (tools/integration/hold_column.py, restart_settle.py), so the
+    // split keeps it.
+    property QtObject daemonSocket: helperLink.socket
 
     // The share scheduler gave up on an acknowledged generation (five
     // failed hyprctl runs): the seat is carrying two keymaps and clients
@@ -1719,619 +1705,451 @@ Item {
     // not a user-visible channel (the flows round's finding).
     signal keymapShareGivenUp()
 
-    // The one rebuild of the socket object: destroy and recreate it
-    // through the loader, on the next tick where QML is idle enough to
-    // tear a live object graph down safely. onError's original home, now
-    // shared with the watchdog's "rebuild" answer and the path check —
-    // one place that knows a fresh socket object is the cure.
-    function rebuildSocket() {
-        root.helloInFlight = false
-        // The disconnect arm's first act, carried here for the same
-        // reason (ticket 54 review F1): the watchdog can order a rebuild
-        // while inputReady still reads true (readiness moves only on
-        // traffic outcomes, and 5 s of silence proves none), and a click
-        // in the teardown window would otherwise queue onto a drained
-        // FIFO and write into the dying socket.
-        root.inputReady = false
-        // Ticket 54: a lying socket never runs the disconnect arm, so the
-        // rebuild carries that arm's one residual reset itself — the
-        // compositor share generation (a restarted daemon can repeat
-        // the stale one and the once-per-generation guard would skip a
-        // re-share). SocketWatch owns the ledger, pinned by its suite.
-        var resets = SocketWatch.rebuildResets({
-            sharedKeymapGen: root.sharedKeymapGen
-        })
-        root.sharedKeymapGen = resets.sharedKeymapGen
-        root.shareQueue = ShareQueue.initial()
-        // The scheduler's world died with the connection: a stale run's
-        // exit must not read as the next run's verdict, and a pending
-        // retry must not fire an unscheduled run (the external audit's
-        // finding 11).
-        shareRetry.stop()
-        shareProcess.running = false
-        // A chord awaiting its final line's ack cannot be completed by a
-        // helper that is being torn down: settle it as a cancellation, the
-        // way every other failure path already does — and the ledger of
-        // oks owed by the dead connection dies with it.
-        if (root.chordAcks.chordDone) root.chordAckTimedOut()
-        root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
-        Qt.callLater(function () {
-            helperLoader.active = false
-            helperLoader.active = true
-        })
+    // The helper connection's transport: the socket object in its
+    // loader, the one rebuild, the hello/reconnect timers and the path
+    // check, in HelperLink.qml (the structural split's step one). What
+    // a reply MEANS is decided below, in the lineReceived handler; both
+    // directions of writing still cross sendCommandUnchecked, whose
+    // ledger push stayed here.
+    HelperLink {
+        id: helperLink
+
+        // SocketWatch's reconnect decision reads four keyboard facts;
+        // bound here because the ledgers they summarise are the
+        // keyboard's, not the transport's.
+        inputReady: root.inputReady
+        sessionSettled: Session.settled(root.session)
+        pastePacing: root.pastePacing
+        chordAwaitingAck: !!root.chordAcks.chordDone
+        // The one choke point, handed down: hello and ping must occupy
+        // their correlation slot like every command.
+        sendChoked: (line) => root.sendCommandUnchecked(line)
     }
 
-    // The helper may start after the shell: systemd orders the service
-    // against graphical-session.target, not against the shell, so the panel's
-    // first connection attempt can find no socket. Quickshell's Socket never
-    // recovers from that — a failed connect leaves its internal QLocalSocket
-    // in place, and setConnected(true) only dials when that object is gone,
-    // with nothing but a successful connection ever clearing it — so the
-    // whole socket is rebuilt whenever the helper's socket file exists and
-    // the helper has not answered hello yet. A helper that dies later needs
-    // none of this: the disconnected path clears the object and the pending
-    // targetConnected redials on its own. One rebuild per two seconds while
-    // the helper is down; a completed handshake stops the timer.
-    Loader {
-        id: helperLoader
-        active: true
-        sourceComponent: helperComponent
-    }
+    // The connection lifecycle's state work — verbatim from the socket
+    // object's own handlers before the split, moved here because the
+    // ledgers being reset are the keyboard's: the session, the chord
+    // ledger, the compositor-share scheduler. HelperLink owns the
+    // object and the timers; these handlers own the consequences.
+    Connections {
+        target: helperLink
 
-    Component {
-        id: helperComponent
+        // The socket flipped to disconnected.
+        function onConnectionDropped() {
+            root.inputReady = false
+            // The handshake no longer holds on this dead socket; the
+            // queue and facts stay until a new connection's fresh
+            // hello restarts them (a live helper may still answer for
+            // the transaction a reconnect is racing).
+            root.session = Session.reduce(root.session, { type: "connectionDown" })
+            // A chord awaiting its final line's ack settles as a
+            // cancellation — the helper released everything it held
+            // on the way down, no ack is coming, and the ledger of
+            // oks owed by this connection dies with it.
+            if (root.chordAcks.chordDone) root.chordAckTimedOut()
+            root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
+            // A restarted helper counts its installs from one again,
+            // so the generation this panel last shared can come round
+            // a second time and the once-per-generation guard would
+            // skip a keymap the compositor has never seen. The path
+            // does not change, so nothing would make it re-read the
+            // file either: two keymaps on the seat, silently.
+            root.sharedKeymapGen = 0
+            root.shareQueue = ShareQueue.initial()
+            shareRetry.stop()
+            shareProcess.running = false
+        }
 
-        Socket {
-            id: helper
-            path: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/oskar/control.sock"
-            connected: true
+        // HelperLink.rebuild() ran: the state resets the rebuild carried
+        // while it lived here, in the same order — they run
+        // synchronously inside rebuild(), before its Qt.callLater tears
+        // the socket object down.
+        function onRebuilt() {
+            // The disconnect arm's first act, carried here for the same
+            // reason (ticket 54 review F1): the watchdog can order a rebuild
+            // while inputReady still reads true (readiness moves only on
+            // traffic outcomes, and 5 s of silence proves none), and a click
+            // in the teardown window would otherwise queue onto a drained
+            // FIFO and write into the dying socket.
+            root.inputReady = false
+            // Ticket 54: a lying socket never runs the disconnect arm, so the
+            // rebuild carries that arm's one residual reset itself — the
+            // compositor share generation (a restarted daemon can repeat
+            // the stale one and the once-per-generation guard would skip a
+            // re-share). SocketWatch owns the ledger, pinned by its suite.
+            var resets = SocketWatch.rebuildResets({
+                sharedKeymapGen: root.sharedKeymapGen
+            })
+            root.sharedKeymapGen = resets.sharedKeymapGen
+            root.shareQueue = ShareQueue.initial()
+            // The scheduler's world died with the connection: a stale run's
+            // exit must not read as the next run's verdict, and a pending
+            // retry must not fire an unscheduled run (the external audit's
+            // finding 11).
+            shareRetry.stop()
+            shareProcess.running = false
+            // A chord awaiting its final line's ack cannot be completed by a
+            // helper that is being torn down: settle it as a cancellation, the
+            // way every other failure path already does — and the ledger of
+            // oks owed by the dead connection dies with it.
+            if (root.chordAcks.chordDone) root.chordAckTimedOut()
+            root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
+        }
 
-            onConnectionStateChanged: {
-                if (connected) {
-                    // Readiness is not the same as "the socket answered": the
-                    // helper accepts commands before the compositor keymap has
-                    // been forwarded to its virtual keyboard, and would drop
-                    // every key. hello therefore goes out on a short delay
-                    // after the flip — inline writes were observed landing on
-                    // a closed device during the VM dogfooding. The flip is
-                    // also what the hello reply's reset keys off: only a
-                    // genuinely new connection released the old one's holds.
-                    root.socketReconnected = true
-                    helloTimer.restart()
+        // One line from the helper. The watchdog's any-line clear has
+        // already run on the transport side before this fired; the
+        // ChordAcks FIFO pop and the reply dispatch are everything the
+        // monolith's onRead did after it.
+        function onLineReceived(line) {
+            var reply = String(line).trim()
+            // And any line is an ANSWER: it pops the oldest
+            // command's slot in the correlation queue — ok, err,
+            // fact or generation, the helper answers in order. The
+            // chord's verdict rides on the pop of its own final
+            // line, success only when the reply is a bare `ok`
+            // (round five's blocker: an err used to leave the slot
+            // occupied forever, failing every later chord).
+            var ack = ChordAcks.replyReceived(root.chordAcks,
+                reply === "ok")
+            root.chordAcks = ack.state
+            if (ack.done) root.chordAckCompleted(ack.done, ack.success)
+            // What this reply ANSWERED, for the err arms below:
+            // the FIFO pop is the only honest witness of which
+            // command a content-ambiguous err settles (round 17
+            // — `err bad group` serves three different verbs).
+            var answeredVerb = String(ack.verb || "")
+            if (reply === "hello " + Session.PROTOCOL_VERSION) {
+                root.serviceIncompatible = false
+                root.inputReady = false
+                // On a genuinely NEW connection the helper released
+                // everything the old one held when that socket
+                // closed, so a locked modifier did not survive the
+                // reconnect however the indicator looked. Reset to
+                // match, and do it without emitting the releases —
+                // sending `up` for a code nobody holds is a lie in
+                // the other direction.
+                // Caps is a semantic panel control, not a held key on
+                // this connection, so a helper restart does not turn
+                // it off. Only the real device-held modifiers reset.
+                //
+                // The gate matters: the repair timer re-hellos an
+                // open-but-unready socket (a configure refused, a
+                // helper still starting) WITHOUT the connection ever
+                // dropping. That helper still holds whatever the
+                // panel asked it to hold, so neither the state reset
+                // nor the `mods 0` may fire here — resetting the
+                // reducer over a live hold would leave the device
+                // Shift down under an idle panel.
+                if (helperLink.socketReconnected) {
+                    helperLink.socketReconnected = false
+                    root.capsFactsFailed = false
+                    // Ticket 38: a genuinely new connection also
+                    // resets the settle guard's world — the helper
+                    // is back at group 0 and whatever this panel
+                    // followed or commanded belongs to the old
+                    // socket. The next reading establishes and arms
+                    // the post-reconnect window. The repair timer's
+                    // re-hello (the else arm below) changes nothing
+                    // here: a live socket's world is intact.
+                    root.settleGuard = SettleGuard.connected(
+                        root.settleGuard)
+                    root.modifierState = Modifiers.reduce(
+                        root.modifierState, { type: "releaseAll" }).state
+                    // Session bookkeeping starts over with the
+                    // connection: the next configure's identity must
+                    // be compared against what THIS helper instance
+                    // has acknowledged, and no reply can still arrive
+                    // for a transaction a predecessor was holding.
+                    root.session = Session.reduce(root.session,
+                        { type: "helloAcked", fresh: true })
+                    sendCommandUnchecked("mods 0")
                 } else {
-                    root.inputReady = false
-                    // The hello this object was owed can no longer arrive;
-                    // the watchdog must not keep waiting on it.
-                    root.helloInFlight = false
-                    // The handshake no longer holds on this dead socket; the
-                    // queue and facts stay until a new connection's fresh
-                    // hello restarts them (a live helper may still answer for
-                    // the transaction a reconnect is racing).
-                    root.session = Session.reduce(root.session, { type: "connectionDown" })
-                    // A chord awaiting its final line's ack settles as a
-                    // cancellation — the helper released everything it held
-                    // on the way down, no ack is coming, and the ledger of
-                    // oks owed by this connection dies with it.
-                    if (root.chordAcks.chordDone) root.chordAckTimedOut()
-                    root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
-                    // A restarted helper counts its installs from one again,
-                    // so the generation this panel last shared can come round
-                    // a second time and the once-per-generation guard would
-                    // skip a keymap the compositor has never seen. The path
-                    // does not change, so nothing would make it re-read the
-                    // file either: two keymaps on the seat, silently.
-                    root.sharedKeymapGen = 0
-                    root.shareQueue = ShareQueue.initial()
-                    shareRetry.stop()
-                    shareProcess.running = false
+                    // The repair timer's re-hello of a live socket:
+                    // the handshake holds, nothing resets.
+                    root.session = Session.reduce(root.session,
+                        { type: "helloAcked", fresh: false })
                 }
-            }
-
-            parser: SplitParser {
-                onRead: function (line) {
-                    var reply = String(line).trim()
-                    // Any line from the helper proves the pipe alive end to
-                    // end (ticket 47's watchdog): the daemon serves each
-                    // connection in order, so whatever this is, a hello
-                    // written before it has been answered or overtaken by
-                    // work that is about to answer.
-                    root.helloInFlight = false
-                    // And any line is an ANSWER: it pops the oldest
-                    // command's slot in the correlation queue — ok, err,
-                    // fact or generation, the helper answers in order. The
-                    // chord's verdict rides on the pop of its own final
-                    // line, success only when the reply is a bare `ok`
-                    // (round five's blocker: an err used to leave the slot
-                    // occupied forever, failing every later chord).
-                    var ack = ChordAcks.replyReceived(root.chordAcks,
-                        reply === "ok")
-                    root.chordAcks = ack.state
-                    if (ack.done) root.chordAckCompleted(ack.done, ack.success)
-                    // What this reply ANSWERED, for the err arms below:
-                    // the FIFO pop is the only honest witness of which
-                    // command a content-ambiguous err settles (round 17
-                    // — `err bad group` serves three different verbs).
-                    var answeredVerb = String(ack.verb || "")
-                    if (reply === "hello " + Session.PROTOCOL_VERSION) {
-                        root.serviceIncompatible = false
-                        root.inputReady = false
-                        // On a genuinely NEW connection the helper released
-                        // everything the old one held when that socket
-                        // closed, so a locked modifier did not survive the
-                        // reconnect however the indicator looked. Reset to
-                        // match, and do it without emitting the releases —
-                        // sending `up` for a code nobody holds is a lie in
-                        // the other direction.
-                        // Caps is a semantic panel control, not a held key on
-                        // this connection, so a helper restart does not turn
-                        // it off. Only the real device-held modifiers reset.
-                        //
-                        // The gate matters: the repair timer re-hellos an
-                        // open-but-unready socket (a configure refused, a
-                        // helper still starting) WITHOUT the connection ever
-                        // dropping. That helper still holds whatever the
-                        // panel asked it to hold, so neither the state reset
-                        // nor the `mods 0` may fire here — resetting the
-                        // reducer over a live hold would leave the device
-                        // Shift down under an idle panel.
-                        if (root.socketReconnected) {
-                            root.socketReconnected = false
-                            root.capsFactsFailed = false
-                            // Ticket 38: a genuinely new connection also
-                            // resets the settle guard's world — the helper
-                            // is back at group 0 and whatever this panel
-                            // followed or commanded belongs to the old
-                            // socket. The next reading establishes and arms
-                            // the post-reconnect window. The repair timer's
-                            // re-hello (the else arm below) changes nothing
-                            // here: a live socket's world is intact.
-                            root.settleGuard = SettleGuard.connected(
-                                root.settleGuard)
-                            root.modifierState = Modifiers.reduce(
-                                root.modifierState, { type: "releaseAll" }).state
-                            // Session bookkeeping starts over with the
-                            // connection: the next configure's identity must
-                            // be compared against what THIS helper instance
-                            // has acknowledged, and no reply can still arrive
-                            // for a transaction a predecessor was holding.
-                            root.session = Session.reduce(root.session,
-                                { type: "helloAcked", fresh: true })
-                            sendCommandUnchecked("mods 0")
-                        } else {
-                            // The repair timer's re-hello of a live socket:
-                            // the handshake holds, nothing resets.
-                            root.session = Session.reduce(root.session,
-                                { type: "helloAcked", fresh: false })
+                // Both through the choke point: every command on
+                // this connection occupies its correlation slot,
+                // so these replies pop what they answer.
+                sendCommandUnchecked("keyboards")
+                // A restarted helper is back at group 0 and has no idea
+                // which layout is current. Re-reading the compositor
+                // sends the right group; using groupCursor here
+                // would send whatever it held before the first sync,
+                // which is 0 on a fresh panel and would force the
+                // first layout.
+            } else if (reply === "keyboards" || reply.indexOf("keyboards\t") === 0) {
+                var names = reply.split("\t").slice(1).filter(function(name) {
+                    return name.length > 0
+                })
+                root.startupKeyboards = names
+                if (!root.startupInventorySeen) {
+                    root.startupInventorySeen = true
+                    root.startupKeyboardName = names.length > 0 ? names[0] : ""
+                    if (!root.anchorKeyboardName)
+                        root.anchorKeyboardName = root.startupKeyboardName
+                }
+                root.pullLayoutsFromCompositor()
+            } else if (reply.indexOf("configured") === 0) {
+                // Mirror the helper's own configure behaviour, for
+                // THE ENTRY THIS REPLY SETTLES — the oldest
+                // outstanding transaction, not the newest sent
+                // (FIFO; see the queue above). A configure that
+                // changed the keymap drained every key it held for
+                // us on its way in (install_config lifts each held
+                // code and zeroes the modifiers); one that kept the
+                // keymap — a group move, a byte-identical refresh —
+                // deliberately kept them. The panel follows both,
+                // the way the hello path already resets over a
+                // connection the helper released: on a keymap
+                // change, drop the device-held modifier state
+                // WITHOUT emitting — an `up` for a code the device
+                // no longer holds would be a lie in the other
+                // direction — while Caps and Fn stay, being
+                // semantic panel controls and never held at the
+                // device. On a same-keymap configure the lock
+                // stays held at the device and drawn locked, and
+                // typing agrees (the gate in applyModifierEvent
+                // writes whatever the reducer emits, restorative
+                // downs included — except across a drain, where
+                // the reducer itself withholds the restore).
+                // The reply names the keymap generation it installed
+                // (protocol 4, decisions §23). A reply without one is
+                // not a helper this panel can reason about: the shapes
+                // moved together with the version, so this is an
+                // installation mismatch, not a recoverable error.
+                var gen = parseInt(reply.split("\t")[1])
+                if (!isFinite(gen) || gen <= 0) {
+                    root.serviceIncompatible = true
+                    root.inputReady = false
+                } else {
+                    root.settleConfigureReply(gen)
+                    // Readiness waits for the WHOLE queue: an older
+                    // reply does not make typing safe while a pipelined
+                    // configure is still compiling the keymap a press
+                    // would land in — a chord allowed through now would
+                    // straddle that drain and lose its release. It also
+                    // waits for keycap facts that answer the generation
+                    // this reply just installed (decisions §23): request
+                    // them the moment the queue is settled and anything
+                    // current has been invalidated.
+                    if (Session.settled(root.session)) {
+                        // Every group of this install, not just the
+                        // one being drawn. The helper resolved them
+                        // all when it installed the keymap, so asking
+                        // for the rest now costs one extra reply each
+                        // and makes the next language switch a lookup
+                        // instead of a round trip through an
+                        // invalidated, gated, dimmed keyboard.
+                        var missing = Session.missingCapGroups(
+                            root.session, root.groupCount)
+                        if (missing.length > 0)
+                            console.log("[oskar] caps requested for group(s)",
+                                missing.join(","), "of", root.groupCount)
+                        for (var mg = 0; mg < missing.length; mg++)
+                            sendCommandUnchecked(capsRequestLine(missing[mg]))
+                    }
+                    root.inputReady = Session.typingReady(root.session)
+                }
+            } else if (reply.indexOf("caps\t") === 0) {
+                // The helper's keycap facts for the world it has
+                // installed (decisions §23). The session refuses any
+                // reply whose generation or group no longer matches
+                // the acknowledged one — a superseded answer computed
+                // from a keymap the helper no longer has can never
+                // enable caps, and while nothing current exists the
+                // typing gate stays shut.
+                var parsed = Session.parseCapsReply(reply)
+                if (!parsed) {
+                    // A reply the parser refuses is protocol drift,
+                    // not an empty keymap: refuse the world rather
+                    // than draw a guessed level.
+                    console.error("[oskar] unreadable keycap facts reply")
+                    root.capsFactsFailed = true
+                    root.inputReady = false
+                } else {
+                    var applied = Session.applyCapsReply(root.session, parsed)
+                    root.session = applied.state
+                    if (applied.accepted) {
+                        root.capsFactsFailed = false
+                        root.shareKeymapWithCompositor()
+                        if (Session.typingReady(root.session)) {
+                            root.inputReady = true
                         }
-                        // Both through the choke point: every command on
-                        // this connection occupies its correlation slot,
-                        // so these replies pop what they answer.
-                        sendCommandUnchecked("keyboards")
-                        // A restarted helper is back at group 0 and has no idea
-                        // which layout is current. Re-reading the compositor
-                        // sends the right group; using groupCursor here
-                        // would send whatever it held before the first sync,
-                        // which is 0 on a fresh panel and would force the
-                        // first layout.
-                    } else if (reply === "keyboards" || reply.indexOf("keyboards\t") === 0) {
-                        var names = reply.split("\t").slice(1).filter(function(name) {
-                            return name.length > 0
-                        })
-                        root.startupKeyboards = names
-                        if (!root.startupInventorySeen) {
-                            root.startupInventorySeen = true
-                            root.startupKeyboardName = names.length > 0 ? names[0] : ""
-                            if (!root.anchorKeyboardName)
-                                root.anchorKeyboardName = root.startupKeyboardName
-                        }
-                        root.pullLayoutsFromCompositor()
-                    } else if (reply.indexOf("configured") === 0) {
-                        // Mirror the helper's own configure behaviour, for
-                        // THE ENTRY THIS REPLY SETTLES — the oldest
-                        // outstanding transaction, not the newest sent
-                        // (FIFO; see the queue above). A configure that
-                        // changed the keymap drained every key it held for
-                        // us on its way in (install_config lifts each held
-                        // code and zeroes the modifiers); one that kept the
-                        // keymap — a group move, a byte-identical refresh —
-                        // deliberately kept them. The panel follows both,
-                        // the way the hello path already resets over a
-                        // connection the helper released: on a keymap
-                        // change, drop the device-held modifier state
-                        // WITHOUT emitting — an `up` for a code the device
-                        // no longer holds would be a lie in the other
-                        // direction — while Caps and Fn stay, being
-                        // semantic panel controls and never held at the
-                        // device. On a same-keymap configure the lock
-                        // stays held at the device and drawn locked, and
-                        // typing agrees (the gate in applyModifierEvent
-                        // writes whatever the reducer emits, restorative
-                        // downs included — except across a drain, where
-                        // the reducer itself withholds the restore).
-                        // The reply names the keymap generation it installed
-                        // (protocol 4, decisions §23). A reply without one is
-                        // not a helper this panel can reason about: the shapes
-                        // moved together with the version, so this is an
-                        // installation mismatch, not a recoverable error.
-                        var gen = parseInt(reply.split("\t")[1])
-                        if (!isFinite(gen) || gen <= 0) {
-                            root.serviceIncompatible = true
-                            root.inputReady = false
-                        } else {
-                            root.settleConfigureReply(gen)
-                            // Readiness waits for the WHOLE queue: an older
-                            // reply does not make typing safe while a pipelined
-                            // configure is still compiling the keymap a press
-                            // would land in — a chord allowed through now would
-                            // straddle that drain and lose its release. It also
-                            // waits for keycap facts that answer the generation
-                            // this reply just installed (decisions §23): request
-                            // them the moment the queue is settled and anything
-                            // current has been invalidated.
-                            if (Session.settled(root.session)) {
-                                // Every group of this install, not just the
-                                // one being drawn. The helper resolved them
-                                // all when it installed the keymap, so asking
-                                // for the rest now costs one extra reply each
-                                // and makes the next language switch a lookup
-                                // instead of a round trip through an
-                                // invalidated, gated, dimmed keyboard.
-                                var missing = Session.missingCapGroups(
-                                    root.session, root.groupCount)
-                                if (missing.length > 0)
-                                    console.log("[oskar] caps requested for group(s)",
-                                        missing.join(","), "of", root.groupCount)
-                                for (var mg = 0; mg < missing.length; mg++)
-                                    sendCommandUnchecked(capsRequestLine(missing[mg]))
-                            }
-                            root.inputReady = Session.typingReady(root.session)
-                        }
-                    } else if (reply.indexOf("caps\t") === 0) {
-                        // The helper's keycap facts for the world it has
-                        // installed (decisions §23). The session refuses any
-                        // reply whose generation or group no longer matches
-                        // the acknowledged one — a superseded answer computed
-                        // from a keymap the helper no longer has can never
-                        // enable caps, and while nothing current exists the
-                        // typing gate stays shut.
-                        var parsed = Session.parseCapsReply(reply)
-                        if (!parsed) {
-                            // A reply the parser refuses is protocol drift,
-                            // not an empty keymap: refuse the world rather
-                            // than draw a guessed level.
-                            console.error("[oskar] unreadable keycap facts reply")
-                            root.capsFactsFailed = true
-                            root.inputReady = false
-                        } else {
-                            var applied = Session.applyCapsReply(root.session, parsed)
-                            root.session = applied.state
-                            if (applied.accepted) {
-                                root.capsFactsFailed = false
-                                root.shareKeymapWithCompositor()
-                                if (Session.typingReady(root.session)) {
-                                    root.inputReady = true
-                                }
-                            }
-                        }
-                    } else if (reply === "pong") {
-                        // The quiescent probe's answer: the pipe is alive
-                        // end to end. The any-line clear at the top of
-                        // this handler already lifted the watchdog's
-                        // mark; pong carries no state, settles nothing,
-                        // and must not reach the fail-closed fallback
-                        // below — unrecognized replies drop the typing
-                        // gate, and a liveness answer is not drift.
-                    } else if (reply.indexOf("err") === 0) {
-                        if (reply.indexOf("err protocol") === 0) {
-                            // The helper answered hello with the version it
-                            // speaks, and it is not ours: the installed
-                            // binary predates (or postdates) this panel.
-                            // That is the incompatible state — the panel
-                            // never installs anything on its own (spec-v1.1
-                            // §6); the offer is the copied install command.
-                            root.serviceIncompatible = true
-                            root.inputReady = false
-                        } else if (reply === "err not ready") {
-                            // A helper fresh out of systemd start answers err
-                            // until its default keymap is installed; it cannot
-                            // become ready without a configure, and nothing
-                            // else sends one — so ask the compositor now
-                            // instead of waiting out the repair timer.
-                            root.pullLayoutsFromCompositor()
-                        } else if (reply === "err key held" || reply === "err not holding") {
-                            // Ownership refusals mean the helper's hold state
-                            // is ahead of ours; the device is fine and typing
-                            // stays enabled. The panel's chords never produce
-                            // them, so one appearing is a client bug worth a
-                            // journal line without bricking the keyboard.
-                            console.warn("[oskar] ownership refusal:", reply)
-                        } else if (reply === "err bad group") {
-                            // One err, three verbs it can answer (round
-                            // 17 straightened the whole arm): a caps
-                            // pre-fetch for a group the keymap does not
-                            // carry, a `group` command, or — since
-                            // ticket 31 — a configure whose own incoming
-                            // map cannot carry its group. The FIFO pop
-                            // above says WHICH this one settled, and the
-                            // ledgers part ways on it.
-                            if (answeredVerb === "configure"
-                                    && root.session.queue.length > 0) {
-                                // The refusal answered a QUEUED configure:
-                                // its entry must settle or it orphans the
-                                // queue — settled() false forever, and
-                                // with §80's never-stopping timer a
-                                // permanent 2 s hello → keyboards →
-                                // compositor pipeline → configure cycle
-                                // until a socket rebuild. The §53 settle
-                                // window makes it reachable (a group
-                                // legal for the old map, a layout list
-                                // that shrank inside it). Failed clean,
-                                // no modifier lift: this refusal happens
-                                // before any install or drain, so a lock
-                                // the panel shows is a lock the device
-                                // still holds.
-                                root.session = Session.reduce(root.session,
-                                    { type: "configureFailed" })
-                            } else if (answeredVerb === "caps"
-                                    || answeredVerb === "group") {
-                                // A caps pre-fetch (or a group switch)
-                                // the helper refused. For the group being
-                                // DRAWN that is keymap-wide disagreement
-                                // about the world, and the hint says so
-                                // instead of letting the built-in table
-                                // pass for it. For one of the other
-                                // groups the panel pre-fetches it is not:
-                                // the drawn group still has current
-                                // facts, typing is still answering the
-                                // installed keymap, and the only
-                                // consequence is that switching INTO
-                                // that group will go the slow way.
-                                // Refusing the whole world over it would
-                                // gate a keyboard that is working.
-                                root.capsFactsFailed =
-                                    !Session.capsCurrent(root.session)
-                                if (root.capsFactsFailed) {
-                                    root.inputReady = false
-                                } else {
-                                    console.error("[oskar] helper has no"
-                                        + " facts for a pre-fetched group;"
-                                        + " that group will resolve on"
-                                        + " switch")
-                                }
-                            } else {
-                                // An unattributable pop (a slot from
-                                // before verbs carried, or a bypassed
-                                // write): the caps-shaped reading is the
-                                // conservative one — it can gate, it can
-                                // never corrupt the configure ledger.
-                                root.capsFactsFailed =
-                                    !Session.capsCurrent(root.session)
-                                if (root.capsFactsFailed)
-                                    root.inputReady = false
-                            }
-                        } else if (reply === "err cannot configure keymap") {
-                            // A FAILED configure is authoritative about the
-                            // device world in a way the error text cannot
-                            // qualify: a compile or rate-limit refusal
-                            // happens BEFORE install_config drains anything
-                            // (the helper still holds whatever the panel
-                            // had down), while an upload failure happens
-                            // AFTER the drain (the helper holds nothing) —
-                            // and both answer with this same err. The panel
-                            // therefore settles to the drained world
-                            // UNCONDITIONALLY, exactly as a changed-keymap
-                            // success does, and then makes the device
-                            // agree: an explicit `up` for every modifier
-                            // the panel had locked — a real lift when the
-                            // helper never drained, a forwarded no-op when
-                            // it already did — plus `mods 0`, so the
-                            // compositor's mask cannot keep the stale
-                            // modifier alive (the helper re-asserts its
-                            // mask from its held set on the next key event,
-                            // so `mods 0` alone would not survive). Panel
-                            // and device agree either way, and a later
-                            // close emits nothing because nothing is held.
-                            // A pending chord survives untouched: its own
-                            // key hold is real in the never-drained case,
-                            // and in the drained case its mouse-up is a
-                            // forwarded no-op. This also covers the
-                            // release-before-refusal ordering: a release
-                            // that ran while this configure was outstanding
-                            // left the lock standing here on purpose (the
-                            // reply owns the settle), so the capture above
-                            // still sees the modifiers it must lift.
-                            root.session = Session.reduce(root.session,
-                                { type: "configureFailed" })
-                            var lockedPositions = []
-                            for (var m = 0; m < Modifiers.ORDER.length; m++) {
-                                if (modifierState[Modifiers.ORDER[m]] === "locked")
-                                    lockedPositions.push(
-                                        Modifiers.positionFor(Modifiers.ORDER[m]))
-                            }
-                            modifierState = Modifiers.reduce(modifierState,
-                                // stamp -1: a failed configure drained
-                                // nothing a pending chord depends on for
-                                // certain, so every pending record survives
-                                // (minus its restore plan, which would
-                                // re-press a lock the panel just dropped).
-                                { type: "configureDrain", stamp: -1 }).state
-                            for (var u = 0; u < lockedPositions.length; u++)
-                                sendCommandUnchecked("up " + lockedPositions[u])
-                            sendCommandUnchecked("mods 0")
-                            root.inputReady = false
-                        } else if (reply === "err unknown command") {
-                            // Version 6 (§91) deleted the typed delivery
-                            // verbs; this refusal now says the two sides
-                            // disagree about the command set one way or
-                            // the other — a v5 helper predates the
-                            // deletion, a peer panel sent a verb it should
-                            // not have. Status-only either way, never a
-                            // typing gate: the handshake's version check
-                            // is the compatibility contract.
-                            console.warn("[oskar] helper refused a command:", reply)
-                        } else {
-                            // An unrecognized reply can only be protocol
-                            // drift; fail closed and leave a trace.
-                            root.inputReady = false
-                            console.warn("[oskar] unrecognized reply:", reply)
-                        }
-                    } else if (reply.indexOf("hello ") === 0) {
-                        // A hello naming another version than the one this
-                        // panel asked for is the same incompatibility in a
-                        // different shape. Defensive: the current helper
-                        // errs instead of greeting across versions.
-                        root.serviceIncompatible = true
-                        root.inputReady = false
                     }
                 }
-            }
-
-            // A quickshell 0.3.1 peer close can log "Socket error for …"
-            // without ever flipping `connected` (observed live: the property
-            // still read true minutes after QLocalSocket::PeerClosedError),
-            // which leaves inputReady stuck at true — a ready-looking
-            // keyboard that cannot type, the exact silent failure §6
-            // forbids. An error arriving on a socket that still reads
-            // connected is therefore treated as the drop the state change
-            // failed to report: enter the disconnected state and rebuild
-            // the socket object, the same reset socketPathCheck uses, so
-            // the gated repair timer owns the redial and the next good
-            // handshake clears the notice. A failed dial reports with
-            // connected false and no-ops here, so this cannot loop.
-            onError: {
-                if (!connected) return
+            } else if (reply === "pong") {
+                // The quiescent probe's answer: the pipe is alive
+                // end to end. The any-line clear at the top of
+                // this handler already lifted the watchdog's
+                // mark; pong carries no state, settles nothing,
+                // and must not reach the fail-closed fallback
+                // below — unrecognized replies drop the typing
+                // gate, and a liveness answer is not drift.
+            } else if (reply.indexOf("err") === 0) {
+                if (reply.indexOf("err protocol") === 0) {
+                    // The helper answered hello with the version it
+                    // speaks, and it is not ours: the installed
+                    // binary predates (or postdates) this panel.
+                    // That is the incompatible state — the panel
+                    // never installs anything on its own (spec-v1.1
+                    // §6); the offer is the copied install command.
+                    root.serviceIncompatible = true
+                    root.inputReady = false
+                } else if (reply === "err not ready") {
+                    // A helper fresh out of systemd start answers err
+                    // until its default keymap is installed; it cannot
+                    // become ready without a configure, and nothing
+                    // else sends one — so ask the compositor now
+                    // instead of waiting out the repair timer.
+                    root.pullLayoutsFromCompositor()
+                } else if (reply === "err key held" || reply === "err not holding") {
+                    // Ownership refusals mean the helper's hold state
+                    // is ahead of ours; the device is fine and typing
+                    // stays enabled. The panel's chords never produce
+                    // them, so one appearing is a client bug worth a
+                    // journal line without bricking the keyboard.
+                    console.warn("[oskar] ownership refusal:", reply)
+                } else if (reply === "err bad group") {
+                    // One err, three verbs it can answer (round
+                    // 17 straightened the whole arm): a caps
+                    // pre-fetch for a group the keymap does not
+                    // carry, a `group` command, or — since
+                    // ticket 31 — a configure whose own incoming
+                    // map cannot carry its group. The FIFO pop
+                    // above says WHICH this one settled, and the
+                    // ledgers part ways on it.
+                    if (answeredVerb === "configure"
+                            && root.session.queue.length > 0) {
+                        // The refusal answered a QUEUED configure:
+                        // its entry must settle or it orphans the
+                        // queue — settled() false forever, and
+                        // with §80's never-stopping timer a
+                        // permanent 2 s hello → keyboards →
+                        // compositor pipeline → configure cycle
+                        // until a socket rebuild. The §53 settle
+                        // window makes it reachable (a group
+                        // legal for the old map, a layout list
+                        // that shrank inside it). Failed clean,
+                        // no modifier lift: this refusal happens
+                        // before any install or drain, so a lock
+                        // the panel shows is a lock the device
+                        // still holds.
+                        root.session = Session.reduce(root.session,
+                            { type: "configureFailed" })
+                    } else if (answeredVerb === "caps"
+                            || answeredVerb === "group") {
+                        // A caps pre-fetch (or a group switch)
+                        // the helper refused. For the group being
+                        // DRAWN that is keymap-wide disagreement
+                        // about the world, and the hint says so
+                        // instead of letting the built-in table
+                        // pass for it. For one of the other
+                        // groups the panel pre-fetches it is not:
+                        // the drawn group still has current
+                        // facts, typing is still answering the
+                        // installed keymap, and the only
+                        // consequence is that switching INTO
+                        // that group will go the slow way.
+                        // Refusing the whole world over it would
+                        // gate a keyboard that is working.
+                        root.capsFactsFailed =
+                            !Session.capsCurrent(root.session)
+                        if (root.capsFactsFailed) {
+                            root.inputReady = false
+                        } else {
+                            console.error("[oskar] helper has no"
+                                + " facts for a pre-fetched group;"
+                                + " that group will resolve on"
+                                + " switch")
+                        }
+                    } else {
+                        // An unattributable pop (a slot from
+                        // before verbs carried, or a bypassed
+                        // write): the caps-shaped reading is the
+                        // conservative one — it can gate, it can
+                        // never corrupt the configure ledger.
+                        root.capsFactsFailed =
+                            !Session.capsCurrent(root.session)
+                        if (root.capsFactsFailed)
+                            root.inputReady = false
+                    }
+                } else if (reply === "err cannot configure keymap") {
+                    // A FAILED configure is authoritative about the
+                    // device world in a way the error text cannot
+                    // qualify: a compile or rate-limit refusal
+                    // happens BEFORE install_config drains anything
+                    // (the helper still holds whatever the panel
+                    // had down), while an upload failure happens
+                    // AFTER the drain (the helper holds nothing) —
+                    // and both answer with this same err. The panel
+                    // therefore settles to the drained world
+                    // UNCONDITIONALLY, exactly as a changed-keymap
+                    // success does, and then makes the device
+                    // agree: an explicit `up` for every modifier
+                    // the panel had locked — a real lift when the
+                    // helper never drained, a forwarded no-op when
+                    // it already did — plus `mods 0`, so the
+                    // compositor's mask cannot keep the stale
+                    // modifier alive (the helper re-asserts its
+                    // mask from its held set on the next key event,
+                    // so `mods 0` alone would not survive). Panel
+                    // and device agree either way, and a later
+                    // close emits nothing because nothing is held.
+                    // A pending chord survives untouched: its own
+                    // key hold is real in the never-drained case,
+                    // and in the drained case its mouse-up is a
+                    // forwarded no-op. This also covers the
+                    // release-before-refusal ordering: a release
+                    // that ran while this configure was outstanding
+                    // left the lock standing here on purpose (the
+                    // reply owns the settle), so the capture above
+                    // still sees the modifiers it must lift.
+                    root.session = Session.reduce(root.session,
+                        { type: "configureFailed" })
+                    var lockedPositions = []
+                    for (var m = 0; m < Modifiers.ORDER.length; m++) {
+                        if (modifierState[Modifiers.ORDER[m]] === "locked")
+                            lockedPositions.push(
+                                Modifiers.positionFor(Modifiers.ORDER[m]))
+                    }
+                    modifierState = Modifiers.reduce(modifierState,
+                        // stamp -1: a failed configure drained
+                        // nothing a pending chord depends on for
+                        // certain, so every pending record survives
+                        // (minus its restore plan, which would
+                        // re-press a lock the panel just dropped).
+                        { type: "configureDrain", stamp: -1 }).state
+                    for (var u = 0; u < lockedPositions.length; u++)
+                        sendCommandUnchecked("up " + lockedPositions[u])
+                    sendCommandUnchecked("mods 0")
+                    root.inputReady = false
+                } else if (reply === "err unknown command") {
+                    // Version 6 (§91) deleted the typed delivery
+                    // verbs; this refusal now says the two sides
+                    // disagree about the command set one way or
+                    // the other — a v5 helper predates the
+                    // deletion, a peer panel sent a verb it should
+                    // not have. Status-only either way, never a
+                    // typing gate: the handshake's version check
+                    // is the compatibility contract.
+                    console.warn("[oskar] helper refused a command:", reply)
+                } else {
+                    // An unrecognized reply can only be protocol
+                    // drift; fail closed and leave a trace.
+                    root.inputReady = false
+                    console.warn("[oskar] unrecognized reply:", reply)
+                }
+            } else if (reply.indexOf("hello ") === 0) {
+                // A hello naming another version than the one this
+                // panel asked for is the same incompatibility in a
+                // different shape. Defensive: the current helper
+                // errs instead of greeting across versions.
+                root.serviceIncompatible = true
                 root.inputReady = false
-                root.rebuildSocket()
             }
         }
-    }
-
-    Timer {
-        id: helloTimer
-        // Gives a fresh connection attempt a moment to actually open before
-        // hello goes out. When the helper is still down the write fails
-        // harmlessly and the next rebuild dials again.
-        interval: 150
-        repeat: false
-        onTriggered: () => {
-            if (root.daemonSocket) {
-                // The version the session negotiates, never a literal: the
-                // reply matcher above compares against the same constant, and
-                // a stale literal here reads as an installation mismatch
-                // against a helper this panel is actually compatible with.
-                // Through the choke point like every command: a re-handshake
-                // with commands unanswered must not let hello's reply pop a
-                // queued slot it does not answer.
-                sendCommandUnchecked("hello " + Session.PROTOCOL_VERSION)
-                // The watchdog's mark: written and unanswered. The write
-                // itself cannot be trusted to fail on a dead transport
-                // (quickshell may buffer it silently), so the mark is set
-                // unconditionally and only ever cleared by arriving traffic.
-                root.helloInFlight = true
-                root.helloSentAt = Date.now()
-            }
-        }
-    }
-
-    Process {
-        id: socketPathCheck
-        command: ["test", "-S", (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/oskar/control.sock"]
-        onExited: (code, ok) => {
-            // The check ran a moment ago; the socket may have connected since
-            // (the original attempt succeeding, or a sibling tick's rebuild).
-            // Rebuilding a live connection would drop it mid-handshake.
-            var item = root.daemonSocket
-            if (code === 0 && !root.inputReady && !(item && item.connected)) {
-                root.rebuildSocket()
-            }
-        }
-    }
-
-    Timer {
-        id: reconnectTimer
-        // Adaptive, and NEVER stopped (the protocol round's P2): the
-        // timer used to stop once the panel was healthy, so a helper
-        // SIGKILLed at quiescence behind a socket that lies `connected`
-        // (Quickshell 0.3.1, observed live twice) was never asked
-        // anything — every keystroke wrote into the void until an
-        // unrelated event or a shell restart. Healthy, the tick is slow
-        // and asks with ping (below); unhealthy or with a probe still
-        // outstanding, it keeps the repair cadence so a wedge is still
-        // noticed, judged and acted on inside ~7 s.
-        // Also while a configure is outstanding. Readiness alone stopped
-        // being enough once a group-only configure no longer lowered
-        // `inputReady` (ticket 16): a socket that stays `connected` but
-        // never answers `configured` would leave the panel ready-looking,
-        // drawing the acked group while the helper types the queued one,
-        // with no tick to notice. A configure is answered in well under
-        // the fast interval — the helper replies before it compiles
-        // anything — so an entry still outstanding when this fires is a
-        // lost reply, not a slow one.
-        interval: (root.helloInFlight || !root.inputReady
-            || !Session.settled(root.session)) ? 2000 : 15000
-        repeat: true
-        running: true
-        onTriggered: () => {
-            // Ticket 47's watchdog: the decision is SocketWatch's pure
-            // table, pinned in tests/socket-watch.qml. The old inline
-            // policy — an open socket is only ever re-helloed — turned a
-            // socket that lies `connected` on a peer-closed transport
-            // into a permanent wedge (the install-from-zero stranger's
-            // dead keys: re-hellos written into a dead object, "Starting
-            // oskar.service…" standing, every key click a silent no-op,
-            // escape only by shell restart). Now a probe outstanding past
-            // its fair window rebuilds the socket object whatever
-            // `connected` claims; a live helper answers in well under a
-            // second, so only a socket that cannot deliver ever sees the
-            // window expire. The rebuild path is also the silent-dial
-            // cure: a fresh socket that connects without ever signalling
-            // gets a hello on the next tick, and the tick after that
-            // treats its silence the same way.
-            var item = root.daemonSocket
-            var action = SocketWatch.reconnectAction({
-                connected: !!(item && item.connected),
-                helloInFlight: root.helloInFlight,
-                helloAgeMs: Date.now() - root.helloSentAt,
-                // The quiescent probe: healthy and settled asks with
-                // ping; a paced paste or an armed chord holds the wire
-                // (ChordAcks poisons a chord on any non-ok reply inside
-                // its region — a pong included).
-                idle: root.inputReady && Session.settled(root.session),
-                probeHold: root.pastePacing || !!root.chordAcks.chordDone
-            })
-            if (action === "hello") {
-                helloTimer.restart()
-                return
-            }
-            if (action === "ping") {
-                sendProbePing()
-                return
-            }
-            if (action === "rebuild") {
-                root.rebuildSocket()
-                return
-            }
-            if (action === "path-check") {
-                socketPathCheck.running = true
-                return
-            }
-            // "wait": the outstanding probe is still inside its window,
-            // or the wire is held.
-        }
-    }
-
-    /// The quiescent probe's write. ping is the daemon's own liveness
-    /// word — hello-gated, one reply line, no state — through the one
-    /// choke point so it occupies its correlation slot like every
-    /// command. The watchdog marks carry the same meaning they carry for
-    /// hello: an answer is owed, and ANY line arriving clears the debt.
-    /// A hello would not do here: its reply re-handshakes (the gate
-    /// drops, keyboards and configure are re-asked), which is repair
-    /// when broken and a visible blink on every probe when healthy.
-    function sendProbePing() {
-        if (!sendCommandUnchecked("ping")) return
-        root.helloInFlight = true
-        root.helloSentAt = Date.now()
     }
 
     /// The one writer for reducer output and panel-originated protocol lines
@@ -2341,9 +2159,7 @@ Item {
     /// (nothing owed — the helper released on disconnect) or the absent
     /// loader object makes the write a no-op.
     function sendCommandUnchecked(text) {
-        if (!daemonSocket) return false
-        daemonSocket.write(text + "\n")
-        daemonSocket.flush()
+        if (!helperLink.write(text)) return false
         // Every command sent occupies one slot in the correlation queue —
         // counted here, at the one choke point every command goes through.
         // The module returns the new state directly; a `.state` suffix
