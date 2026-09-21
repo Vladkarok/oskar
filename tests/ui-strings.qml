@@ -174,7 +174,8 @@ QtObject {
             "CursorPolicy.qml", "EmojiPage.qml", "HoverTooltip.qml",
             "KeyClickSound.qml", "Theme.qml", "SettingsPopover.qml",
             "SettingsColorRow.qml", "SettingsColorEditor.qml",
-            "SettingsConfirmChip.qml", "SettingsResetChip.qml"]
+            "SettingsConfirmChip.qml", "SettingsResetChip.qml",
+            "SettingsLayer.qml"]
         var index = 0
 
         function sweepNext() {

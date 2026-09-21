@@ -41,7 +41,7 @@ Item {
     // row can never linger hidden until close.
     onUserOverridesChanged: {
         if (Object.keys(root.userOverrides).length === 0)
-            settingsPopover.resetAllArmed = false
+            settingsLayerHost.disarmResetAll()
     }
     property var geometryState: ConfigFile.stateDefaults()
     property string configurationError: ""
@@ -287,7 +287,7 @@ Item {
         if (next) {
             // One surface at a time in the leftover centre: the page
             // replaces the settings card, it does not stack on it.
-            settingsPopover.visible = false
+            settingsLayerHost.closePopover()
             root.closeCustomEditor()
         }
         root.emojiOpen = next
@@ -800,8 +800,8 @@ Item {
             text = text.slice(0, -1)
         if (!text.length) return
         if (root.hexEditing) {
-            if (root.customEditorField !== "") customColorEditor.insertHexText(text)
-            else settingsPopover.insertHexText(text)
+            if (root.customEditorField !== "") settingsLayerHost.editorInsertHexText(text)
+            else settingsLayerHost.popoverInsertHexText(text)
             return
         }
         emojiPage.pasteIntoSearch(text)
@@ -1176,8 +1176,8 @@ Item {
         var place = null
         if (root.emojiDrag && root.emojiCenter)
             place = SettingsPlacement.centreRestore(root.emojiCenter, size,
-                settingsLayer.overlayBox)
-        if (!place) place = settingsLayer.emojiPlace
+                settingsLayerHost.overlayBox)
+        if (!place) place = settingsLayerHost.emojiPlace
         emojiPage.x = place.x
         emojiPage.y = place.y
     }
@@ -1339,7 +1339,7 @@ Item {
     // settings row. Swatches already write the field; Custom must too.
     function applyColourOverride(name, value) {
         root.setOverride(name, value)
-        settingsPopover.adoptAppliedColour(name, value)
+        settingsLayerHost.adoptAppliedColour(name, value)
     }
 
     // The sparse override map stays behind the panel API: the popover's
@@ -1373,7 +1373,7 @@ Item {
     // (onOpenedChanged).
     function clearAllOverrides() {
         if (!root.configHealthy) return
-        settingsPopover.resetAllArmed = false
+        settingsLayerHost.disarmResetAll()
         root.commitOverrides({})
     }
 
@@ -1431,8 +1431,8 @@ Item {
         // draft must never outlive the surface that sanctioned them.
         root.endHexEdit()
         root.closeCustomEditor()
-        settingsPopover.visible = false
-        settingsPopover.resetAllArmed = false
+        settingsLayerHost.closePopover()
+        settingsLayerHost.disarmResetAll()
         root.emojiOpen = false
         languageMenu.close()
         // The relayout nudge is needed in both directions: the zone leaving
@@ -2208,11 +2208,11 @@ Item {
                     height: tokens.space(30)
                     radius: tokens.cornerRadius
                     color: gearArea.pressed ? tokens.accent
-                        : settingsPopover.visible ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
+                        : settingsLayerHost.popoverVisible ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
                         : gearArea.containsMouse ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
                         : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
                     border.color: Util.alpha(
-                        settingsPopover.visible || gearArea.containsMouse
+                        settingsLayerHost.popoverVisible || gearArea.containsMouse
                             ? tokens.accent : tokens.foreground,
                         tokens.pressedFillAlpha)
                     border.width: tokens.normalBorderWidth
@@ -2261,11 +2261,11 @@ Item {
                             // rule); the gear restores the card.
                             root.emojiOpen = false
                             languageMenu.close()
-                            if (settingsPopover.visible || root.customEditorField !== "") {
+                            if (settingsLayerHost.popoverVisible || root.customEditorField !== "") {
                                 root.closeCustomEditor()
-                                settingsPopover.visible = false
+                                settingsLayerHost.closePopover()
                             } else {
-                                settingsPopover.visible = true
+                                settingsLayerHost.openPopover()
                             }
                         }
                         onPressAndHold: touchHeld = true
@@ -2368,7 +2368,7 @@ Item {
                             // the silence class (the flows round's
                             // finding) — the wait is SAID, on the hint
                             // line.
-                            if (settingsPopover.visible
+                            if (settingsLayerHost.popoverVisible
                                 || root.customEditorField !== ""
                                 || root.emojiOpen) {
                                 root.flashRefused(UiStrings.tr(
@@ -2920,114 +2920,33 @@ Item {
                                          : WlrKeyboardFocus.Exclusive)
                 : WlrKeyboardFocus.None
 
-        // Any leftover-centre surface: the settings card, the custom
-        // colour editor, or the emoji page (ticket 24). The mask and the
-        // dismiss area arm on this, and never on the keyboard band.
-        readonly property bool overlayOpen: settingsPopover.visible
-            || root.customEditorField !== ""
-            || root.emojiOpen
-        // Ticket 29: the page alone is non-modal — the card and the editor
-        // keep the modal leftover (an outside click dismisses them), but
-        // with only the page standing the input region is the page's own
-        // rectangle, so a press on the client behind it reaches that
-        // client: focus moves, the rawEvent disarm routes the keys there,
-        // and the page stays up for the next pick.
-        readonly property bool emojiPageSolo: root.emojiOpen
-            && !settingsPopover.visible && root.customEditorField === ""
-        readonly property var overlayBox: ({
-            x: 0, y: 0, w: settingsLayer.width, h: settingsLayer.height
-        })
-        readonly property var bandBox: SettingsPlacement.overlayBand(
-            root.mode, overlayBox,
-            { x: card.x, y: card.y, w: card.width, h: card.height })
-        readonly property var leftoverBox: SettingsPlacement.overlayInputRect(
-            overlayBox, bandBox)
-        readonly property var popoverPlace: SettingsPlacement.centreInLeftover(
-            overlayBox, bandBox,
-            { w: settingsPopover.width, h: settingsPopover.height })
-        readonly property var editorPlace: SettingsPlacement.centreInLeftover(
-            overlayBox, bandBox,
-            { w: customColorEditor.width, h: customColorEditor.height })
-        readonly property var emojiPlace: SettingsPlacement.centreInLeftover(
-            overlayBox, bandBox,
-            { w: emojiPage.width, h: emojiPage.height })
-
         // A resize of the overlay (a screen change) is one of the facts
         // the emoji page's placement re-derives from — the remembered
         // centre clamps into whatever the current visible area is.
         onWidthChanged: root.applyEmojiPosition()
         onHeightChanged: root.applyEmojiPosition()
 
-        mask: Region {
-            x: settingsLayer.overlayOpen
-                ? (settingsLayer.emojiPageSolo ? emojiPage.x
-                    : settingsLayer.leftoverBox.x) : 0
-            y: settingsLayer.overlayOpen
-                ? (settingsLayer.emojiPageSolo ? emojiPage.y
-                    : settingsLayer.leftoverBox.y) : 0
-            width: settingsLayer.overlayOpen
-                ? (settingsLayer.emojiPageSolo ? emojiPage.width
-                    : settingsLayer.leftoverBox.w) : 0
-            height: settingsLayer.overlayOpen
-                ? (settingsLayer.emojiPageSolo ? emojiPage.height
-                    : settingsLayer.leftoverBox.h) : 0
-            Region {
-                x: settingsPopover.x
-                y: settingsPopover.y
-                width: settingsPopover.visible ? settingsPopover.width : 0
-                height: settingsPopover.visible ? settingsPopover.height : 0
-                intersection: Intersection.Combine
-            }
-            Region {
-                x: customColorEditor.x
-                y: customColorEditor.y
-                width: customColorEditor.visible ? customColorEditor.width : 0
-                height: customColorEditor.visible ? customColorEditor.height : 0
-                intersection: Intersection.Combine
-            }
-            Region {
-                x: emojiPage.x
-                y: emojiPage.y
-                width: emojiPage.visible ? emojiPage.width : 0
-                height: emojiPage.visible ? emojiPage.height : 0
-                intersection: Intersection.Combine
-            }
-        }
+        // The settings content itself — the leftover geometry engine,
+        // the input mask, the everywhere-outside dismiss area, the
+        // settings popover and the custom colour editor — lives in
+        // SettingsLayer.qml (the structural split's step five). This
+        // window keeps what only a window can hold: the surface flags,
+        // the focus contract above, and the mask binding below, fed
+        // from the component. The emoji page and the two focus sinks
+        // stay direct children here: the page is not a settings
+        // surface (it keeps z: 1 over the host's z: 0 base, exactly as
+        // it stood over the dismiss area), and the sinks are
+        // endHexEdit's parking spots.
+        mask: settingsLayerHost.inputMask
 
-        MouseArea {
-            x: settingsLayer.leftoverBox.x
-            y: settingsLayer.leftoverBox.y
-            width: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.w : 0
-            height: settingsLayer.overlayOpen ? settingsLayer.leftoverBox.h : 0
-            enabled: settingsLayer.overlayOpen
+        SettingsLayer {
+            id: settingsLayerHost
+            anchors.fill: parent
             z: 0
-            onClicked: function (mouse) {
-                if (settingsPopover.visible
-                    && mouse.x + x >= settingsPopover.x
-                    && mouse.x + x <= settingsPopover.x + settingsPopover.width
-                    && mouse.y + y >= settingsPopover.y
-                    && mouse.y + y <= settingsPopover.y + settingsPopover.height)
-                    return
-                if (customColorEditor.visible
-                    && mouse.x + x >= customColorEditor.x
-                    && mouse.x + x <= customColorEditor.x + customColorEditor.width
-                    && mouse.y + y >= customColorEditor.y
-                    && mouse.y + y <= customColorEditor.y + customColorEditor.height)
-                    return
-                if (emojiPage.visible
-                    && mouse.x + x >= emojiPage.x
-                    && mouse.x + x <= emojiPage.x + emojiPage.width
-                    && mouse.y + y >= emojiPage.y
-                    && mouse.y + y <= emojiPage.y + emojiPage.height)
-                    return
-                root.endHexEdit()
-                if (root.customEditorField !== "") {
-                    root.closeCustomEditor()
-                    return
-                }
-                settingsPopover.visible = false
-                root.emojiOpen = false
-            }
+            panel: root
+            tokens: tokens
+            card: card
+            emojiPage: emojiPage
         }
 
         Item {
@@ -3040,36 +2959,6 @@ Item {
             id: editorFocusSink
             width: 0
             height: 0
-        }
-
-        SettingsPopover {
-            id: settingsPopover
-            panel: root
-            tokens: tokens
-            hostWidth: settingsLayer.leftoverBox.w
-            hostHeight: settingsLayer.leftoverBox.h
-            x: settingsLayer.popoverPlace.x
-            y: settingsLayer.popoverPlace.y
-            z: 1
-            onCustomColourRequested: function (fieldName, labelText) {
-                root.openCustomEditor(fieldName, labelText)
-            }
-        }
-
-        SettingsColorEditor {
-            id: customColorEditor
-            panel: root
-            tokens: tokens
-            fieldName: root.customEditorField
-            labelText: root.customEditorLabel
-            visible: root.customEditorField !== ""
-            oldColor: root.customEditorOldColor
-            hostWidth: settingsLayer.leftoverBox.w
-            hostHeight: settingsLayer.leftoverBox.h
-            x: settingsLayer.editorPlace.x
-            y: settingsLayer.editorPlace.y
-            z: 2
-            onDismissed: root.closeCustomEditor()
         }
 
         // The panel's own emoji page (ticket 24, step 2), hosted by the
@@ -3085,8 +2974,8 @@ Item {
             layoutCode: keyboard.activeLayoutCode
             tooltipHoverShows: root.inputAfford.tooltipHoverShows === true
             uiLang: root.uiLang
-            hostWidth: settingsLayer.leftoverBox.w
-            hostHeight: settingsLayer.leftoverBox.h
+            hostWidth: settingsLayerHost.leftoverBox.w
+            hostHeight: settingsLayerHost.leftoverBox.h
             // Placement is the panel's (applyEmojiPosition) — x/y are
             // written, never bound, because a strip drag would destroy
             // any binding (the card's own lesson). The drag's clamp is

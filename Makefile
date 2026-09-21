@@ -28,7 +28,7 @@ PLUGIN_RUNTIME := Panel.qml BarWidget.qml Keyboard.qml HelperLink.qml PasteChord
 	ChordAcks.js ShareQueue.js PasteFlow.js \
 	SettingsPopover.qml SettingsColorRow.qml SettingsColorEditor.qml \
 	SettingsConfirmChip.qml SettingsResetChip.qml DragLine.qml \
-	SettingsPlacement.js manifest.json
+	SettingsLayer.qml SettingsPlacement.js manifest.json
 
 .PHONY: build check stage install
 
