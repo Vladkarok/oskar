@@ -43,6 +43,9 @@ var CONFIG_FIELDS = [
     { file: "follow_theme", value: "followTheme" },
     { file: "emoji_close_after_pick", value: "emojiCloseAfterPick" },
     { file: "emoji_page_size", value: "emojiPageSize" },
+    // The emoji page's free drag (the emoji-drag ticket): off is exactly
+    // the computed leftover-centre placement that shipped.
+    { file: "emoji_drag", value: "emojiDrag" },
     { file: "super_mark", value: "superMark" },
     // Ticket 50: the dwell pair — off by default, a bounded delay when on.
     { file: "dwell_enabled", value: "dwellEnabled" },
@@ -73,6 +76,11 @@ function maintainerDefaults() {
         followTheme: true,
         emojiCloseAfterPick: false,
         emojiPageSize: "medium",
+        // The emoji page's free drag is an opt-in: off (the default) is
+        // exactly the placement that shipped — computed, centred, no
+        // affordance. Sparse-store semantics mean this key never appears
+        // in the file unless the user turned the drag on.
+        emojiDrag: false,
         // The Super cap says what the key is (ticket 22): the Omarchy glyph
         // stops being the unconditional drawing and becomes one chosen mark.
         // Sparse-store semantics mean this key never appears in the file
@@ -104,8 +112,8 @@ function maintainerDefaults() {
 }
 
 function stateDefaults() {
-    return { center: null, emojiUsage: [], emojiSkinTone: "", layoutGroup: 0,
-        layoutDevice: "" }
+    return { center: null, emojiCenter: null, emojiUsage: [],
+        emojiSkinTone: "", layoutGroup: 0, layoutDevice: "" }
 }
 
 function owns(object, key) {
@@ -181,7 +189,8 @@ function validFieldValue(field, value) {
     if (field.file === "size_preset")
         return value === "medium" || value === "large" || value === "x-large"
     if (field.file === "sound" || field.file === "follow_theme"
-        || field.file === "emoji_close_after_pick")
+        || field.file === "emoji_close_after_pick"
+        || field.file === "emoji_drag")
         return typeof value === "boolean"
     if (field.file === "emoji_page_size")
         return value === "medium" || value === "large" || value === "x-large"
@@ -342,6 +351,15 @@ function parseState(text) {
         if (center === undefined)
             return { value: null, error: "Invalid value for center" }
         state.center = center
+    }
+    // The emoji page's remembered centre (the emoji-drag ticket): the
+    // same point rule as the floating card's centre — a number pair or
+    // null, anything else malformed with the §5 preservation semantics.
+    if (owns(parsed.value, "emoji_center")) {
+        var emojiCenter = parsePoint(parsed.value.emoji_center)
+        if (emojiCenter === undefined)
+            return { value: null, error: "Invalid value for emoji_center" }
+        state.emojiCenter = emojiCenter
     }
     if (owns(parsed.value, "emoji_usage")) {
         var records = parsed.value.emoji_usage
@@ -788,6 +806,9 @@ function serializeState(state) {
     return JSON.stringify({
         center: state.center
             ? { x: state.center.x, y: state.center.y }
+            : null,
+        emoji_center: state.emojiCenter
+            ? { x: state.emojiCenter.x, y: state.emojiCenter.y }
             : null,
         emoji_usage: state.emojiUsage || [],
         emoji_skin_tone: EMOJI_SKIN_TONES.indexOf(state.emojiSkinTone) >= 0

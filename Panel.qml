@@ -138,6 +138,11 @@ Item {
 
     property bool emojiCloseAfterPick: maintainedDefaults.emojiCloseAfterPick
     property string emojiPageSize: maintainedDefaults.emojiPageSize
+    // The emoji page's free drag (the emoji-drag ticket): off by
+    // default — off IS today's page, computed leftover-centre placement
+    // and no affordance. Override, else the maintained default, the same
+    // plain preference shape as the picking pair above.
+    property bool emojiDrag: maintainedDefaults.emojiDrag
     // The Super cap's mark (ticket 22): the word by default, a chosen mark
     // otherwise. Override, else the maintained default — the same plain
     // preference shape as the mode and the emoji app.
@@ -280,6 +285,12 @@ Item {
         && emojiPage.searchArmed
     readonly property var emojiUsage: geometryState.emojiUsage || []
     readonly property string emojiSkinTone: geometryState.emojiSkinTone || ""
+    // The emoji page's remembered centre (the emoji-drag ticket):
+    // persisted UI state beside the floating card's centre, on the same
+    // write path. Kept, never erased — turning the setting off returns
+    // to computed placement without forgetting where the hand left the
+    // page, so flipping it back on restores the remembered spot.
+    readonly property var emojiCenter: geometryState.emojiCenter || null
     // The remembered layout group: persisted UI state (not an override),
     // the restart fallback LayoutDevices reads when no live device
     // evidence exists.
@@ -375,6 +386,7 @@ Item {
     function mergedGeometryState(overrides) {
         var next = {
             center: root.geometryState.center,
+            emojiCenter: root.geometryState.emojiCenter || null,
             emojiUsage: root.emojiUsage,
             emojiSkinTone: root.emojiSkinTone,
             layoutGroup: root.rememberedLayoutGroup,
@@ -1160,6 +1172,61 @@ Item {
         })
     }
 
+    // ---- the emoji page's placement (the emoji-drag ticket) ----
+    //
+    // The page's x/y are applied here, never bound: a strip drag writes
+    // them directly and would destroy any binding (the card's own
+    // lesson), so every placement path re-derives from the same rule —
+    // with the drag on and a remembered centre, the top-left comes from
+    // that CENTRE clamped into the CURRENT overlay (SettingsPlacement's
+    // deterministic anchor, the floating card's rule in this window's
+    // vocabulary); anything else — the setting off, no centre yet, a
+    // degenerate restore — is exactly today's computed leftover centre.
+    // A held page-drag owns the placement, exactly as applyFloating
+    // Position stands down for a held card drag.
+    function applyEmojiPosition() {
+        if (!root.emojiOpen) return
+        if (emojiPage.dragActive) return
+        var size = { w: emojiPage.width, h: emojiPage.height }
+        var place = null
+        if (root.emojiDrag && root.emojiCenter)
+            place = SettingsPlacement.centreRestore(root.emojiCenter, size,
+                settingsLayer.overlayBox)
+        if (!place) place = settingsLayer.emojiPlace
+        emojiPage.x = place.x
+        emojiPage.y = place.y
+    }
+
+    // Where a free page-drag lands is remembered as the page's CENTRE —
+    // the card's own rule: a centre restores honestly against a changed
+    // page size or output, a remembered top-left near an edge did not.
+    // The write path is every geometry field's (mergedGeometryState,
+    // then one atomic save), and a press that moved nothing writes
+    // nothing. No cross-output hand-off here: the page rides the
+    // settings layer, one output at a time, and the release keeps
+    // whatever the clamp left in this one.
+    function rememberEmojiPosition() {
+        var center = {
+            x: emojiPage.x + emojiPage.width / 2,
+            y: emojiPage.y + emojiPage.height / 2
+        }
+        var previous = root.emojiCenter
+        if (previous && previous.x === center.x && previous.y === center.y) return
+        root.geometryState = root.mergedGeometryState(
+            { emojiCenter: center })
+        root.saveState()
+    }
+
+    // Placement is applied on open (a fresh open re-anchors from the
+    // remembered centre, clamped into whatever the current visible area
+    // is — a monitor change or a different leftover must not strand it)
+    // and re-derived on every change that used to re-evaluate the old
+    // x/y bindings: the card's own moves, the layer's resizes and the
+    // page's size changes.
+    onEmojiOpenChanged: {
+        if (root.emojiOpen) root.applyEmojiPosition()
+    }
+
     function applyEffectiveSettings() {
         // Mode, size, sound and follow-theme are panel properties; the
         // appearance fields resolve reactively in the Theme facade, which
@@ -1176,6 +1243,7 @@ Item {
         root.followTheme = effective.followTheme
         root.emojiCloseAfterPick = effective.emojiCloseAfterPick
         root.emojiPageSize = effective.emojiPageSize
+        root.emojiDrag = effective.emojiDrag
         root.dwellEnabled = effective.dwellEnabled
         root.dwellDelayMs = effective.dwellDelayMs
         root.uiLanguage = effective.uiLanguage
@@ -1196,6 +1264,10 @@ Item {
         // External mode and preset edits take the same placement path as GUI
         // changes, including clamping a newly enlarged floating card.
         root.applyFloatingPosition()
+        // The emoji page's placement re-derives with the settings that
+        // can move it: a page-size edit while the page stands, a drag
+        // setting flipped by an external edit.
+        root.applyEmojiPosition()
     }
 
     function loadOverrides(text) {
@@ -2219,10 +2291,10 @@ Item {
             // mid-drag — an external config reload, not just the chooser —
             // must not steal the placement from the hand (the guard in
             // applyFloatingPosition).
-            onXChanged: root.applyFloatingPosition()
-            onYChanged: root.applyFloatingPosition()
-            onWidthChanged: root.applyFloatingPosition()
-            onHeightChanged: root.applyFloatingPosition()
+            onXChanged: { root.applyFloatingPosition(); root.applyEmojiPosition() }
+            onYChanged: { root.applyFloatingPosition(); root.applyEmojiPosition() }
+            onWidthChanged: { root.applyFloatingPosition(); root.applyEmojiPosition() }
+            onHeightChanged: { root.applyFloatingPosition(); root.applyEmojiPosition() }
 
             Item {
                 id: dragBar
@@ -2234,45 +2306,21 @@ Item {
                 // quiet ink — and ALIVE: while the bar is dragged the line
                 // brightens and shortens from both ends. The window-title
                 // grammar everyone already reads ("a bar = carry me"),
-                // docked hides it with the drag itself.
-                Rectangle {
-                    id: dragLine
+                // docked hides it with the drag itself. The three-state
+                // drawing lives in DragLine.qml — the emoji page's strip
+                // wears the same component — and this bar passes its own
+                // cellGap proportions in: parity by construction, and the
+                // bar's own behaviour is unchanged.
+                DragLine {
                     visible: root.mode === "floating"
-                    // The owner's refined sketch: the line is the bar's
-                    // honest handle with THREE states — rest (quiet, full
-                    // width), press-grab (the moment the hand closes on
-                    // the bar: brighter, shorter SYMMETRICALLY from both
-                    // ends, shifted up a couple px as if lifted), and
-                    // carried (same held look while the panel follows).
-                    // Hover alone does NOT change it — a pointer passing
-                    // over must not pretend a grab.
-                    readonly property bool grabbed: dragArea.pressed
-                    readonly property bool carried: dragArea.drag.active
-                    // NO left/right anchors: symmetric shortening is x +
-                    // width together, and mixing anchors with x is what
-                    // broke the left edge (x was ignored while the left
-                    // anchor held the edge in place).
-                    x: keyboard.cellGap
-                        + (grabbed || carried ? tokens.space(6) : 0)
-                    width: parent.width - 2 * keyboard.cellGap
-                        - (grabbed || carried ? 2 * tokens.space(6) : 0)
-                    height: Math.max(3, Math.round(keyboard.cellGap * 0.35))
-                    anchors {
-                        top: parent.top
-                        topMargin: keyboard.cellGap
-                            - (grabbed ? Math.round(keyboard.cellGap * 0.25) : 0)
-                    }
-                    Behavior on x { NumberAnimation {
-                        duration: 110; easing.type: Easing.OutQuad } }
-                    Behavior on width { NumberAnimation {
-                        duration: 110; easing.type: Easing.OutQuad } }
-                    Behavior on anchors.topMargin { NumberAnimation {
-                        duration: 110; easing.type: Easing.OutQuad } }
-                    radius: height / 2
-                    color: Util.alpha(tokens.foreground,
-                        grabbed || carried ? 0.75
-                        : dragArea.containsMouse ? 0.55 : 0.35)
-                    Behavior on color { ColorAnimation { duration: 110 } }
+                    tokens: tokens
+                    grabbed: dragArea.pressed
+                    carried: dragArea.drag.active
+                    hovered: dragArea.containsMouse
+                    edgeGap: keyboard.cellGap
+                    shortenBy: tokens.space(6)
+                    thickness: keyboard.cellGap * 0.35
+                    liftBy: Math.round(keyboard.cellGap * 0.25)
                 }
 
                 MouseArea {
@@ -3211,6 +3259,12 @@ Item {
             overlayBox, bandBox,
             { w: emojiPage.width, h: emojiPage.height })
 
+        // A resize of the overlay (a screen change) is one of the facts
+        // the emoji page's placement re-derives from — the remembered
+        // centre clamps into whatever the current visible area is.
+        onWidthChanged: root.applyEmojiPosition()
+        onHeightChanged: root.applyEmojiPosition()
+
         mask: Region {
             x: settingsLayer.overlayOpen
                 ? (settingsLayer.emojiPageSolo ? emojiPage.x
@@ -3340,8 +3394,16 @@ Item {
             uiLang: root.uiLang
             hostWidth: settingsLayer.leftoverBox.w
             hostHeight: settingsLayer.leftoverBox.h
-            x: settingsLayer.emojiPlace.x
-            y: settingsLayer.emojiPlace.y
+            // Placement is the panel's (applyEmojiPosition) — x/y are
+            // written, never bound, because a strip drag would destroy
+            // any binding (the card's own lesson). The drag's clamp is
+            // the LAYER, not the leftover: free placement may cover the
+            // keyboard band.
+            dragEnabled: root.emojiDrag
+            dragBounds: ({ w: settingsLayer.width, h: settingsLayer.height })
+            onDragSettled: root.rememberEmojiPosition()
+            onWidthChanged: root.applyEmojiPosition()
+            onHeightChanged: root.applyEmojiPosition()
             z: 1
             visible: root.emojiOpen
             // Ticket 58: the page's presses join the input-profile

@@ -75,6 +75,62 @@ QtObject {
                 { x: 540, y: 350 })
         })
 
+        // ---- the emoji page's free placement (the emoji-drag ticket) ----
+        //
+        // The drag's clamp and the remembered centre's restore are the
+        // same deterministic-anchor rule the floating card owns
+        // (spec-v1.1 §4, ConfigFile.floatingAnchor), in this module's
+        // rect vocabulary: a dragged top-left never leaves the visible
+        // area, and a saved CENTRE re-derives the top-left against the
+        // CURRENT bounds — a smaller overlay, a different monitor or a
+        // different page size moves the page no further than staying
+        // fully visible demands, never stranding it off-screen.
+
+        T.test("a dragged top-left clamps inside the visible area on every edge", function () {
+            var bounds = { x: 0, y: 0, w: 1280, h: 800 }
+            var size = { w: 400, h: 300 }
+            T.deepEqual(Place.clampedTopLeft({ x: -60, y: 200 }, size, bounds),
+                { x: 0, y: 200 })
+            T.deepEqual(Place.clampedTopLeft({ x: 1200, y: 900 }, size, bounds),
+                { x: 880, y: 500 })
+            // Inside already: untouched.
+            T.deepEqual(Place.clampedTopLeft({ x: 440, y: 180 }, size, bounds),
+                { x: 440, y: 180 })
+            // A page larger than the bounds pins to the origin instead of
+            // inverting the clamp — the floatingAnchor rule.
+            T.deepEqual(Place.clampedTopLeft({ x: 300, y: 300 },
+                { w: 2000, h: 1200 }, bounds), { x: 0, y: 0 })
+            // Degenerate inputs answer null; the caller falls back to the
+            // computed placement rather than trusting a guess.
+            T.equal(Place.clampedTopLeft(null, size, bounds), null)
+            T.equal(Place.clampedTopLeft({ x: 10, y: 10 }, size, null), null)
+        })
+
+        T.test("a remembered centre restores the top-left clamped into the CURRENT area", function () {
+            var bounds = { x: 0, y: 0, w: 1280, h: 800 }
+            // An unchanged centre, size and bounds restore the exact same
+            // top-left every time — the anchor is deterministic.
+            var place = Place.centreRestore({ x: 640, y: 400 },
+                { w: 400, h: 300 }, bounds)
+            T.deepEqual(place, { x: 440, y: 250 })
+            T.deepEqual(Place.centreRestore({ x: 640, y: 400 },
+                { w: 400, h: 300 }, bounds), place)
+            // A centre remembered on a bigger output clamps to the edge of
+            // the smaller current one — never stranded, never flipped past.
+            T.deepEqual(Place.centreRestore({ x: 1200, y: 750 },
+                { w: 400, h: 300 }, { x: 0, y: 0, w: 1024, h: 600 }),
+                { x: 624, y: 300 })
+            // A changed page size re-anchors from the same centre.
+            T.deepEqual(Place.centreRestore({ x: 640, y: 400 },
+                { w: 200, h: 150 }, bounds), { x: 540, y: 325 })
+            // No remembered centre is the caller's fallback signal (the
+            // computed leftover centre), not a place; so is a degenerate
+            // size or bounds.
+            T.equal(Place.centreRestore(null, { w: 400, h: 300 }, bounds), null)
+            T.equal(Place.centreRestore({ x: 640, y: 400 },
+                { w: 0, h: 300 }, bounds), null)
+        })
+
         // ---- ticket 23: the colour row's indicator square ----
         //
         // The widest control block a colour row lays down grew by the

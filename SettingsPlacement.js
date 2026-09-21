@@ -82,3 +82,47 @@ function centreInLeftover(output, band, size) {
 function overlayInputRect(output, band) {
     return leftoverRect(output, band)
 }
+
+// ---- the emoji page's free drag (the emoji-drag ticket) ----
+//
+// The same deterministic-anchor rule the floating card owns
+// (spec-v1.1 §4, ConfigFile.floatingAnchor), in this module's rect
+// vocabulary: the visible area here is the whole overlay the page may
+// be dragged in, not the leftover — free placement may cover the
+// keyboard band; that is what "free" means.
+
+// Clamp a w×h surface's top-left so it stays fully inside bounds. A
+// surface larger than the bounds pins to the origin rather than
+// inverting the clamp. Degenerate input answers null — the caller falls
+// back to computed placement instead of trusting a guess.
+function clampedTopLeft(point, size, bounds) {
+    var w = size && isFinite(size.w) ? size.w : 0
+    var h = size && isFinite(size.h) ? size.h : 0
+    if (!point || !isFinite(point.x) || !isFinite(point.y)
+        || !validBox(bounds) || w <= 0 || h <= 0)
+        return null
+    var maxX = bounds.x + Math.max(0, bounds.w - w)
+    var maxY = bounds.y + Math.max(0, bounds.h - h)
+    return {
+        x: Math.round(Math.min(Math.max(point.x, bounds.x), maxX)),
+        y: Math.round(Math.min(Math.max(point.y, bounds.y), maxY))
+    }
+}
+
+// Re-derive the top-left from a remembered CENTRE against the CURRENT
+// bounds: an unchanged centre, size and bounds restore the exact same
+// top-left every time, and a smaller overlay, a different monitor or a
+// different page size moves the page no further than staying fully
+// visible demands — a remembered top-left instead restored to a
+// different visible spot, the defect the card's own centre rule cured.
+// No centre (or a degenerate size/bounds) answers null: the caller's
+// fallback is today's computed leftover centre.
+function centreRestore(center, size, bounds) {
+    var w = size && isFinite(size.w) ? size.w : 0
+    var h = size && isFinite(size.h) ? size.h : 0
+    if (!center || !isFinite(center.x) || !isFinite(center.y)
+        || w <= 0 || h <= 0)
+        return null
+    return clampedTopLeft({ x: center.x - w / 2, y: center.y - h / 2 },
+        { w: w, h: h }, bounds)
+}

@@ -20,6 +20,9 @@ QtObject {
                 // Omarchy 4.0.2's own default emoji picker (2026-09-05).
                 emojiCloseAfterPick: false,
                 emojiPageSize: "medium",
+                // The emoji page's free drag is opt-in: off is exactly
+                // the computed leftover-centre placement that shipped.
+                emojiDrag: false,
                 // The Super cap says what the key is (ticket 22).
                 superMark: "word",
                 // Ticket 50: dwell-to-type is off until the user opts in.
@@ -40,8 +43,8 @@ QtObject {
                 borderColor: "#5a5a5a"
             })
             T.deepEqual(Config.stateDefaults(), {
-                center: null, emojiUsage: [], emojiSkinTone: "",
-                layoutGroup: 0, layoutDevice: ""
+                center: null, emojiCenter: null, emojiUsage: [],
+                emojiSkinTone: "", layoutGroup: 0, layoutDevice: ""
             })
         })
 
@@ -58,6 +61,63 @@ QtObject {
                 "Invalid value for emoji_page_size")
             T.equal(Config.reloadOverrides({}, '{"emoji_close_after_pick":1}').error,
                 "Invalid value for emoji_close_after_pick")
+        })
+
+        T.test("the emoji drag preference validates, stays sparse, and defaults off", function () {
+            // The emoji page's free drag: a boolean, off by default — off
+            // is exactly the computed leftover-centre placement that
+            // shipped, no affordance added. Canonical snake_case and the
+            // camelCase alias are the same field with the same rule (R5).
+            var parsed = Config.reloadOverrides({}, '{"emoji_drag":true}')
+            T.equal(parsed.error, "")
+            T.deepEqual(parsed.value, { emojiDrag: true })
+            T.equal(Config.serializeOverrides(parsed.value),
+                '{\n  "emoji_drag": true\n}\n')
+            var alias = Config.reloadOverrides({}, '{"emojiDrag":false}')
+            T.equal(alias.error, "")
+            T.deepEqual(alias.value, { emojiDrag: false })
+            // Booleans only: a number or a stray string is a malformed
+            // edit with the §5 preservation semantics.
+            T.equal(Config.reloadOverrides({}, '{"emoji_drag":1}').error,
+                "Invalid value for emoji_drag")
+            T.equal(Config.reloadOverrides({}, '{"emoji_drag":"yes"}').error,
+                "Invalid value for emoji_drag")
+            // The string form heals exactly like the other boolean
+            // fields' legacy values did.
+            var healed = Config.reloadOverrides({}, '{"emoji_drag":"true"}')
+            T.equal(healed.error, "")
+            T.deepEqual(healed.value, { emojiDrag: true })
+            // Sparse: an absent key never reaches the file, and the
+            // maintained default is off.
+            T.equal(Config.owns(parsed.value, "mode"), false)
+            T.equal(Config.maintainerDefaults().emojiDrag, false)
+        })
+
+        T.test("the remembered emoji page centre is validated state, never an override", function () {
+            // The free-drag ticket's persisted placement: the page's
+            // CENTRE in overlay-local coordinates, beside the floating
+            // card's centre and on the same write path — parsed with the
+            // same point rule, malformed with the §5 preservation
+            // semantics, unknown to the override store.
+            var parsed = Config.reloadState(Config.stateDefaults(),
+                '{"emoji_center":{"x":640,"y":381.5}}')
+            T.equal(parsed.error, "")
+            T.deepEqual(parsed.value.emojiCenter, { x: 640, y: 381.5 })
+            T.equal(Config.serializeState(parsed.value).indexOf(
+                '"emoji_center": {\n    "x": 640,\n    "y": 381.5\n  }') >= 0,
+                true)
+            // Absent keeps null (no remembered position yet); a partial or
+            // non-numeric point is malformed, never a guess.
+            T.equal(Config.stateDefaults().emojiCenter, null)
+            T.equal(Config.reloadState(parsed.value,
+                '{"emoji_center":{"x":12}}').error,
+                "Invalid value for emoji_center")
+            T.equal(Config.reloadState(parsed.value,
+                '{"emoji_center":[640,400]}').error,
+                "Invalid value for emoji_center")
+            T.equal(Config.reloadState(parsed.value,
+                '{"emoji_center":null}').error, "")
+            T.equal(Config.configField("emoji_center"), null)
         })
 
         T.test("emoji usage state preserves exact sequences and validates its bound", function () {
@@ -540,7 +600,8 @@ QtObject {
         T.test("valid external state reloads while malformed state is retained", function () {
             var first = Config.reloadState(Config.stateDefaults(), '{"center":{"x":12,"y":34}}')
             T.deepEqual(first.value, {
-                center: { x: 12, y: 34 }, emojiUsage: [], emojiSkinTone: "",
+                center: { x: 12, y: 34 }, emojiCenter: null,
+                emojiUsage: [], emojiSkinTone: "",
                 layoutGroup: 0, layoutDevice: ""
             })
             var malformed = Config.reloadState(first.value, '{"center":{"x":12}}')
@@ -552,8 +613,8 @@ QtObject {
             // placement rules instead of restoring a stale top-left.
             var legacy = Config.reloadState(Config.stateDefaults(), '{"position":{"x":12,"y":34}}')
             T.deepEqual(legacy.value, {
-                center: null, emojiUsage: [], emojiSkinTone: "",
-                layoutGroup: 0, layoutDevice: ""
+                center: null, emojiCenter: null, emojiUsage: [],
+                emojiSkinTone: "", layoutGroup: 0, layoutDevice: ""
             })
             T.equal(legacy.error, "")
         })
@@ -561,6 +622,7 @@ QtObject {
         T.test("state serialization cannot copy preferences into state", function () {
             T.equal(Config.serializeState({ center: { x: 5, y: 9 }, mode: "floating" }),
                 '{\n  "center": {\n    "x": 5,\n    "y": 9\n  },'
+                + '\n  "emoji_center": null,'
                 + '\n  "emoji_usage": [],'
                 + '\n  "emoji_skin_tone": "",'
                 + '\n  "layout_group": 0,'

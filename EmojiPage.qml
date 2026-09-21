@@ -36,6 +36,26 @@ Rectangle {
     property real hostWidth: 0
     property real hostHeight: 0
 
+    // The free-drag affordance (the emoji-drag ticket), wired from the
+    // panel's emoji_drag setting. Off (the default) means no strip, no
+    // drag, exactly the page that shipped; on grows a drag strip along
+    // the top edge, above the search header, wearing the keyboard
+    // card's own three-state line (DragLine.qml — parity by
+    // construction).
+    property bool dragEnabled: false
+    // The window the page may be dragged in ({w,h} — the settings
+    // layer's own size, not the leftover: free placement may cover the
+    // keyboard band). The strip's MouseArea clamps the drag to it.
+    property var dragBounds: null
+    // Whether a strip drag is live. The panel's placement guard reads
+    // it: a held drag owns the placement, the floating card's own rule.
+    readonly property bool dragActive: stripDrag.drag.active
+    // A free drag ended — release, or the compositor took the gesture
+    // away mid-drag and wherever the hand left the page is still worth
+    // keeping (the card's onCanceled reasoning). The panel persists the
+    // page's centre.
+    signal dragSettled()
+
     // The search text the on-screen keys build (Keyboard.searchMode routes
     // them here). Cleared on a fresh open — a stale filter must not greet
     // the next open the way a stale hex draft must not (the card's own
@@ -208,6 +228,11 @@ Rectangle {
     readonly property real pageMargin: tokens.space(10)
     readonly property real contentSpacing: tokens.space(7)
     readonly property real gridGap: tokens.space(4)
+    // The drag strip's height — a comfortable grab band, its share of
+    // the natural height and the column's spacing counted only while
+    // the strip stands, so an off setting leaves today's arithmetic
+    // byte-for-byte.
+    readonly property real stripHeight: tokens.space(20)
     // Key-sized cells, independent from the keyboard's own M/L/XL scale:
     // this page's preset changes viewport capacity, not tile or key size.
     readonly property real cellSize: Math.round(tokens.space(42))
@@ -232,6 +257,7 @@ Rectangle {
         gridRowsWanted * (cellSize + gridGap) - gridGap + usageChromeHeight
     readonly property real naturalPageHeight: pageMargin * 2 + headerRow.height
         + 1 + tabsFlow.height + gridIdealHeight + contentSpacing * 3
+        + (dragEnabled ? stripHeight + contentSpacing : 0)
     readonly property real maxPageHeight: hostHeight > 0
         ? Math.max(0, hostHeight - tokens.space(6) * 2) : tokens.space(120)
     height: Math.min(naturalPageHeight, maxPageHeight)
@@ -260,6 +286,60 @@ Rectangle {
         anchors.fill: parent
         anchors.margins: emojiRoot.pageMargin
         spacing: emojiRoot.contentSpacing
+
+        // ---- the free-drag strip (the emoji-drag ticket) ----
+        //
+        // The keyboard card's own drag grammar wearing a new host: the
+        // shared DragLine along the page's top edge, ABOVE the search
+        // header. The strip consumes its own press — a drag is not a
+        // click into the field, so the armed search underneath stays
+        // exactly as armed as it was — and the press joins the
+        // input-profile observation like every other surface the panel
+        // draws. The clamp is dragBounds (the whole layer), not the
+        // leftover: free placement may cover the keyboard band. The
+        // release hands the placement to the panel, which remembers the
+        // page's centre.
+        Item {
+            id: dragStrip
+            width: parent.width
+            height: emojiRoot.stripHeight
+            visible: emojiRoot.dragEnabled
+
+            DragLine {
+                tokens: emojiRoot.tokens
+                grabbed: stripDrag.pressed
+                carried: stripDrag.drag.active
+                hovered: stripDrag.containsMouse
+                edgeGap: tokens.space(2)
+                shortenBy: tokens.space(6)
+                liftBy: 1
+            }
+
+            MouseArea {
+                id: stripDrag
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.SizeAllCursor
+                drag.target: emojiRoot
+                drag.axis: Drag.XAndYAxis
+                drag.minimumX: 0
+                drag.maximumX: emojiRoot.dragBounds
+                    ? Math.max(0, emojiRoot.dragBounds.w - emojiRoot.width) : 0
+                drag.minimumY: 0
+                drag.maximumY: emojiRoot.dragBounds
+                    ? Math.max(0, emojiRoot.dragBounds.h - emojiRoot.height) : 0
+                onPressed: function (mouse) {
+                    emojiRoot.pointerSourceObserved(mouse.source)
+                }
+                onReleased: emojiRoot.dragSettled()
+                onCanceled: emojiRoot.dragSettled()
+                HoverTooltip {
+                    text: UiStrings.tr("emoji.dragStrip", emojiRoot.uiLang)
+                    hovered: stripDrag.containsMouse
+                        && emojiRoot.tooltipHoverShows
+                }
+            }
+        }
 
         // ---- header: the search the keys type ----
         //
@@ -533,7 +613,9 @@ Rectangle {
             id: gridArea
             width: parent.width
             height: Math.max(0, contentColumn.height - headerRow.height - 1
-                - tabsFlow.height - emojiRoot.contentSpacing * 3)
+                - tabsFlow.height - emojiRoot.contentSpacing * 3
+                - (emojiRoot.dragEnabled ? emojiRoot.stripHeight
+                    + emojiRoot.contentSpacing : 0))
 
             GridView {
                 id: grid

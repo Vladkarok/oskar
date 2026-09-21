@@ -125,6 +125,7 @@ Rectangle {
          UiStrings.tr("settings.row.inputProfile", panel.uiLang),
          UiStrings.tr("settings.row.emojiPicking", panel.uiLang),
          UiStrings.tr("settings.row.emojiPageSize", panel.uiLang),
+         UiStrings.tr("settings.row.emojiDrag", panel.uiLang),
          UiStrings.tr("settings.row.superMark", panel.uiLang),
          UiStrings.tr("settings.row.sound", panel.uiLang),
          UiStrings.tr("settings.row.followTheme", panel.uiLang),
@@ -872,6 +873,48 @@ Rectangle {
                     tokens: popoverRoot.tokens
                     panel: popoverRoot.panel
                     overrideName: "emojiPageSize"
+                }
+            }
+
+            // The free-drag ticket's row: whether the emoji page grows
+            // its drag strip. The picking row's own shape — two boolean
+            // segments naming the behaviour, a reset chip — and the same
+            // string-carrying signal rule (the value arrives as "true"/
+            // "false" and must be written a real boolean).
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+                Text {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: UiStrings.tr("settings.row.emojiDrag", panel.uiLang)
+                    color: tokens.foreground
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBody
+                }
+                SettingsSegmented {
+                    id: emojiDragControl
+                    x: popoverRoot.controlColumnX
+                    anchors.verticalCenter: parent.verticalCenter
+                    segments: [
+                        { value: false,
+                          label: UiStrings.tr("settings.emojiDrag.inPlace", panel.uiLang) },
+                        { value: true,
+                          label: UiStrings.tr("settings.emojiDrag.movable", panel.uiLang) }
+                    ]
+                    current: panel.emojiDrag
+                    onPicked: function (value) {
+                        panel.setOverride("emojiDrag", value === "true")
+                    }
+                }
+                SettingsResetChip {
+                    anchors.left: emojiDragControl.right
+                    anchors.leftMargin: tokens.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "emojiDrag"
                 }
             }
 

@@ -353,6 +353,27 @@ var STRINGS = {
         uk: "Розмір сторінки емодзі",
         it: "Dimensione pagina emoji"
     },
+    // The free-drag ticket's row: whether the page can be dragged. The
+    // segment pair names the behaviour, short enough for the two-way
+    // control's ~70px slices ("Подвижна" is 58px-class at fontBody).
+    "settings.row.emojiDrag": {
+        en: "Emoji page dragging",
+        ru: "Перетаскивание страницы",
+        uk: "Перетягування сторінки",
+        it: "Trascinamento pagina"
+    },
+    "settings.emojiDrag.inPlace": {
+        en: "In place",
+        ru: "На месте",
+        uk: "На місці",
+        it: "Fissa"
+    },
+    "settings.emojiDrag.movable": {
+        en: "Draggable",
+        ru: "Подвижна",
+        uk: "Рухома",
+        it: "Mobile"
+    },
     "settings.section.superMark": {
         en: "SUPER MARK",
         ru: "МЕТКА SUPER",
@@ -658,6 +679,14 @@ var STRINGS = {
         ru: "Очистить поиск",
         uk: "Очистити пошук",
         it: "Cancella la ricerca"
+    },
+    // The free-drag strip's hover help (the strip is the keyboard card's
+    // drag grammar wearing a new host).
+    "emoji.dragStrip": {
+        en: "Drag to move the page",
+        ru: "Перетащите, чтобы переместить страницу",
+        uk: "Перетягніть, щоб перемістити сторінку",
+        it: "Trascina per spostare la pagina"
     },
     "emoji.chooseTone": {
         en: "Choose skin tone",
