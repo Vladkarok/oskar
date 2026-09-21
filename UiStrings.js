@@ -10,8 +10,8 @@
 //
 // The language is the ACTIVE LAYOUT with an override on top — the
 // searchPlaceholder mechanism (EmojiPage.js, ticket 36) generalised:
-// "auto" (the default) answers uk for a ua layout, ru for ru, English
-// for everything else; the settings row pins a language only when the
+// "auto" (the default) answers uk for a ua layout, ru for ru, it for
+// an it layout, English for everything else; the settings row pins a language only when the
 // seat carries its layout (ticket 61: Auto and English always,
 // ru/uk/it appear only when installed). A language we do not ship reads as English rather than a
 // guess, exactly like the placeholder always did for a custom code.
@@ -738,7 +738,7 @@ function ids() {
     return out
 }
 
-// The effective UI language. An explicit en/ru/uk wins; "auto" (and
+// The effective UI language. An explicit shipped language wins; "auto" (and
 // anything else — the store rejects junk at the file, this is the
 // runtime's own last word) follows the ACTIVE LAYOUT's code: ua speaks
 // Ukrainian, ru Russian, every other code English. Lowercased before

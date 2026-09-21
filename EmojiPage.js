@@ -267,10 +267,8 @@ function searchKeyAction(event) {
     return "char"
 }
 
-// The search field's placeholder word, in the ACTIVE LAYOUT's language
-// (the owner's 2026-09-13 call): ua draws Пошук, ru Поиск, everything
-// else the English Search. Keyed by the xkb layout CODE the panel already
-// knows, so a custom code falls through to English rather than guessing.
+// (The layout-keyed placeholder rule is gone: the placeholder is drawn
+// from UiStrings in the override-aware UI language — see languageFor.)
 
 // The tone picker's names, localized (ticket 52): SKIN_TONES keeps its
 // English label as the data fallback (the field contract is pinned to

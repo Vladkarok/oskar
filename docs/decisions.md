@@ -3488,3 +3488,17 @@ it" residues beside them; the handoff's loop line current.
 The method note for whatever hunts next: grep-for-deleted-vocabulary
 cannot find this class — find the behaviour-changing commits and read
 the contract docs beside them.
+
+## 102. Triage round eleven: the contract sentences beside the behaviour changes
+
+Round eleven, curve 10,10,5,5,3,4,4,4,2,4 — four poisons, every one
+the r10 class generalized: UiStrings' auto-clause omitted the it
+branch (the sentence r10 edited, the clause before it); EmojiPage
+carried an orphaned doc for the deleted placeholder rule (the
+vocabulary sweep missed it — the STRING id survives, so greps looked
+live); the handoff's loop line no-matched AGAIN (r9 claimed it, r10
+claimed it, neither landed — the loop's most-punished class, caught
+by the exit round); CI's comment said 16 suites. All fixed; the
+languageFor doc; vm-handoff's snapshot marked. The r9/r10 claims
+that no-matched are the record's own lesson — the handoff line is
+now written by the same commit that appends the decision entry.

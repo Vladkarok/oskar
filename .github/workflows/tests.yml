@@ -1,5 +1,5 @@
 # The regression wall's host layers on every push (ticket 43's CI half):
-# the 16 offscreen JS suites, qmllint's fatal class, the packaging
+# the 21 offscreen JS suites, qmllint's fatal class, the packaging
 # file-set gate, and the daemon's tests under clippy. The
 # live lab layers (canary, restart-settle, QMP clicks) stay local —
 # they need the disposable VM.
