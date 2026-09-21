@@ -48,7 +48,7 @@ RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "")
 # /usr/share/oskar/…) and one of our basenames. Both halves are
 # required, so the omarchy shell's own Commons/Ui files cannot collide.
 OURS = re.compile(
-    r"(Panel|Keyboard|HelperLink|BarWidget|Theme|HoverTooltip|KeyClickSound|CursorPolicy"
+    r"(Panel|Keyboard|HelperLink|PasteChords|BarWidget|Theme|HoverTooltip|KeyClickSound|CursorPolicy"
     r"|Settings\w*|EmojiPage|EmojiCatalog|LanguageControl|HoldColumn"
     r"|LayoutDevices|ModifierReducer|KeyboardSession|ClipboardPaste|Config)\.(qml|js)")
 OURS_LINE = re.compile(r"oskar")

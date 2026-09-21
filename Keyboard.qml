@@ -14,10 +14,8 @@ import "Config.js" as ConfigFile
 import "LayoutDevices.js" as LayoutDevices
 import "SettleGuard.js" as SettleGuard
 import "SocketWatch.js" as SocketWatch
-import "ClipboardPaste.js" as ClipboardPaste
 import "ChordAcks.js" as ChordAcks
 import "ShareQueue.js" as ShareQueue
-import "PasteFlow.js" as PasteFlow
 import "LanguageControl.js" as LanguageControl
 
 Item {
@@ -1308,8 +1306,8 @@ Item {
         // releaseAll is always-live and cannot re-enter this gate; a
         // bare release is harmless to let through (the next tick's
         // lock-set comparison already covers drift).
-        if (root.pastePacing && !alwaysLive) {
-            root.abortPacedPaste()
+        if (pasteChords.pastePacing && !alwaysLive) {
+            pasteChords.abortPacedPaste()
         }
         var dropRestore = event.type === "release" && Session.hasDrainAhead(session)
         // No speculative settle here, deliberately: a release that runs
@@ -1332,36 +1330,6 @@ Item {
         }
     }
 
-    /// Current-content paste (spec-v1.1 §1): an exact chord through the
-    /// reducer, never a held cap and never mixed with latched Ctrl/Alt/Super.
-    /// `wmClass` selects the CLIPBOARD chord (terminals: Ctrl+Shift+V; else
-    /// Shift+Insert). Empty class uses the terminal chord so PRIMARY is not
-    /// sent into a terminal the lookup failed to name.
-    // The wine chord's delivery: one line per tick, never a burst. Wine
-    // polls its keyboard a frame at a time, and a chord whose lines all
-    // land in the same instant can be sampled with V visible before Ctrl
-    // — a manual Ctrl+V never has the problem, because hands have
-    // latency. The state settles immediately (the reducer ran); only the
-    // writes are paced, and a second paste while one is pacing is
-    // refused rather than interleaved.
-    //
-    // Ticket 28's transaction contract (audit 2026-09-13): a paste is no
-    // longer fire-and-forget. The optional `completed` callback fires
-    // exactly once — on the helper's acknowledgement of the chord's
-    // final line, both paths (the review's third round: success is the
-    // counterpart answering, not the write returning), and
-    // synchronously with false on any refusal (already pacing, a held
-    // key, an unready input, a dead socket mid-pace). The
-    // emoji page records usage only from a real completion; every
-    // caller passes one (§89: the chip and the txn both do — a missing
-    // one is a no-op report and the flow still awaits the verdict).
-    property bool pastePacing: false
-    property var pastePacedLines: []
-    // The full chord and how much of it went out, so an abort can owe the
-    // device exactly its unlifted presses.
-    property var pastePaceAllLines: []
-    property int pastePaceSent: 0
-    property var pastePaceDone: null
     // The chord whose final line is out and whose helper acknowledgement
     // has not come back yet. Success is the ack of ITS OWN last command,
     // correlated through ChordAcks' outstanding-commands ledger — not the
@@ -1373,225 +1341,44 @@ Item {
     // chord waits at a time (the transaction serializes them) behind a
     // guard timer a silent helper cannot wedge.
     property var chordAcks: ChordAcks.initial()
-    // The paste lifecycle (PasteFlow.js): one paste at a time, the
-    // busy-gate and the ordered cancellation as data. The timer and
-    // socket machinery stays here; the invariant lives there.
-    property var pasteFlow: PasteFlow.initial()
-    // Which modifiers were locked when the chord computed its lines: a
-    // mid-chord event that changes the held world (a configure draining
-    // the device, a releaseAll) invalidates the remaining lines, and the
-    // chord aborts instead of writing plans for a world that is gone.
-    property var pastePaceLocks: []
-    Timer {
-        id: pastePacedTick
-        interval: 35
-        repeat: false
-        onTriggered: () => {
-            if (!root.pastePacing) return
-            if (root.pastePacedLines.length === 0) {
-                // Unreachable today (dispatch commits with lines or fails),
-                // but the invariant stays local: every paced exit is
-                // finishPacedPaste, so the flow can never outlive the flag.
-                finishPacedPaste(false)
-                return
-            }
-            if (!root.inputReady || !root.pasteChordAssumptionsHold()) {
-                // The head line is neither consumed nor counted: nothing
-                // was dispatched for it, so the sent prefix the abort
-                // compensates is exactly what left the panel.
-                root.abortPacedPaste()
-                return
-            }
-            if (!sendCommandUnchecked(root.pastePacedLines.shift())) {
-                // The write refused: the consumed line pressed nothing at
-                // the device (nothing owed for it), and the socket being
-                // gone means the compensations are forwarded no-ops —
-                // the helper already released its claims on disconnect.
-                root.abortPacedPaste()
-                return
-            }
-            root.pastePaceSent++
-            if (root.pastePacedLines.length > 0) restart()
-            else root.finishPacedPaste(true)
-        }
+
+    // The paste chords' machinery — pasteCurrent's dispatch, the wine
+    // pacer, the ack guard, the flow state — lives in PasteChords.qml
+    // (the structural split's step two). The ledger above stayed HERE:
+    // its one choke point (sendCommandUnchecked below) and the reply
+    // dispatch that pops it are the keyboard's, so the child reads it
+    // through the bound `chordAcks` property and writes every chord
+    // transition back through `setChordAcks` — one home, one queue.
+    PasteChords {
+        id: pasteChords
+
+        // The ledger's read half: bound from the one home, never
+        // assigned in the child (an assignment would fork the queue).
+        chordAcks: root.chordAcks
+        // The ledger's write half: every chordStart/chordArmed/
+        // chordSettled the machinery makes lands as one assignment.
+        setChordAcks: (state) => { root.chordAcks = state }
+        // The write choke point: every paced line, chord line and
+        // compensating release crosses sendCommandUnchecked, so each
+        // occupies its correlation slot — HelperLink's discipline too.
+        sendChoked: (line) => root.sendCommandUnchecked(line)
+        // The input gate: the paste event and the abort's compensating
+        // releaseAll run through applyModifierEvent, which stays here —
+        // its §92 abort calls back into the child's abortPacedPaste.
+        applyEvent: (event, sink) => root.applyModifierEvent(event, sink)
+        inputReady: root.inputReady
+        modifierState: root.modifierState
     }
 
-    // The chord's assumptions still hold while no key press interleaved
-    // and the locked-modifier set is exactly the one its lines planned
-    // around. Pure comparison; the abort itself lives below.
-    function pasteChordAssumptionsHold() {
-        if (modifierState.pending) return false
-        for (var i = 0; i < Modifiers.ORDER.length; i++) {
-            var name = Modifiers.ORDER[i]
-            var lockedNow = modifierState[name] === "locked"
-            var lockedThen = root.pastePaceLocks.indexOf(name) !== -1
-            if (lockedNow !== lockedThen) return false
-        }
-        return true
-    }
-
-    function finishPacedPaste(success) {
-        root.pastePacing = false
-        var done = root.pastePaceDone
-        root.pastePaceDone = null
-        if (done && success) {
-            root.pasteFlow = PasteFlow.awaiting(root.pasteFlow)
-            settleChordThroughHelper(done)
-        } else {
-            root.pasteFlow = PasteFlow.failed(root.pasteFlow)
-            if (done) done(false)
-        }
-    }
-
-    // Route a dispatched chord's success through the helper's reply to its
-    // final line. Failure paths never wait: a refusal, an abort or a dead
-    // socket is already a verdict.
-    function settleChordThroughHelper(done) {
-        if (!done) return
-        root.chordAcks = ChordAcks.chordArmed(root.chordAcks, done)
-        chordAckGuard.restart()
-    }
-
-    // The chord's own final line was answered: `ok` is success, anything
-    // else — an err — is a failed chord, and both spend the slot. The
-    // lifecycle closes with the verdict, whichever way it came.
-    function chordAckCompleted(done, success) {
-        root.pasteFlow = PasteFlow.verdictDone(root.pasteFlow)
-        chordAckGuard.stop()
-        if (done) done(success)
-    }
-
-    // The guard timeout, or a connection that cannot answer: the wait
-    // ends failed, and the queue keeps draining on its own.
-    function chordAckTimedOut() {
-        var done = root.chordAcks.chordDone
-        root.chordAcks = ChordAcks.chordSettled(root.chordAcks)
-        root.pasteFlow = PasteFlow.verdictDone(root.pasteFlow)
-        chordAckGuard.stop()
-        if (done) done(false)
-    }
-
-    Timer {
-        id: chordAckGuard
-        // Longer than the daemon's 5 s worst case (the external audit's
-        // finding 10): a guard that fired first reported failure while
-        // the daemon still delivered the chord late — pasting the next
-        // pick's clipboard, the exact A→B race the transaction exists to
-        // prevent.
-        interval: 8 * 1000
-        repeat: false
-        onTriggered: () => {
-            if (root.chordAcks.chordDone) root.chordAckTimedOut()
-        }
-    }
-
-    // A paced chord that cannot continue: lift what its sent prefix
-    // pressed without pairing, converge the modifier state by lifting
-    // (never re-press — the releaseAll that follows resets the panel's
-    // locks to match a device that no longer holds them), and report the
-    // cancellation. After a socket loss every write here is a forwarded
-    // no-op: the helper released its claims on disconnect, and a dead
-    // socket cannot owe anything (the disconnect path's own argument).
-    function abortPacedPaste() {
-        var owed = ClipboardPaste.compensatingReleases(root.pastePaceAllLines,
-            root.pastePaceSent)
-        for (var i = 0; i < owed.length; i++)
-            sendCommandUnchecked(owed[i])
-        root.pastePacedLines = []
-        applyModifierEvent({ type: "releaseAll" })
-        root.finishPacedPaste(false)
-    }
+    // The panel's frozen surface, forwarded to the machinery's new home
+    // under the names Panel.qml has always called (pasteCurrent's two
+    // callers; the §88 lane gate's pastePacing/pasteFlow.phase reads).
+    readonly property bool pastePacing: pasteChords.pastePacing
+    readonly property var pasteFlow: pasteChords.pasteFlow
 
     function pasteCurrent(wmClass, completed) {
-        // Every dispatched chord awaits its verdict (§89): a
-        // callback-less call used to return the flow to idle the
-        // instant the writes returned — the wl-copy-vs-in-flight-V
-        // race the fifth lane was closed against, reborn for any
-        // future caller following the old comment. There is no such
-        // caller today (the chip and the txn both pass callbacks); a
-        // missing one is a no-op report and the flow still awaits the
-        // verdict.
-        var done = completed || function () {}
-        var cls = String(wmClass || "")
-        // One paste at a time (PasteFlow owns the gate; round nine's
-        // finding was this check living beside a chordStart that reset
-        // the running chord's tracking): refused clean, nothing touched.
-        var begun = PasteFlow.begin(root.pasteFlow)
-        if (begun.refuse) {
-            if (done) done(false)
-            return false
-        }
-        root.pasteFlow = begun.state
-        var chord = Modifiers.pasteChordForClass(cls)
-        console.log("[oskar] paste chord for", cls === "" ? "(unknown class)" : cls,
-            "->", (chord.ctrl ? "Ctrl+" : "") + (chord.shift ? "Shift+" : "")
-            + chord.position)
-        // The chord's region begins here (round eight): every command
-        // sent from now until the verdict is the chord's business, and an
-        // err anywhere inside it poisons the success — a final ok alone
-        // proved nothing when the middle of the chord failed.
-        root.chordAcks = ChordAcks.chordStart(root.chordAcks)
-        var event = {
-            type: "paste",
-            ctrl: chord.ctrl === true,
-            shift: chord.shift === true,
-            position: chord.position
-        }
-        if (Modifiers.usesWinePasteChord(cls.toLowerCase())) {
-            // The flag arms AFTER the opening dispatch (§93, the audit's
-            // poison): it stands guard against events that arrive while
-            // the paste DRAINS — arming it before would make the paste's
-            // own {type: "paste"} event the first thing the gate aborts.
-            root.pastePacedLines = []
-            applyModifierEvent(event, function (line) {
-                root.pastePacedLines.push(line)
-            })
-            if (root.pastePacedLines.length === 0) {
-                // The reducer refused (a key press is pending) or input
-                // is not ready: nothing was dispatched and nothing will
-                // complete.
-                root.pasteFlow = PasteFlow.failed(root.pasteFlow)
-                if (done) done(false)
-                return false
-            }
-            root.pastePacing = true
-            root.pasteFlow = PasteFlow.paced(root.pasteFlow,
-                root.pastePacedLines.length)
-            root.pastePaceAllLines = root.pastePacedLines.slice()
-            root.pastePaceSent = 0
-            root.pastePaceDone = done
-            root.pastePaceLocks = []
-            for (var m = 0; m < Modifiers.ORDER.length; m++)
-                if (modifierState[Modifiers.ORDER[m]] === "locked")
-                    root.pastePaceLocks.push(Modifiers.ORDER[m])
-            pastePacedTick.restart()
-            return true
-        }
-        var sent = 0
-        var wrote = true
-        applyModifierEvent(event, function (line) {
-            sent++
-            if (!sendCommandUnchecked(line)) wrote = false
-        })
-        if (sent === 0 || !wrote) {
-            root.pasteFlow = PasteFlow.failed(root.pasteFlow)
-            if (done) done(false)
-            return false
-        }
-        // Success is the helper's acknowledgement of the final line, not
-        // the write returning (the review's third round): the next emoji
-        // must not replace the clipboard before the paste events have at
-        // least reached the compositor. `done` is always a function (the
-        // §89 default): a missing callback is a NO-OP REPORT — the flow
-        // still awaits the verdict and the guard still runs, so the gate
-        // can never silently reopen (the agent audit's blocker) and can
-        // never wedge on an unarmed wait either.
-        root.pasteFlow = PasteFlow.awaiting(root.pasteFlow)
-        settleChordThroughHelper(done)
-        return true
+        return pasteChords.pasteCurrent(wmClass, completed)
     }
-
-
 
     /// Lifts locked Shift and returns every modifier to idle. The panel closing
     /// is not the compositor forgetting: locked Shift is really held at the
@@ -1600,7 +1387,7 @@ Item {
     /// world this release is about to reset, and its tail (the Shift
     /// re-press) would re-hold what the close is lifting.
     function releaseModifiers() {
-        if (root.pastePacing) root.abortPacedPaste()
+        if (pasteChords.pastePacing) pasteChords.abortPacedPaste()
         // The panel is closing (this runs from its close branch): a
         // pending hold can never reach its release and a standing menu
         // has no panel left to stand on — both fold here, before the
@@ -1719,7 +1506,7 @@ Item {
         // keyboard's, not the transport's.
         inputReady: root.inputReady
         sessionSettled: Session.settled(root.session)
-        pastePacing: root.pastePacing
+        pastePacing: pasteChords.pastePacing
         chordAwaitingAck: !!root.chordAcks.chordDone
         // The one choke point, handed down: hello and ping must occupy
         // their correlation slot like every command.
@@ -1746,7 +1533,7 @@ Item {
             // cancellation — the helper released everything it held
             // on the way down, no ack is coming, and the ledger of
             // oks owed by this connection dies with it.
-            if (root.chordAcks.chordDone) root.chordAckTimedOut()
+            if (root.chordAcks.chordDone) pasteChords.chordAckTimedOut()
             root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
             // A restarted helper counts its installs from one again,
             // so the generation this panel last shared can come round
@@ -1792,7 +1579,7 @@ Item {
             // helper that is being torn down: settle it as a cancellation, the
             // way every other failure path already does — and the ledger of
             // oks owed by the dead connection dies with it.
-            if (root.chordAcks.chordDone) root.chordAckTimedOut()
+            if (root.chordAcks.chordDone) pasteChords.chordAckTimedOut()
             root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
         }
 
@@ -1812,7 +1599,7 @@ Item {
             var ack = ChordAcks.replyReceived(root.chordAcks,
                 reply === "ok")
             root.chordAcks = ack.state
-            if (ack.done) root.chordAckCompleted(ack.done, ack.success)
+            if (ack.done) pasteChords.chordAckCompleted(ack.done, ack.success)
             // What this reply ANSWERED, for the err arms below:
             // the FIFO pop is the only honest witness of which
             // command a content-ambiguous err settles (round 17
