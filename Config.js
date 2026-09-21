@@ -36,11 +36,6 @@ var UI_LANGUAGES = ["auto", "en", "ru", "uk", "it"]
 // world. One list for validation, the popover's segments and the tests —
 // the SUPER_MARKS rule.
 var INPUT_PROFILES = ["auto", "mouse", "touch"]
-// Ticket 28: "direct" types the pick (decisions §39/§40); "clipboard"
-// publishes the exact sequence and sends the paste chord — the mode the
-// owner chose for Chromium-family clients such as ZCode.
-var EMOJI_DELIVERY_MODES = ["direct", "clipboard"]
-
 var CONFIG_FIELDS = [
     { file: "mode", value: "mode" },
     { file: "size_preset", value: "sizePreset" },
@@ -48,7 +43,6 @@ var CONFIG_FIELDS = [
     { file: "follow_theme", value: "followTheme" },
     { file: "emoji_close_after_pick", value: "emojiCloseAfterPick" },
     { file: "emoji_page_size", value: "emojiPageSize" },
-    { file: "emoji_delivery", value: "emojiDelivery" },
     { file: "super_mark", value: "superMark" },
     // Ticket 50: the dwell pair — off by default, a bounded delay when on.
     { file: "dwell_enabled", value: "dwellEnabled" },
@@ -82,7 +76,6 @@ function maintainerDefaults() {
         // Ticket 28: typing is the default delivery (decisions §39/§40);
         // clipboard compatibility is the explicit user's choice for the
         // clients that drop it — never a silent swap.
-        emojiDelivery: "direct",
         // The Super cap says what the key is (ticket 22): the Omarchy glyph
         // stops being the unconditional drawing and becomes one chosen mark.
         // Sparse-store semantics mean this key never appears in the file
@@ -195,8 +188,6 @@ function validFieldValue(field, value) {
         return typeof value === "boolean"
     if (field.file === "emoji_page_size")
         return value === "medium" || value === "large" || value === "x-large"
-    if (field.file === "emoji_delivery")
-        return EMOJI_DELIVERY_MODES.indexOf(value) !== -1
     // Exactly the five marks the popover offers: anything else is a
     // malformed edit with the §5 preservation semantics, never a guess. The
     // QML side independently treats an unknown string as the word, so a
@@ -296,7 +287,7 @@ function parseOverrides(text) {
         // rejects every genuinely string-typed field's boolean.
         if (typeof value === "string" && field.file !== "mode"
             && field.file !== "size_preset"
-            && field.file !== "emoji_delivery" && field.file !== "super_mark"
+            && field.file !== "super_mark"
             && (value === "true" || value === "false")
             && validFieldValue(field, value === "true"))
             value = value === "true"

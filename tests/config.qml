@@ -21,8 +21,7 @@ QtObject {
                         emojiCloseAfterPick: false,
                 emojiPageSize: "medium",
                 // Ticket 28: typing is the default delivery.
-                emojiDelivery: "direct",
-                // The Super cap says what the key is (ticket 22).
+                                // The Super cap says what the key is (ticket 22).
                 superMark: "word",
                 // Ticket 50: dwell-to-type is off until the user opts in.
                 dwellEnabled: false,
@@ -109,34 +108,6 @@ QtObject {
             T.equal(okState.value.layoutDevice, "at-translated-set-2-keyboard")
         })
 
-        T.test("emoji delivery mode is direct or clipboard, direct by default", function () {
-            // Ticket 28: the explicit mode for clients that drop the typed
-            // routes. The canonical name and its camelCase alias validate
-            // identically; anything else is a malformed edit with the §5
-            // preservation semantics.
-            var modes = ["direct", "clipboard"]
-            for (var i = 0; i < modes.length; i++) {
-                var parsed = Config.reloadOverrides({},
-                    '{"emoji_delivery":"' + modes[i] + '"}')
-                T.equal(parsed.error, "")
-                T.deepEqual(parsed.value, { emojiDelivery: modes[i] })
-                T.equal(Config.serializeOverrides(parsed.value),
-                    '{\n  "emoji_delivery": "' + modes[i] + '"\n}\n')
-            }
-
-            var previous = { emojiDelivery: "direct" }
-            var unknown = Config.reloadOverrides(previous,
-                '{"emoji_delivery":"paste"}')
-            T.equal(unknown.value, previous)
-            T.equal(unknown.error, "Invalid value for emoji_delivery")
-            var aliasOk = Config.reloadOverrides({}, '{"emojiDelivery":"clipboard"}')
-            T.equal(aliasOk.error, "")
-            T.deepEqual(aliasOk.value, { emojiDelivery: "clipboard" })
-            var aliasBad = Config.reloadOverrides(previous,
-                '{"emojiDelivery":"emote"}')
-            T.equal(aliasBad.value, previous)
-            T.equal(aliasBad.error, "Invalid value for emojiDelivery")
-        })
 
         T.test("dwell preferences validate, stay sparse, and default off", function () {
             // Ticket 50: the accessibility pair — an off-by-default switch

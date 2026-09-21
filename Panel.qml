@@ -217,7 +217,6 @@ Item {
     // Emoji delivery mode (ticket 28): "direct" types the pick through the
     // helper; "clipboard" publishes the exact sequence and sends the paste
     // chord — the owner's choice for Chromium-family clients (ZCode).
-    property string emojiDelivery: maintainedDefaults.emojiDelivery
     // Colour-field entry (spec-v1.1 §5) and the armed emoji search
     // (ticket 42) — the panel's only TWO sanctioned keyboard-focus
     // exceptions, both on the settings overlay, never at once. False
@@ -651,13 +650,6 @@ Item {
             root.flashRefused(UiStrings.tr("hint.pasteBusy", root.uiLang))
             return
         }
-        // The §86 serialization's third lane (§87): a direct text pick
-        // in flight owns the window the same way — the chip's paced
-        // chord would interleave its Ctrl with the delivery.
-        if (root.directPickBusy) {
-            root.flashRefused(UiStrings.tr("hint.pasteBusy", root.uiLang))
-            return
-        }
         // R2: one target determination before any delivery choice. A
         // panel-local input — the colour field, or the emoji page whose
         // search every key is typing into while it is open — takes the
@@ -1073,15 +1065,6 @@ Item {
     }
 
     // The emoji delivery mode (ticket 28): setSuperMark's shape. Flipping
-    // the mode also cancels an unresolved publish — a slow verify must not
-    // paste a pick the user has decided to deliver by typing instead.
-    function setEmojiDelivery(mode) {
-        if (!root.configHealthy) return
-        if (root.emojiDelivery === mode) return
-        root.cancelEmojiPublish("delivery mode changed")
-        root.setOverride("emojiDelivery", mode)
-    }
-
     // ---- which output, and where on it (spec-v1 §7) ----
     //
     // Both modes open on the monitor the pointer is on and then stay there
@@ -1191,7 +1174,6 @@ Item {
         root.mode = effective.mode
         root.sizePreset = effective.sizePreset
         root.superMark = effective.superMark
-        root.emojiDelivery = effective.emojiDelivery
         var soundChanged = root.sound !== effective.sound
         root.sound = effective.sound
         root.followTheme = effective.followTheme
@@ -1692,35 +1674,6 @@ Item {
         beginEmojiPublish(emoji)
     }
 
-    // Direct-mode (typing) pick queue: one delivery in flight, three
-    // waiting, the same discipline the clipboard transaction already
-    // has. A pick's callback — success or failure — hands the next.
-    property var directPickQueue: []
-    property bool directPickBusy: false
-
-    function pickViaDirect(emoji, unicodeEntry) {
-        // The other half of the cross-route gate: a clipboard
-        // transaction mid-flight owns the window (see onEmojiChosen) —
-        // and so does a paced paste chord (§87's fourth lane: the
-        // panel-paced Ctrl would ride the glyph's tap).
-        if (root.emojiTxnState.phase !== "idle" || keyboard.pastePacing) {
-            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
-            return
-        }
-        if (root.directPickBusy) {
-            if (root.directPickQueue.length >= 3) {
-                console.warn("[oskar] direct pick refused: three already"
-                    + " queued behind a delivery")
-                root.emojiPickRefused = true
-                emojiPickRefuseTimer.restart()
-                return
-            }
-            root.directPickQueue.push({ emoji: emoji, unicodeEntry: unicodeEntry })
-            return
-        }
-        root.sendDirectPick(emoji, unicodeEntry)
-    }
-
     // The visible refusal (P2's other half): an accent flash on the hint
     // line, auto-cleared after the clipboard-gone notice's own beat.
     property bool emojiPickRefused: false
@@ -1765,40 +1718,6 @@ Item {
         }
     }
 
-    function sendDirectPick(emoji, unicodeEntry) {
-        root.directPickBusy = true
-        var sent = keyboard.sendText(emoji, function (success) {
-            root.directPickBusy = false
-            if (success) {
-                root.recordEmojiSuccess(emoji)
-                root.emojiPickSettled()
-                if (root.emojiCloseAfterPick) root.emojiOpen = false
-            } else {
-                // The helper answered and refused (budget spent, no
-                // keymap, no slots): a real refusal, so it gets the
-                // same visibility the queue cap has — the arm §79's
-                // own standard forgot (the flows round's finding).
-                root.flashRefused(UiStrings.tr("hint.pickFailed",
-                    root.uiLang))
-            }
-            if (root.directPickQueue.length > 0) {
-                var next = root.directPickQueue.shift()
-                root.sendDirectPick(next.emoji, next.unicodeEntry)
-            }
-        }, unicodeEntry)
-        if (!sent) {
-            // The send never left — the gate was shut or the write
-            // bounced — so NO reply will ever fire the callback, and
-            // the queue's busy flag waits on exactly that (the round's
-            // POISON: one such pick wedged every later pick for the
-            // rest of the session). Fail the pick and everything
-            // queued behind it — they queued behind a dead socket too —
-            // visibly, and hand the next click a clean slate.
-            root.directPickBusy = false
-            root.directPickQueue = []
-            root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
-        }
-    }
 
     // The effects of one accepted pick: replace the clipboard owner, then
     // verify. Called for the first pick and for every pick the queue
@@ -3454,8 +3373,6 @@ Item {
             y: settingsLayer.emojiPlace.y
             z: 1
             visible: root.emojiOpen
-            deliveryMode: root.emojiDelivery
-            onDeliveryModeRequested: function (mode) { root.setEmojiDelivery(mode) }
             // Ticket 58: the page's presses join the input-profile
             // observation, the caps' and the header chips' own rule.
             onPointerSourceObserved: function (source) {
@@ -3478,57 +3395,13 @@ Item {
                 // ahead of the first keystroke. On a refused send the
                 // search stays disarmed; a field click re-arms it.
                 if (emojiPage.searchArmed) emojiPage.searchArmed = false
-                // Ticket 28's explicit mode: clipboard compatibility
-                // publishes the exact sequence and pastes it, for the
-                // clients (ZCode) that drop the typed routes. Direct keeps
-                // decisions §39/§40 untouched.
-                if (root.emojiDelivery === "clipboard") {
-                    if (root.directPickBusy) {
-                        root.flashRefused(UiStrings.tr("hint.pickFailed",
-                            root.uiLang))
-                        return
-                    }
-                    root.pickViaClipboard(delivered.emoji)
-                    return
-                }
-                // Direct-mode picks QUEUE while a delivery is active
-                // (the liveability round's P2: the daemon's
-                // `err text busy` used to be a silent drop — the second
-                // of two quick picks into a Chromium-family client
-                // simply vanished). Same order and cap as the clipboard
-                // mode's transaction queue: three may wait, the fourth
-                // is refused OUT LOUD, and a pick's own completion
-                // starts the next. The ROUTE is the pure table's call
-                // (§84, the owner's live report): which of the three
-                // channels can carry THIS payload into THIS client —
-                // the old binary choice landed private-use tofu in
-                // every Electron app the class regex could not name
-                // and split skin tones in Telegram.
-                var route = EmojiGrid.deliveryRoute(delivered.emoji,
-                    root.focusedClientClass())
-                // One pick in flight per window, across BOTH routes
-                // (§86, the round's third convergence): the two queues
-                // never knew about each other, so a clipboard pick and a
-                // direct glyph pick could interleave into the same
-                // client — order inverted, or the glyph typed with the
-                // paced chord's Ctrl still held at the device. The
-                // paste chip's own rule, applied to picks: refuse
-                // VISIBLY, the windows are sub-second.
-                if (route === "clipboard") {
-                    if (root.directPickBusy) {
-                        root.flashRefused(UiStrings.tr("hint.pickFailed",
-                            root.uiLang))
-                        return
-                    }
-                    root.pickViaClipboard(delivered.emoji)
-                    return
-                }
-                if (root.emojiTxnState.phase !== "idle") {
-                    root.flashRefused(UiStrings.tr("hint.pickFailed",
-                        root.uiLang))
-                    return
-                }
-                root.pickViaDirect(delivered.emoji, route === "text-unicode")
+                // §91: ONE route — the clipboard transaction. The typed
+                // delivery routes (keysym taps, Unicode composition) are
+                // gone from the protocol and the panel alike; the owner
+                // chose the byte-exact channel for every pick, and the
+                // transaction's own queue serializes them (three wait,
+                // the fourth refuses out loud).
+                root.pickViaClipboard(delivered.emoji)
             }
             onSkinToneChosen: function (tone) { root.chooseEmojiSkinTone(tone) }
             onDismissed: root.emojiOpen = false

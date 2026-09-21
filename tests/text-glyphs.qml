@@ -29,42 +29,6 @@ QtObject {
             }
         })
 
-        T.test("glyphs route by CLIENT proof, never by payload faith (§90)", function () {
-            // The owner's live report killed §84's first rule ("a lone
-            // BMP scalar rides the keysym route everywhere"): his
-            // Electron build repeats the FIRST glyph for every later
-            // pick — its keymap table caches the first transient. The
-            // keysym route serves only the PROVEN clients; §40's
-            // discipline — no Chromium-family build sees a transient
-            // keymap — holds for every payload, glyphs included.
-            var entries = TextGlyphs.entries()
-            var byClass = {
-                "foot": "text",
-                "com.rtosta.zapzap": "text",
-                "brave-browser": "text-unicode",
-                "com.anthropic.Claude": "text-unicode",
-                "zcode": "clipboard",
-                "org.telegram.desktop": "clipboard",
-                "viber": "clipboard",
-                "": "clipboard"
-            }
-            for (var c in byClass) {
-                // Every glyph, same route — the payload no longer
-                // buys anyone the keysym route.
-                for (var i = 0; i < entries.length; i++) {
-                    T.equal(Page.deliveryRoute(entries[i].emoji, c),
-                        byClass[c],
-                        entries[i].emoji + " into " + c)
-                }
-                // And the invariant beyond glyphs: no unlisted client
-                // is EVER handed the transient route, whatever the
-                // payload — the emoji twins included.
-                T.equal(Page.deliveryRoute("\u2665\uFE0F", c), byClass[c],
-                    "the twin into " + c)
-                T.equal(Page.deliveryRoute("\uD83D\uDC4D", c), byClass[c],
-                    "an astral single into " + c)
-            }
-        })
 
         T.test("entries carry the catalogue's shape", function () {
             var entries = TextGlyphs.entries()
@@ -188,37 +152,6 @@ QtObject {
                 "the shelf's heart vanished from the search view")
         })
 
-        T.test("a twinned glyph survives the whole pick flow (§87's mirror)", function () {
-            // END TO END, the way the page really works: the tile's
-            // model → the tone step → the route table. A twinned glyph
-            // under a selected tone must still deliver itself, as a
-            // lone BMP scalar, on the keysym fast lane.
-            var merged = Page.allEntries()
-            var textSlice = Page.groupEntries(merged, "Text")
-            var textView = Page.visibleEntries(textSlice, merged, 0)
-            var tones = ["", "\u{1F3FB}", "\u{1F3FD}", "\u{1F3FF}"]
-            var twinned = 0
-            for (var i = 0; i < textView.length; i++) {
-                var twin = textView[i].emoji + "\uFE0F"
-                var isTwin = false
-                for (var m = 0; m < merged.length; m++)
-                    if (merged[m].emoji === twin) isTwin = true
-                if (!isTwin) continue
-                twinned++
-                for (var t = 0; t < tones.length; t++) {
-                    var toned = Page.entryForTone(textView[i], tones[t], merged)
-                    T.equal(toned.emoji, textView[i].emoji,
-                        textView[i].emoji + " under a tone resolved to "
-                            + toned.emoji)
-                    T.equal(Page.deliveryRoute(toned.emoji, "foot"), "text",
-                        textView[i].emoji + " routed off the fast lane")
-                    T.equal(Page.deliveryRoute(toned.emoji,
-                        "com.rtosta.zapzap"), "text")
-                }
-            }
-            T.equal(twinned >= 15, true,
-                "the fixture expects the twin set, got " + twinned)
-        })
 
         T.test("searchEverything caps the catalogue side, appends glyphs whole", function () {
             var results = Page.searchEverything("a", 8)

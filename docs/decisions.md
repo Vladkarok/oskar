@@ -3183,3 +3183,45 @@ against client builds the panel cannot see.
 
 55 Rust tests, 21 host suites, the wall's canary (15) and
 restart-settle (8) — green; deployed live for the owner to verify.
+
+## 91. One channel: every pick is the clipboard
+
+The owner's call, restated after §90 finally made it unambiguous ("я
+вроде просил чтоб всем слало через буфер обмена и мы избавляемся от
+сложной логики детекта"): delete the typed delivery routes and the
+client-detection logic entirely — every emoji pick, glyph or astral
+family alike, goes through the clipboard transaction. The §84-§90
+saga had proven the class-routing approach unfixable in principle: no
+list enumerates the world's clients, and every rule written on faith
+(imported §40's defect straight back) needed the owner's desk to
+break it.
+
+Gone, 3032 lines net:
+- Daemon: `text`/`text-unicode` commands, both delivery engines
+  (transient-keymap taps, Unicode composition), the slot planner, the
+  transient keymap builder, the pick budgets, the DeliveryFlag RAII
+  machinery, wait_out_delivery/lock_outside_delivery, TEXT_ROWS —
+  main.rs 5969 → 4290 lines (−28%), 55 → 44 Rust tests, and the
+  protocol answers the retired verbs with `err unknown command`.
+- Panel: the direct pick queue and its §80/§86-§88 serialization
+  lanes (five of them — the txn's own queue is the one serializer
+  left), sendText and the text-reply FIFO with its settle arms, the
+  delivery-route table with both class regexes, the delivery-mode
+  toggle on the emoji page, the emojiDelivery setting whole (value,
+  validator arm, popover row, config heal), the text-ok/text-err
+  reply arms. SocketWatch's ledger shrank to the share generation.
+- Lab: eight typed-delivery legs (foot/x11cat/Electron byte-exactness,
+  the two-keymap-events cost, held-modifier interplay, mid-delivery
+  SIGTERM/focus splits); the custom-keymap test drains the compile
+  churn window first (§91's re-order: the lost legs used to space the
+  compile-hungry neighbours).
+
+What remains is the one byte-exact channel (publish → verify → paste
+chord), proven against every client the lab can name and the owner's
+seat besides, at its documented cost: every pick replaces the
+clipboard.
+
+44 Rust tests, 21 host suites, clippy, the wall's canary (15) and
+restart-settle (8), the nested 32 — green; deployed live. The
+shrink the owner asked for at last: −3032 lines, and the entire
+§76-§88 delivery-concurrency defect class structurally gone.

@@ -68,7 +68,6 @@ Item {
             dwellReset()
         }
     }
-    property var pendingTextReplies: []
 
     // ---- the hold column (ticket 37) ----
     //
@@ -1579,41 +1578,7 @@ Item {
         return true
     }
 
-    /// One emoji's sequence to the focused client (ticket 24, step 4): the
-    /// helper's `text`/`text-unicode` command over the same socket and the
-    /// same unchecked write every command uses. Gated like a tap — with the
-    /// helper not ready the caps draw gated and the send is a silent no-op,
-    /// so an emoji click with the service down spends the page and nothing
-    /// else. Protocol 5 gave text its own replies: `text-ok` settles the
-    /// first queued callback with success, `text-err …` with failure, so
-    /// usage and page-close wait for the helper's acknowledgement — and a
-    /// refusal reaches the caller instead of passing unnoticed. None of
-    /// them disturbs the configure ledger, which only `configured` and
-    /// `err cannot configure keymap` can move.
-    function sendText(s, completed, unicodeEntry) {
-        if (!root.inputReady) return false
-        var line = Session.textLine(s)
-        if (line === "") return false
-        if (unicodeEntry) line = "text-unicode " + s
-        if (!sendCommandUnchecked(line)) return false
-        var queue = root.pendingTextReplies.slice()
-        queue.push(completed || null)
-        root.pendingTextReplies = queue
-        return true
-    }
 
-    /// The connection that owed the pending text replies is going away
-    /// (the disconnect arm) or already answered on a connection this panel
-    /// no longer holds (the rebuild): settle every outstanding callback
-    /// with failure, exactly once each. §79's pick queue waits on its
-    /// callback to hand the next pick over — a callback dropped uninvoked
-    /// wedges the queue's owner (and with it the emoji page) for the rest
-    /// of the session, which is how the round-eight paste chip died too.
-    function settleTextCallbacks(owed) {
-        for (var i = 0; i < owed.length; i++) {
-            if (owed[i]) owed[i](false)
-        }
-    }
 
     /// Lifts locked Shift and returns every modifier to idle. The panel closing
     /// is not the compositor forgetting: locked Shift is really held at the
@@ -1758,20 +1723,14 @@ Item {
         // Ticket 54: a lying socket never runs the disconnect arm, so the
         // rebuild carries that arm's two residual resets itself — the
         // text-reply FIFO (a stale head would be settled by a post-
-        // recovery text-ok, the wrong reply for the wrong request) and
+        // recovery reply, the wrong answer for the wrong request) and
         // the compositor share generation (a restarted daemon can repeat
         // the stale one and the once-per-generation guard would skip a
         // re-share). SocketWatch owns the ledger, pinned by its suite.
         var resets = SocketWatch.rebuildResets({
-            pendingTextReplies: root.pendingTextReplies,
             sharedKeymapGen: root.sharedKeymapGen
         })
-        root.pendingTextReplies = resets.pendingTextReplies
         root.sharedKeymapGen = resets.sharedKeymapGen
-        // The FIFO's callbacks settle with failure, not silence: the
-        // pick queue's owner waits on exactly-once (the module hands
-        // them back precisely so this arm can pay them).
-        settleTextCallbacks(resets.droppedTextReplies)
         root.shareQueue = ShareQueue.initial()
         // The scheduler's world died with the connection: a stale run's
         // exit must not read as the next run's verdict, and a pending
@@ -1830,14 +1789,6 @@ Item {
                     helloTimer.restart()
                 } else {
                     root.inputReady = false
-                    // The replies this connection owed settle as failure,
-                    // not silence (§79's pick queue waits on exactly-once;
-                    // a dropped callback wedges its owner for the session).
-                    // Taken and cleared BEFORE the callbacks run, so
-                    // nothing a callback queues mid-settlement is wiped.
-                    var owedReplies = root.pendingTextReplies
-                    root.pendingTextReplies = []
-                    settleTextCallbacks(owedReplies)
                     // The hello this object was owed can no longer arrive;
                     // the watchdog must not keep waiting on it.
                     root.helloInFlight = false
@@ -1963,12 +1914,6 @@ Item {
                                 root.anchorKeyboardName = root.startupKeyboardName
                         }
                         root.pullLayoutsFromCompositor()
-                    } else if (reply === "text-ok"
-                            && root.pendingTextReplies.length > 0) {
-                        var successes = root.pendingTextReplies.slice()
-                        var succeeded = successes.shift()
-                        root.pendingTextReplies = successes
-                        if (succeeded) succeeded(true)
                     } else if (reply.indexOf("configured") === 0) {
                         // Mirror the helper's own configure behaviour, for
                         // THE ENTRY THIS REPLY SETTLES — the oldest
@@ -2057,14 +2002,6 @@ Item {
                                 }
                             }
                         }
-                    } else if (reply.indexOf("text-err") === 0) {
-                        if (root.pendingTextReplies.length > 0) {
-                            var failures = root.pendingTextReplies.slice()
-                            var failed = failures.shift()
-                            root.pendingTextReplies = failures
-                            if (failed) failed(false)
-                        }
-                        console.warn("[oskar] text delivery refused:", reply)
                     } else if (reply === "pong") {
                         // The quiescent probe's answer: the pipe is alive
                         // end to end. The any-line clear at the top of
@@ -2213,7 +2150,7 @@ Item {
                             root.inputReady = false
                         } else if (reply === "err unknown command") {
                             // Protocol 5 rewrote every text/text-unicode
-                            // refusal into `text-err …`, settled by the arm
+                            // refusal answered by its own err arm
                             // above; `err unknown command` is the one
                             // refusal any verb can still earn, and it says
                             // the installed helper predates this panel's

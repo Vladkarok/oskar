@@ -142,48 +142,17 @@ QtObject {
         // review), and the ledger of what a rebuild resets belongs beside
         // the verdict that orders it, here, where the suite can pin it.
 
-        T.test("a rebuild drains the pending text-reply FIFO", function () {
-            // Residual one, the pre-fix shape: the rebuild cleared only
-            // the hello mark and left the FIFO standing, so its stale
-            // head was settled by the first `text-ok` after recovery —
-            // the wrong reply matched to the wrong request. The drain
-            // clears the FIFO AND hands the callbacks back in order for
-            // the caller to settle with failure: the socket that owed
-            // them answers on no connection this panel holds, and §79's
-            // pick queue made "the callback fires exactly once"
-            // load-bearing — dropping them uninvoked wedged the queue.
-            var owed1 = function () {}
-            var owed2 = function () {}
-            var resets = SocketWatch.rebuildResets({
-                pendingTextReplies: [owed1, null, owed2],
-                sharedKeymapGen: 3
-            })
-            T.deepEqual(resets.pendingTextReplies, [])
-            T.equal(resets.droppedTextReplies.length, 3)
-            T.equal(resets.droppedTextReplies[0] === owed1, true)
-            T.equal(resets.droppedTextReplies[1], null)
-            T.equal(resets.droppedTextReplies[2] === owed2, true)
-            // Absent fields reset the same way: the early-boot path
-            // check rebuilds a socket that never handed anything over.
-            T.deepEqual(SocketWatch.rebuildResets(null).pendingTextReplies, [])
-            T.deepEqual(SocketWatch.rebuildResets(null).droppedTextReplies, [])
-        })
-
         T.test("a rebuild zeroes the compositor share generation", function () {
-            // Residual two, the pre-fix shape: sharedKeymapGen survived
-            // the rebuild, and a restarted daemon counts its installs
-            // from one again — the fresh hello's ack can repeat the
-            // stale value, the once-per-generation share guard compares
-            // equal and skips a re-share of a file the compositor never
-            // compiled from this daemon (and nothing else re-reads an
-            // unchanged path): two keymaps on the seat, silently.
+            // §91: the text-reply FIFO left with the typed delivery
+            // routes; the ledger's one remaining field is the share
+            // generation (ticket 54's residual two — see the module).
             var resets = SocketWatch.rebuildResets({
-                pendingTextReplies: [],
                 sharedKeymapGen: 7
             })
             T.equal(resets.sharedKeymapGen, 0)
             T.equal(SocketWatch.rebuildResets(null).sharedKeymapGen, 0)
         })
+
 
         Qt.exit(T.report("socket watch"))
     }

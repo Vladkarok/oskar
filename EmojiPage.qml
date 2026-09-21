@@ -31,8 +31,6 @@ Rectangle {
     property string skinTone: ""
     property bool tonePickerOpen: false
     // Ticket 28's delivery mode, shown by the header's clipboard toggle.
-    property string deliveryMode: "direct"
-    signal deliveryModeRequested(string mode)
 
     // Overlay size the page may occupy. Placement (leftover centre) is
     // applied by the panel as x/y; this only feeds the clamp below.
@@ -278,8 +276,7 @@ Rectangle {
                 id: searchField
                 anchors {
                     left: parent.left
-                    right: deliveryButton.left
-                    rightMargin: emojiRoot.contentSpacing
+                    right: parent.right
                     top: parent.top
                     bottom: parent.bottom
                 }
@@ -399,75 +396,6 @@ Rectangle {
                 }
             }
 
-            Rectangle {
-                id: deliveryButton
-                // Ticket 28: the delivery mode lives beside the tone hand —
-                // one press toggles typing (⌨) and clipboard compatibility
-                // (📋). The clipboard mode REPLACES the clipboard with the
-                // picked sequence; the tooltip says so, per §6.
-                anchors {
-                    right: toneButton.left
-                    rightMargin: emojiRoot.contentSpacing
-                    verticalCenter: parent.verticalCenter
-                }
-                width: tokens.space(28)
-                height: tokens.space(24)
-                radius: tokens.cornerRadius
-                color: deliveryArea.pressed ? tokens.accent
-                    : deliveryArea.containsMouse
-                        ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
-                        : emojiRoot.deliveryMode === "clipboard"
-                            ? Util.alpha(tokens.accent, tokens.hoverFillAlpha)
-                            : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-                border.color: emojiRoot.deliveryMode === "clipboard"
-                    ? tokens.accent
-                    : Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-                border.width: tokens.normalBorderWidth
-
-                Text {
-                    anchors.centerIn: parent
-                    text: emojiRoot.deliveryMode === "clipboard" ? "📋" : "⌨"
-                    font.pixelSize: tokens.fontBody
-                }
-                MouseArea {
-                    id: deliveryArea
-                    // Touch-and-hold shows the tooltip WITHOUT toggling
-                    // (the gear's pattern, the QML round's finding): in
-                    // the touch profile there is no hover, and the
-                    // clipboard mode's only disclosure — "it replaces
-                    // the clipboard" — lived in a tooltip touch could
-                    // never open.
-                    property bool touchHeld: false
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    Accessible.role: Accessible.Button
-                    Accessible.name: emojiRoot.deliveryMode === "clipboard"
-                        ? UiStrings.tr("emoji.delivery.clipboardAccess", emojiRoot.uiLang)
-                        : UiStrings.tr("emoji.delivery.typing", emojiRoot.uiLang)
-                    onPressAndHold: touchHeld = true
-                    onReleased: function (mouse) {
-                        if (!(mouse.x >= 0 && mouse.x <= width
-                                && mouse.y >= 0 && mouse.y <= height))
-                            touchHeld = false
-                    }
-                    onCanceled: touchHeld = false
-                    onClicked: function (mouse) {
-                        var held = touchHeld
-                        touchHeld = false
-                        if (held) return
-                        emojiRoot.deliveryModeRequested(
-                            emojiRoot.deliveryMode === "clipboard"
-                                ? "direct" : "clipboard")
-                    }
-                }
-                HoverTooltip {
-                    text: emojiRoot.deliveryMode === "clipboard"
-                        ? UiStrings.tr("emoji.delivery.clipboardTip", emojiRoot.uiLang)
-                        : UiStrings.tr("emoji.delivery.typing", emojiRoot.uiLang)
-                    hovered: deliveryArea.containsMouse
-                        && (emojiRoot.tooltipHoverShows || deliveryArea.touchHeld)
-                }
-            }
 
             Rectangle {
                 id: toneButton
@@ -494,8 +422,6 @@ Rectangle {
                 }
                 MouseArea {
                     id: toneArea
-                    // deliveryArea's own touch-and-hold rule: the
-                    // disclosure without the toggle.
                     property bool touchHeld: false
                     anchors.fill: parent
                     hoverEnabled: true

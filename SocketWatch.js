@@ -77,36 +77,19 @@ function reconnectAction(state) {
 
 /// Ticket 54: what the rebuild path resets beyond the socket object
 /// itself. The whole point of a rebuild is that the disconnect arm never
-/// runs — a socket that lies `connected` is why "rebuild" exists — so two
-/// of that arm's resets cannot be left to it (both named by 47's review):
-///
-///   - the pending text-reply FIFO. A stale head left standing is settled
-///     by the first `text-ok` after recovery: the wrong reply matched to
-///     the wrong request. The rebuild drains it with the disconnect arm's
-///     semantics — cleared, and the callbacks handed back in
-///     `droppedTextReplies` for the caller to settle with failure, because
-///     the socket that owed them answers on no connection this panel
-///     holds. Invoking them (with false, exactly once each) rather than
-///     dropping them became load-bearing with §79's pick queue: the
-///     queue's busy flag waits on its callback firing, and one dropped
-///     callback wedges every later pick for the rest of the session.
-///   - the compositor share generation. A restarted daemon counts its
-///     installs from one again, so the fresh connection's ack can repeat
-///     the generation the panel last shared; the once-per-generation guard
-///     would compare equal and skip a re-share of a file the compositor
-///     never saw from this daemon — and nothing else re-reads an unchanged
-///     path: two keymaps on the seat, silently.
+/// runs — a socket that lies `connected` is why "rebuild" exists — so the
+/// disconnect arm's compositor-share-generation reset cannot be left to
+/// it: a restarted daemon counts its installs from one again, so the
+/// fresh connection's ack can repeat the generation the panel last
+/// shared; the once-per-generation guard would compare equal and skip a
+/// re-share of a file the compositor never saw from this daemon — and
+/// nothing else re-reads an unchanged path: two keymaps on the seat,
+/// silently. (§91 took the text-reply FIFO with the typed delivery
+/// routes; this ledger shrank to the one field that remains.)
 ///
 /// The ledger lives beside the verdict that orders it so the decision and
 /// its resets cannot drift apart; the caller packs its properties in and
 /// assigns the returned fields back, the reconnectAction discipline.
 function rebuildResets(state) {
-    var owed = state && Array.isArray(state.pendingTextReplies)
-        ? state.pendingTextReplies
-        : []
-    return {
-        pendingTextReplies: [],
-        droppedTextReplies: owed,
-        sharedKeymapGen: 0
-    }
+    return { sharedKeymapGen: 0 }
 }
