@@ -3571,7 +3571,7 @@ the pre-step file; the few adapted lines enumerated in each commit):
   loader/Socket, hello and the never-stopping probe, path-check,
   rebuild, the write choke's transport half. The reply INTERPRETATION
   stayed in Keyboard (it is keyboard state).
-- **PasteChords.qml** (→3287): the chord machinery — pasteCurrent,
+- **PasteChords.qml** (→3329): the chord machinery — pasteCurrent,
   the wine pacer, assumptions, abort, the 8 s guard. The ChordAcks
   ledger keeps ONE home (Keyboard): the child holds a bound read half
   and writes back through setChordAcks — a local var would have

@@ -1503,8 +1503,10 @@ Item {
         // keyboard's, not the transport's.
         // The bound facts are fresh only because ChordAcks/Session
         // transitions REASSIGN (never mutate in place) — a var-property
-        // binding cannot see a sub-property mutation. The modules'
-        // suites pin that purity; break it and probeHold stales silently.
+        // binding cannot see a sub-property mutation. No suite pins the
+        // purity directly (the modules' tests just never mutate); a
+        // future in-place mutation here would stale probeHold silently —
+        // re-read this seam when touching either module.
         inputReady: root.inputReady
         sessionSettled: Session.settled(root.session)
         pastePacing: pasteChords.pastePacing

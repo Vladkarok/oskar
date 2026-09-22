@@ -35,7 +35,7 @@ matters is `docs/decisions.md`.
 |---|---|
 | `manifest.json` | plugin manifest (`io.github.vladkarok.oskar`) |
 | `Panel.qml` | the keyboard window: a docked full-width strip or a floating overlay |
-| `Keyboard.qml` | key grid, layout tracking, socket client |
+| `Keyboard.qml` + the extracted seams (`HelperLink.qml`, `PasteChords.qml`, `HoldMenu.qml`) | key grid, layout tracking, reply dispatch, keycap pipeline; the socket client and paste chords live in their seams (§105–§106) |
 | `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
 | `EmojiPage.qml`, `EmojiCatalog.js` | the panel's own emoji page over the keys; catalogue generated from vendored Unicode data (`third_party/emoji/`) |
 | `ClipboardPaste.js` | the emoji delivery transaction and the paste chip's target rule (colour field, emoji search, external client) |

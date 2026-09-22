@@ -48,6 +48,10 @@ Rectangle {
     // The window the page may be dragged in ({w,h} — the settings
     // layer's own size, not the leftover: free placement may cover the
     // keyboard band). The strip's MouseArea clamps the drag to it.
+    // The FULL box shape {x, y, w, h} — the placement module's validBox
+    // refuses a bounds without x/y (§104's poison: clampedTopLeft
+    // answered null and the settle threw). The drag clamp reads w/h;
+    // both consumers take the one object.
     property var dragBounds: null
     // Whether a strip drag is live. The panel's placement guard reads
     // it: a held drag owns the placement, the floating card's own rule.

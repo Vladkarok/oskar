@@ -48,9 +48,11 @@ RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "")
 # /usr/share/oskar/…) and one of our basenames. Both halves are
 # required, so the omarchy shell's own Commons/Ui files cannot collide.
 OURS = re.compile(
-    r"(Panel|Keyboard|HelperLink|PasteChords|PrivateSaves|EmojiDelivery|HoldMenu|BarWidget|Theme|HoverTooltip|KeyClickSound|CursorPolicy|SettingsLayer"
+    r"(Panel|Keyboard|HelperLink|PasteChords|PrivateSaves|EmojiDelivery|HoldMenu|DragLine|BarWidget|Theme|HoverTooltip|KeyClickSound|CursorPolicy|SettingsLayer"
     r"|Settings\w*|EmojiPage|EmojiCatalog|LanguageControl|HoldColumn"
-    r"|LayoutDevices|ModifierReducer|KeyboardSession|ClipboardPaste|Config)\.(qml|js)")
+    r"|LayoutDevices|ModifierReducer|KeyboardSession|ClipboardPaste|Config"
+    r"|TextGlyphs|UiStrings|ShareQueue|SocketWatch|SettleGuard|Dwell"
+    r"|InputProfile|SettingsPlacement)\.(qml|js)")
 OURS_LINE = re.compile(r"oskar")
 GRANDFATHERED = "Cannot anchor to an item that isn't a parent or sibling"
 FALLBACK = "keycap fallback"

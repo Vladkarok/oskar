@@ -165,8 +165,12 @@ QtObject {
 
         // ---- the call-site sweep ----
         //
-        // Every literal UiStrings.tr("id" in every runtime QML file must
-        // resolve in all three languages. The files are read one by one
+        // Every literal UiStrings.tr("id" in the QML files that carry
+        // tr call sites (plus SettingsLayer, swept for symmetry) must
+        // resolve in all FOUR languages. The files without tr sites
+        // (HelperLink, PasteChords, PrivateSaves, HoldMenu, DragLine)
+        // are deliberately absent: the sweep resolves literals that
+        // exist. The files are read one by one
         // (async XHR; the runner's event loop spins until each lands) and
         // the suite reports after the last one.
         var files = ["Panel.qml", "BarWidget.qml", "Keyboard.qml",

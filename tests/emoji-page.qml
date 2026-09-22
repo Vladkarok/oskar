@@ -28,10 +28,11 @@ QtObject {
     // The ON-state chrome, restated INDEPENDENTLY (the round-three
     // finding killed r2's tautology — it compared the off formula
     // against itself plus constants): five column children, four gaps,
-    // the strip's 20 and its own spacing. This is a suite-side
-    // restatement, NOT a load of the page's own two copies (nothing
-    // loads EmojiPage.qml — the header's standing limit): it pins the
-    // arithmetic contract the page's copies must both carry.
+    // the strip's 20 and its own spacing. This pins the RESTATED
+    // arithmetic contract only — no product change can redden it (a
+    // page-side drift fails nothing here; the header's standing
+    // no-load limit). It earns its keep as the checked spec of the
+    // chrome sum, beside the off-state formula it grew from.
     function naturalPageHeightDragOn(cell, gap, rows) {
         var chrome = 2 * 10 + 28 + 1 + 24 + 20 + 4 * 7
         return chrome + rows * (cell + gap) - gap

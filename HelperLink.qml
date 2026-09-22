@@ -21,7 +21,6 @@ Item {
     readonly property QtObject socket: helperLoader.item
     // Mirrors the live socket: false before the first dial, while the
     // loader rebuilds it, and after a drop.
-    readonly property bool connected: socket ? socket.connected : false
 
     // Set when the socket reaches `connected`, consumed by the hello reply:
     // only a genuinely new connection may reset device-held modifier state,
