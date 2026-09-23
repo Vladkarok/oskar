@@ -299,7 +299,7 @@ systemd crash restart policy remains authoritative.
 The panel distinguishes starting/configuring, unavailable, incompatible and
 ready states with no status VERB on the protocol — liveness is proved by
 traffic: the panel's never-stopping probe speaks every 15 s at quiescence
-(§80), and a negotiated connection silent for 60 s is dropped (§82). While not ready,
+(§107), and a negotiated connection silent for 60 s is dropped (§107). While not ready,
 input-producing caps are disabled; Close, Settings, mode, size, Caps and Fn
 remain usable. A compact friendly header notice names
 `oskar.service`, does not resize the keyboard, and disappears after the

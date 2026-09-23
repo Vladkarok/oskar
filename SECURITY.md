@@ -43,7 +43,7 @@ daemon's own sloppy writes.
   deadline (a renewable timeout evicted no one — the cross-round's
   catch) and a loud `err too many clients` on refusal. A post-handshake
   connection silent for 60 s is dropped through the ordinary release
-  path (§82): the panel's never-stopping probe speaks every 15 s and
+  path (§107): the panel's never-stopping probe speaks every 15 s and
   never trips it; a hung same-user client cannot park a slot for the
   process lifetime.
 - **Socket-directory pre-bind impersonation** — the daemon refuses to

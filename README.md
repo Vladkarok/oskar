@@ -25,9 +25,9 @@ from the Omarchy theme.
 Alpha, daily-driven by its author on his own machine — that is how most
 of it was found and fixed. There are **no releases yet**: the tag
 churn of the first days was premature and has been taken down, and a
-numbered version will appear only after the review rounds settle. Until
-then the source install below is the way, and the changelog that
-matters is `docs/decisions.md`.
+numbered version will come later. Until then, install from source as
+described below. [CHANGELOG.md](CHANGELOG.md) lists what works;
+`docs/decisions.md` explains why it works that way.
 
 ## Layout
 
@@ -333,7 +333,7 @@ integration legs verify the protocol and keymap seams; every emoji pick
 is delivered by the clipboard transaction (§91 — the typed delivery
 routes are gone), whose helper ack proves the chord reached the
 compositor, not that the destination consumed the paste — that residual
-is stated in decisions §63. Visual feel and real-host application
+is stated in decisions §107. Visual feel and real-host application
 behavior remain owner-acceptance work.
 
 ```sh

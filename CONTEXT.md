@@ -154,7 +154,7 @@ The one delivery channel (§91 — decisions §39/§40's typed routes are
 historical): the pick publishes its exact sequence to the clipboard,
 verifies the read, and sends the client's paste chord. The helper's
 acknowledgement proves the chord reached the compositor, not that the
-destination consumed the paste (decisions §63's stated residual).
+destination consumed the paste (decisions §107's stated residual).
 _Avoid_: clipboard synthesis, per-keystroke spawn, delivery mode
 
 ### Settings
