@@ -2,9 +2,6 @@ daemon/target/
 core.*
 .scratch/
 __pycache__/
-.agents/*
-!.agents/skills/
-!.agents/skills/board/
 /pkg/
 /src/
 *.pkg.tar.zst
@@ -33,3 +30,7 @@ CLAUDE.md
 # The handoff archive: history of the private journals (2026-09-21) —
 # stays with the private half.
 docs/session-handoff-archive.md
+
+# revmux review config (lenses, profiles) went private 2026-09-23 with the
+# rest of the agent infrastructure; revmux reads it from disk.
+.revmux/
