@@ -521,21 +521,20 @@ Item {
     // resolved or when the theme has no such event.
     property string soundFile: ""
     // A sound setting of ON with an effect that cannot play is never silent
-    // about it (the §3 rule for visible caps, applied to the settings
-    // popover): a failed theme lookup or a missing QtMultimedia raises this
+    // about it: a failed theme lookup or a missing QtMultimedia raises this
     // and the sound row says "unavailable" at the switch itself — one
     // mechanism, where the setting lives. Cleared by a successful resolve
     // and irrelevant while the switch is off.
     property bool soundUnavailable: false
 
     // Every colour, font, radius and spacing the panel draws with comes from
-    // here, and from nowhere else (spec-v1 §8). Following the theme is what a
+    // here, and from nowhere else. Following the theme is what a
     // plain binding through it already does — the shell reassigns the shared
     // tokens on a theme switch and the keyboard redraws where it stands, with
     // no restart, no keymap compile and no reconnection, because none of that
     // is on this path. `follow_theme: false` is the one thing that needs code.
-    // The sparse override map rides in as the facade's top precedence tier
-    // (spec-v1.1 §5): the popover writes overrides, the facade resolves
+    // The sparse override map rides in as the facade's top precedence tier:
+    // the popover writes overrides, the facade resolves
     // override over token over shipped fallback, and no panel property or
     // second reader stands between them.
     Theme {
@@ -554,7 +553,7 @@ Item {
         depSetup.running = true
     }
 
-    // ---- helper lifecycle actions (spec-v1.1 §6) ----
+    // ---- helper lifecycle actions ----
     //
     // Retry runs the one command the spec names, detached like every other
     // process spawn here, and lets the socket client's existing repair path
@@ -564,7 +563,7 @@ Item {
     // clipboardText; nothing is ever installed, built or elevated by the
     // panel itself.
     //
-    // The copied command is the lifecycle command (ticket 32): one
+    // The copied command is the lifecycle command: one
     // `oskar setup` converges registration, plugin enable and the
     // unit — and exists both for the package (/usr/bin) and after any
     // source install.sh run (~/.local/bin). Only a never-installed source
@@ -584,13 +583,13 @@ Item {
         Quickshell.clipboardText = root.installCommand
     }
 
-    // Current-content paste (spec-v1.1 §1, ticket 14). Never writes
+    // Current-content paste. Never writes
     // CLIPBOARD. A panel-local input (colour field, emoji search) takes
     // the paste itself; otherwise the helper sends the proven paste chord
-    // at whoever already has focus — unconditionally, by owner decision
-    // (decisions §41): a dead clipboard owner pasting nothing is the
-    // Wayland behaviour the chip no longer compounds with its own
-    // refusal. Empty clipboard hides the chip. The control stays
+    // at whoever already has focus — unconditionally: a dead clipboard
+    // owner pasting nothing is the Wayland behaviour, and the chip does
+    // not compound it with its own refusal. Empty clipboard hides the
+    // chip. The control stays
     // clickable whenever it can deliver — Quickshell's clipboard getter
     // is not a reliable empty check and is not the hex-insert source (it
     // stays empty/stale here).
@@ -605,8 +604,8 @@ Item {
     property var clipboardReadState: ClipboardPaste.readInitial()
     // Last non-empty focused class: a layer click can briefly clear
     // activeToplevel, and terminals vs GTK pick different CLIPBOARD chords.
-    // Refreshed from the compositor's own `activewindow` event stream
-    // (ticket 56): while a panel overlay holds the keyboard (the armed
+    // Refreshed from the compositor's own `activewindow` event stream:
+    // while a panel overlay holds the keyboard (the armed
     // emoji search), activeToplevel is null and this memory is the only
     // witness of the chat the keys — and an emoji pick — must return to.
     // Fed by the event, it is the compositor's focus history, not a
@@ -626,14 +625,12 @@ Item {
 
     function pasteCurrentContent() {
         if (!root.pasteEnabled) return
-        // While an emoji pick owns the clipboard (the external audit's
-        // finding 7), a chip click pastes whatever the clipboard holds —
-        // mid-transaction — and the chord (fire-and-forget in the era
-        // of that finding) reopened the paste gate for a second paste
-        // behind it. Refuse; the queue
-        // drains in milliseconds. The refusal is decided — its VISIBILITY
-        // is the flows round's finding: a chip that draws enabled and
-        // clicks dead is the silence class.
+        // While an emoji pick owns the clipboard, a chip click must not
+        // paste mid-transaction — the paste chord is fire-and-forget and
+        // would reopen the paste gate for a second paste behind it.
+        // Refuse; the queue drains in milliseconds. A refusal must be
+        // VISIBLE: a chip that draws enabled and clicks dead is the
+        // silence class.
         if (emojiDelivery.emojiTxnState.phase !== "idle") {
             console.warn("[oskar] paste chip refused: an emoji pick owns"
                 + " the clipboard")
@@ -653,8 +650,8 @@ Item {
         }
         // The callback is the paste flow's own refusal channel
         // (PasteFlow.begin refuses one-at-a-time, the paced dispatch can
-        // refuse on an empty plan): the chip used to pass nothing, so
-        // those refusals were silent too — same class, same cure.
+        // refuse on an empty plan): a refusal must flash on the hint
+        // line rather than pass silently.
         keyboard.pasteCurrent(root.focusedClientClass(), function (ok) {
             if (!ok) {
                 root.flashRefused(UiStrings.tr("hint.pasteBusy", root.uiLang))
@@ -667,13 +664,12 @@ Item {
     // blocks on a dead owner serves this read, so a watchdog force-kills
     // it, and an answer arriving for a target that closed or was replaced
     // inserts nothing.
-    // The paste/read target with FIELD identity (round thirteen's P2):
-    // "colour field" alone let a delayed paste started for key
-    // background land in text colour when focus moved mid-read — the
-    // arrival guard now refuses exactly that.
+    // The paste/read target carries FIELD identity: "colour field" alone
+    // would let a delayed paste started for key background land in text
+    // colour when focus moved mid-read — the arrival guard refuses
+    // exactly that.
     function currentPasteTarget() {
-        // The RULE lives in ClipboardPaste.js with its suite (the cold
-        // audit's finding 7: it had drifted here, untested); the panel
+        // The RULE lives in ClipboardPaste.js with its suite; the panel
         // supplies only the live facts.
         return ClipboardPaste.pasteTargetFor(root.emojiSearchActive,
             root.hexEditing, root.hexEditField,
@@ -723,9 +719,9 @@ Item {
         clipboardGoneTimer.restart()
     }
 
-    // Set when a refresh had to wait a retiring probe out (round
-    // thirteen's P2): the retired exit re-drives it, so a burst of
-    // clipboard changes never leaves the chip stale-hidden.
+    // Set when a refresh had to wait a retiring probe out: the retired
+    // exit re-drives it, so a burst of clipboard changes never leaves the
+    // chip stale-hidden.
     property bool clipboardRefreshQueued: false
 
     function refreshClipboardPreview() {
@@ -805,7 +801,7 @@ Item {
         emojiPage.pasteIntoSearch(text)
     }
 
-    // The hint line's one state table (spec-v1.1 §3, §1, §6). The newest
+    // The hint line's one state table. The newest
     // answer to a click wins: a failure names itself here — text plus whether
     // it draws in the accent colour — instead of a clear header, and hands the
     // hint back when it recovers or auto-clears; the keymap failure, if one
@@ -816,26 +812,24 @@ Item {
     //
     // It lives on the panel root on purpose: QML resolves bare names only
     // against the component's root object, so the same table defined on the
-    // drag bar silently blanked every hint binding that used it (the one
-    // regression cab882e's "no re-shoot" claim missed; the nested run for
-    // this ticket caught it).
+    // drag bar would silently blank every hint binding that used it.
     //
-    // The helper lifecycle states (spec-v1.1 §6) sit between the transient
+    // The helper lifecycle states sit between the transient
     // click answers and a clear header. Kind comes from the session
     // (Keyboard.lifecycleKind): incompatible and stopped outrank a keymap
     // mismatch because without a usable service nothing can type, but a
-    // connected mismatch is unavailable — never the starting notice
-    // (decisions §23). Ready is absent on purpose: the notice disappears
+    // connected mismatch is unavailable — never the starting notice.
+    // Ready is absent on purpose: the notice disappears
     // once the handshake succeeds and the line stays empty. `action`
     // carries the affordance the chips below draw:
     // "retry" for a service that is not running, "update" for a protocol
     // mismatch (Copy install command plus Retry).
     readonly property var hintState: {
-        // The transients OVERLAY the base and carry its action through
-        // (the diff audit's finding): a refusal flash or a clipboard
-        // notice used to mask the Retry/Update chips for its whole
-        // beat — the affordance the user was reaching for would vanish
-        // mid-click and return. The text flashes; the chip stays.
+        // The transients OVERLAY the base and carry its action through:
+        // a refusal flash or a clipboard notice must not mask the
+        // Retry/Update chips — the affordance the user was reaching for
+        // would otherwise vanish mid-click and return. The text
+        // flashes; the chip stays.
         var base = hintBaseState()
         // The queue-cap flash's flag lives in the delivery component
         // (the structural split's step four); the hint table is still
@@ -878,8 +872,7 @@ Item {
                 accent: true
             }
         if (root.saveFailedNotice)
-            // A save that cannot land must not lie (the flows round's
-            // finding): the controls already show the new value, the
+            // A save that cannot land must not lie: the controls already show the new value, the
             // disk does not have it, and on the next shell start the
             // setting is gone. The notice stands until a save lands —
             // the sound row's "unavailable" precedent: a setting that
@@ -923,11 +916,11 @@ Item {
         onTriggered: root.startingNoticeDue = true
     }
 
-    // Cursor hiding (spec-v1 §9) is owned by CursorPolicy (CursorPolicy.qml
+    // Cursor hiding is owned by CursorPolicy (CursorPolicy.qml
     // + CursorPolicy.js), not by the panel's presentation code: one
     // serialized lifecycle for probe, override and restore, so a close that
-    // lands before the probe answers cannot leave a session override behind
-    // (review finding R6). The binding drives it whatever writer flips
+    // lands before the probe answers cannot leave a session override
+    // behind. The binding drives it whatever writer flips
     // `opened` — the bar toggle, close(), or the shell itself.
     CursorPolicy {
         id: cursorPolicy
@@ -938,13 +931,13 @@ Item {
         root.opened = true  // and isPluginOpen reads it back
     }
 
-    // Ticket 30's local workaround, measured on the owner's host (scale 2):
+    // Local workaround for a Hyprland limitation (measured at scale 2):
     // the docked panel's exclusive zone registers (reserved = the strip's
     // height) and NEW tiled windows respect it, but Hyprland does not
     // relayout the windows that were tiled while the panel was closed —
     // their bottoms stay behind the strip until something else forces a
     // layout. One config keyword write forces it. The value is read, set
-    // one above, and restored on the next tick: at the owner's gaps of 0
+    // one above, and restored on the next tick: at a gap setting of 0
     // the visible cost is a one-frame one-pixel gap.
     //
     // Review-hardened: a nudge arriving while the chain is busy is skipped
@@ -1048,7 +1041,7 @@ Item {
         root.setOverride("mode", newMode)
     }
 
-    // The Super cap's mark (ticket 22). setMode's shape: the health guard so
+    // The Super cap's mark. setMode's shape: the health guard so
     // a malformed external edit stands down every writer, and a no-op when
     // the choice already stands — no movement, no config write.
     function setSuperMark(mark) {
@@ -1057,7 +1050,7 @@ Item {
         root.setOverride("superMark", mark)
     }
 
-    // ---- which output, and where on it (spec-v1 §7) ----
+    // ---- which output, and where on it ----
     //
     // Both modes open on the monitor the pointer is on and then stay there
     // until closed or dragged. Deliberately not bound to Hyprland's focused
@@ -1095,7 +1088,7 @@ Item {
     }
 
     // Floating position is stored as the card centre local to whatever output
-    // the panel is on — the deterministic anchor of spec-v1.1 §4 — not in
+    // the panel is on, not in
     // compositor coordinates: the panel follows the pointer's monitor at
     // open, so a global position would put it half off a differently-sized
     // second screen. The top-left is rederived and re-clamped on every
@@ -1123,10 +1116,10 @@ Item {
 
     // A press on the bar that moved nothing is still a release, and every save
     // is a blocking atomic write — so only a centre that actually changed is
-    // written back. The centre is what gets saved (spec-v1.1 §4); storing the
-    // dragged top-left instead was the defect this panel shipped with: a card
-    // dragged near an edge restored to a different visible spot whenever the
-    // preset or the output had changed between save and restore.
+    // written back. The centre is what gets saved: storing the
+    // dragged top-left instead would restore a card dragged near an edge
+    // to a different visible spot whenever the
+    // preset or the output changed between save and restore.
     function rememberFloatingPosition() {
         var center = { x: card.x + card.width / 2, y: card.y + card.height / 2 }
         var previous = root.floatingCenter
@@ -1189,13 +1182,13 @@ Item {
     // settings layer, one output at a time, and the release keeps
     // whatever the clamp left in this one.
     function rememberEmojiPosition() {
-        // Re-clamp BEFORE saving (the triage round's finding): the drag
+        // Re-clamp BEFORE saving: the drag
         // axis bounds apply on pointer moves, so a geometry change that
-        // landed while the pointer stood still mid-drag can leave the
+        // lands while the pointer stands still mid-drag can leave the
         // page overhanging — release would then remember an off-visible
         // centre and leave the page parked there until the next open.
         // The write-back heals this release and the saved centre alike.
-        // Null-guarded (same finding): a degenerate or absent bounds
+        // Null-guarded: a degenerate or absent bounds
         // skips the clamp and still saves — the next open re-clamps
         // through centreRestore against whatever the visible area is
         // by then.
@@ -1223,8 +1216,8 @@ Item {
     // Placement is applied on open (a fresh open re-anchors from the
     // remembered centre, clamped into whatever the current visible area
     // is — a monitor change or a different leftover must not strand it)
-    // and re-derived on every change that used to re-evaluate the old
-    // x/y bindings: the card's own moves, the layer's resizes and the
+    // and re-derived on every change that would otherwise leave stale
+    // x/y: the card's own moves, the layer's resizes and the
     // page's size changes.
     onEmojiOpenChanged: {
         if (root.emojiOpen) root.applyEmojiPosition()
@@ -1290,7 +1283,7 @@ Item {
         root.applyFloatingPosition()
     }
 
-    // Missing files are a normal first run (§5): defaults stand, no error.
+    // Missing files are a normal first run: defaults stand, no error.
     // The FileViews are the only place that can tell a missing file from an
     // existing one — `text()` reads empty for both — so the distinction is
     // made here, on loadFailed, and the parse functions are only ever handed
@@ -1346,7 +1339,7 @@ Item {
         return ConfigFile.owns(root.userOverrides, name)
     }
 
-    // Per-override reset (spec-v1.1 §5): removing an override drops its key
+    // Per-override reset: removing an override drops its key
     // from the sparse map, so the maintained default — or the live theme
     // token, while following — shows through again, and the next atomic
     // write leaves the file sparse. Refused while a malformed external edit
@@ -1362,7 +1355,7 @@ Item {
         root.commitOverrides(next)
     }
 
-    // Reset-all (spec-v1.1 §5) empties the whole override map — every
+    // Reset-all empties the whole override map — every
     // setting, including the appearance fields the popover hosts and unknown
     // keys a future version wrote. The confirmation
     // is the popover's own inline arm/confirm row, not a system dialog; the
@@ -1434,23 +1427,22 @@ Item {
         root.emojiOpen = false
         languageMenu.close()
         // The relayout nudge is needed in both directions: the zone leaving
-        // is as lazy as the zone arriving (ticket 30).
+        // is as lazy as the zone arriving.
         root.nudgeHyprlandRelayout()
         // Locked Shift is genuinely held down at the device, so closing the
         // panel has to let go of it before the keyboard disappears.
         keyboard.releaseModifiers()
-        // The touch observation is per-SUMMON, not per-process (the touch
-        // council's scoping fix, ticket 62): a hidden panel is a session
-        // boundary — "restart forgets" was too coarse when the panel is
-        // summoned dozens of times a day, and a touch on one monitor must
+        // The touch observation is per-SUMMON, not per-process: a hidden
+        // panel is a session
+        // boundary, since the panel is summoned dozens of times a day, and a touch on one monitor must
         // not park release-typing on another for the whole session.
         touchObserved = false
     }
 
     // The R2 pipelines run as `setsid bash -c "wl-paste | head -c N"`, so
     // the direct child is a session and process-group LEADER and
-    // cancellation kills the whole group. Killing only the shell — the
-    // 2026-09-19 audit's finding — left wl-paste and head orphaned with
+    // cancellation must kill the whole group: killing only the shell
+    // leaves wl-paste and head orphaned with
     // stdout still open, one stalled reader accumulating per attempt.
     function killProcessGroup(proc) {
         var pid = Number(proc.processId)
@@ -1522,7 +1514,7 @@ Item {
         }
     }
 
-    // CLIPBOARD watch (spec-v1.1 §1): event-driven, not a poll. --watch
+    // CLIPBOARD watch: event-driven, not a poll. --watch
     // fires on each change; open and paste click still do a one-shot
     // refresh because --watch does not always emit the current value.
     Process {
@@ -1545,13 +1537,13 @@ Item {
         }
         onExited: function (exitCode) {
             // A retired exit is the KILLED run's: its bytes describe a
-            // clipboard the seq has already moved past (the cold-audit's
-            // finding — the chip showed A while the clipboard held B).
+            // clipboard the seq has already moved past, and applying
+            // them would show a stale clipboard value.
             var wasRetired = clipboardTypes.retiring
             clipboardTypes.retiring = false
             if (wasRetired) {
                 // The refresh that waited this kill out runs now, with a
-                // fresh sequence and a reusable Process (round 13).
+                // fresh sequence and a reusable Process.
                 if (root.clipboardRefreshQueued) {
                     root.clipboardRefreshQueued = false
                     refreshClipboardPreview()
@@ -1596,9 +1588,9 @@ Item {
         onTriggered: root.clipboardContentGone = false
     }
 
-    // Emoji delivery through the clipboard (§91's one channel): the
+    // Emoji delivery goes through the clipboard, the one channel: the
     // transaction's processes, timers and verdict arms live in
-    // EmojiDelivery.qml (the structural split's step four) — the pure
+    // EmojiDelivery.qml — the pure
     // machine stays ClipboardPaste.txn*. The panel keeps what a pick is
     // ABOUT: the dispatch facts below (the class derivation at the
     // click), the refusal flashing (flashRefused, the machinery the
@@ -1612,17 +1604,17 @@ Item {
 
         // The txn's translated refusals name their language here.
         uiLang: root.uiLang
-        // §79's one visible-refusal channel, handed down: the verdict
-        // arms flash exactly where the monolith flashed.
+        // The one visible-refusal channel, handed down: the verdict
+        // arms flash exactly where the panel's own refusals flash.
         flashRefused: (text, ms) => root.flashRefused(text, ms)
         // The retiring discipline's kill — the panel's own helper.
         killProcessGroup: (proc) => root.killProcessGroup(proc)
-        // The §88 lane facts, from the keyboard's frozen surface.
+        // The pacing/flow facts, from the keyboard's frozen surface.
         pastePacing: keyboard.pastePacing
         pasteFlow: keyboard.pasteFlow
         // The txn's chord goes through keyboard.pasteCurrent with its
-        // completed callback (§89 — the chordSeq discipline rides in
-        // the delivery's own closure).
+        // completed callback — the chordSeq discipline rides in
+        // the delivery's own closure.
         pasteChordStart: (wmClass, done) => keyboard.pasteCurrent(wmClass, done)
 
         // The delivered pick's verdict: usage, the search settle and
@@ -1630,16 +1622,15 @@ Item {
         // three panel-side effects the completed arm ran inline.
         onPickSettled: function (emoji) {
             root.recordEmojiSuccess(emoji)
-            // Ticket 29's flow: the keys go back to the chat the emoji
+            // The keys go back to the chat the emoji
             // landed in.
             root.emojiPickSettled()
             if (root.emojiCloseAfterPick) root.emojiOpen = false
         }
     }
 
-    // One transient channel for refused clicks and one-shot notices —
-    // §79's standard ("a refused click is VISIBLE, in both modes"),
-    // generalised past the pick queue by the flows round: the paste chip
+    // One transient channel for refused clicks and one-shot notices: a
+    // refused click must be VISIBLE, in both modes — the paste chip
     // refused under a transaction, the language chip refused under a
     // standing overlay, the share scheduler's give-up, a failed pick.
     // A newer flash replaces a standing one; the duration is the
@@ -1658,10 +1649,10 @@ Item {
         refusedHintTimer.restart()
     }
 
-    // The share scheduler's give-up, made visible (the flows round's
-    // finding: journal-only is silence, and the symptom — layouts
+    // The share scheduler's give-up, made visible: journal-only would be
+    // silence, and the symptom — layouts
     // flipping on focus change — is one of the most visible
-    // misbehaviours the panel has). Informational, so it gets a longer
+    // misbehaviours the panel has. Informational, so it gets a longer
     // beat than a refusal.
     Connections {
         target: keyboard
@@ -1785,8 +1776,8 @@ Item {
             // session — the sound is skipped rather than guessed into
             // a world-writable /tmp.
             "[[ -n \"$4\" ]] || exit 1; "
-            // Split on ':' with read -ra (round seven): the old
-            // ':'→' ' substitution + word splitting broke any XDG entry
+            // Split on ':' with read -ra: a ':'→' '
+            // substitution + word splitting would break any XDG entry
             // that itself contains a space.
             + "bases=(); IFS=':' read -ra _dirs <<< \"$2:$3\"; "
             + "for _d in \"${_dirs[@]}\"; do [[ -n \"$_d\" ]] && bases+=(\"$_d\"); done; "
@@ -1933,16 +1924,15 @@ Item {
         // overlaid instead; that is the accepted behaviour, not a bug.
         // Floating reserves nothing, exactly as before.
         //
-        // The reservation is exact by construction, never transiently wrong
-        // (spec-v1.1 §4): ExclusionMode.Auto derives the zone from this
+        // The reservation is exact by construction, never transiently wrong:
+        // ExclusionMode.Auto derives the zone from this
         // window's own geometry, the bottom anchor keeps the window's bottom
         // edge fixed while `implicitHeight` rebinds, and the layer-shell
         // surface commits the new size and its zone together — so at every
         // commit the reserved space equals the visible strip, and a preset
         // change moves the top edge only. Non-fullscreen tiled windows can
         // therefore never sit under the visible panel; whether a client
-        // keeps its internal bottom scroll on resize is its own policy
-        // (decisions §21).
+        // keeps its internal bottom scroll on resize is its own policy.
         exclusionMode: root.mode === "docked" ? ExclusionMode.Auto : ExclusionMode.Ignore
 
         // Mirrors the reference `.keyboard-container`: solid panel
@@ -1992,7 +1982,7 @@ Item {
                 width: parent.width
                 height: tokens.space(30) + keyboard.cellGap * 3
 
-                // The drag handle (the owner's 2026-09-18 sketch): a thin
+                // The drag handle: a thin
                 // 3px line along the floating bar's top edge, rounded,
                 // quiet ink — and ALIVE: while the bar is dragged the line
                 // brightens and shortens from both ends. The window-title
@@ -2030,9 +2020,9 @@ Item {
                         minimumY: 0
                         maximumY: panel.height - card.height
                     }
-                    // Where the drag lands is state worth keeping (spec-v1 §7),
+                    // Where the drag lands is state worth keeping,
                     // and a drag the compositor takes away mid-gesture still
-                    // left the card somewhere — same reasoning as the cancel
+                    // leaves the card somewhere — same reasoning as the cancel
                     // path on the key caps. No key can be held by this
                     // MouseArea: it covers the bar, which has no caps in it.
                     onReleased: root.finishDrag()
@@ -2041,8 +2031,8 @@ Item {
 
                 // The panel's one status line. A swap, not an addition: the
                 // line cannot change the card's height, so no failure state
-                // ever churns the docked reservation that tickets 08 and 20
-                // own. Text and colour both mirror hintState on the panel
+                // ever churns the docked reservation. Text and colour both
+                // mirror hintState on the panel
                 // root above. When the chips stand beside it, the text
                 // shifts left by half the whole notice's width — chips plus
                 // the margin to the text — so the notice as a group sits
@@ -2051,14 +2041,14 @@ Item {
                 // so its z can outrank the settings/editor dismiss layers.
                 // The notice group's RIGHT boundary is noticeEdge below —
                 // never an anchor to pasteButton itself, which lives one
-                // hierarchy up and cannot be anchored to legally (ticket
-                // 57: every re-evaluation of those ternary anchors emitted
-                // the cross-hierarchy warning the canary had grandfathered).
+                // hierarchy up and cannot be anchored to legally: a
+                // cross-hierarchy anchor there emits a QML warning on every
+                // re-evaluation.
 
                 // The notice group's right boundary, placed by a plain x
                 // binding at the left edge of the rightmost chip that is
                 // visible — the paste chip when it stands, else the MODE
-                // chip (permanent since 2026-09-15, left of dismiss) —
+                // chip, left of dismiss —
                 // minus the gap. pasteButton.x is in CARD coordinates (its
                 // parent), so dragBar.x converts it into this space;
                 // modeChip is a sibling and needs no conversion. An Item
@@ -2139,7 +2129,7 @@ Item {
                         MouseArea {
                             id: copyArea
                             anchors { fill: parent }
-                            // Ticket 58: the 28px failure-path chips grow
+                            // The 28px failure-path chips grow
                             // like the standing chrome (zero in mouse).
                             anchors.leftMargin: -root.chromeHitGrow28.left
                             anchors.rightMargin: -root.chromeHitGrow28.right
@@ -2172,7 +2162,7 @@ Item {
                         MouseArea {
                             id: retryArea
                             anchors { fill: parent }
-                            // Ticket 58: growth + observation, copyArea's
+                            // Growth + observation, copyArea's
                             // own rule.
                             anchors.leftMargin: -root.chromeHitGrow28.left
                             anchors.rightMargin: -root.chromeHitGrow28.right
@@ -2186,7 +2176,7 @@ Item {
                     }
                 }
 
-                // The settings gear (spec-v1.1 §5). Leftmost on purpose: the
+                // The settings gear. Leftmost on purpose: the
                 // popover it opens is anchored at its own top-left, so the
                 // compact panel of controls drops under the gear and over
                 // the grid without ever reaching past the card's right edge.
@@ -2228,7 +2218,7 @@ Item {
                     MouseArea {
                         id: gearArea
                         anchors { fill: parent }
-                        // Ticket 58: the touch target grows invisibly in
+                        // The touch target grows invisibly in
                         // the touch profile (negative margins; the drawn
                         // chip never moves), and the press reports its
                         // source so auto can learn touch. In mouse the
@@ -2238,19 +2228,18 @@ Item {
                         anchors.topMargin: -root.chromeHitGrow30.up
                         anchors.bottomMargin: -root.chromeHitGrow30.down
                         hoverEnabled: true
-                        // The touch answer for glyph-only chrome (the
-                        // seam's pinned decision): a touch-and-hold names
-                        // the glyph the hover used to, and the release
+                        // The touch answer for glyph-only chrome: a
+                        // touch-and-hold names
+                        // the glyph the hover otherwise would, and the release
                         // still acts — help-then-action, one gesture, the
                         // click never suppressed.
                         // The hold flag is UNCONDITIONAL and the action
-                        // rides release-or-click deduped (the touch
-                        // council's probe on Qt 6.11.2: clicked is
+                        // rides release-or-click deduped: on Qt 6.11.2 clicked is
                         // suppressed after an accepted pressAndHold —
                         // so a hold's release must act itself, inside
                         // the cap; and the flag may not depend on the
                         // profile, or a long MOUSE press would lose the
-                        // click to the same suppression).
+                        // click to the same suppression.
                         property bool touchHeld: false
                         function act(mouse) {
                             root.observePointerSource(mouse.source)
@@ -2282,8 +2271,8 @@ Item {
                     HoverTooltip {
                         text: UiStrings.tr("tooltip.settings", root.uiLang)
                         // Hover names the glyph in MOUSE only — in touch
-                        // the answer is the hold above (possibly-synthesized
-                        // hover never shows one; the council's finding 2).
+                        // the answer is the hold above: a possibly-synthesized
+                        // hover never shows one.
                         hovered: gearArea.containsMouse
                             && root.inputAfford.tooltipHoverShows
                         held: gearArea.touchHeld
@@ -2292,8 +2281,8 @@ Item {
 
                 Rectangle {
                     id: langCtl
-                    // The control's shape follows the installed layout count
-                    // (ticket 35): one layout hides it — an inert chip is
+                    // The control's shape follows the installed layout count:
+                    // one layout hides it — an inert chip is
                     // noise and a false affordance; two toggle directly, the
                     // shape this bar always had; three or more open the
                     // chooser. Grey keeps its old meaning: hidden is
@@ -2345,7 +2334,7 @@ Item {
                     MouseArea {
                         id: langHit
                         anchors { fill: parent }
-                        // Ticket 58: invisible touch-target growth (zero
+                        // Invisible touch-target growth (zero
                         // in mouse) and the press's source reported to the
                         // auto profile.
                         anchors.leftMargin: -root.chromeHitGrow30.left
@@ -2363,8 +2352,7 @@ Item {
                             // layer keys on): the chooser waits rather than
                             // dropping a menu under another overlay. But a
                             // chip that draws enabled and clicks dead is
-                            // the silence class (the flows round's
-                            // finding) — the wait is SAID, on the hint
+                            // the silence class — the wait is SAID, on the hint
                             // line.
                             if (settingsLayerHost.popoverVisible
                                 || root.customEditorField !== ""
@@ -2378,11 +2366,7 @@ Item {
                     }
                 }
 
-                // The owner's 2026-09-05 call, agreed: no size button in
-                // the header. Dock/Float followed it out on 2026-09-08 —
-                // and came BACK on 2026-09-15 by the same owner's call:
-                // he found himself switching more than expected and opening
-                // Settings each time was friction. The chip shows the
+                // No size button in the header. The chip shows the
                 // CURRENT mode (the language chip's idiom — a label that
                 // states where you are, not a mystery icon), one click
                 // toggles through the same setMode the Settings row uses
@@ -2421,7 +2405,7 @@ Item {
                     MouseArea {
                         id: modeChipHit
                         anchors { fill: parent }
-                        // Ticket 58: invisible touch-target growth (zero
+                        // Invisible touch-target growth (zero
                         // in mouse) and the press's source reported.
                         anchors.leftMargin: -root.chromeHitGrow30.left
                         anchors.rightMargin: -root.chromeHitGrow30.right
@@ -2440,15 +2424,14 @@ Item {
                     // The seam's pinned per-control decision for TEXT
                     // chrome: the tooltip is hidden on touch — its label
                     // already states the mode, and the hide is ENFORCED by
-                    // the tooltipHoverShows gate below (ticket 62: a
-                    // synthesized hover may follow a finger; nothing is
-                    // silent "by absence"). No hold arm: the hold
+                    // the tooltipHoverShows gate below: a
+                    // synthesized hover may follow a finger, so hiding must
+                    // not rely on the absence of a real hover. No hold arm: the hold
                     // vocabulary belongs to input, not chrome help.
                     HoverTooltip {
                         text: UiStrings.tr("mode.chip.tooltip", root.uiLang)
-                        // Text chrome: hidden under touch (the table's
-                        // own tooltipTextChrome rule — enforced, not
-                        // assumed; ticket 62's review found it ungated).
+                        // Text chrome: hidden under touch, enforced by the
+                        // table's own tooltipTextChrome rule, not assumed.
                         hovered: modeChipHit.containsMouse
                             && root.inputAfford.tooltipHoverShows
                     }
@@ -2484,7 +2467,7 @@ Item {
                     MouseArea {
                         id: dismissHit
                         anchors { fill: parent }
-                        // Ticket 58: growth + observation + the glyph
+                        // Growth + observation + the glyph
                         // chrome's touch-and-hold tooltip, the gear's own
                         // rule.
                         anchors.leftMargin: -root.chromeHitGrow30.left
@@ -2495,7 +2478,7 @@ Item {
                         // The gear site's dedupe rule: the hold flag
                         // unconditional, the action on release-inside or
                         // click (Qt suppresses clicked after an accepted
-                        // hold — the council's probe).
+                        // hold).
                         property bool touchHeld: false
                         function act(mouse) {
                             root.observePointerSource(mouse.source)
@@ -2527,19 +2510,19 @@ Item {
                 id: keyboard
                 theme: tokens
                 uiScale: root.sizeScale
-                // What the Super cap draws (ticket 22): the panel resolves
+                // What the Super cap draws: the panel resolves
                 // override over default; the keyboard picks the arm with the
                 // pure choice in KeyboardLayout.js, so an unknown value and
                 // an absent Omarchy font both land on the word, never a
                 // blank cap.
                 superMark: root.superMark
-                // Dwell-to-type (ticket 50): the caps' rest-to-type
+                // Dwell-to-type: the caps' rest-to-type
                 // behaviour and its delay, resolved override over default
                 // above and handed down as one voice — the keyboard owns
                 // the machine, the panel owns the setting.
                 dwellEnabled: root.dwellEnabled
                 dwellDelayMs: root.dwellDelayMs
-                // The input profile (ticket 58): the panel resolves the
+                // The input profile: the panel resolves the
                 // setting over the observation (InputProfile.resolve) and
                 // hands the EFFECTIVE profile down — the keyboard owns the
                 // typing semantics, the panel owns the fact. The caps'
@@ -2564,8 +2547,8 @@ Item {
                 // press, dismiss on a second press. The keyboard stays
                 // mapped and clickable underneath — that is the point.
                 onEmojiCapActivated: root.toggleEmojiPage()
-                // Step 3: while the page stands AND the search is armed the
-                // keys feed it and reach nothing else (ticket 29) — a focus
+                // While the page stands AND the search is armed the
+                // keys feed it and reach nothing else — a focus
                 // change disarms, a click on the field re-arms. The binding
                 // (not an assignment) is what ends the interception on every
                 // close route — the page dies with emojiOpen by whatever
@@ -2652,7 +2635,7 @@ Item {
             }
 
 
-            // Current-content paste (spec-v1.1 §1): the reserved top-centre
+            // Current-content paste: the reserved top-centre
             // header place. Empty CLIPBOARD hides the chip. Text shows a
             // single-line preview elided to the chip width; non-text keeps
             // the clipboard glyph. Click pastes CLIPBOARD without writing
@@ -2739,7 +2722,7 @@ Item {
                 MouseArea {
                     id: pasteArea
                     anchors { fill: parent }
-                    // Ticket 58: growth (zero in mouse) + observation +
+                    // Growth (zero in mouse) + observation +
                     // the glyph chrome's touch-and-hold tooltip.
                     anchors.leftMargin: -root.chromeHitGrow30.left
                     anchors.rightMargin: -root.chromeHitGrow30.right
@@ -2749,8 +2732,8 @@ Item {
                     enabled: root.pasteEnabled
                     property bool touchHeld: false
                     // The gear site's dedupe rule (Qt suppresses
-                    // clicked after an accepted hold — the council's
-                    // probe): flag unconditional, release-inside acts.
+                    // clicked after an accepted hold): flag unconditional,
+                    // release-inside acts.
                     onPressAndHold: touchHeld = true
                     onReleased: function (mouse) {
                         if (touchHeld
@@ -2777,7 +2760,7 @@ Item {
                 }
             }
 
-            // The >=3-layout chooser (ticket 35), card-local like the paste
+            // The >=3-layout chooser, card-local like the paste
             // chip so its z outranks keys and bar. The catch area underneath
             // eats the everywhere-outside click — the same contract the
             // settings popover keeps with its own layer.
@@ -2886,10 +2869,10 @@ Item {
         }
     }
 
-    // One settings overlay (spec-v1.1 §5). Separate PanelWindows for the
-    // popover/editor failed to remap after the first hide (gear opens
-    // once, then needs a shell restart) and leftover clicks ate the card.
-    // This window stays mapped while the keyboard is open; the mask is
+    // One settings overlay: separate PanelWindows for the popover/editor
+    // fail to remap after the first hide (gear opens once, then needs a
+    // shell restart), so this window stays mapped while the keyboard is
+    // open; the mask is
     // empty until settings open, then leftover ∪ the card so Custom on
     // the band still receives clicks without a bounding-box over keys.
     PanelWindow {
@@ -2902,7 +2885,7 @@ Item {
         WlrLayershell.namespace: "io.github.vladkarok.oskar.settings"
         WlrLayershell.layer: WlrLayer.Overlay
         // Two sanctioned exceptions, never at once: a colour field being
-        // typed (spec-v1.1 §5) and the armed emoji search (ticket 42).
+        // typed and the armed emoji search.
         // Each primes Exclusive for 75 ms to acquire the compositor's
         // focus, then settles OnDemand; every other state — disarmed
         // search, closed page, unedited colours — is None, so every
@@ -2927,7 +2910,7 @@ Item {
         // The settings content itself — the leftover geometry engine,
         // the input mask, the everywhere-outside dismiss area, the
         // settings popover and the custom colour editor — lives in
-        // SettingsLayer.qml (the structural split's step five). This
+        // SettingsLayer.qml. This
         // window keeps what only a window can hold: the surface flags,
         // the focus contract above, and the mask binding below, fed
         // from the component. The emoji page and the two focus sinks
@@ -2959,7 +2942,7 @@ Item {
             height: 0
         }
 
-        // The panel's own emoji page (ticket 24, step 2), hosted by the
+        // The panel's own emoji page, hosted by the
         // same leftover-centre mechanism as the card and the editor. The
         // keyboard underneath stays live — the page rides the overlay
         // window, never the key grid.
@@ -2980,7 +2963,7 @@ Item {
             // the LAYER, not the leftover: free placement may cover the
             // keyboard band.
             dragEnabled: root.emojiDrag
-            // x/y included (the triage round's poison): the placement
+            // x/y included: the placement
             // module's validBox refuses a bounds without them, and the
             // MouseArea clamp reads only w/h — both consumers fed from
             // the one shape.
@@ -2991,7 +2974,7 @@ Item {
             onHeightChanged: root.applyEmojiPosition()
             z: 1
             visible: root.emojiOpen
-            // Ticket 58: the page's presses join the input-profile
+            // The page's presses join the input-profile
             // observation, the caps' and the header chips' own rule.
             onPointerSourceObserved: function (source) {
                 root.observePointerSource(source)
@@ -3004,33 +2987,32 @@ Item {
                 var delivered = applyTone
                     ? EmojiGrid.entryForTone(entry, root.emojiSkinTone,
                         EmojiGrid.allEntries()) : entry
-                // Ticket 42: while the search is armed the overlay holds
+                // While the search is armed the overlay holds
                 // keyboard focus, and a delivery must land in the client
                 // that focus returns to — so the arm drops BEFORE the
                 // helper or the clipboard chord is asked for anything.
                 // The binding's None makes the compositor refocus the
-                // last window (the colour-field release's proven path)
-                // ahead of the first keystroke. On a refused send the
-                // search stays disarmed; a field click re-arms it.
+                // last window ahead of the first keystroke. On a refused
+                // send the search stays disarmed; a field click re-arms it.
                 if (emojiPage.searchArmed) emojiPage.searchArmed = false
-                // §91: ONE route — the clipboard transaction. The typed
+                // ONE route — the clipboard transaction. The typed
                 // delivery routes (keysym taps, Unicode composition) are
-                // gone from the protocol and the panel alike; the owner
-                // chose the byte-exact channel for every pick, and the
+                // gone from the protocol and the panel alike; the
+                // byte-exact channel is used for every pick, and the
                 // transaction's own queue serializes them (three wait,
                 // the fourth refuses out loud).
-                // Ticket 56: the class is derived ONCE, here at the
+                // The class is derived ONCE, here at the
                 // click — request() takes it as a fact of the pick and
-                // never re-derives (the derivation now runs ahead of
-                // the delivery's §88 gate: same click, same live focus,
-                // an idempotent refresh of the same memory the event
-                // stream keeps).
+                // never re-derives: the derivation runs ahead of
+                // the delivery's own gate, so it stays an idempotent
+                // refresh of the same memory the event
+                // stream keeps.
                 emojiDelivery.request(delivered.emoji,
                     root.focusedClientClass())
             }
             onSkinToneChosen: function (tone) { root.chooseEmojiSkinTone(tone) }
             onDismissed: root.emojiOpen = false
-            // Ticket 42: physical typing while the search is armed. The
+            // Physical typing while the search is armed. The
             // page routed the raw event through EmojiGrid.searchKeyAction;
             // what lands here is the same action the caps would have sent.
             onPhysicalSearchInput: function (action, text) {
