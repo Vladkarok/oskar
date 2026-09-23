@@ -290,7 +290,7 @@ class LegDaemon:
     """The helper under the private runtime; one instance per lifetime.
 
     Its stderr carries the same `group -> <n>` line the incident's journal
-    did (daemon/src/main.rs logs every same-keymap group move), which is
+    did (daemon/src/state.rs logs every same-keymap group move), which is
     the leg's independent count of group-moving commands.
     """
 
