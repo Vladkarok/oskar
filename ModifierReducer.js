@@ -117,11 +117,11 @@ function unchanged(state) {
 ///   { type: "paste",        ctrl, shift, position }
 ///
 /// `shift` on a press means the cap draws the position's shift level and must
-/// type that level — the symbols page (spec-v1 §4). Like Caps Lock it is
+/// type that level — the symbols page. Like Caps Lock it is
 /// satisfied with a real Shift press around the key rather than by choosing a
 /// character, because the compositor resolves the position through its own
 /// layout and the panel does not get to decide what comes out. `altgr` is the
-/// curated page's answer for the keymap's AltGr levels (spec-v1.1 §3): level
+/// curated page's answer for the keymap's AltGr levels: level
 /// 3 carries AltGr alone, level 4 AltGr and Shift — the same real-modifier
 /// press around the key, one boundary further into the keymap the user
 /// already has, and never a new input mechanism.
@@ -212,9 +212,8 @@ function pasteChordForClass(wmClass) {
 function usesWinePasteChord(cls) {
     // Proton game windows carry the Windows executable's name as their
     // class ("football.exe"); Hyprland reports Steam Proton titles as
-    // "steam_proton" or "steam_app_<id>" (the owner's "Last War" is
-    // "steam_proton"), and Wine's own surfaces carry "wine"
-    // ("wine64-preloader").
+    // "steam_proton" or "steam_app_<id>", and Wine's own surfaces carry
+    // "wine" ("wine64-preloader").
     if (cls.indexOf("wine") !== -1 || cls.indexOf("proton") !== -1) return true
     if (cls.indexOf("steam_app") === 0) return true
     return cls.slice(-4) === ".exe"
@@ -374,7 +373,7 @@ function press(state, event) {
         // above and is never decided twice; AltGr on an exact press follows
         // the level flag — the chord is the level's, not the latch's — and
         // Ctrl, Alt and Super are ordinary modifiers on every press and
-        // wrap as §5 says.
+        // wrap accordingly.
         if (modifier === "shift") continue
         if (exact && modifier === "altgr") {
             if (event.altgr === true) wants.altgr = true

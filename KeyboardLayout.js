@@ -6,8 +6,8 @@
 // every row's widths sum to 15.5 exactly: the panel lays all rows out on one
 // shared cell pitch (Keyboard.qml) and loudly reports any row that misses
 // it, because under a shared pitch a short row stops short of the card edge
-// instead of merely shrinking. The widths sit on a half-unit lattice in the
-// owner-measured Windows stagger; what that buys is the grid comment in
+// instead of merely shrinking. The widths sit on a half-unit lattice
+// matching a Windows-style stagger; what that buys is the grid comment in
 // Keyboard.qml, and this is not the place to say it twice.
 //
 // A second shape belongs to `&123`: { glyph: "£", shiftGlyph: "€" } names
@@ -59,7 +59,7 @@ function fCaps(n) {
     return caps
 }
 
-// ---- the Super cap's mark (ticket 22, decisions §27 as amended) ----
+// ---- the Super cap's mark ----
 //
 // Which arm of the settings choice the Super cap draws. Pure so the host
 // suite can drive it: `mark` is the setting string, `omarchyFontPresent` the
@@ -68,7 +68,7 @@ function fCaps(n) {
 // The word is the default and the landing place for everything undrawable:
 // an unknown setting string (the store rejects them, but the QML treats one
 // as the word anyway so nothing can ever draw a blank cap) and the Omarchy
-// choice when the private font is absent (§27: the gate stays attached to
+// choice when the private font is absent (the gate stays attached to
 // that arm alone — an absent file never requests U+E900).
 function superMarkArm(mark, omarchyFontPresent) {
     if (mark === "omarchy") return omarchyFontPresent ? "omarchy" : "word"
@@ -79,21 +79,21 @@ function superMarkArm(mark, omarchyFontPresent) {
 // The row both pages end on, identical but for the page key's own label. It is
 // the row the pointer returns to most, so it is the one that must not move
 // between pages: same caps, same widths, same place (see the height pin in
-// Keyboard.qml) — the page key included, which has sat in the bottom-right
-// slot since owner round 6.
+// Keyboard.qml) — the page key included, which sits in the bottom-right
+// slot.
 function commandRow(pageLabel) {
     return [
         { label: "Ctrl", key: "ctrl" },
         // Fn is a panel display control: it swaps the top row in place and
         // never emits a key position or participates in modifier latching.
         { label: "Fn", key: "fn" },
-        // Super's cap draws this label by default (ticket 22): the word is
+        // Super's cap draws this label by default: the word is
         // the default arm of the mark setting, this label is the accessible
         // name of every arm, and it is the missing-font fallback of the
-        // Omarchy glyph arm (spec-v1.1 §1, decisions §27 as amended).
+        // Omarchy glyph arm.
         { label: "Super", key: "logo" },
         { label: "Alt", key: "alt" },
-        // The emoji cap (spec-v1.1 §1): a fixed label for the cap that
+        // The emoji cap: a fixed label for the cap that
         // opens the panel's own emoji page. Like the arrows, it is artwork,
         // not a character any level of the keymap produces.
         { label: "☺", key: "emoji" },
@@ -103,16 +103,15 @@ function commandRow(pageLabel) {
         { label: "←", key: "Left" },
         { label: "↓", key: "Down" },
         { label: "→", key: "Right" },
-        // The page switch (spec-v1 §4). A key, never a modifier: it changes
+        // The page switch. A key, never a modifier: it changes
         // what can be seen and nothing about what is held, and the label names
         // where the next press goes rather than where you are. It holds the
-        // bottom-right corner — Windows' ENG slot — since owner round 6.
+        // bottom-right corner — Windows' ENG slot.
         { label: pageLabel, key: "page" }
     ]
 }
 
-// Half-unit lattice with the classic stagger (owner round 6, laid out like
-// the measured Windows reference): every width is a multiple of 0.5 and
+// Half-unit lattice: every width is a multiple of 0.5 and
 // adjacent rows' gap lines are offset by exactly half a unit, so every gap
 // falls mid-key of the neighbouring rows — rows 1 and 3 land their
 // boundaries on whole units, rows 2 and 4 on half units, and the command
@@ -156,8 +155,7 @@ var rows = [
         typedRow("z x c v b n m ,< .> /?", 3),
         [{ label: "↑", key: "Up" }],
         // Spans exactly → plus the page key on the row below (see the lattice
-        // note above). The 0.75 trailing Shift this row used to end on was a
-        // flex-model hack whose label clipped at the panel edge.
+        // note above).
         { label: "Shift", key: "shift", w: 2.0 }
     ),
     commandRow("&123")
@@ -270,7 +268,7 @@ function symbolFunctionRows(pageLabel) {
 
 
 // Positions whose facts the panel asks for on top of the ones its pages
-// declare, because the reserved symbol block may be hosted there (§33) and a
+// declare, because the reserved symbol block may be hosted there and a
 // glyph cap names a character rather than a position.
 //
 // This is a REQUEST list, not a map: which of these the helper actually hosts
@@ -279,10 +277,11 @@ function symbolFunctionRows(pageLabel) {
 // alone costs an empty record.
 //
 // The digit row and the other rows' non-letter positions, which every
-// application's keycode table carries, plus the two free positions ticket 20
-// measured through. The exotic free keycodes this list used to hold are gone:
-// Chromium's Ozone/Wayland DomCode table drops them and Wine substitutes for
-// them, so the symbols typed in a terminal and produced nothing in Electron.
+// application's keycode table carries, plus the two free positions that
+// plumb through both Chromium's Ozone/Wayland DomCode table and Wine's
+// substitution. The other exotic free keycodes are excluded: neither
+// carries them, so a symbol placed there types in a terminal and produces
+// nothing in Electron.
 var reservedPositions = [
     "AE01", "AE02", "AE03", "AE04", "AE05", "AE06",
     "AE07", "AE08", "AE09", "AE10", "AE11", "AE12",
@@ -328,7 +327,7 @@ function declaredPositions() {
 
 /// Which real modifiers an exact-level cap holds around its key.
 ///
-/// Levels five to eight are the reserved block's (decisions §33): `<LVL5>`
+/// Levels five to eight are the reserved block's: `<LVL5>`
 /// opens them, and Shift and `<LVL3>` choose among the four exactly as they
 /// choose among the four below. One table, so a cap, a press and a test
 /// cannot disagree about what level 7 means.
@@ -356,7 +355,7 @@ function levelChord(level) {
 /// move when something unrelated changes.
 ///
 /// Level-major, and that is the whole point of the ordering. The block lives
-/// on levels five to eight of ordinary positions now (decisions §33), so a
+/// on levels five to eight of ordinary positions now, so a
 /// position-major scan would find `@` on `AE01`'s catalogue level before
 /// `AE02`'s own Shift level and send `<LVL5>`+`<LVL3>` for a character plain
 /// Shift already types. Level-major asks the layout first and reaches for the
@@ -423,7 +422,7 @@ function isLetterKey(capData) {
 }
 
 // The character one cap resolves to, given what Caps and Shift are doing.
-// Moved here from Keyboard.qml (ticket 03) so that the rule deciding what a
+// Lives here, not in Keyboard.qml, so that the rule deciding what a
 // cap SHOWS lives in the same module as the rules deciding what its press
 // TYPES, and the two can only move together, tested at the pure seam: caps
 // must match actual typed output, and this function is where they meet.
@@ -447,14 +446,13 @@ function charUnderModifiers(capData, capsOn, shiftOn) {
 /// What the compiled keymap has to say about one cap, expressed as the fields
 /// to lay over it — never as an edit to the cap itself. Positions the keymap
 /// does not cover are appended to `misses` and left for the caller to report;
-/// a miss is a reporting matter, not an error (§11).
+/// a miss is a reporting matter, not an error.
 ///
-/// Entries are the helper's keycap facts (decisions §23, ticket 04): already
+/// Entries are the helper's keycap facts: already
 /// resolved level answers, `{ text }` for drawable character text and
-/// `{ none }` for a level with nothing to draw. There is no second reading —
-/// the §11 pipeline compiled keysym tokens with its own `xkbcli` and this
-/// function had to know both; ticket 05 retired it, and with it the last
-/// place where two authorities could disagree about what a position carries.
+/// `{ none }` for a level with nothing to draw. There is no second reading:
+/// this is the only place a position's carried character is decided, so two
+/// authorities can never disagree about it.
 function capOverlay(capData, symbols, misses) {
     var levels = Array.isArray(symbols) ? symbols : []
     var textAt = function (index) {
@@ -474,13 +472,12 @@ function capOverlay(capData, symbols, misses) {
         return "<no symbol at this level>"
     }
 
-    // The symbols page's dual cap (2026-09-05, the owner's symbols-page v2
-    // round): both levels from the keymap, no built-in character behind
+    // The symbols page's dual cap: both levels from the keymap, no built-in character behind
     // either. Whichever level resolves is carried as t (base) / s (shifted)
     // and the panel draws the stacked pair with Shift-swapped emphasis, so
     // the page SHOWS what Shift does to every cap. A level that does not
     // resolve is a miss; a cap with neither resolving is marked unavailable —
-    // dim, press-refusing, never a silent blank (spec-v1.1 §3). What a cap
+    // dim, press-refusing, never a silent blank. What a cap
     // does with a latched Shift is the main page's own pairing semantics
     // (non-exact press in Keyboard.qml), decided by ModifierReducer.js;
     // nothing here changes a reducer fact.
@@ -518,11 +515,11 @@ function capOverlay(capData, symbols, misses) {
     return overlay
 }
 
-/// A silent substitution is the failure mode decisions.md §11 records: the awk
-/// program broke, the map came back empty, and the built-in US table stayed on
-/// screen for days while the label said "Ukrainian". One line per rebuild
-/// rather than one per key, so a wholly empty map is loud without being sixty
-/// lines of noise.
+/// A silent substitution is the failure mode this guards against: the awk
+/// program breaks, the map comes back empty, and the built-in US table stays
+/// on screen while the label says "Ukrainian". One line per rebuild rather
+/// than one per key, so a wholly empty map is loud without being sixty lines
+/// of noise.
 function reportMisses(misses, layoutCode) {
     if (misses.length === 0) return
     var shown = misses.slice(0, 12).join(" ")
@@ -535,9 +532,10 @@ function reportMisses(misses, layoutCode) {
 ///
 /// `applyLanguage` runs on every facts change AND on every page toggle, and
 /// it runs before the caller's identity check can decide the rows did not
-/// change. Toggling to `&123` and back on a keymap that is missing something
-/// used to print the same line each time. What is worth knowing is that the
-/// keymap is short, not how many times the user pressed a key.
+/// change, so toggling to `&123` and back on a keymap that is missing
+/// something would print the same line every time without this guard. What
+/// is worth knowing is that the keymap is short, not how many times the user
+/// pressed a key.
 var lastReport = ""
 function reportOnce(line) {
     if (line === lastReport) return
@@ -555,16 +553,14 @@ function reportOnce(line) {
 /// plus overlay means there is no copy to keep in step with the declaration.
 function applyLanguage(rowsSource, layoutCode, capsFacts) {
     // One fact source: the helper's acknowledged keycap facts, resolved by
-    // libxkbcommon against the very keymap that types (decisions §23). The
-    // second source — the §11 xkbcli pipeline's `symbolMap`, which fed `token`
-    // and `lvl` caps — went with ticket 18: every cap is a glyph cap or a
-    // positioned cap now, and keeping a compile that nothing drew from cost a
-    // process per layout change and could raise "keymap unavailable" over caps
-    // that were perfectly good.
+    // libxkbcommon against the very keymap that types. Every cap is a glyph
+    // cap or a positioned cap now, so a second compiled source would cost a
+    // process per layout change and could raise "keymap unavailable" over
+    // caps that were perfectly good.
     //
     // With `capsFacts` absent — facts still in flight, or an unresolved
     // mismatch — the built-in table draws as the gated last-resort fallback
-    // (spec-v1 §3.5) while the panel's status owns saying why; that window
+    // while the panel's status owns saying why; that window
     // is deliberately NOT reported per cap, or every group switch would log
     // a forty-line miss report for facts that are milliseconds away. With
     // facts in hand, a position they do not answer is a loud per-cap miss,
@@ -573,11 +569,11 @@ function applyLanguage(rowsSource, layoutCode, capsFacts) {
     var glyphIndex = null
     // Glyph caps asked for and glyph caps answered. A page where NONE of them
     // resolved is not fifty independent misses — it is the reserved block
-    // missing (decisions §33), and saying so once is the only useful thing to
-    // print. The panel used to infer this from a hand-mirrored copy of the
-    // helper's host list, which could not tell a hosted position from one
-    // that natively has eight levels; this asks the question the user cares
-    // about instead, which is whether any symbol cap can type.
+    // missing, and saying so once is the only useful thing to print. This
+    // counts what actually drew rather than cross-checking a hosted-position
+    // list, which cannot tell a hosted position from one that natively has
+    // eight levels; the question that matters is whether any symbol cap can
+    // type.
     var glyphCaps = 0
     var glyphHits = 0
     var resolved = rowsSource.map(function (row) {
@@ -587,7 +583,7 @@ function applyLanguage(rowsSource, layoutCode, capsFacts) {
                 // A cap that asks for a character and lets the keymap say
                 // where it lives. Unresolved means the active keymap cannot
                 // produce it at all: dim and press-refusing, never a blank
-                // cap that looks typeable (spec-v1.1 §3).
+                // cap that looks typeable.
                 //
                 // `shiftGlyph` makes it a dual cap, drawn by the panel the
                 // way every other dual cap is — the Shift character dim on
@@ -631,7 +627,8 @@ function applyLanguage(rowsSource, layoutCode, capsFacts) {
                     // including a Shift half that did. `disabled` gates the
                     // press for the cap as a whole, so attaching the upper
                     // glyph here would draw a character the cap cannot type,
-                    // which is the exact promise spec-v1.1 §3 forbids. Both
+                    // which is exactly the broken promise this guards
+                    // against. Both
                     // halves are reported: a page quietly losing caps on a
                     // keymap with fewer free positions is how this goes
                     // unnoticed.
@@ -642,11 +639,10 @@ function applyLanguage(rowsSource, layoutCode, capsFacts) {
                             + capData.glyph + ") is unreachable: its base is not")
                 }
             } else if (!capData.xkb)
-                // No position, no keymap question. (The retired §3 curated
-                // page's `fixedGlyph`/`latin` test went with ticket 40:
-                // fields nothing in the tree has set since that page died —
+                // No position, no keymap question. `fixedGlyph`/`latin`
+                // fields are unused — nothing in the tree sets them — and
                 // the declared-vocabulary pin in tests/keyboard-layout.qml
-                // keeps them from coming back by accident.)
+                // keeps them from coming back by accident.
                 overlay = {}
             else if (capsFacts)
                 overlay = capOverlay(capData, capsFacts[capData.xkb], misses)

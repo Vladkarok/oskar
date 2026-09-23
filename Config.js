@@ -14,8 +14,8 @@ var MODE_FLOATING = "floating"
 
 // The Super cap's mark: what the modifier cap draws.
 // The word is the default; the others are one mark each — the Omarchy glyph
-// (U+E900 in the private font), two inline vectors and the owner's original
-// Tux SVG. `macos` draws the macOS command mark (⌘), which is what that key
+// (U+E900 in the private font), two inline vectors and a supplied
+// monochrome Tux SVG. `macos` draws the macOS command mark (⌘), which is what that key
 // carries on an Apple keyboard — not an apple.
 // One list here, so validation, the popover's segments and the tests cannot
 // disagree about the value space.

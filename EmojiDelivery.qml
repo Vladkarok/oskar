@@ -144,8 +144,8 @@ Item {
             killProcessGroup(emojiClipboardVerify)
             console.warn("[oskar] emoji verify stalled — pick dropped,"
                 + " the clipboard keeps whatever it holds")
-            // §87: a dropped pick is the user's click vanishing — the
-            // same silence the chord refusal used to be. Flash it.
+            // A dropped pick is the user's click vanishing; flash it
+            // rather than let it pass in silence.
             root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
             startNextEmojiTxn()
         }
@@ -236,7 +236,7 @@ Item {
         if (result.action === "drop") {
             console.warn("[oskar] emoji clipboard publication not confirmed;"
                 + " pick dropped, no chord sent")
-            // §87: the drop is the click vanishing — flash, don't
+            // The drop is the click vanishing — flash, don't
             // journal.
             root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
             startNextEmojiTxn()
@@ -250,13 +250,13 @@ Item {
         // of passing unnoticed. The emoji stays published; if the chord
         // never completes, manual Ctrl+V remains possible.
         //
-        // Ticket 56: the chord is derived for the class the PICK carried
+        // The chord is derived for the class the PICK carried
         // (result.state.clientClass) — never re-derived from whoever holds
         // focus by the time the clipboard transaction landed.
         //
         // The completion carries the transaction's seq, captured HERE:
         // a cancelled pick's late reply must land stale, not complete
-        // whichever pick owns the machine by then (round seven).
+        // whichever pick owns the machine by then.
         var chordSeq = result.state.seq
         root.pasteChordStart(result.state.clientClass, function (success) {
             finishEmojiChord(chordSeq, success)
@@ -265,9 +265,8 @@ Item {
 
     // The chord's verdict. Only a real completion records usage, settles
     // the search and closes the page; a cancellation leaves all three
-    // alone. A completion arriving for a cancelled transaction (only
-    // the tests cancel now — the delivery-mode flip that once did this
-    // is §91 history) lands as "ignore" or "stale" and records
+    // alone. A completion arriving for a cancelled transaction — only the
+    // tests cancel now — lands as "ignore" or "stale" and records
     // nothing, then the queue — empty after a cancel — hands over nothing.
     function finishEmojiChord(seq, success) {
         var done = ClipboardPaste.txnChordDone(root.emojiTxnState, seq, success)
@@ -281,11 +280,9 @@ Item {
         } else if (done.action === "cancelled") {
             console.warn("[oskar] emoji paste chord refused or aborted;"
                 + " no usage recorded (the clipboard keeps the pick)")
-            // Same silence class the round has been closing, one layer
-            // down (the diff audit's finding): the queue caps and the
-            // paste chip flash their refusals — a pick whose chord
-            // never dispatched must not be the one click that vanishes
-            // without a word.
+            // The same silence class as the queue caps and the paste
+            // chip: a pick whose chord never dispatched must not be
+            // the one click that vanishes without a word.
             root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
         }
         startNextEmojiTxn()

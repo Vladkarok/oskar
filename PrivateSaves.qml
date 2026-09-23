@@ -32,7 +32,7 @@ Item {
     property string statePath: ""
     // The stand-off guards, bound from the panel's error properties:
     // while one stands, the matching dir maker's exit writes nothing —
-    // the bad file is never overwritten (spec-v1.1 §5).
+    // the bad file is never overwritten.
     property string configError: ""
     property string stateError: ""
     // The maps, bound live: the dir makers' exits serialize whatever
@@ -44,11 +44,10 @@ Item {
     // A config/state save that could not land (dir creation failed, or
     // the private write failed twice): the in-memory controls already
     // show the new value, so the only honest panel says so on the hint
-    // line until a save lands (the flows round's finding — a failed
-    // save used to lie silently until the next shell start ate the
-    // setting). Per PATH, not one boolean (the second round's finding):
-    // config and state are two channels — a landed state write must
-    // not vouch for a config write that never ran. A path leaves the
+    // line until a save lands — otherwise a failed save lies silently
+    // until the next shell start eats the setting. Per PATH, not one
+    // boolean: config and state are two channels — a landed state write
+    // must not vouch for a config write that never ran. A path leaves the
     // list only when a write of that same path succeeds.
     property var saveFailedPaths: []
     function saveFailedMark(path) {
@@ -64,16 +63,14 @@ Item {
         })
     }
 
-    // Private by permission, not by hope (round ten): the documented
-    // 700/600 is now enforced on create AND repaired on every save —
-    // umask-independent, and an existing 755/644 install is healed the
-    // first time the panel saves into it.
-    // Private by permission, not by hope (round ten) — and private AT
-    // CREATION, not after the fact (the cold audit's fourth finding:
-    // FileView's atomic rename lands at umask and a later chmod left a
-    // world-readable window, or a crash inside it left 644 forever).
-    // The dir is install -d -m 700; every save goes through one
-    // umask-077 temp+rename, 600 by construction.
+    // Private by permission, not by hope: the documented 700/600 is
+    // enforced on create AND repaired on every save — umask-independent,
+    // and an existing 755/644 install is healed the first time the panel
+    // saves into it. Private at CREATION too, not after the fact:
+    // FileView's atomic rename would otherwise land at umask with a
+    // later chmod leaving a world-readable window, or a crash inside it
+    // leaving 644 forever. The dir is install -d -m 700; every save goes
+    // through one umask-077 temp+rename, 600 by construction.
     Process {
         id: configDirMaker
         command: ["bash", "-c",
@@ -121,13 +118,12 @@ Item {
     // One writer, one queue: a save arriving mid-write replaces its own
     // target's queued entry (newest wins per file) and the exit drains
     // the queue — overlapping config/state saves coalesce instead of
-    // racing a Process restart (round thirteen's note on the shared
-    // writer).
+    // racing a Process restart.
     property var privateWriteQueue: []
     // The in-flight write (path, payload, and whether a failure already
-    // requeued it once — the external audit's finding 12: a failed write
-    // was only logged, and the newest config/state was dropped until the
-    // next save happened to land).
+    // requeued it once — otherwise a failed write is only logged, and
+    // the newest config/state is dropped until the next save happens to
+    // land).
     property var privateWriteInFlight: null
     Process {
         id: privateWriter
@@ -145,10 +141,9 @@ Item {
                     + ")" + (root.privateWriteInFlight.retried ? " — again" : ", retrying"))
                 if (!root.privateWriteInFlight.retried) {
                     // Retry ONLY when no newer save for this path is
-                    // already queued (the liveability triage's finding 1:
-                    // the requeue used to drop the newer entry and push
-                    // the failed write's STALE payload — older data could
-                    // win on disk).
+                    // already queued — otherwise the requeue drops the
+                    // newer entry and pushes the failed write's STALE
+                    // payload, letting older data win on disk.
                     var hasNewer = false
                     for (var q = 0; q < root.privateWriteQueue.length; q++)
                         if (root.privateWriteQueue[q].path
@@ -164,15 +159,13 @@ Item {
                 } else {
                     // The retry failed too: the newest config/state is
                     // NOT on disk and every control already shows it —
-                    // the flows round's finding: a failed save must not
-                    // lie. This path's notice stands until this path's
-                    // save lands.
+                    // a failed save must not lie. This path's notice
+                    // stands until this path's save lands.
                     root.saveFailedMark(root.privateWriteInFlight.path)
                 }
             }
             root.privateWriteInFlight = null
-            // The queue's HEAD runs next (FIFO; the cold audit's cosmetic —
-            // it was a loop that could only ever take the first entry).
+            // The queue's HEAD runs next (FIFO).
             if (root.privateWriteQueue.length > 0) {
                 var next = root.privateWriteQueue[0]
                 root.privateWriteQueue = root.privateWriteQueue.slice(1)

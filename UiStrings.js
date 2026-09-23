@@ -1,6 +1,6 @@
 .pragma library
 
-// The UI string table (ticket 52): every word the panel draws as chrome —
+// The UI string table: every word the panel draws as chrome —
 // tooltips, accessible names, settings labels and hints, status lines —
 // lives here behind an id, carried in the four languages we ship. The
 // panel's QML holds no English of its own; what it draws is
@@ -9,10 +9,10 @@
 // through here.
 //
 // The language is the ACTIVE LAYOUT with an override on top — the
-// searchPlaceholder mechanism (EmojiPage.js, ticket 36) generalised:
+// searchPlaceholder mechanism (EmojiPage.js) generalised:
 // "auto" (the default) answers uk for a ua layout, ru for ru, it for
 // an it layout, English for everything else; the settings row pins a language only when the
-// seat carries its layout (ticket 61: Auto and English always,
+// seat carries its layout (Auto and English always,
 // ru/uk/it appear only when installed). A language we do not ship reads as English rather than a
 // guess, exactly like the placeholder always did for a custom code.
 //
@@ -25,7 +25,7 @@
 var LANGUAGES = ["en", "ru", "uk", "it"]
 
 var STRINGS = {
-    // ---- the header's status lines (spec-v1.1 §6) ----
+    // ---- the header's status lines ----
     "hint.clipboardGone": {
         en: "Clipboard content is no longer available",
         ru: "Содержимое буфера обмена больше недоступно",
@@ -255,7 +255,7 @@ var STRINGS = {
         uk: "Розмір",
         it: "Dimensione"
     },
-    // Ticket 52's own row: the override this whole module hangs off.
+    // The override this whole module hangs off.
     // The segment labels beside it are language endonyms (English,
     // Русский, Українська) and stay fixed — a chooser's entries name
     // themselves, whatever the UI is speaking.
@@ -278,7 +278,7 @@ var STRINGS = {
         it: "Auto"
     },
 
-    // ---- the input profile (ticket 58) ----
+    // ---- the input profile ----
     //
     // The row's three segments share the language row's fixed-width
     // discipline: the widest translated label ("Сенсор") measures 43px at
@@ -666,7 +666,7 @@ var STRINGS = {
     },
 
     // ---- the emoji page ----
-    // The placeholder stays word-for-word what ticket 36 shipped
+    // The placeholder stays word-for-word across the shipped languages
     // (Пошук/Поиск/Search); tests/ui-strings.qml pins the parity.
     "emoji.searchPlaceholder": {
         en: "Search",
@@ -712,7 +712,7 @@ var STRINGS = {
         uk: "Нічого не знайдено",
         it: "Nessun risultato"
     },
-    // %1 is the emoji's own catalogue name (data, English by §37).
+    // %1 is the emoji's own catalogue name (data, always English).
     "access.insert": {
         en: "Insert %1",
         ru: "Вставить %1",
@@ -773,7 +773,7 @@ function ids() {
 // Ukrainian, ru Russian, every other code English. Lowercased before
 // comparing, the placeholder's own rule.
 function languageFor(layoutCode, override, layoutCodes) {
-    // The owner's 2026-09-17 rule: an override pins the UI only when
+    // An override pins the UI only when
     // its language is offered — see languageChoices; anything else is
     // inert (stale file, hand edit, layouts shrank) and the layout
     // answers. Nothing is ever shoved into a seat that cannot type it.
