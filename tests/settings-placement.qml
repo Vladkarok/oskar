@@ -1,10 +1,10 @@
-// Leftover-centre placement for the settings overlay (live-host ticket 05).
-// Pure SettingsPlacement.js, no compositor (spec-v1.1 §8). Ticket 23 also
-// pins here, beside the placement it must not break: the colour row's
+// Leftover-centre placement for the settings overlay.
+// Pure SettingsPlacement.js, no compositor. Also pins here, beside the
+// placement it must not break: the colour row's
 // control block (indicator square included) against the popover's own width
 // formula at every size preset, and the committed values the indicator's
 // fill displays — the pure layer of the row; the QML itself stays invisible
-// to the suites (decisions §36).
+// to the suites.
 import QtQml
 import "../SettingsPlacement.js" as Place
 import "../Config.js" as Config
@@ -79,7 +79,7 @@ QtObject {
         //
         // The drag's clamp and the remembered centre's restore are the
         // same deterministic-anchor rule the floating card owns
-        // (spec-v1.1 §4, ConfigFile.floatingAnchor), in this module's
+        // (ConfigFile.floatingAnchor), in this module's
         // rect vocabulary: a dragged top-left never leaves the visible
         // area, and a saved CENTRE re-derives the top-left against the
         // CURRENT bounds — a smaller overlay, a different monitor or a
@@ -131,7 +131,7 @@ QtObject {
                 { w: 0, h: 300 }, bounds), null)
         })
 
-        // ---- ticket 23: the colour row's indicator square ----
+        // ---- the colour row's indicator square ----
         //
         // The widest control block a colour row lays down grew by the
         // committed-colour indicator square. Nothing loads the QML, so the
@@ -195,10 +195,8 @@ QtObject {
         })
 
         T.test("the indicator's committed values carry the awkward shapes", function () {
-            // The shipped swatch palette is what the owner's five rows
-            // showed; a custom colour must commit to a value distinct from
-            // every swatch — the case that had no colour answer before the
-            // square.
+            // A custom colour must commit to a value distinct from
+            // every swatch in the shipped palette.
             var swatches = Config.recommendedSwatches(null)
             var custom = Config.commitHexDraft("#e06c75", true)
             T.equal(custom.action, "commit")

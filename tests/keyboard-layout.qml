@@ -1,6 +1,6 @@
 // The keycap pipeline driven as a pure module:
 // what rows the page declares for what the keymap resolved, and what each cap
-// draws versus what its press types (ticket 03, review findings R2 and R3).
+// draws versus what its press types.
 // Run with tools/run-tests.sh — no compositor, no display. The real-keymap
 // end of the same question is answered in the nested-session evidence run;
 // this suite pins the rules the module must keep whatever a keymap says.
@@ -28,7 +28,7 @@ QtObject {
                 "?", "~", "£", "€", "¥", "¢", "°", "±",
                 "×", "≈", "÷", "≠", "¬", "≤", "≥", "∞"
             ]
-            // The shape the helper actually installs (decisions §33): the
+            // The shape the helper actually installs: the
             // catalogue on levels five to eight of positions that keep their
             // own levels one to four. This fixture is the hard case — a
             // layout carrying NOTHING of its own, so every cap has to come
@@ -138,7 +138,7 @@ QtObject {
             T.equal(Layout.isLetterKey({ chr: "", chrShift: "Q" }), false)
         })
 
-        // ---- ticket 04: the helper-facts (text) overlay path ----
+        // ---- the helper-facts (text) overlay path ----
 
         T.test("a dual cap draws both helper text levels stacked", function () {
             var misses = []
@@ -181,7 +181,7 @@ QtObject {
         })
 
         T.test("a glyph cap resolves by character, at whatever level carries it", function () {
-            // Ticket 18. The cap names a character; the keymap says where it
+            // The cap names a character; the keymap says where it
             // lives. Level 3 and 4 additionally ask for <LVL3> rather than
             // RALT, because RALT is ISO_Level3_Shift only on some layouts.
             var facts = {
@@ -237,9 +237,9 @@ QtObject {
             T.equal(index["£"].position, "AB11")
             T.equal(index["£"].level, 1)
             T.equal(index["¥"].level, 2)
-            // Levels five to eight are where the block lives now (decisions
-            // §33), so they are indexed and they carry the level the press
-            // needs. Past eight is past every chord the panel has.
+            // Levels five to eight are where the block lives, so they
+            // are indexed and they carry the level the press needs.
+            // Past eight is past every chord the panel has.
             var deep = Layout.buildGlyphIndex({
                 AB11: [{ none: "" }, { none: "" }, { none: "" }, { none: "" },
                        { text: "☃" }, { none: "" }, { none: "" }, { text: "∞" },
@@ -252,10 +252,9 @@ QtObject {
         })
 
         T.test("applyLanguage draws every positioned cap from the helper facts", function () {
-            // One source since ticket 18. The second — the §11 pipeline's
-            // symbolMap, which fed `token` and `lvl` caps — is gone, so a
-            // positioned cap and a glyph cap both resolve against the same
-            // facts and can never disagree about the keymap.
+            // One source: a positioned cap and a glyph cap both resolve
+            // against the same helper facts and can never disagree
+            // about the keymap.
             var facts = {
                 AD01: [{ text: "\u0439" }, { text: "\u0419" }],
                 AD02: [{ text: "\u0446" }, { text: "\u0426" },
@@ -292,7 +291,7 @@ QtObject {
             T.equal(resolved[0][1].chr, "w")
         })
 
-        // ---- ticket 12: pair caps on &123 (compact-control-map.md) ----
+        // ---- pair caps on &123 (compact-control-map.md) ----
 
         function unitsLeftOf(row, key) {
             var sum = 0
@@ -387,8 +386,7 @@ QtObject {
             T.equal(rows[3][rows[3].length - 1].w,
                 Layout.rows[3][Layout.rows[3].length - 1].w)
             // Both pages are five rows, which is what the panel reserves
-            // height for. The curated page's own maximum used to be a third
-            // term here; it went with the page (ticket 05).
+            // height for.
             T.equal(Math.max(Layout.rows.length, rows.length), 5)
         })
 
@@ -421,7 +419,7 @@ QtObject {
         })
 
         T.test("the layout answers first and the block only for what it lacks", function () {
-            // Level-major ordering (decisions §33). The block sits on levels
+            // Level-major ordering. The block sits on levels
             // five to eight of positions the layout already uses, so a
             // position-major index would find `@` in the catalogue on AE01
             // before finding it on AE02's own Shift level and send
@@ -482,15 +480,14 @@ QtObject {
             T.equal(fn[0][13].key, "F12")
         })
 
-        // ---- ticket 22: the Super cap's mark is a setting ----
+        // ---- the Super cap's mark is a setting ----
         //
         // The pure arm choice Keyboard.qml draws by: the word is the default
         // and the landing place for everything undrawable — an unknown
         // setting string, and the Omarchy glyph when its private font is
         // absent. Rendering shape and proportion of the three drawn marks is
-        // invisible to this suite (decisions §36) and stays for the owner's
-        // eyes; what is pinned here is that every answer names an arm that
-        // draws something.
+        // invisible to this suite; what is pinned here is that every
+        // answer names an arm that draws something.
 
         T.test("the Super cap draws the word by default and on anything unknown", function () {
             T.equal(Layout.superMarkArm("word", true), "word")
@@ -506,9 +503,8 @@ QtObject {
 
         T.test("the Omarchy arm answers on the font gate alone", function () {
             T.equal(Layout.superMarkArm("omarchy", true), "omarchy")
-            // The packaged TTF absent: the word, never a blank cap
-            // (decisions §27 as amended) — the gate stays attached to this
-            // arm and to no other.
+            // The packaged TTF absent: the word, never a blank cap —
+            // the gate stays attached to this arm and to no other.
             T.equal(Layout.superMarkArm("omarchy", false), "word")
         })
 
@@ -523,11 +519,12 @@ QtObject {
         })
 
         T.test("declaredPositions answers every positioned cap the pages declare", function () {
-            // The caps request is built from this list (ticket 39): when it
-            // degenerated to RALT alone — a stale `.k` read on caps renamed
-            // to `xkb` — the helper honestly answered one position, twenty-six
-            // letter caps missed, and the built-in tables drew a us/ua
-            // frankenstein while the label said the layout was fine.
+            // The caps request is built from this list: a degenerate list
+            // (e.g. RALT alone from a stale `.k` read on caps renamed to
+            // `xkb`) leaves most letter caps unrequested — the helper
+            // honestly answers only what it was asked, and the built-in
+            // tables would draw a us/ua frankenstein while the label
+            // said the layout was fine.
             var positions = Layout.declaredPositions()
             T.equal(positions.indexOf("AD01") >= 0, true)
             T.equal(positions.indexOf("AC10") >= 0, true)
@@ -550,12 +547,11 @@ QtObject {
             T.equal(positions.length >= 40, true)
         })
 
-        // ---- ticket 40: field contracts — a renamed field must never
-        // ---- again miss a reader ----
+        // ---- field contracts — a renamed field must never miss a reader ----
         //
-        // The §43 rename renamed a builder field and missed one QML-side
-        // reader; the reader got `undefined`, nothing warned, and the
-        // built-in tables drew for weeks. These pins walk the SHIPPED
+        // A builder field rename that misses a QML-side reader leaves
+        // the reader silently `undefined`, with the built-in tables
+        // drawing instead of a warning. These pins walk the SHIPPED
         // declarations and the resolver's construction paths, so a rename
         // in a builder breaks THIS suite instead of the panel.
 

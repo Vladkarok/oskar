@@ -1,6 +1,6 @@
-// The UI string table (ticket 52): every user-facing word the panel
+// The UI string table: every user-facing word the panel
 // draws is an id in UiStrings.js's table, carried in EN/RU/UK — the
-// searchPlaceholder mechanism (EmojiPage.js, ticket 36) generalised to
+// searchPlaceholder mechanism (EmojiPage.js) generalised to
 // the whole surface, with a settings override on top. Run with
 // tools/run-tests.sh — no compositor, no display.
 //
@@ -72,8 +72,8 @@ QtObject {
         })
 
         T.test("languageFor: the override wins ONLY if its language is installed, auto follows the layout", function () {
-            // The owner's 2026-09-17 call: never offer — let alone apply —
-            // a language the seat cannot type. Auto is the searchPlaceholder
+            // Never offer — let alone apply — a language the seat
+            // cannot type. Auto is the searchPlaceholder
             // mapping (ua→uk, ru→ru, else en); an explicit override pins
             // the UI ONLY when its language rides an installed layout (or
             // is English, the product's fallback); otherwise it is inert
@@ -91,9 +91,9 @@ QtObject {
             // (the fallback); ru/uk only when the layout carries them.
             T.equal(UiStrings.languageFor("us", "en", ["us"]), "en")
             T.equal(UiStrings.languageFor("us", "ru", ["us", "ru"]), "ru")
-            // The owner's exact case: ru chosen on a seat that has none —
-            // stale file, hand-edited config, or layouts shrank — the
-            // override goes inert, the layout answers, nothing is shoved.
+            // ru chosen on a seat that has none — stale file, hand-edited
+            // config, or layouts shrank — the override goes inert, the
+            // layout answers, nothing is shoved.
             T.equal(UiStrings.languageFor("us", "ru", ["us", "ua"]), "en")
             T.equal(UiStrings.languageFor("ua", "ru", ["us", "ua"]), "uk")
             // A junk override degrades the same way.
@@ -104,9 +104,9 @@ QtObject {
 
         T.test("languageChoices: the offered languages mirror the installed layouts", function () {
             // The LANGUAGE row offers Auto and English always, plus each
-            // translation whose layout the seat carries (the owner's
-            // 2026-09-17 call: a us,ua seat sees Auto/English/Українська
-            // — no Русский segment for a language it cannot type).
+            // translation whose layout the seat carries: a us,ua seat
+            // sees Auto/English/Українська — no Русский segment for a
+            // language it cannot type.
             T.deepEqual(UiStrings.languageChoices(["us", "ua"]),
                 ["auto", "en", "uk"])
             T.deepEqual(UiStrings.languageChoices(["us", "ru"]),
@@ -125,9 +125,9 @@ QtObject {
 
 
         T.test("every translation keeps the English arity of its placeholders", function () {
-            // A ru string that lost its %1 stays non-empty and used to pass
-            // the completeness pin while tr() silently skipped a
-            // substitution (ticket 52 review): the placeholder COUNT is
+            // A ru string that lost its %1 stays non-empty, so the
+            // completeness pin alone would miss it while tr() silently
+            // skips a substitution: the placeholder COUNT is
             // part of the contract, per language.
             function count(text) {
                 var found = text.match(/%[0-9]+/g) || []

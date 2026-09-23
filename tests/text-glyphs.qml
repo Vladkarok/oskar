@@ -1,4 +1,4 @@
-// The text-glyph shelf (§85): the owner's bare-BMP classics in the
+// The text-glyph shelf: bare-BMP classics in the
 // picker. Two contracts live here: every glyph is a LONE BMP scalar (so
 // one character, no sequence — the shelf's data shape),
 // and the merge seam places the shelf as the THIRD tab, before the
@@ -13,7 +13,7 @@ import "harness.js" as T
 QtObject {
     Component.onCompleted: {
         T.test("every glyph is a lone BMP scalar — one character, no sequence", function () {
-            // §85's data contract (§91 renamed the consequence): the
+            // The shelf's data contract: the
             // shelf draws simple one-character glyphs; a regression to
             // astral or multi-scalar would render as sequences in fonts
             // and split the shelf's identity promises — this pin is the
@@ -90,14 +90,12 @@ QtObject {
         T.test("the shelf never hijacks a catalogue family (§86's poison 1)", function () {
             // THE VIEW THE USER SEES: the page draws each group tab as
             // the catalogue's own slice passed through visibleEntries
-            // with the merged table. The §86 bug was exactly here — a
-            // bare glyph winning the family key rewrote the twin's TILE
-            // (monochrome render) and its PICK (bare bytes). Pin: no
-            // entry of any catalogue slice ever comes out as a
-            // different string, and no glyph substitutes onto a
-            // non-Text tab. (The first draft of this pin asserted
-            // groupEntries and caught nothing — written-after-the-fix
-            // tautology, caught by negative-testing the guard away.)
+            // with the merged table. A bare glyph winning the family key
+            // would rewrite the twin's TILE (monochrome render) and its
+            // PICK (bare bytes). Pin: no entry of any catalogue slice
+            // ever comes out as a different string, and no glyph
+            // substitutes onto a non-Text tab. Assert on visibleEntries,
+            // not groupEntries — groupEntries alone cannot catch this.
             var catalog = Catalog.entries()
             var merged = Page.allEntries()
             var groups = Catalog.groups()
@@ -115,9 +113,9 @@ QtObject {
                 }
             }
             // The Text tab itself passes through AS ITSELF, asserted
-            // against the RAW SHELF (§88's pin fix: the §87 draft
-            // re-collapsed an already-collapsed slice — twin-to-twin
-            // comparison, vacuous; only its group arm was live).
+            // against the RAW SHELF: comparing against an already-
+            // collapsed slice instead would be a twin-to-twin
+            // comparison, vacuous except for its group arm.
             var shelf = TextGlyphs.entries()
             var textSlice = Page.groupEntries(merged, "Text")
             var textView = Page.visibleEntries(textSlice, merged, 0)
@@ -166,9 +164,9 @@ QtObject {
                 if (results[r].group === "Text") fromShelf++
                 else fromCatalog++
             }
-            // The catalogue side is capped WITH COLLAPSE HEADROOM (§88:
-            // raw cap = 3x the page limit — tone families eat up to six
-            // raw hits per distinct tile).
+            // The catalogue side is capped WITH COLLAPSE HEADROOM: raw
+            // cap = 3x the page limit — tone families eat up to six
+            // raw hits per distinct tile.
             T.equal(fromCatalog <= 8 * 3, true,
                 "catalogue side capped at 3x the limit, got " + fromCatalog)
             // "a" matches shelf keywords (arrow, sun...) — they ride

@@ -1,13 +1,12 @@
-// The settle guard's half of ticket 38, driven as a pure module: after a
+// The settle guard, driven as a pure module: after a
 // daemon (re)connect, which observed group readings may the panel FOLLOW —
 // move the helper's group and `remembered` with — and which are the
 // compositor's own re-application churn echoed back at a panel that just
-// re-registered its virtual keyboard. The incident this owns (2026-09-13
-// 18:53, journal in the ticket): daemon restart, first configure 'us,ua',
-// one language click three seconds later moved all three keyboards to group
-// 1, the panel followed — and then a devices read returned the reading
-// keyboard at 0 (Hyprland churn), the panel FOLLOWED the flip, and the seat
-// stayed split with the label lying until converged by hand.
+// re-registered its virtual keyboard. Without the guard: a language click
+// moves all three keyboards to group 1 and the panel follows — then a
+// devices read returns the reading keyboard at 0 (Hyprland churn), the
+// panel FOLLOWS the flip, and the seat stays split with the label lying
+// until converged by hand.
 //
 // Run with tools/run-tests.sh — no compositor, no display.
 import QtQml
@@ -170,7 +169,7 @@ QtObject {
             T.equal(remembered, 1)
         })
 
-        // ---- the cold-start constraint (decisions §47) ----
+        // ---- the cold-start constraint ----
 
         T.test("cold start with diverged sleepers: the remembered answer is followed", function () {
             // A fresh panel over a live daemon: no daemon-restart window
@@ -183,8 +182,8 @@ QtObject {
             var v = SettleGuard.decide(s, 1, 0)
             T.equal(v.follow, true)
             T.equal(v.state.followed, 1)
-            // The §47 branch answers the same remembered group on every
-            // refresh; nothing about it is a flip, so nothing is held.
+            // The cold-start branch answers the same remembered group on
+            // every refresh; nothing about it is a flip, so nothing is held.
             v = SettleGuard.decide(v.state, 1, 400)
             T.equal(v.follow, true)
         })

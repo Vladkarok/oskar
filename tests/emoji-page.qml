@@ -1,8 +1,8 @@
-// Pure logic behind the panel's own emoji page (ticket 24, steps 2–3). Not
-// a product seam: loads EmojiPage.js and the catalogue the way the page
-// does, with no compositor (decisions §36) — the tab model and group slice
-// the grid shows, and the step-3 rule that turns one intercepted keyboard
-// cap into the next search query. The geometry half restates the page's
+// Pure logic behind the panel's own emoji page. Not a product seam:
+// loads EmojiPage.js and the catalogue the way the page does, with
+// no compositor — the tab model and group slice the grid shows, and
+// the rule that turns one intercepted keyboard cap into the next
+// search query. The geometry half restates the page's
 // own width/height formulas beside SettingsPlacement — the same
 // carried-by-hand duplication the settings-placement suite records for the
 // settings card; a change to the page's chrome has to be carried here.
@@ -25,9 +25,9 @@ QtObject {
         return chrome + rows * (cell + gap) - gap
     }
 
-    // The ON-state chrome, restated INDEPENDENTLY (the round-three
-    // finding killed r2's tautology — it compared the off formula
-    // against itself plus constants): five column children, four gaps,
+    // The ON-state chrome, restated INDEPENDENTLY of the off formula
+    // (comparing it against itself plus constants would be a
+    // tautology): five column children, four gaps,
     // the strip's 20 and its own spacing. This pins the RESTATED
     // arithmetic contract only — no product change can redden it (a
     // page-side drift fails nothing here; the header's standing
@@ -62,9 +62,9 @@ QtObject {
             T.equal(Page.categoryIcon("Smileys & Emotion"), "😀")
             T.equal(Page.categoryIcon("People & Body"), "👋")
             T.equal(Page.categoryIcon("Flags"), "🏁")
-            // The MERGED group list (§86): the pin used to iterate the
-            // catalogue's own groups and stayed green while the Text
-            // shelf's tab fell to the bullet fallback.
+            // Must pin the MERGED group list (Page.tabs' output), not the
+            // catalogue's own groups — iterating the latter would stay
+            // green while the Text shelf's tab fell to the bullet fallback.
             var merged = Page.tabs(Page.allGroups())
             T.equal(merged.length, groups.length + 1)
             for (var i = 0; i < merged.length; i++) {
@@ -199,7 +199,7 @@ QtObject {
 
         T.test("appends keep what was typed, verbatim and case included", function () {
             // The field shows what was typed; search() lowercases its own
-            // side (§37), so the seam must not.
+            // side, so the seam must not.
             T.equal(Page.nextQuery("", "char", "a"), "a")
             T.equal(Page.nextQuery("Fl", "char", "a"), "Fla")
             T.equal(Page.nextQuery("", "char", "3"), "3")
@@ -244,7 +244,7 @@ QtObject {
             T.equal(q, " th")
             T.equal(Catalog.search(q, 0).length > 0, true)
             // A composed query typed through the seam — "flag", separator,
-            // "ukraine" — ranks the flag itself first (§37's capitalised
+            // "ukraine" — ranks the flag itself first (capitalised name
             // shape). The term must be a real word of the name: "ua" is no
             // substring of "ukraine" and would match nothing there.
             var typed = ""
@@ -338,8 +338,8 @@ QtObject {
         })
 
         T.test("the usage view opens on a snapshot, not the live records", function () {
-            // Ticket 34: the open snapshot reflects the records as they
-            // stand at that moment and nothing later. The copy is deep —
+            // The open snapshot reflects the records as they stand at
+            // that moment and nothing later. The copy is deep —
             // aliasing is the classic bug a snapshot can hide, so a
             // mutated record or a pushed one must not leak in.
             var records = [
@@ -356,9 +356,9 @@ QtObject {
         })
 
         T.test("re-entering the usage group re-snapshots; leaving it keeps the view", function () {
-            // The owner's fruits-and-back round trip: picks accumulate in
-            // the store while another category shows, the return hands the
-            // view the re-snapshot, and leaving again changes nothing.
+            // Picks accumulate in the store while another category
+            // shows; the return hands the view the re-snapshot, and
+            // leaving again changes nothing.
             var records = [{ emoji: "😀", count: 1, lastUsed: 1 }]
             var snapshot = Page.usageViewOnOpen(records)
             records = Page.usageAfterSuccess(records, "😛")
@@ -373,8 +373,8 @@ QtObject {
         })
 
         T.test("five picks under the usage view move no tile", function () {
-            // The exact report that opened ticket 34: a new emoji clicked
-            // five times climbs the frequency ranking live and lands under
+            // A new emoji clicked five times climbs the frequency
+            // ranking live and lands under
             // the pointer on the last clicks. No reopen and no group
             // change means no refresh call at all — the view derives from
             // the untouched snapshot while the store re-ranks beneath it.
@@ -466,7 +466,7 @@ QtObject {
             T.equal(fitted.h < natural.h, true)
         })
 
-        // ---- ticket 40: field contracts — the page's builders vs the
+        // ---- field contracts — the page's builders vs the
         // ---- delegates' reads ----
         //
         // The tab delegate reads modelData.value/modelData.label (tab 429
@@ -475,8 +475,7 @@ QtObject {
         // sections read emoji/count/lastUsed off the store's records. A
         // rename in any builder must break this suite, not the page.
         T.test("skin-tone entries carry exactly the three fields the tone picker reads", function () {
-            // The last unpinned EmojiPage family (ticket 40 review): the
-            // picker delegate reads value (active check + the chosen
+            // The picker delegate reads value (active check + the chosen
             // signal), label (its text) and hand (the swatch glyph) off
             // every SKIN_TONES entry — a rename in the table blanks the
             // swatches silently, so the shape is pinned here.
@@ -541,8 +540,7 @@ QtObject {
                 ["count", "emoji", "lastUsed"])
         })
 
-        // ---- ticket 42: physical key events route through the search seam
-        // ---- ----
+        // ---- physical key events route through the search seam ----
         //
         // While the search is armed the overlay surface holds keyboard
         // focus and physical keystrokes arrive on a focusable scope; the

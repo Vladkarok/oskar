@@ -1,8 +1,7 @@
 // The header's language control has three shapes, and the chooser's menu
 // is pure data. Run with tools/run-tests.sh — no compositor, no display.
 //
-// The shapes are the owner's 2026-09-13 call (ticket 35, audit backlog
-// item 1): one layout hides the control (an inert chip is noise), two
+// The shapes: one layout hides the control (an inert chip is noise), two
 // toggle directly (the shape the panel always had), three or more open a
 // chooser that moves the seat to an absolute group. A count >= 2 with no
 // positively identified switch set stays visible but grey — hidden means
@@ -41,7 +40,7 @@ QtObject {
         T.test("menu entries keep group order and flag the active one", function () {
             // Endonyms outrank the base.lst titles the panel feeds in:
             // the seat may say "English (US)"/"Ukrainian", the menu says
-            // English/Українська (the owner's 2026-09-19 call).
+            // English/Українська.
             var entries = LanguageControl.menuEntries(
                 ["us", "ua", "de"], { us: "English (US)", ua: "Ukrainian" }, 1)
             T.deepEqual(entries, [
@@ -95,7 +94,7 @@ QtObject {
             T.equal(entries[0].active, false)
         })
 
-        // ---- ticket 40: the chooser's field contract ----
+        // ---- the chooser's field contract ----
         //
         // Panel.qml's chooser rows read entry.group (the click switches by
         // it, the armed row compares it to the live cursor) and entry.title

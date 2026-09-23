@@ -1,4 +1,4 @@
-// Ticket 37's pure seam: which levels a keymap position offers as a hold
+// A pure seam: which levels a keymap position offers as a hold
 // column, and which caps defer their typing to mouse-release so a hold can
 // open a menu without typing first. Run with tools/run-tests.sh — no
 // compositor, no display. The menu chrome itself (MouseAreas, the timer)
@@ -55,7 +55,7 @@ QtObject {
         })
 
         T.test("levels five to eight are never offered, whatever they carry", function () {
-            // The reserved block's own levels (decisions §33): the &123
+            // The reserved block's own levels: the &123
             // page is the one route to those characters, and a hold on a
             // letter cap must not grow a second one.
             var entries = HoldColumn.columnEntries([
@@ -72,7 +72,7 @@ QtObject {
         })
 
         T.test("a block-hosted position still offers only its layout levels", function () {
-            // The ordinary shape after §33: levels 1-4 keep the layout's
+            // The ordinary shape: levels 1-4 keep the layout's
             // own characters and the catalogue rides above. A column on
             // such a position is the layout's, never the catalogue's.
             var entries = HoldColumn.columnEntries([
@@ -139,7 +139,7 @@ QtObject {
         T.test("a cap with no column never defers", function () {
             // The regression the whole design turns on: without content
             // there is no menu, and such a cap keeps today's press-types
-            // plus the compositor's own repeat (spec-v1 §6).
+            // plus the compositor's own repeat.
             T.equal(HoldColumn.shouldDefer(deferredCap(), [], false, true), false)
             T.equal(HoldColumn.shouldDefer(deferredCap(), null, false, true), false)
         })
@@ -152,7 +152,7 @@ QtObject {
         })
 
         T.test("a not-ready keyboard never defers", function () {
-            // The gated cap's press path never starts (spec-v1.1 §6), and
+            // The gated cap's press path never starts, and
             // a hold is part of that press path.
             T.equal(HoldColumn.shouldDefer(deferredCap(), richColumn(),
                 false, false), false)
@@ -223,8 +223,8 @@ QtObject {
         })
 
         T.test("the corner-dot marker marks exactly the caps the menu would open for", function () {
-            // The owner's 2026-09-14 call: a very light dot on caps worth
-            // holding — never the variants themselves. The marker's fact is
+            // A very light dot on caps worth holding — never the
+            // variants themselves. The marker's fact is
             // shouldDefer's structural twin: same exclusions, MINUS the
             // moment gates (search, readiness, availability), so the dot is
             // static keymap information and cannot disagree with the menu.

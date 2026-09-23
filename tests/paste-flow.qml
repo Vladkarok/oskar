@@ -45,10 +45,9 @@ QtObject {
         })
 
         T.test("cancellation answers an ordered program per phase", function () {
-            // Round nine's reproduction shape: cancel mid-PACE aborts the
-            // pacer (the V-press-onto-held-Ctrl hole); cancel while
-            // AWAITING clears the armed verdict (round seven's late
-            // reply); cancel on idle touches nothing.
+            // Cancel mid-PACE aborts the pacer (the V-press-onto-held-Ctrl
+            // hole); cancel while AWAITING clears the armed verdict
+            // (a late reply must not land); cancel on idle touches nothing.
             var idle = PasteFlow.initial()
             var c0 = PasteFlow.cancel(idle)
             T.equal(c0.abortPacer, false)

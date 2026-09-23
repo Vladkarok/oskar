@@ -33,8 +33,8 @@ QtObject {
         })
 
         T.test("success shares what the run launched, and consumes the wish (§71)", function () {
-            // Round ten's reproduction used to end here: shared 1,
-            // helper at 2, nothing running, nothing retrying.
+            // Success must leave: shared 1, helper at 2, nothing running,
+            // nothing retrying.
             var state = ShareQueue.acked(ShareQueue.initial(), 1).state
             state = ShareQueue.acked(state, 2).state
             var done = ShareQueue.runFinished(state, true)

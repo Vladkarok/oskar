@@ -102,8 +102,8 @@ QtObject {
             T.equal(stale.state.pending, true)
         })
 
-        // Ticket 28's delivery transaction (audit 2026-09-13): one pick
-        // owns the clipboard and the paste chord end to end. A pick while
+        // The delivery transaction: one pick owns the clipboard and the
+        // paste chord end to end. A pick while
         // another is unfinished queues in order — a queued payload must
         // never replace the clipboard owner an unfinished paste still
         // depends on, and usage/settle/close happen only at the chord's
@@ -116,7 +116,7 @@ QtObject {
             var second = ClipboardPaste.txnPick(first.state, "🔥")
             T.equal(second.action, "queued")
             // The running pick keeps the clipboard, the sequence and its
-            // own click-time class (ticket 56); the queued pick is a
+            // own click-time class; the queued pick is a
             // {emoji, clientClass} pair awaiting promotion.
             T.equal(second.state.pending, "😀")
             T.equal(second.state.seq, first.state.seq)
@@ -365,15 +365,14 @@ QtObject {
             T.deepEqual(ClipboardPaste.compensatingReleases(lifted, lifted.length), [])
         })
 
-        // Ticket 56 (the IME matrix's kitty cell): the pick's target class
-        // is derived ONCE, at the click, and travels with the payload
-        // through publish, verify and chord. The old shape re-derived the
-        // class at the chord's arrival, and the second derivation could
-        // disagree with the first — the matrix measured a kitty pick
-        // landing wine-shaped (bare Ctrl+V, no Shift, no "paste chord for
-        // kitty" line). One derivation, one table (§44): whatever the
-        // ambient focus read says by the time the clipboard transaction
-        // lands, the chord answers for the class the pick was clicked for.
+        // The pick's target class is derived ONCE, at the click, and
+        // travels with the payload through publish, verify and chord.
+        // Re-deriving it at the chord's arrival risks disagreeing with
+        // the click-time read — a kitty pick could land wine-shaped
+        // (bare Ctrl+V, no Shift, no "paste chord for kitty" line).
+        // One derivation, one table: whatever the ambient focus read
+        // says by the time the clipboard transaction lands, the chord
+        // answers for the class the pick was clicked for.
 
         T.test("a pick remembers the client class it was clicked for, through verify to the chord", function () {
             var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(),
@@ -461,14 +460,13 @@ QtObject {
             T.equal(dead.state.clientClass, "")
         })
 
-        // ---- the review's third round: a stalled verify and a full queue ----
+        // ---- a stalled verify and a full queue ----
 
         T.test("a stalled verify drops the pick and hands the queue over", function () {
             // A clipboard owner that never finishes its read can stall the
-            // verify forever (finding 2): the watchdog's timeout is a
-            // terminal drop — the same shape the five-mismatch limit
-            // already made — loud, no chord, and the next queued pick
-            // proceeds.
+            // verify forever: the watchdog's timeout is a terminal drop —
+            // the same shape the five-mismatch limit already makes —
+            // loud, no chord, and the next queued pick proceeds.
             var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(),
                 "😀", "kitty")
             var queued = ClipboardPaste.txnPick(started.state, "🔥", "kitty")

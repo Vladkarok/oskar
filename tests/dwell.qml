@@ -1,8 +1,8 @@
-// Ticket 50's pure seam: the dwell state machine. Hover a cap for D
-// milliseconds and it types — press+release as one click — with a second
-// threshold that opens ticket 37's column menu for caps that carry one.
-// Everything timing-shaped is decided here against an INJECTED clock, so the
-// host suite can pin it (tests/dwell.qml, the HoldColumn.js discipline):
+// The dwell state machine, a pure seam. Hover a cap for D milliseconds
+// and it types — press+release as one click — with a second threshold
+// that opens the hold-column menu for caps that carry one. Everything
+// timing-shaped is decided here against an INJECTED clock, so the host
+// suite can pin it (tests/dwell.qml, the HoldColumn.js discipline):
 // the QML side only delivers enter/move/leave events, runs the deadline
 // timer, and maps the returned action onto the same press paths a physical
 // click takes. Run with tools/run-tests.sh — no compositor, no display.
@@ -38,9 +38,9 @@ QtObject {
         })
 
         T.test("the menu window rides the hold threshold, never drifts from it", function () {
-            // Dwell-past opens ticket 37's menu; the window between the type
-            // and the menu is 37's own hold window by design (one hold
-            // vocabulary), and it is DERIVED, not copied — the module reads
+            // Dwell-past opens the column menu; the window between the type
+            // and the menu is hold-column's own hold window by design (one
+            // hold vocabulary), and it is DERIVED, not copied — the module reads
             // HoldColumn's constant so the two cannot disagree.
             T.equal(Dwell.MENU_WINDOW_MS, HoldColumn.HOLD_THRESHOLD_MS)
             T.equal(Dwell.menuDelayFor(800), 800 + HoldColumn.HOLD_THRESHOLD_MS)
@@ -73,9 +73,9 @@ QtObject {
         })
 
         T.test("a cap without a column types once and never repeats", function () {
-            // The ticket's own framing: dwell is click-shaped. Repeat
-            // belongs to a key held down at the compositor (spec-v1 §6),
-            // and a dwell press+release is over when it is over — resting
+            // Dwell is click-shaped. Repeat belongs to a key held down
+            // at the compositor, and a dwell press+release is over
+            // when it is over — resting
             // on an ordinary letter must not machine-gun it. The fired
             // state is the RETURNED one; the machine never mutates in
             // place.
@@ -202,14 +202,12 @@ QtObject {
 
         // ---- the re-arm interval: one function for the remaining time ----
         //
-        // Ticket 55's fix taught the wiring to re-arm the deadline timer
-        // for the REMAINING time against the absolute deadline — and the
-        // press branch already re-armed for the menu window, so the same
-        // arithmetic lived twice in dwellTick under two spellings. It
-        // lives here once: which deadline a phase waits for is the
-        // machine's own fact (nextArmMs restates tick's two comparisons),
-        // and the wiring only delivers. The fixtures use the leg's own
-        // shape: an 800 delay, an 1120 menu window.
+        // The wiring re-arms the deadline timer for the REMAINING time
+        // against the absolute deadline. Which deadline a phase waits
+        // for is the machine's own fact (nextArmMs restates tick's two
+        // comparisons, once, instead of duplicating the arithmetic per
+        // caller), and the wiring only delivers. The fixtures use the
+        // leg's own shape: an 800 delay, an 1120 menu window.
 
         T.test("nextArmMs answers the ms to the phase's own deadline, from the enter", function () {
             // Armed waits for the type deadline, spent for the menu
@@ -279,9 +277,9 @@ QtObject {
         // ---- eligibility: which caps dwell at all ----
 
         T.test("a character cap dwells; a gated keyboard dwells nothing", function () {
-            // inputReady is the existing disabled discipline (spec-v1.1
-            // §6): a cap that cannot type has no press path, and a dwell
-            // is a press. Readiness is checked at enter AND the wiring
+            // inputReady is the existing disabled discipline: a cap that
+            // cannot type has no press path, and a dwell is a press.
+            // Readiness is checked at enter AND the wiring
             // re-checks at fire — the machine itself only guards entry.
             T.equal(Dwell.eligible({ chr: "q", xkb: "AD01" }, false, true), true)
             T.equal(Dwell.eligible({ chr: "q", xkb: "AD01" }, false, false), false)
@@ -294,8 +292,8 @@ QtObject {
 
         T.test("search never dwells: the emoji page is excluded chrome", function () {
             // The chrome decision, one edge of it: while the emoji page
-            // stands, its search arm is immediate by contract (ticket 37
-            // refused the defer for the same reason) and the page itself
+            // stands, its search arm is immediate by contract (hold-column
+            // refuses the defer for the same reason) and the page itself
             // — cells, categories, its pick targets — is a picker
             // surface, not a typing surface. A dwell user cannot pick an
             // emoji by dwelling either, so letting the query fill by
@@ -304,9 +302,9 @@ QtObject {
         })
 
         T.test("sticky modifiers dwell-press exactly like a click", function () {
-            // The ticket's own rule: a dwell on Shift latches Shift,
-            // precisely what a click does — applyModifierEvent's click
-            // event, lock upgrades included where the reducer allows.
+            // A dwell on Shift latches Shift, precisely what a click
+            // does — applyModifierEvent's click event, lock upgrades
+            // included where the reducer allows.
             var clickable = ["ctrl", "alt", "logo", "altgr", "shift"]
             for (var i = 0; i < clickable.length; i++) {
                 T.equal(Dwell.eligible(
@@ -316,8 +314,8 @@ QtObject {
 
         T.test("keysym caps dwell: they are input, not chrome", function () {
             // BackSpace, Enter, Tab, the arrows — the nav caps exist
-            // because they are pointer-unreachable (§22); for a dwell
-            // user they are the whole point.
+            // because they are pointer-unreachable; for a dwell user
+            // they are the whole point.
             var keysyms = ["BackSpace", "Return", "Tab", "Left", "Right",
                 "Up", "Down", "Delete", "Home", "End"]
             for (var i = 0; i < keysyms.length; i++) {
@@ -389,10 +387,9 @@ QtObject {
 
         // ---- slice two: the hold menu's entries as dwell targets ----
         //
-        // The residual 50's review left standing on purpose: a
-        // pure-dwell user can OPEN ticket 37's column menu by resting
-        // PAST the type, but the entries were clicks — one click still
-        // owed to PICK. Slice two routes entry hover through the same
+        // A pure-dwell user can OPEN the column menu by resting PAST
+        // the type, but the entries are clicks — one click still owed
+        // to PICK. Slice two routes entry hover through the same
         // machine; the fire is the entry's own click semantics
         // (pickHoldEntry in the wiring), and the click path is
         // unchanged — a click still picks instantly.

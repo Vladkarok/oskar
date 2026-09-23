@@ -1,7 +1,7 @@
 // Pure cursor-policy lifecycle logic, beside the existing panel reducer
 // tests. This is not a product seam: it drives the same pure state machine
 // the panel's CursorPolicy.qml hosts, with no processes, compositor or
-// filesystem behind it (spec-v1.1 §8). The machine's contract is the whole
+// filesystem behind it. The machine's contract is the whole
 // point: every event returns the actions to execute, and a stale generation's
 // answer can never produce one.
 import QtQml
@@ -383,8 +383,8 @@ QtObject {
         T.test("a probe deferred behind an undo write survives a close-open burst", function () {
             // open deferred behind the undo, closed again (queueing a
             // restore), opened again — all before the undo write settles.
-            // The restoreQueued path used to drop the queued probe here,
-            // leaving the panel open with the suspension unestablished.
+            // The restoreQueued path must keep the queued probe, or the
+            // panel ends up open with the suspension unestablished.
             var m = suspended()
             Machine.close(m) // verify read seq 2
             Machine.readResult(m, "restore", 2, false) // undo write seq 2
@@ -414,7 +414,7 @@ QtObject {
 
         T.test("a config reload while the panel is open re-suspends", function () {
             // A reload re-applies the config file and wipes running-session
-            // eval changes. Spec-v1 §9 holds for the WHOLE open: the policy
+            // eval changes. The invariant holds for the WHOLE open: the policy
             // must re-measure and re-establish the suspension (or honestly
             // stand down if the config itself now says false), not leave the
             // cursor hiding under the finger until the next close.

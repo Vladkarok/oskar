@@ -1,13 +1,11 @@
-// Ticket 47's pure seam: the socket reconnect decision. The incident this
-// owns (the install-from-zero stranger, 2026-09-14, lab journal): a daemon
-// stop under a connected panel can leave quickshell's Socket reporting
+// A pure seam: the socket reconnect decision. A daemon stop under a
+// connected panel can leave quickshell's Socket reporting
 // `connected: true` on a peer-closed socket (Keyboard.qml's own comment
-// documents the live observation; reproduced in the lab twice — once by the
-// stranger's service restarts, once on purpose). The old reconnect policy
-// answered "an open socket is never torn down" with a re-hello — written
-// into a dead object, unanswered forever — so the panel wedged at
+// documents the live observation). A reconnect policy that treats "an
+// open socket is never torn down" as license to re-hello into it writes
+// into a dead object, unanswered forever — the panel wedges at
 // "Starting oskar.service…" with the typing gate shut, every key
-// click a silent no-op, and only a shell restart escaped it.
+// click a silent no-op, and only a shell restart escapes it.
 //
 // The decision table here pins the watchdog: a hello that has gone
 // unanswered past its fair window rebuilds the socket WHATEVER `connected`
@@ -85,15 +83,13 @@ QtObject {
             T.equal(SocketWatch.HELLO_STALE_MS, 5000)
         })
 
-        // ---- the quiescent probe (the round that kept the timer armed
-        // when healthy) ----
+        // ---- the quiescent probe (the timer stays armed when healthy) ----
         //
-        // The watchdog above only ever judged a hello it had reason to
-        // send — and nothing sent one once the panel was healthy, so a
-        // SIGKILLed helper behind a lying `connected` was silent forever
-        // (the wedge the module was built for, at quiescence). The slow
-        // always-armed tick now asks with ping; the table decides which
-        // word.
+        // The watchdog above only ever judges a hello it had reason to
+        // send — and nothing sends one once the panel is healthy, so a
+        // SIGKILLed helper behind a lying `connected` would go silent
+        // forever. The slow always-armed tick asks with ping instead;
+        // the table decides which word.
 
         T.test("an idle healthy tick asks with ping, not hello", function () {
             // A hello reply re-handshakes — the gate drops, everything is
@@ -133,19 +129,19 @@ QtObject {
             }), "wait")
         })
 
-        // ---- ticket 54: the rebuild's own residuals ----
+        // ---- the rebuild's own residuals ----
         //
         // The whole point of "rebuild" is that the disconnect arm never
         // runs — the socket lies `connected`, which is why the object is
-        // torn down instead of waiting for a state change. Two of that
-        // arm's resets therefore cannot be left to it (both named by 47's
-        // review), and the ledger of what a rebuild resets belongs beside
-        // the verdict that orders it, here, where the suite can pin it.
+        // torn down instead of waiting for a state change. Some of that
+        // arm's resets therefore cannot be left to it, and the ledger of
+        // what a rebuild resets belongs beside the verdict that orders
+        // it, here, where the suite can pin it.
 
         T.test("a rebuild zeroes the compositor share generation", function () {
-            // §91: the text-reply FIFO left with the typed delivery
-            // routes; the ledger's one remaining field is the share
-            // generation (ticket 54's residual two — see the module).
+            // The text-reply FIFO left with the typed delivery routes;
+            // the ledger's one remaining field is the share generation
+            // (see the module).
             var resets = SocketWatch.rebuildResets({
                 sharedKeymapGen: 7
             })

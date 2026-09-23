@@ -1,5 +1,5 @@
-// The keyboard session's half of ticket 04, driven as a pure module: the
-// configure transaction queue it inherited from the panel, and the
+// The keyboard session, driven as a pure module: the
+// configure transaction queue, and the
 // generation correlation that decides which keycap facts may be drawn.
 // Run with tools/run-tests.sh — no compositor, no display. The helper's end
 // of the same facts is pinned in daemon unit tests and the nested-session
@@ -12,7 +12,7 @@ QtObject {
     Component.onCompleted: {
         var s0 = Session.initial()
 
-        // ---- configure transactions: the queue the panel used to own ----
+        // ---- configure transactions: the queue this module owns ----
 
         T.test("a configure is queued with its identity, group and send stamp", function () {
             var s = Session.reduce(s0, {
@@ -163,8 +163,8 @@ QtObject {
         })
 
         T.test("a caps mismatch is unavailable, never the starting notice", function () {
-            // decisions §23 / spec-v1.1 §6: connected + failed facts is
-            // keymap-unavailable, not "Starting oskar.service…".
+            // Connected + failed facts is keymap-unavailable, not
+            // "Starting oskar.service…".
             T.equal(Session.lifecycleKind({
                 inputReady: false, serviceConnected: true,
                 serviceIncompatible: false, keycapsFailed: false,
@@ -452,7 +452,7 @@ QtObject {
         })
 
 
-        // Ticket 06: the compositor's kb_file is compared to the published
+        // The compositor's kb_file is compared to the published
         // keymap by exact identity, never by substring — an unrelated user
         // path that happens to contain our suffix is the user's file.
         T.test("the published keymap path is built from the runtime dir", function () {
@@ -478,7 +478,7 @@ QtObject {
             T.equal(Session.isPublishedKeymap(ours + ".backup", dir), false)
         })
 
-        // ---- ticket 40: field contracts — the state and reply shapes the
+        // ---- field contracts — the state and reply shapes the
         // ---- panel binds ----
         //
         // Keyboard.qml binds session.group/ackedGen/sends/queue and draws

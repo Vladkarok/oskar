@@ -52,9 +52,8 @@ QtObject {
         })
 
         T.test("the chord settles on the drain, not the first ok", function () {
-            // The review's fourth round, head on: a chord of three lines
-            // arms its wait after dispatch, and the FIRST ok — the Ctrl
-            // press's — must not settle it.
+            // A chord of three lines arms its wait after dispatch, and
+            // the FIRST ok — the Ctrl press's — must not settle it.
             var state = ChordAcks.initial()
             for (var i = 0; i < 3; i++)
                 state = ChordAcks.sent(state, "down ctrl")
@@ -72,9 +71,8 @@ QtObject {
         })
 
         T.test("an err on the chord's final line settles it failed", function () {
-            // Round five's blocker: an err'd command used to sit in the
-            // ledger forever, failing every later chord by timeout. Now
-            // the err spends the slot AND carries the verdict.
+            // An err'd command spends its ledger slot AND carries the
+            // verdict, so it cannot fail later chords by timeout.
             var state = ChordAcks.initial()
             state = ChordAcks.sent(state, "down ctrl")
             state = ChordAcks.sent(state, "up ctrl")
@@ -134,10 +132,10 @@ QtObject {
         })
 
         T.test("a late reply to a timed-out chord settles nothing", function () {
-            // The reviewer's live reproduction: the old chord times out
-            // with two commands unanswered, a new chord arms, and the OLD
-            // replies start arriving — the new chord must not be declared
-            // complete while its own commands are still unacked.
+            // The old chord times out with two commands unanswered, a
+            // new chord arms, and the OLD replies start arriving — the
+            // new chord must not be declared complete while its own
+            // commands are still unacked.
             var state = ChordAcks.initial()
             state = ChordAcks.sent(state, "down ctrl")
             state = ChordAcks.sent(state, "down AB04")
@@ -163,10 +161,9 @@ QtObject {
         })
 
         T.test("an err inside the chord poisons the verdict, final ok or not", function () {
-            // Round eight's reproduction: a custom keymap without Insert
-            // errors both Insert commands while the last Shift release
-            // answers ok — the old logic saw only the final ok and
-            // recorded success for a paste that delivered nothing.
+            // A custom keymap without Insert errors both Insert commands
+            // while the last Shift release answers ok — the verdict must
+            // reflect the errs, not just the final line's ok.
             var state = ChordAcks.initial()
             state = ChordAcks.chordStart(state)
             state = ChordAcks.sent(state, "down shift")

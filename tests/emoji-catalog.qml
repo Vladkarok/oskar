@@ -1,8 +1,8 @@
-// Pure emoji catalogue (ticket 24, decisions §37). Not a product seam:
-// loads the generated EmojiCatalog.js the way the panel will, with no
-// compositor. The counts it pins are the generator's output for the
-// vendored Emoji 16.0 / CLDR 46 data on 2026-09-09; a deliberate data
-// upgrade regenerates both this suite's expectations and the catalogue.
+// Pure emoji catalogue. Not a product seam: loads the generated
+// EmojiCatalog.js the way the panel will, with no compositor. The
+// counts it pins are the generator's output for the vendored Emoji
+// 16.0 / CLDR 46 data; a deliberate data upgrade regenerates both
+// this suite's expectations and the catalogue.
 import QtQml
 import "../EmojiCatalog.js" as Catalog
 import "harness.js" as T
@@ -212,10 +212,9 @@ QtObject {
             T.equal(shouted[0].name, "flag: Ukraine")
         })
 
-        // Ticket 36: the ru/uk keyword halves below were red on the
-        // English-only catalogue (2026-09-13); the pinned English orderings
-        // were captured from that same pre-change catalogue and must stay
-        // identical once the Russian and Ukrainian vocabularies ship.
+        // The pinned English orderings below must stay identical to the
+        // English-only catalogue once the Russian and Ukrainian
+        // vocabularies ship alongside it.
         T.test("ru and uk keywords ship in lockstep, never on variants", function () {
             // CLDR 46 keywords the same 1948 sequences for en, ru and uk;
             // the catalogue keeps ru/uk presence in lockstep and off the
@@ -331,7 +330,7 @@ QtObject {
             T.deepEqual(tail, ["house", "house with garden", "stethoscope"])
         })
 
-        // ---- ticket 40: the catalogue's field contract ----
+        // ---- the catalogue's field contract ----
         //
         // The page's grid delegate reads entry.emoji and entry.name; the
         // search reads keywords/ru/uk; the tabs come from group; the tone

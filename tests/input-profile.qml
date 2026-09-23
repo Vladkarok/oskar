@@ -1,7 +1,7 @@
-// Ticket 58's pure seam: the input profile. The panel serves two pointer
+// A pure seam: the input profile. The panel serves two pointer
 // worlds — the mouse it was born with and touch fingers — and which world
 // is live decides a family of affordances: whether character caps type on
-// release with slide-off cancel (generalising ticket 37's deferred caps),
+// release with slide-off cancel (generalising hold-column's deferred caps),
 // whether dwell may arm, what a tooltip does without hover, how much
 // forgiveness a chrome chip's hit area grows, and whether our own surfaces
 // may steal a sliding finger. ALL of that lives here as DATA — the
@@ -22,8 +22,8 @@ QtObject {
         // ---- the resolution: setting + observation -> effective profile ----
 
         T.test("the dwell guard: auto never flips away from mouse while dwell is on", function () {
-            // The touch council's a11y rule (ticket 62): a user who
-            // ENABLED dwell chose their access method — one stray touch
+            // An accessibility rule: a user who ENABLED dwell chose
+            // their access method — one stray touch
             // (theirs, a caregiver's, the cat's) must not disarm it for
             // the panel's life while the recovery path needs the very
             // input that was lost. An explicit touch pin still wins.
@@ -73,7 +73,7 @@ QtObject {
         T.test("the stickiness decision is pinned: once seen, per summon", function () {
             // Touch observed is MONOTONIC within a summon (the panel holds
             // the fact; the seam is stateless and never decays it, and a
-            // HIDDEN panel resets it — ticket 62's council scoping). A
+            // HIDDEN panel resets it). A
             // touchscreen laptop's stray mouse click must not flap the
             // profile back mid-session, and a flip the other way is the
             // explicit setting's job. What is pinned here is the
@@ -217,7 +217,7 @@ QtObject {
         T.test("touch keeps press semantics where repeat is the point", function () {
             // BackSpace, the arrows and the modifiers are `key` caps —
             // hold-to-repeat is their touch idiom (the compositor's own
-            // repeat, spec-v1 §6). Space (fixed label) keeps it too: the
+            // repeat). Space (fixed label) keeps it too: the
             // most-held key on the board must not lose its repeat to the
             // release-typing rule.
             T.equal(InputProfile.defersTyping("touch", false,
@@ -230,8 +230,8 @@ QtObject {
 
         T.test("touch never defers a gated, searching or dead cap", function () {
             // The moment gates are the same gates the press path keeps:
-            // readiness (spec-v1.1 §6), the emoji search's press-fed
-            // query (ticket 37's rule, restated), the unavailable mark,
+            // readiness, the emoji search's press-fed
+            // query (hold-column's rule, restated), the unavailable mark,
             // spacers.
             T.equal(InputProfile.defersTyping("touch", false,
                 letterCap(), [], false, false), false)
@@ -308,18 +308,15 @@ QtObject {
 
         // ---- the settings row's translated labels fit their segments ----
         //
-        // §52's discipline, applied to this row: the segmented control is
-        // a FIXED width, so the widest translated label must fit the
-        // segment it lands in. The probe draws every label in the mono
-        // face at fontBody (12) offscreen, exactly the way the popover's
-        // own label column re-measures.
+        // The segmented control is a FIXED width, so the widest
+        // translated label must fit the segment it lands in. The probe
+        // draws every label in the mono face at fontBody (12) offscreen,
+        // exactly the way the popover's own label column re-measures.
 
         T.test("every translated profile label fits its segment", function () {
-            // Ticket 52 + the QML round: the labels come straight from
-            // UiStrings across ALL shipped languages (the old probe
-            // listed en/ru by hand and let Italian "Tattile" overflow
-            // the row's own budget — the width follows the vocabulary
-            // now, and the row was widened to 180 to hold it).
+            // The labels come straight from UiStrings across ALL shipped
+            // languages: checking only a couple by hand would miss a
+            // language whose translation overflows the row's budget.
             var labels = []
             for (var l = 0; l < UiStrings.LANGUAGES.length; l++) {
                 var lang = UiStrings.LANGUAGES[l]
@@ -345,10 +342,10 @@ QtObject {
         })
 
         T.test("the notice keys on the OBSERVATION, not the effective profile", function () {
-            // The owner's screenshot caught the first condition
-            // (effectiveInputProfile === "touch") lighting the notice on a
-            // HAND-PINNED touch too — overflowing the un-widened row. The
-            // pin: the notice exists exactly when the observation flipped
+            // Keying on effectiveInputProfile === "touch" alone would
+            // also light the notice on a HAND-PINNED touch, overflowing
+            // the un-widened row. The pin: the notice exists exactly when
+            // the observation flipped
             // auto (synthesized touch arrived, no hand pin, dwell guard
             // off). The wiring reads the same three facts.
             T.equal(InputProfile.resolve("auto", true, false) === "touch"
@@ -361,11 +358,11 @@ QtObject {
         })
 
         T.test("the auto-flipped notice fits its widened segment", function () {
-            // Ticket 62: while auto stands flipped to touch, the Auto
-            // segment carries the "Auto+touch" notice and the row widens
-            // from 150 to 240 — the notice must fit (240 - 4 - 2 * 2) / 3
-            // = 77.33px minus its 4px padding, in every language (EN is the
-            // widest at 71.875px; the review caught 235 falling 0.2px short).
+            // While auto stands flipped to touch, the Auto segment
+            // carries the "Auto+touch" notice and the row widens from
+            // 150 to 240 — the notice must fit (240 - 4 - 2 * 2) / 3
+            // = 77.33px minus its 4px padding, in every language (EN is
+            // the widest at 71.875px; a 235px row falls 0.2px short).
             var labels = ["Auto+touch",
                 "\u0410\u0432\u0442\u043e+\u0442\u0430\u0447"]
             var probe = Qt.createQmlObject(

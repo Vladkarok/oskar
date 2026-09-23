@@ -3,8 +3,8 @@
 //
 // This suite exists because the same defect arrived three times and no test
 // could see any of them: the logic lived in a jq program inside a shell string.
-// The fixtures below are the owner's real device zoo, copied out of
-// `hyprctl devices -j` on the machine where it last broke.
+// The fixtures below are real device data, copied out of
+// `hyprctl devices -j`.
 import QtQml
 import "../LayoutDevices.js" as Devices
 import "harness.js" as T
@@ -47,12 +47,12 @@ QtObject {
         }
 
         T.test("the group is never read from a device the button does not move", function () {
-            // Ticket 21, and the reason this file exists. The reading used to
-            // come from every non-pseudo device, the switch from the helper's
-            // identified three. `ideapad-extra-buttons` and the Razer's
-            // keyboard interface sit on group 1 and nothing ever advances
-            // them, so the panel reported Ukrainian, told the helper group 1,
-            // and the physical keyboard produced English.
+            // Reading the group from every non-pseudo device instead of
+            // only the ones the button moves picks up devices like
+            // `ideapad-extra-buttons` or the Razer's keyboard interface,
+            // which sit on group 1 and never advance — so the panel
+            // would report Ukrainian, tell the helper group 1, and the
+            // physical keyboard would produce English.
             var picked = Devices.select(zoo(0, ""), "", safeNames)
             T.equal(picked.reading.active_layout_index, 0)
             T.equal(Devices.activeLayout(picked.reading), "us")
@@ -98,16 +98,16 @@ QtObject {
         })
 
         T.test("after a restart the remembered group beats a majority of sleepers", function () {
-            // The owner's 2026-09-12 desync, exactly as `hyprctl devices`
-            // caught it live: the seat's flag on a mouse's keyboard
-            // interface (never safe), no anchor (the shell just restarted),
-            // the keyboard the user actually types on flipped to group 1 by
-            // alt-shift while its two sleeping siblings never receive the
-            // toggle and sit on 0. Consensus read 0 — English caps while he
-            // typed Ukrainian. The panel's remembered group, persisted with
-            // its state, is the honest tie-breaker; the helper's own device
-            // cannot serve (its reported index is the layout slot, never the
-            // group — measured live).
+            // A desync as `hyprctl devices` can report it: the seat's flag
+            // on a mouse's keyboard interface (never safe), no anchor (the
+            // shell just restarted), the keyboard the user actually types
+            // on flipped to group 1 by alt-shift while its two sleeping
+            // siblings never receive the toggle and sit on 0. Consensus
+            // reads 0 — English caps while the user types Ukrainian. The
+            // panel's remembered group, persisted with its state, is the
+            // honest tie-breaker; the helper's own device cannot serve
+            // (its reported index is the layout slot, never the group —
+            // measured live).
             var desync = zoo(0, "razer-razer-deathadder-v3-keyboard")
             desync[3].active_layout_index = 1
             var picked = Devices.select(desync, "", safeNames, 1)
@@ -166,11 +166,11 @@ QtObject {
         })
 
         T.test("the typing keyboard is reported only from the seat's own flag", function () {
-            // The anchor used to be fed from layout events, and every
-            // switchxkblayout this panel issues emits one naming the device it
-            // moved — so the anchor pointed at whatever the panel touched
-            // last. It read its own echo and rearranged the seat around it.
-            // `typing` answers only when the seat itself says a safe keyboard
+            // The anchor must not be fed from layout events: every
+            // switchxkblayout this panel issues emits one naming the
+            // device it moved, so an anchor sourced from that would read
+            // its own echo and rearrange the seat around it. `typing`
+            // answers only when the seat itself says a safe keyboard
             // produced the key.
             T.equal(Devices.select(zoo(0, "at-translated-set-2-keyboard"), "", safeNames).typing,
                 "at-translated-set-2-keyboard")
@@ -253,7 +253,7 @@ QtObject {
             T.equal(Devices.isTyped("keychron-power-button-keyboard"), true)
         })
 
-        // Ticket 31 (audit 2026-09-13): the remembered group is only
+        // The remembered group is only
         // honored while the CURRENT keymap can carry it. A session whose
         // layout list shrank (four→two, two→one) must fall back to the
         // consensus path instead of requesting a group the map does not
@@ -305,7 +305,7 @@ QtObject {
         })
 
         T.test("ticket 64: an external toggle splits the twins and the named anchor may be the sleeper", function () {
-            // The owner's live incident: fcitx5's vkb holds `main` (so the
+            // fcitx5's vkb holds `main` (so the
             // current tier finds nothing — fcitx is pseudo), the anchor
             // names the SLEEPING twin on group 0 while the typing twin
             // sits on group 1. The reading must not answer the sleeper's
@@ -335,17 +335,14 @@ QtObject {
             T.equal(same.group, 0)
         })
 
-        // The 2026-09-18 desync (20:07, split-watch.log): the typing
-        // interface flipped 0→1 with no Alt anywhere and no actor in the
-        // journal — the compositor moved it on a plain Shift press. The
-        // panel's own vkb held `main` (fresh registration), so the reading
-        // was only the named anchor — the TYPING twin, live on group 1,
-        // its two sleeping siblings on 0. The ticket-64 arm answered
-        // consensus + remembered = 0: every indicator showed English while
-        // the fingers typed Ukrainian, and nothing resynced until the next
-        // Alt+Shift. The doctrine is "the keyboard under the user's hands
-        // is the authority" — the arm had inverted it into a vote of two
-        // devices that never receive keys.
+        // The doctrine is "the keyboard under the user's hands is the
+        // authority": when the flag names the TYPING twin as anchor and
+        // it flips groups on its own (e.g. a plain Shift press the
+        // compositor handles with no Alt and no actor in the journal),
+        // that flip must be followed. Outvoting it with sleeping twins
+        // that never receive keys would leave every indicator showing
+        // English while the fingers type Ukrainian, unresynced until
+        // the next Alt+Shift.
         T.test("a flip on the anchor is followed, not outvoted by sleeping twins", function () {
             var desync = zoo(0, "hl-virtual-keyboard-oskar-daemon")
             desync[3].active_layout_index = 1
