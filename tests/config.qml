@@ -167,7 +167,7 @@ QtObject {
 
 
         T.test("dwell preferences validate, stay sparse, and default off", function () {
-            // Ticket 50: the accessibility pair — an off-by-default switch
+            // The accessibility pair — an off-by-default switch
             // and a bounded delay (Dwell.js owns the window the timer
             // clamps into; the FILE holds the same bounds so an external
             // edit cannot smuggle a 10-second or zero rest past the
@@ -199,7 +199,7 @@ QtObject {
         })
 
         T.test("the UI language is auto by default, one of four words", function () {
-            // Ticket 52: "auto" follows the active layout (the shipped
+            // "auto" follows the active layout (the shipped
             // searchPlaceholder mapping), en/ru/uk pin the UI regardless
             // of the layout. One list (UI_LANGUAGES) is the value space —
             // validation, the popover's segments and this pin cannot
@@ -225,7 +225,7 @@ QtObject {
         })
 
         T.test("the input profile is auto by default, one of three words", function () {
-            // Ticket 58: "auto" activates the touch affordances when the
+            // "auto" activates the touch affordances when the
             // panel observes touch events; mouse/touch pin the world. One
             // list (INPUT_PROFILES) is the value space, matching the
             // SUPER_MARKS rule. Junk is a malformed edit and the previous
@@ -265,7 +265,7 @@ QtObject {
         })
 
         T.test("the Super mark is one of five words, the word by default", function () {
-            // Ticket 22: what the Super cap draws is a preference in the same
+            // What the Super cap draws is a preference in the same
             // validated store as the rest. The popover offers five marks and
             // nothing else is one; the canonical snake_case name and its
             // camelCase alias are the same field with the same rule.
