@@ -87,7 +87,7 @@ QtObject {
             T.equal(TextGlyphs.search("qqqqzzzz").length, 0)
         })
 
-        T.test("the shelf never hijacks a catalogue family (§86's poison 1)", function () {
+        T.test("the shelf never hijacks a catalogue family", function () {
             // THE VIEW THE USER SEES: the page draws each group tab as
             // the catalogue's own slice passed through visibleEntries
             // with the merged table. A bare glyph winning the family key
@@ -128,7 +128,7 @@ QtObject {
             }
         })
 
-        T.test("search keeps the shelf's identity, not its twin's (§88)", function () {
+        T.test("search keeps the shelf's identity, not its twin's", function () {
             // The search path's mirror symptom is VANISHING, not
             // twin-drawing: a substituted glyph dedups against the
             // catalogue twin already seen. The pin asserts the shelf's
@@ -175,7 +175,7 @@ QtObject {
                 "glyph hits appended past the cap")
         })
 
-        T.test("no tone ever applies to a glyph (§86's poison 2)", function () {
+        T.test("no tone ever applies to a glyph", function () {
             // The real pick flow tones BEFORE it routes; the invariant
             // must hold at that step, not on the raw entry.
             var tones = ["", "\u{1F3FB}", "\u{1F3FC}", "\u{1F3FD}",

@@ -568,12 +568,12 @@ Item {
         // fallback (LayoutDevices).
         root.groupConfirmed(session.group)
         if (!entry) return
-        // A GENERATION JUMP on a same-identity ack means the helper took
-        // the FULL path behind the panel's back — the voided-install
-        // repair after a failed restore: it
-        // drained every held claim and zeroed the mask, and a ledger that
-        // still believes them draws a locked Shift over a device holding
-        // nothing. The jump IS the drain, whatever the entry promised.
+        // A GENERATION JUMP on a same-identity ack means the helper's
+        // installed map changed since the panel's last ack (another client
+        // configured it), so this configure took the FULL path: it drained
+        // every held claim and zeroed the mask, and a ledger that still
+        // believes them draws a locked Shift over a device holding nothing.
+        // The jump IS the drain, whatever the entry promised.
         // (previousGen 0 is the first ack of a session — its entry is
         // `changed` by construction, so the jump check adds nothing.)
         var drained = entry.changed

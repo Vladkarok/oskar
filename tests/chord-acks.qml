@@ -25,7 +25,7 @@ QtObject {
         })
 
         T.test("a slot names its verb, and the reply exposes what it settled", function () {
-            // Round 17: `err bad group` answers a configure, a caps
+            // `err bad group` answers a configure, a caps
             // pre-fetch and a `group` alike — the dispatcher can only
             // do the right thing to the right ledger if the pop says
             // WHICH command the reply answered. Arming and settling

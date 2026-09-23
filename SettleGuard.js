@@ -141,7 +141,7 @@ function decide(state, observed, now) {
 
     // The establishing configure: no followed world exists (a fresh panel,
     // or a fresh helper connection reset it). This is the cold-start path
-    // §47 rides — the remembered tie-breaker's answer arrives exactly here
+    // — the remembered tie-breaker's answer arrives exactly here
     // and is followed unconditionally — and the reconnect path's first
     // compositor answer after the daemon restart. It also arms the window:
     // everything guarded below happens only AFTER a world was established.

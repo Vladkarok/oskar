@@ -11,9 +11,9 @@
 # set is the gate: a new root module fails the check until it is
 # declared shippable.
 #
-# Round eight: the enumeration is the FILESYSTEM, not `git ls-files` — a
-# release archive carries no .git, the old enumeration came back empty,
-# and the gate blessed whatever it was handed. An empty enumeration is a
+# The enumeration is the FILESYSTEM, not `git ls-files`: a release archive
+# carries no .git, so a git enumeration would come back empty and the gate
+# would bless whatever it was handed. An empty enumeration is a
 # failure, never a pass.
 set -uo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

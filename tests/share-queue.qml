@@ -23,7 +23,7 @@ QtObject {
             T.equal(ShareQueue.acked(shared, 3).start, false)
         })
 
-        T.test("a newer generation mid-run only updates the wish (§69)", function () {
+        T.test("a newer generation mid-run only updates the wish", function () {
             var state = ShareQueue.acked(ShareQueue.initial(), 1).state
             var mid = ShareQueue.acked(state, 2)
             T.equal(mid.start, false, "no second run while one is in flight")
@@ -32,7 +32,7 @@ QtObject {
             T.equal(mid.state.wished, 2)
         })
 
-        T.test("success shares what the run launched, and consumes the wish (§71)", function () {
+        T.test("success shares what the run launched, and consumes the wish", function () {
             // Success must leave: shared 1, helper at 2, nothing running,
             // nothing retrying.
             var state = ShareQueue.acked(ShareQueue.initial(), 1).state

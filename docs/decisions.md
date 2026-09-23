@@ -2155,6 +2155,9 @@ means a missing glyph can never take the name away entirely.
 
 ## 91. One channel: every pick is the clipboard
 
+(The §76–§90 sections cited here are review journals, kept in the private
+repo; their durable rules are in §107.)
+
 The owner's call, restated after §90 finally made it unambiguous ("я
 вроде просил чтоб всем слало через буфер обмена и мы избавляемся от
 сложной логики детекта"): delete the typed delivery routes and the
@@ -2317,12 +2320,12 @@ the private repo; the durable rules they produced are these.
   reply write is bounded.
 - One reply line per command line, in order — empty lines included
   (`err empty`). The panel's correlation is built on that FIFO.
-- No slow work under the shared lock.
+- Every command runs under the shared lock, held only for bounded work:
+  a configure's bounded `kb_file` read and its compile run under it (the
+  churn budget bounds how often); nothing paced or unbounded does.
 - Liveness is proved by traffic: the panel's reconnect timer never stops
   and pings every 15 s when healthy, and the helper drops a negotiated
   connection silent for 60 s.
-- A failed restore voids the install's identity, so the next configure
-  takes the full path instead of short-circuiting to a stale success.
 - The protocol version moves whenever the command set does.
 
 **The panel**
@@ -2340,8 +2343,9 @@ the private repo; the durable rules they produced are these.
   its queue (the retiring discipline).
 - A share run records the generation it launched; the pending wish is
   consumed on success.
-- A generation jump on a same-identity configure ack is a drain: the
-  modifier ledger drains with the device.
+- A generation jump on a same-identity configure ack is a drain (another
+  client changed the installed map, so the configure took the full path):
+  the modifier ledger drains with the device.
 - A row rebuild releases any key the mouse is holding.
 - Every refusal is visible (`flashRefused`). Silence — a click that does
   nothing, a state that desyncs from the screen — is the worst defect

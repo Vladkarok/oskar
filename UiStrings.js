@@ -666,8 +666,7 @@ var STRINGS = {
     },
 
     // ---- the emoji page ----
-    // The placeholder stays word-for-word across the shipped languages
-    // (Пошук/Поиск/Search); tests/ui-strings.qml pins the parity.
+    // tests/ui-strings.qml pins the en/ru/uk values verbatim.
     "emoji.searchPlaceholder": {
         en: "Search",
         ru: "Поиск",

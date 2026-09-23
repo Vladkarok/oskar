@@ -64,9 +64,9 @@ FATAL='no matching signal found for handler'
 
 status=0
 found=""
-# Round eight: enumerate the FILESYSTEM, not `git ls-files` — a release
-# archive carries no .git, the old enumeration came back empty, and the
-# check blessed whatever it was handed. Tests, tools, the daemon's
+# Enumerate the FILESYSTEM, not `git ls-files`: a release archive carries
+# no .git, so a git enumeration would come back empty and the check would
+# bless whatever it was handed. Tests, tools, the daemon's
 # vendored tree and every hidden directory (a .scratch experiment must
 # not gate the build) stay out; an empty enumeration is a failure, never
 # a pass.

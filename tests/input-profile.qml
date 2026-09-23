@@ -32,7 +32,7 @@ QtObject {
             T.equal(InputProfile.resolve("auto", false, true), "mouse")
             T.equal(InputProfile.resolve("touch", false, true), "touch")
             T.equal(InputProfile.resolve("mouse", true, true), "mouse")
-            // The two-arg call (dwell unspecified) keeps the 58 contract.
+            // The two-arg call (dwell unspecified) keeps the auto-profile contract.
             T.equal(InputProfile.resolve("auto", true), "touch")
         })
 

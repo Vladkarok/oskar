@@ -785,7 +785,7 @@ doctor_keycap_fallback() {
   # with a multi-MB journal. Same guard the socket probes already use.
   first="$(printf '%s\n' "$text" | grep -m1 "keycap fallback" || true)"
   doc_fail "$what" "$hits line(s) in the last hour — the caps are silently \
-degraded to the built-in tables (drawn != typed; ticket 39's class). \
+degraded to the built-in tables (drawn != typed). \
 First: ${first:0:120}; try: oskar upgrade, then rerun doctor"
 }
 
@@ -875,8 +875,8 @@ panel; try: pacman -S quickshell"
     missing+=("qs.Ui ($DOCTOR_SHELL_ROOT/Ui)")
   if ((${#missing[@]})); then
     doc_fail "$what" "the Omarchy shell's theme singletons are missing: \
-${missing[*]} — the panel imports them and will not load (the fresh-user \
-invisible-panel class, ticket 47); try: reinstall the omarchy shell package"
+${missing[*]} — the panel imports them and will not load (an invisible \
+panel); try: reinstall the omarchy shell package"
   else
     doc_ok "$what" "quickshell present; $DOCTOR_SHELL_ROOT/{Commons,Ui} exist"
   fi

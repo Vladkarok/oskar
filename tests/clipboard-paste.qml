@@ -504,7 +504,7 @@ QtObject {
         })
 
         T.test("a cancelled chord's late verdict cannot complete the next pick", function () {
-            // Round seven's reproduction: A's chord dispatched, was
+            // A's chord dispatched, was
             // cancelled mid-flight, B started and reached ITS pasting — and
             // A's delayed reply still said "pasting" and recorded B as
             // successful mid-dispatch. The verdict now carries the seq it
