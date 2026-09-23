@@ -153,7 +153,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         } else {
             Some(
                 connected_at
-                    .checked_add(Duration::from_secs(5))
+                    .checked_add(HANDSHAKE_WINDOW)
                     .map(|deadline| {
                         deadline
                             .saturating_duration_since(Instant::now())
