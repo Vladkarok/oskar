@@ -194,8 +194,7 @@ Item {
     // uniform between rows the way the Windows 11 touch keyboard's are, and
     // every width being a multiple of 0.5 keeps all rows' vertical gap lines
     // on one half-unit lattice: adjacent rows' gap lines are offset by
-    // exactly half a unit — the classic stagger of the owner's measured
-    // Windows reference — so every gap lands mid-key of the neighbouring
+    // exactly half a unit, so every gap lands mid-key of the neighbouring
     // rows instead of on top of one.
     readonly property real gridUnits: 15.5
     readonly property real cellPitch: (root.gridWidthUnits + root.cellGap) / root.gridUnits
@@ -309,10 +308,9 @@ Item {
     property string anchorKeyboardName: ""
     // The persisted identity of the keyboard the seat last typed on. Seeded
     // into anchorKeyboardName before the first refresh: a shell restart makes
-    // Hyprland re-pick `main` by enumeration order (measured: at-translated,
-    // group 0, while the owner's real keyboard sat on group 1) — the named
-    // tier then reads the LIVE index of the REAL device instead of a
-    // re-enumerated flag.
+    // Hyprland re-pick `main` by enumeration order, which need not match the
+    // real device's active group — the named tier then reads the LIVE index
+    // of the REAL device instead of a re-enumerated flag.
     property string rememberedLayoutDevice: ""
     signal layoutDeviceNamed(string name)
     // The keyboard the most recent compositor `activelayout` event named —
@@ -446,14 +444,12 @@ Item {
         // change, facts refresh): a dwell pointing at one of them dies
         // with it — its underline died with the delegate — and never
         // fires into a cap that no longer exists. A PRESS mid-hold dies
-        // the same way, and its release lived only in the delegate's own
-        // handlers: hold Backspace with the
-        // mouse, flip the language with the other hand, and the rows
-        // rebuilt under the grab — the `up` never came, and the key
-        // repeated into the focused window until the daemon's 15 s cap.
-        // The reducer's release is a no-op with nothing pending, so this
-        // lifts only what the destroyed delegate could no longer lift;
-        // rows that came out identical never rebuild and the live
+        // the same way, since its release lives only in the delegate's own
+        // handlers — otherwise a rebuild under a held key never sends `up`
+        // and the key repeats into the focused window until the daemon's
+        // 15s cap. The reducer's release is a no-op with nothing pending,
+        // so this lifts only what the destroyed delegate could no longer
+        // lift; rows that came out identical never rebuild and the live
         // delegate keeps owning its own release.
         dwellReset()
         releaseKey()
@@ -823,12 +819,11 @@ Item {
         if (sharedKeymapGen === 0) return
         // The restore interpolates a USER-side path (the compositor's
         // kb_file, or the sidecar any same-user client can set) into a
-        // single-quoted Lua literal — a quote in the path closed the
-        // string and executed config-side Lua (both auditors; one proved
-        // it in a stub). Session.luaQuote escapes every unsafe byte as
-        // data for the Lua layer; bash never re-parses expansion results
-        // (the cross-round's correction to an earlier note here), so the
-        // positional argument is safe by construction at both layers.
+        // single-quoted Lua literal — an unescaped quote in the path would
+        // close the string and execute config-side Lua. Session.luaQuote
+        // escapes every unsafe byte as data for the Lua layer, and bash
+        // never re-parses expansion results, so the positional argument is
+        // safe by construction at both layers.
         Quickshell.execDetached(["bash", "-c",
             "hyprctl eval \"hl.config({input = {kb_file = $1}})\" >/dev/null 2>&1",
             "onscreen-keyboard-restore", Session.luaQuote(userKeymapFile)])
@@ -901,9 +896,9 @@ Item {
         // from configure acks) all stay on the clicked group, and one
         // re-read after the quiesce interval supplies the second agreeing
         // reading a genuine external switch deserves to be followed on.
-        // The establishing configure itself is never held, which is what
-        // keeps the §47 remembered tie-breaker answering on a cold start
-        // exactly as before (SettleGuard.decide's first arm).
+        // The establishing configure itself is never held, which keeps
+        // the remembered tie-breaker answering on a cold start
+        // (SettleGuard.decide's first arm).
         var settle = SettleGuard.decide(root.settleGuard, configGroup,
             Date.now())
         root.settleGuard = settle.state
@@ -1099,7 +1094,7 @@ Item {
         // and the seat still converges on one group.)
         if (next < 0 || next >= layoutCodes.length) return
         if (switchKeyboards.length === 0) return
-        // Ticket 38: the click is user intent. Told to the settle guard so
+        // The click is user intent. Told to the settle guard so
         // its echo reading is followed immediately inside the post-reconnect
         // window (a guard that held its own click would break language
         // switching for the window's length) and so any flip the guard was
@@ -1128,8 +1123,8 @@ Item {
     }
 
     Component.onCompleted: {
-        // The ticket-06 recovery seed runs before the first snapshot can
-        // build a configure (and once more at the decision point itself):
+        // The recovery seed runs before the first snapshot can build a
+        // configure (and once more at the decision point itself):
         // blockLoading makes the local read synchronous.
         recoverUserKeymapSource()
         if (root.rememberedLayoutDevice !== "")
@@ -1156,7 +1151,7 @@ Item {
         }
     }
 
-    // Ticket 38: one re-read per held reading. A held flip is one
+    // One re-read per held reading. A held flip is one
     // observation; a genuine external switch persists, so a fresh snapshot
     // after the quiesce interval supplies the agreeing reading that lets
     // the guard follow it, while churn keeps re-anchoring the candidate's
@@ -1268,8 +1263,8 @@ Item {
             || event.type === "release"
             || event.type === "releaseAll")
         if (!inputReady && !alwaysLive) return
-        // A paced paste owns the device while it drains (the external
-        // round's P2): a key dispatched under its held Ctrl is a
+        // A paced paste owns the device while it drains: a key
+        // dispatched under its held Ctrl is a
         // shortcut out the door — Ctrl+Q — and the pacer's own
         // assumptions check could only see the conflict at its NEXT
         // tick, after the damage. Any other event aborts the paste
@@ -1306,9 +1301,9 @@ Item {
     // has not come back yet. Success is the ack of ITS OWN last command,
     // correlated through ChordAcks' outstanding-commands ledger — not the
     // first `ok` on the wire (which answers the chord's Ctrl press), and
-    // not the panel's own socket write (the review's third and fourth
-    // rounds: the next emoji's publication used to race a destination
-    // that had not received the paste yet). The ack says the events
+    // not the panel's own socket write, since gating on the write instead
+    // would let the next emoji's publication race a destination that has
+    // not received the paste yet. The ack says the events
     // reached the compositor — nothing shorter is completion, and one
     // chord waits at a time (the transaction serializes them) behind a
     // guard timer a silent helper cannot wedge.
@@ -1336,15 +1331,15 @@ Item {
         sendChoked: (line) => root.sendCommandUnchecked(line)
         // The input gate: the paste event and the abort's compensating
         // releaseAll run through applyModifierEvent, which stays here —
-        // its §92 abort calls back into the child's abortPacedPaste.
+        // its abort calls back into the child's abortPacedPaste.
         applyEvent: (event, sink) => root.applyModifierEvent(event, sink)
         inputReady: root.inputReady
         modifierState: root.modifierState
     }
 
     // The panel's frozen surface, forwarded to the machinery's new home
-    // under the names Panel.qml has always called (pasteCurrent's two
-    // callers; the §88 lane gate's pastePacing/pasteFlow.phase reads).
+    // under the names Panel.qml calls (pasteCurrent's two
+    // callers; the lane gate's pastePacing/pasteFlow.phase reads).
     readonly property bool pastePacing: pasteChords.pastePacing
     readonly property var pasteFlow: pasteChords.pasteFlow
 
@@ -1363,7 +1358,7 @@ Item {
         // The panel is closing (this runs from its close branch): a
         // pending hold can never reach its release and a standing menu
         // has no panel left to stand on — both fold here, before the
-        // releaseAll, so the close leaves nothing of ticket 37 behind.
+        // releaseAll, so the close leaves neither behind.
         // A dwell dies with the panel for the same reason: its timer
         // must not type into whatever the user opens next.
         clearCapHold()
@@ -1393,7 +1388,7 @@ Item {
     // The rule is Layout.charUnderModifiers's: an exact cap (the curated page's)
     // answers only to the level it carries — never redrawing as another symbol
     // because Shift is active, which is the agreement between what a cap shows
-    // and what its exact press types (review finding R3) — letters swap on
+    // and what its exact press types — letters swap on
     // Caps XOR Shift, and other paired caps shift with Shift alone.
     function charUnderModifiers(capData) {
         return Layout.charUnderModifiers(capData, modifierState.caps,
@@ -1402,7 +1397,7 @@ Item {
 
     // Punctuation/number keys show both symbols stacked (like the
     // reference's `.key.dual`); plain letter keys just swap case. The
-    // symbols page's dual caps (2026-09-05, symbols v2) carry the explicit
+    // symbols page's dual caps carry the explicit
     // `dual` flag and are dual here even when their shifted level resolved
     // to nothing — a valid base-only cap still renders the stacked pair
     // with an empty shifted slot, never a centered impostor. Main-page caps
@@ -1443,7 +1438,7 @@ Item {
     // stopped.
     readonly property bool serviceConnected: daemonSocket ? daemonSocket.connected : false
     property bool serviceIncompatible: false
-    // spec-v1.1 §6 + decisions §23: the header's helper/keymap kind. A
+    // The header's helper/keymap kind. A
     // connected caps mismatch is unavailable, never the starting notice.
     readonly property string lifecycleKind: Session.lifecycleKind({
         inputReady: inputReady,
@@ -1537,7 +1532,7 @@ Item {
             // in the teardown window would otherwise queue onto a drained
             // FIFO and write into the dying socket.
             root.inputReady = false
-            // Ticket 54: a lying socket never runs the disconnect arm, so the
+            // A lying socket never runs the disconnect arm, so the
             // rebuild carries that arm's one residual reset itself — the
             // compositor share generation (a restarted daemon can repeat
             // the stale one and the once-per-generation guard would skip a
@@ -1549,8 +1544,7 @@ Item {
             root.shareQueue = ShareQueue.initial()
             // The scheduler's world died with the connection: a stale run's
             // exit must not read as the next run's verdict, and a pending
-            // retry must not fire an unscheduled run (the external audit's
-            // finding 11).
+            // retry must not fire an unscheduled run.
             shareRetry.stop()
             shareProcess.running = false
             // A chord awaiting its final line's ack cannot be completed by a
@@ -1571,17 +1565,17 @@ Item {
             // command's slot in the correlation queue — ok, err,
             // fact or generation, the helper answers in order. The
             // chord's verdict rides on the pop of its own final
-            // line, success only when the reply is a bare `ok`
-            // (round five's blocker: an err used to leave the slot
-            // occupied forever, failing every later chord).
+            // line, success only when the reply is a bare `ok` —
+            // otherwise an err would leave the slot occupied forever
+            // and fail every later chord.
             var ack = ChordAcks.replyReceived(root.chordAcks,
                 reply === "ok")
             root.chordAcks = ack.state
             if (ack.done) pasteChords.chordAckCompleted(ack.done, ack.success)
             // What this reply ANSWERED, for the err arms below:
             // the FIFO pop is the only honest witness of which
-            // command a content-ambiguous err settles (round 17
-            // — `err bad group` serves three different verbs).
+            // command a content-ambiguous err settles — `err bad
+            // group` serves three different verbs.
             var answeredVerb = String(ack.verb || "")
             if (reply === "hello " + Session.PROTOCOL_VERSION) {
                 root.serviceIncompatible = false
@@ -1608,7 +1602,7 @@ Item {
                 if (helperLink.socketReconnected) {
                     helperLink.socketReconnected = false
                     root.capsFactsFailed = false
-                    // Ticket 38: a genuinely new connection also
+                    // A genuinely new connection also
                     // resets the settle guard's world — the helper
                     // is back at group 0 and whatever this panel
                     // followed or commanded belongs to the old
@@ -1680,7 +1674,7 @@ Item {
                 // downs included — except across a drain, where
                 // the reducer itself withholds the restore).
                 // The reply names the keymap generation it installed
-                // (protocol 4, decisions §23). A reply without one is
+                // (protocol 4). A reply without one is
                 // not a helper this panel can reason about: the shapes
                 // moved together with the version, so this is an
                 // installation mismatch, not a recoverable error.
@@ -1758,8 +1752,8 @@ Item {
                     // speaks, and it is not ours: the installed
                     // binary predates (or postdates) this panel.
                     // That is the incompatible state — the panel
-                    // never installs anything on its own (spec-v1.1
-                    // §6); the offer is the copied install command.
+                    // never installs anything on its own; the offer
+                    // is the copied install command.
                     root.serviceIncompatible = true
                     root.inputReady = false
                 } else if (reply === "err not ready") {
@@ -1777,26 +1771,24 @@ Item {
                     // journal line without bricking the keyboard.
                     console.warn("[oskar] ownership refusal:", reply)
                 } else if (reply === "err bad group") {
-                    // One err, three verbs it can answer (round
-                    // 17 straightened the whole arm): a caps
+                    // One err, three verbs it can answer: a caps
                     // pre-fetch for a group the keymap does not
-                    // carry, a `group` command, or — since
-                    // ticket 31 — a configure whose own incoming
-                    // map cannot carry its group. The FIFO pop
-                    // above says WHICH this one settled, and the
-                    // ledgers part ways on it.
+                    // carry, a `group` command, or a configure
+                    // whose own incoming map cannot carry its
+                    // group. The FIFO pop above says WHICH this
+                    // one settled, and the ledgers part ways on it.
                     if (answeredVerb === "configure"
                             && root.session.queue.length > 0) {
                         // The refusal answered a QUEUED configure:
                         // its entry must settle or it orphans the
                         // queue — settled() false forever, and
-                        // with §80's never-stopping timer a
-                        // permanent 2 s hello → keyboards →
-                        // compositor pipeline → configure cycle
-                        // until a socket rebuild. The §53 settle
-                        // window makes it reachable (a group
-                        // legal for the old map, a layout list
-                        // that shrank inside it). Failed clean,
+                        // the repair timer's never-stopping 2 s
+                        // hello → keyboards → compositor pipeline
+                        // → configure cycle runs permanently until
+                        // a socket rebuild. The settle window makes
+                        // it reachable (a group legal for the old
+                        // map, a layout list that shrank inside
+                        // it). Failed clean,
                         // no modifier lift: this refusal happens
                         // before any install or drain, so a lock
                         // the panel shows is a lock the device
@@ -1927,9 +1919,9 @@ Item {
         if (!helperLink.write(text)) return false
         // Every command sent occupies one slot in the correlation queue —
         // counted here, at the one choke point every command goes through.
-        // The module returns the new state directly; a `.state` suffix
-        // here once silently nulled the queue and killed reply handling
-        // for the rest of the session.
+        // The module returns the new state directly, not wrapped in a
+        // `.state` field: unwrapping a bare state nulls the queue and
+        // kills reply handling for the rest of the session.
         root.chordAcks = ChordAcks.sent(root.chordAcks, text)
         return true
     }
@@ -1946,10 +1938,9 @@ Item {
     }
 
     function capDefersHold(capData) {
-        // Ticket 58's generalisation, composed at the seam so it is
-        // pinned (tests/input-profile.qml): in the MOUSE profile this is
-        // ticket 50's interplay verbatim — Dwell.holdDefers, i.e. ticket
-        // 37's column-only defer with the dwell veto over it, byte-today.
+        // Composed at the seam so it is pinned (tests/input-profile.qml):
+        // in the MOUSE profile this is Dwell.holdDefers verbatim — a
+        // column-only defer with the dwell veto over it, byte-today.
         // In the TOUCH profile every character cap defers — a drifting
         // finger must never strand a phantom character under
         // press-typing — on InputProfile.touchDefers's own rule (the
@@ -2038,7 +2029,7 @@ Item {
     /// One menu entry, typed through the same exact-level chord the &123
     /// glyph caps send (typeCap's exact arm): the position plus
     /// levelChord's modifiers around it, one press and one release as a
-    /// single click. `exact` spends latched Shift/AltGr per §2 without
+    /// single click. `exact` spends latched Shift/AltGr without
     /// letting them choose the level, the configure stamp is taken at the
     /// pick, and the release lifts everything the press wrapped — the
     /// reducer owns the whole shape, nothing here re-derives it.
@@ -2162,19 +2153,17 @@ Item {
         } else if (result.action === "menu") {
             dwellOpenMenu()
         } else if (dwellState && dwellState.phase !== "done") {
-            // Ticket 55: a delivery can land BEFORE the deadline — Qt's
-            // timers carry coarse-timer slack and may fire a few percent
-            // EARLY (measured live: 782ms into an 800ms rest). The
+            // A delivery can land BEFORE the deadline — Qt's timers carry
+            // coarse-timer slack and may fire a few percent EARLY. The
             // machine correctly answers "none" below the deadline, and
             // `repeat: false` means that early fire was the timer's one
-            // delivery — without this re-arm the rest stays armed
-            // forever with no error, exactly the all-of-dwell-inert
-            // defect the VM leg caught. Re-arm for the REMAINING time
+            // delivery, so it must be re-armed here or the rest stays
+            // armed forever with no error. Re-arm for the REMAINING time
             // against the absolute deadline (t0-anchored, so repeated
             // early deliveries converge on the crossing), covering both
             // crossings — the type deadline and the menu window alike.
-            // nextArmMs owns that arithmetic (55 follow-up): it was
-            // spelled twice here and in the press branch above.
+            // nextArmMs owns that arithmetic; it is spelled twice, here
+            // and in the press branch above.
             dwellTimer.interval = Dwell.nextArmMs(dwellState, now)
             dwellTimer.restart()
         }
@@ -2209,13 +2198,11 @@ Item {
             dwellReset()
             return
         }
-        // The underline's uniform rule (§54: progress, never state — it
+        // The underline's uniform rule: progress, never state — it
         // vanishes the instant the rest ends, typed or not, on EVERY
         // cap alike, character or special; a pinned-full line through
         // the menu window would read as state, and the menu opening is
-        // its own signal). Ticket 50 review L1 caught it lingering on
-        // the character arm; the flows round caught the special arm
-        // still missing it.
+        // its own signal.
         try { dwellDelegate.stopDwellFill() } catch (error) {}
         if (!cap.key) {
             typeCap(cap)
@@ -2226,7 +2213,7 @@ Item {
         if (Layout.positionForKeysym(cap.key)) releaseKey()
     }
 
-    /// The second threshold: the continued rest opens ticket 37's menu,
+    /// The second threshold: the continued rest opens the hold menu,
     /// reusing openHoldMenu whole — geometry, catch area, the pick's
     /// chord. The entries are re-read from the live facts: a keymap that
     /// stopped carrying a column mid-rest ends the dwell quietly, never
@@ -2315,14 +2302,14 @@ Item {
             // wrap around the key and what a lock does to them. Curated
             // caps are `exact`: a latched Shift or AltGr is never APPLIED
             // by one — the chord is the level's, not the latch's — but it
-            // is always CONSUMED by one, as §2 spends any non-modifier
-            // key's latches. Pair caps wrap AltGr intrinsically and apply
+            // is always CONSUMED by one — any non-modifier key spends
+            // its latches. Pair caps wrap AltGr intrinsically and apply
             // a latched or locked Shift; they are not exact. The symbol/digit
             // caps on &123 are exact too: the latch already chose the layer.
             shift: Layout.levelChord(level).shift,
             altgr: Layout.levelChord(level).level3,
-            // Levels five to eight are the reserved block's own (decisions
-            // §33): <LVL5> opens them and Shift and <LVL3> choose among the
+            // Levels five to eight are the reserved block's own:
+            // <LVL5> opens them and Shift and <LVL3> choose among the
             // four, so a glyph resolved up there presses one more real
             // modifier than one resolved below and nothing else changes.
             level5: Layout.levelChord(level).level5,
@@ -2501,8 +2488,7 @@ Item {
                             // up lines). Caps and Fn are semantic panel
                             // controls, page, emoji and Close are commands
                             // — none of them reach the protocol, so all stay
-                            // live while the helper is not ready (spec-v1.1
-                            // §6).
+                            // live while the helper is not ready.
                             //
                             // `inputGated` is the one named arm for that gate,
                             // used identically at press and release: a gated
@@ -2519,8 +2505,7 @@ Item {
                             // keymap — a valid partial keymap's hole — must
                             // never sit there blank and clickable. It draws
                             // dim like a gated cap, refuses the press, and
-                            // emits nothing; the §11 miss report is the
-                            // record of why. Fixed-label caps and spacers
+                            // emits nothing. Fixed-label caps and spacers
                             // are never marked unavailable: their labels are
                             // the panel's own.
                             property bool producesInput: types
@@ -2564,8 +2549,8 @@ Item {
                             Text {
                                 id: superLogo
                                 // The Omarchy arm: same request as the bar
-                                // launcher, and §27's gate stays attached to
-                                // this arm alone — superMarkArm returns
+                                // launcher, and the font-present gate stays
+                                // attached to this arm alone — superMarkArm returns
                                 // "omarchy" only when the packaged TTF is
                                 // present, so Qt cannot substitute another
                                 // family's U+E900 and an absent font lands on
@@ -2654,9 +2639,9 @@ Item {
                                         Accessible.name: "Super"
                                         // CurveRenderer antialiases stroked
                                         // curves itself; GeometryRenderer
-                                        // aliased the loops at key size (the
-                                        // owner's pixelated-⌘ report), and an
-                                        // MSAA layer broke the mark entirely.
+                                        // aliases the loops at key size, and
+                                        // an MSAA layer breaks the mark
+                                        // entirely.
                                         preferredRendererType: Shape.CurveRenderer
 
                                         transform: Scale {
@@ -2670,9 +2655,7 @@ Item {
                                         // four quarter-circle loops, RoundCap
                                         // and RoundJoin so the corners read
                                         // round, the fill transparent because
-                                        // the stroke IS the mark. Coordinates
-                                        // lifted verbatim from the owner
-                                        // render the choice was made on.
+                                        // the stroke IS the mark.
                                         ShapePath {
                                             strokeColor: capRect.superInk
                                             fillColor: "transparent"
@@ -2760,8 +2743,8 @@ Item {
                                 visible: capRect.stacked
                                 // The `|| ""` guards the symbols-page dual
                                 // caps, whose levels come from the keymap:
-                                // a level that did not resolve is a §11 miss
-                                // and an empty slot, never the string
+                                // a level that did not resolve is an empty
+                                // slot, never the string
                                 // "undefined" drawn on a cap.
                                 text: capData.chrShift || ""
                                 anchors { top: parent.top }
@@ -2786,8 +2769,7 @@ Item {
                                 font.pixelSize: root.capGlyphSize
                             }
 
-                            // The hold-variant marker (the owner's
-                            // 2026-09-14 call): a very light dot in the
+                            // The hold-variant marker: a very light dot in the
                             // bottom-right corner of exactly the caps a
                             // hold would open a column menu for — telling
                             // what is worth holding without drawing the
@@ -2868,7 +2850,7 @@ Item {
                                 anchors.topMargin: -rowItem.hitTop
                                 anchors.bottomMargin: -rowItem.hitBottom
                                 hoverEnabled: true
-                                // Ticket 58: in the touch profile our own
+                                // In the touch profile our own
                                 // surfaces may not steal a sliding finger
                                 // from a pressed cap — the slide-off cancel
                                 // contract needs the release delivered HERE.
@@ -2902,16 +2884,12 @@ Item {
                                 // is emitted for both, which is why letter caps
                                 // never showed the loss.
                                 //
-                                // The modifiers are here too now (issue 17).
-                                // They used to wait for the click and then a
-                                // further 250 ms, in case a second click was
-                                // coming that would make it a lock — which the
-                                // owner felt, correctly, as a quarter-second
-                                // of lag on every Shift. They latch on the way
-                                // down instead and the lock upgrades them,
+                                // Modifiers latch on the way down, and a
+                                // second press upgrades the latch to a lock
+                                // — no double-click timeout to wait out,
                                 // which costs nothing and waits for nothing.
-                                // What makes that safe is the measured order
-                                // of the signals: for two fast taps a real
+                                // What makes that safe is the order of the
+                                // signals: for two fast taps a real
                                 // MouseArea emits
                                 //
                                 // pressed, released, clicked,
@@ -2921,7 +2899,7 @@ Item {
                                 // of the second press, before its own
                                 // `released`. The second press is therefore
                                 // seen first as a click on a latched modifier
-                                // — which §5 says returns it to idle, never to
+                                // — which returns it to idle, never to
                                 // locked — and the reducer rolls that back
                                 // when the lock lands a moment later.
                                 //
@@ -2936,7 +2914,7 @@ Item {
                                 // The bound is what is claimed here, and it is
                                 // the residual the by-hand retest looks for.
                                 onPressed: (mouse) => {
-                                    // Ticket 58: the press reports its
+                                    // The press reports its
                                     // source FIRST, so the very touch that
                                     // teaches auto already answers as touch
                                     // — this press defers, its release
@@ -2958,7 +2936,7 @@ Item {
                                     // that could not type.
                                     if (capRect.disabled) return
                                     if (!capData.key) {
-                                        // Ticket 37: a character cap whose
+                                        // A character cap whose
                                         // position carries extra levels types
                                         // on RELEASE — the press arms a hold
                                         // and sends nothing, so the threshold
@@ -3003,7 +2981,7 @@ Item {
                                 // it is the hold's own and types nothing,
                                 // leaving the menu standing for its pick.
                                 onReleased: (mouse) => {
-                                    // The slide-off half of ticket 58's
+                                    // The slide-off half of
                                     // release-typing: in the touch profile a
                                     // lift that left the cap first CANCELS
                                     // the hold (never types) — capHit still
@@ -3060,13 +3038,13 @@ Item {
                                 // which is survivable because nobody
                                 // double-clicks Close to close twice.
                                 //
-                                // The page control and the
-                                // emoji cap are no longer among
-                                // them: waiting for `clicked` lost every
-                                // second press of a rapid pair to the same
-                                // suppression — fatal now the emoji cap
-                                // toggles a page, whose dismiss IS the second
-                                // press. Neither tears anything out from
+                                // The page control and the emoji cap act on
+                                // press, not click: waiting for `clicked`
+                                // would lose every second press of a rapid
+                                // pair to the same suppression, which is
+                                // fatal since the emoji cap toggles a page
+                                // whose dismiss IS the second press. Neither
+                                // tears anything out from
                                 // under the pointer — the grid the button
                                 // sits on does not rebuild — so both act on
                                 // the way down, one press per press.
@@ -3098,7 +3076,7 @@ Item {
 
     Timer {
         id: capHoldTimer
-        // The one timer ticket 37 adds, and it repeats nothing: it fires
+        // The hold column's one timer, and it repeats nothing: it fires
         // once per hold to open the column menu. Key repeat stays the
         // compositor's own — and a deferred cap, having sent
         // no press line at threshold, has no repeat to manage at all.
@@ -3109,14 +3087,12 @@ Item {
 
     Timer {
         id: dwellTimer
-        // The dwell path's one timer, and like ticket 37's it
+        // The dwell path's one timer, and like the hold column's it
         // repeats nothing by itself: it is deadline-driven — the delay,
         // then the menu window for a column cap — and Dwell.tick decides
         // what a crossing means. A crossing may take several fires: Qt's
         // coarse slack fires ~2% early and dwellTick re-arms for the
-        // remaining time against the absolute deadline (ticket 55 — the
-        // first cut assumed one interval per crossing and deadlocked
-        // armed forever on the early fire). A cleared dwell never fires:
+        // remaining time against the absolute deadline. A cleared dwell never fires:
         // the machine's dead state answers "none" whatever a stray
         // trigger delivers.
         interval: 800
@@ -3126,7 +3102,7 @@ Item {
 
     // The hold column's menu — the card, its catch area
     // and its entry delegates, in HoldMenu.qml (the structural split's
-    // step six). Card-local, like ticket 35's chooser: the panel
+    // step six). Card-local: the panel
     // window's input mask is the card rect, so the component fills the
     // keyboard's own bounds and stands over the held cap's column.
     HoldMenu {
