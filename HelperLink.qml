@@ -26,7 +26,7 @@ Item {
     // The hello watchdog's ledger: a hello was written and nothing has
     // arrived from the helper since. `connected` alone cannot be trusted
     // to say the pipe is alive — a peer-closed Quickshell Socket can keep
-    // reporting true — so liveness is proved by traffic, and a hello
+    // reporting true (observed live on Quickshell 0.3.1) — so liveness is proved by traffic, and a hello
     // outstanding past SocketWatch.HELLO_STALE_MS rebuilds the socket
     // whatever `connected` claims. Cleared by every arriving line, by a
     // disconnect, and by the rebuild itself (the hello belonged to the

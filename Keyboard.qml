@@ -309,7 +309,8 @@ Item {
     // The persisted identity of the keyboard the seat last typed on. Seeded
     // into anchorKeyboardName before the first refresh: a shell restart makes
     // Hyprland re-pick `main` by enumeration order, which need not match the
-    // real device's active group — the named tier then reads the LIVE index
+    // real device's active group (measured: at-translated on group 0 while
+    // the real keyboard sat on group 1) — the named tier then reads the LIVE index
     // of the REAL device instead of a re-enumerated flag.
     property string rememberedLayoutDevice: ""
     signal layoutDeviceNamed(string name)
@@ -2154,7 +2155,8 @@ Item {
             dwellOpenMenu()
         } else if (dwellState && dwellState.phase !== "done") {
             // A delivery can land BEFORE the deadline — Qt's timers carry
-            // coarse-timer slack and may fire a few percent EARLY. The
+            // coarse-timer slack and may fire a few percent EARLY (measured
+            // live: 782ms into an 800ms rest). The
             // machine correctly answers "none" below the deadline, and
             // `repeat: false` means that early fire was the timer's one
             // delivery, so it must be re-armed here or the rest stays

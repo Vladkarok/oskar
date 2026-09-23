@@ -2364,3 +2364,20 @@ the private repo; the durable rules they produced are these.
 - The package file-set check runs on its own: every runtime module must
   be in `PLUGIN_RUNTIME`.
 
+
+## 108. The helper is modules; comments carry invariants, not history
+
+`daemon/src/main.rs` (4.1k lines) was split by responsibility — `protocol`
+(wire format, parse, caps replies), `server` (socket, handshake, write
+bounds), `apply` (command execution, held keys, shutdown), `keymap`
+(compile, reserved symbols, keycap facts), `seat` (published keymap,
+source sidecar, socket path, keyboard discovery), `state` (shared state,
+Wayland dispatch) and `main` (lifecycle). A pure move: every line accounted
+for, the same 44 tests.
+
+Code comments state the current invariant and the evidence behind it, and
+may point at live spec or decisions sections; they do not carry tickets,
+review rounds or journal numbers. Comments that narrated history went stale
+with every behaviour change, and stale prose was most of what late review
+rounds found. `tools/comment-only.py` proves a prose pass left code
+untouched; the sweep commits are listed in `.git-blame-ignore-revs`.
