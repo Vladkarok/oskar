@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The regression wall (ticket 43): ONE command, every layer, one table.
+# The regression wall: ONE command, every layer, one table.
 #
 # The breakage classes we actually shipped are netted layer by layer:
 #   host battery    — the pure JS seams (13 suites) + qmllint's fatal
@@ -55,7 +55,7 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
   # legs run their host half (virsh monitor + this script's children)
   # while the guest frame runs in the lab, so a running qmp_guest_frame
   # means the lab is held even though no guest-side leg process matches
-  # the older pattern (ticket 48 review).
+  # the other legs' pattern.
   if pgrep -f "integration/panel_canary" >/dev/null 2>&1 \
       || ssh "$LAB" 'pgrep -f "integration/(panel_canary|restart_settle|chooser35|emoji_focus|hold_column|qmp_guest_frame)" >/dev/null 2>&1'; then
     row "live-legs" SKIP "another tenant holds the lab — rerun when free"
@@ -71,11 +71,10 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
         panel_canary) env_var="OSK_PANEL_CANARY_LIVE=1" ;;
         restart_settle) env_var="OSK_RESTART_SETTLE_LIVE=1" ;;
       esac
-      # The live signature is PROBED, not guessed (2026-09-21, twice in
-      # one session the legs died at `lifecycle: starting` because
-      # `ls -t | head -1` grabbed a corpse: interrupted leg runs leave
+      # The live signature is PROBED, not guessed: `ls -t | head -1`
+      # can grab a corpse, since interrupted leg runs leave
       # dead sig dirs behind, and the live session's dir can be the
-      # OLDEST of the bunch). Newest-first, but only a signature whose
+      # OLDEST of the bunch. Newest-first, but only a signature whose
       # socket actually answers hyprctl counts; none answering is a lab
       # without a session — loud, not a fake run.
       if ssh "$LAB" "cd ~/oskar \
@@ -96,7 +95,7 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
         row "$leg" FAIL "see $WALL_TMP/$leg.log"
       fi
     done
-    # The QMP half (ticket 48): the canary's mask and real-click legs run
+    # The QMP half: the canary's mask and real-click legs run
     # HOST-side against the lab over the virsh monitor — the one row that
     # proves compositor-routed clicks reach the daemon. Same tenancy as
     # the guest legs above; the sudo password for the strace oracle comes

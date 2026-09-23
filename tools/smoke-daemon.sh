@@ -47,7 +47,7 @@ fi
 socket="$XDG_RUNTIME_DIR/oskar/control.sock"
 log="$XDG_RUNTIME_DIR/oskar-smoke.log"
 
-# Build the deliberately tiny public Wayland observer used by decisions §35's
+# Build the deliberately tiny public Wayland observer used by the
 # keymap-payload regression. Generated xdg-shell bindings stay in the private
 # runtime directory; the repository carries only the readable test client.
 observer_build="$XDG_RUNTIME_DIR/osk-keymap-observer-build"
@@ -76,7 +76,7 @@ cc -std=c11 -Wall -Wextra -Werror \
   -o "$observer"
 export OSK_KEYMAP_OBSERVER="$observer"
 
-# The stuck-key cap ships at fifteen seconds (spec-v1 §6). A suite that slept
+# The stuck-key cap ships at fifteen seconds. A suite that slept
 # through that four times over would be useless, so the helper takes the cap
 # from the environment and the suite reads the same variable — what is asserted
 # is the cap's behaviour, with its duration as the one injected fact.

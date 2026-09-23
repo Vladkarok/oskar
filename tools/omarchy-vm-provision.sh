@@ -30,7 +30,7 @@
 #
 # Idempotent. Installs the build toolchain, builds the daemon, installs the
 # plugin and the systemd service, enables and starts the service for the
-# graphical session (spec-v1.1 §6; opt out with OSK_NO_AUTOSTART=1, which
+# graphical session (opt out with OSK_NO_AUTOSTART=1, which
 # disables it), and turns on sshd so the host can drive the VM afterwards.
 # Re-run it any time the source changed.
 #
@@ -116,14 +116,14 @@ install -Dm755 "$BUILD_SRC/daemon/target/release/oskar-daemon" "$HOME/.local/lib
 install -Dm644 "$BUILD_SRC/systemd/oskar.service" "$HOME/.config/systemd/user/oskar.service"
 systemctl --user daemon-reload
 
-# Spec-v1.1 §6 (decisions §19): provisioning enables and starts the helper
+# Provisioning enables and starts the helper
 # for the graphical session — an installed-but-disabled unit is
 # indistinguishable from a broken keyboard, and systemd's restart policy
 # owns it from here. OSK_NO_AUTOSTART=1 is the development opt-out: it
-# leaves (or puts) the unit disabled, which was the default before §6.
+# leaves (or puts) the unit disabled.
 # Both branches warn on systemd failure rather than dying (a helper that
 # cannot start must not block provisioning) and rather than passing
-# silently (a §11 silent failure).
+# silently.
 if [[ "${OSK_NO_AUTOSTART:-}" == "1" ]]; then
     systemctl --user disable --now oskar 2>/dev/null \
         || echo "WARNING: could not disable oskar.service; see 'systemctl --user status oskar'" >&2
@@ -131,7 +131,7 @@ if [[ "${OSK_NO_AUTOSTART:-}" == "1" ]]; then
 else
     # Enable and start each warn on failure rather than dying (a helper
     # that cannot start must not block provisioning) and rather than
-    # passing silently (a §11 silent failure): what actually happened is
+    # passing silently: what actually happened is
     # warned on stderr here and reported truthfully in the summary below,
     # never papered over with a default success.
     if systemctl --user enable oskar 2>/dev/null; then
@@ -177,7 +177,7 @@ fi
 sudo systemctl enable --now sshd
 
 # The plugin itself is enabled through omarchy below; the helper unit is
-# enabled and started here unless OSK_NO_AUTOSTART is set (see §6 above).
+# enabled and started here unless OSK_NO_AUTOSTART is set (see above).
 if omarchy plugin enable "$PLUGIN_ID"; then
     plugin_state="enabled"
 else

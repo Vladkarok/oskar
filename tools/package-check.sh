@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
-# The packaging file-set gate, INDEPENDENT of the QML type check (the
-# review's seventh round: it used to live in qml-check.sh behind an early
-# exit-0 for missing Quickshell types, so a CI container without Quickshell
-# skipped BOTH — and the round-five ChordAcks PLUGIN_RUNTIME miss sailed
-# through green). This script needs only find, grep and the Makefile, and
-# always runs.
+# The packaging file-set gate, INDEPENDENT of the QML type check: living
+# behind the type check's early exit-0 for missing Quickshell types would
+# let a CI container without Quickshell skip both gates. This script
+# needs only find, grep and the Makefile, and always runs.
 #
-# Every runtime module the tree ships must be on the package's list. On
-# 2026-09-13 the §35/§37 modules (LanguageControl.js, HoldColumn.js) missed
-# PLUGIN_RUNTIME and a make-installed panel could not LOAD at all — the
-# suites are green because they import the tree, not the package, and only
-# the lab noticed. Here the file set is the gate: a new root module fails
-# the check until it is declared shippable.
+# Every runtime module the tree ships must be on the package's list. A
+# module missing from PLUGIN_RUNTIME means a make-installed panel cannot
+# LOAD at all — the suites stay green because they import the tree, not
+# the package, so only a real package build catches it. Here the file
+# set is the gate: a new root module fails the check until it is
+# declared shippable.
 #
 # Round eight: the enumeration is the FILESYSTEM, not `git ls-files` — a
 # release archive carries no .git, the old enumeration came back empty,

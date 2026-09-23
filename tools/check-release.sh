@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release consistency gate — the 2026-09-19 audit's automation ask.
+# Release consistency gate.
 # Checks, from the working tree:
 #   1. PKGBUILD pkgver == manifest.json version
 #   2. tag v$pkgver exists locally and on origin, and the local tag is pushed

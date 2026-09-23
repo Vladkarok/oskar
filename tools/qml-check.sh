@@ -2,10 +2,10 @@
 # Static check for the QML the suites cannot see.
 #
 # Every offscreen suite here drives the pure JavaScript modules. Nothing loads
-# `Keyboard.qml` or `Panel.qml`, and on 2026-09-09 that cost a shipped commit:
-# `onPairPositionsChanged` outlived the property it watched, QML refuses a
-# handler for a property that does not exist, and the panel would not load at
-# all — with 300 checks green. The owner found it.
+# `Keyboard.qml` or `Panel.qml`, so a handler outliving the property it
+# watches (QML refuses a handler for a property that does not exist,
+# and the panel would not load at all) can ship with every offscreen
+# check green.
 #
 # `qmllint` resolves Quickshell's own types (it ships .qmltypes) and says
 # exactly that:
@@ -103,6 +103,6 @@ fi
 
 echo "qml check: no handler names a property that does not exist"
 
-# The packaging file-set gate moved to tools/package-check.sh (round
-# seven): it must run wherever git and a Makefile exist, never behind
+# The packaging file-set gate lives in tools/package-check.sh: it must
+# run wherever git and a Makefile exist, never behind
 # this script's type-availability skip.

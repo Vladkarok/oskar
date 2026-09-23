@@ -20,9 +20,9 @@ else
   echo "uninstall.sh: registration does not point at this checkout; leaving the live install alone" >&2
 fi
 
-# Ownership before removal (the external round's P2): the helper binary,
-# the unit and the CLI symlink are SHARED paths — whichever checkout
-# installed LAST owns them. The CLI symlink is the honest marker (each
+# Ownership before removal: the helper binary, the unit and the CLI
+# symlink are SHARED paths — whichever checkout installed LAST owns
+# them. The CLI symlink is the honest marker (each
 # install writes it and it names its checkout's bin/oskar); removing the
 # trio while another checkout owns it would gut that install's live
 # service mid-flight.

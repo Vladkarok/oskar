@@ -1,8 +1,6 @@
 #!/bin/bash
 
-# oskar — one user-facing lifecycle command for the on-screen
-# keyboard (audit 2026-09-13, ticket 32; renamed omarchy-osk -> oskar
-# pre-publish, ticket 59).
+# oskar — one user-facing lifecycle command for the on-screen keyboard.
 #
 #   oskar setup [--migrate-source]   activate; idempotent; also walks
 #                                          an old omarchy-osk install
@@ -44,8 +42,8 @@ SOURCE_HELPER="$HOME/.local/libexec/oskar-daemon"
 SOCKET="${XDG_RUNTIME_DIR:-$HOME/.run}/oskar/control.sock"
 PROTOCOL_VERSION="6"
 
-# The pre-rename world (ticket 59): every name the product carried
-# before it settled on oskar. setup and upgrade migrate it away, teardown
+# The pre-rename world: every name the product carried before it
+# settled on oskar. setup and upgrade migrate it away, teardown
 # deactivates it, doctor names it. Detection is per-trace and every step
 # is idempotent — a second run finds nothing and says nothing.
 OLD_UNIT="omarchy-osk.service"
@@ -159,28 +157,27 @@ migrate_source() {
   systemctl --user daemon-reload
 }
 
-# --- the rename migration (ticket 59) ----------------------------------------
+# --- the rename migration (omarchy-osk -> oskar) ------------------------------
 #
 # The product was born omarchy-osk and renamed oskar before anything was
-# published. Machines that installed the old name (the owner's host, the
-# lab, any private clone) walk to the new one through these functions:
-# detection is per-trace, every step is idempotent, nothing of the user's
-# is deleted (registrations that are real directories and old unit files
-# are moved aside with the --migrate-source precedent's *.migrated-<ts>
-# naming), and the state the panel reads moves WITH the name so the
-# keyboard does not forget its settings on rename day.
+# published. Machines that installed the old name walk to the new one
+# through these functions: detection is per-trace, every step is
+# idempotent, nothing of the user's is deleted (registrations that are
+# real directories and old unit files are moved aside with the
+# --migrate-source precedent's *.migrated-<ts> naming), and the state
+# the panel reads moves WITH the name so the keyboard does not forget
+# its settings on rename day.
 
 old_world_found() {
   # Any live trace of the old name: registration (either kind), unit
   # (source-install's user unit, the packaged unit file, enabled or
   # active state), old helper, PATH shadow, the old package's unit on
-  # disk — and, since ticket 60, the DATA dirs too. A machine whose
-  # enabled traces are all gone (the old uninstall ran first, or old
-  # teardown + package removal) still deserves the config/state MOVE
-  # on rename day; before 60 those settings stranded silently under
-  # the old names (never destroyed, hand-recoverable, but stranded).
-  # Every step of the walk guards its own inputs, so a data-only find
-  # walks a migration that moves the dirs and no-ops the rest.
+  # disk, and the DATA dirs. A machine whose enabled traces are all
+  # gone (the old uninstall ran first, or old teardown + package
+  # removal) still deserves the config/state MOVE on rename day, so
+  # data-only traces count too. Every step of the walk guards its own
+  # inputs, so a data-only find walks a migration that moves the dirs
+  # and no-ops the rest.
   [[ -e "$OLD_REGISTRATION" || -L "$OLD_REGISTRATION" ]] && return 0
   [[ -f "$OLD_USER_UNIT" || -f "$OLD_SOURCE_HELPER" ]] && return 0
   [[ -e "$OLD_SHADOW" || -L "$OLD_SHADOW" ]] && return 0
@@ -259,8 +256,8 @@ beside it — merge by hand if something was wanted from it"
       say "state moved: $OLD_STATE_DIR -> $state_new"
     fi
   fi
-  # Session-scoped (socket, published keymap, the §6 recovery record):
-  # dies with the session anyway; removing it keeps a same-session
+  # Session-scoped (socket, published keymap, recovery record): dies
+  # with the session anyway; removing it keeps a same-session
   # restart from finding a stale old-name record.
   if [[ -d "$OLD_RUNTIME_DIR" ]]; then
     rm -rf "$OLD_RUNTIME_DIR"
@@ -453,8 +450,8 @@ cmd_status() {
   [[ -f "$HELPER" ]] || helper_state="MISSING"
   local reply
   # A failing transport (stale socket, timeout, socat's own nonzero)
-  # must not kill the report under set -e (round ten): the probe's own
-  # empty answer already reads as "not answering" below.
+  # must not kill the report under set -e: the probe's own empty
+  # answer already reads as "not answering" below.
   reply="$(protocol_probe)" || reply=""
   local proto="ok (protocol $PROTOCOL_VERSION)"
   if [[ "$reply" == "hello $PROTOCOL_VERSION" ]]; then
@@ -519,7 +516,7 @@ cmd_teardown() {
   say "teardown complete; config and state preserved"
 }
 
-# --- doctor (ticket 49) ------------------------------------------------------
+# --- doctor -------------------------------------------------------------------
 #
 # One read-only diagnosis against the live session: every check names a
 # failure this project has actually shipped or hit, prints
@@ -558,10 +555,10 @@ doctor_hello() {
 doctor_query() {
   # One command line in, its reply line out; empty = no answer. The
   # queries doctor sends (caps, keyboards) are read-only against the
-  # helper's installed state. The hello rides the SAME connection (round
-  # eight): the helper executes nothing before a completed handshake, so
-  # a bare query on a fresh connection answered "err hello first" and
-  # doctor misread that as a broken keymap.
+  # helper's installed state. The hello rides the SAME connection: the
+  # helper executes nothing before a completed handshake, so a bare
+  # query on a fresh connection would get "err hello first" and read
+  # as a broken keymap instead of a missing handshake.
   command -v socat >/dev/null 2>&1 || return 0
   [[ -S "$DOCTOR_SOCKET" ]] || return 0
   printf 'hello %s\n%s\n' "$PROTOCOL_VERSION" "$1" |
@@ -664,8 +661,8 @@ command manages; try: oskar setup"
 
   # ~/.local/bin shadows /usr/bin on default PATHs: a stale shadow is how
   # a bare `oskar setup` silently re-creates a migrated-away source
-  # world (the §45 lesson). A DANGLING shadow is skipped by PATH lookup
-  # and is harmless, so existence follows the link (-e, not -L).
+  # world. A DANGLING shadow is skipped by PATH lookup and is harmless,
+  # so existence follows the link (-e, not -L).
   local shadow="PATH shadow"
   points="$(realpath "$DOCTOR_SHADOW" 2>/dev/null || true)"
   if [[ "$MODE" == "packaged" && -e "$DOCTOR_SHADOW" ]]; then
@@ -702,7 +699,7 @@ oskar manages; try: pick one (oskar setup --migrate-source \
 from /usr/bin/oskar, or remove the package)"
   fi
 
-  # The rename (ticket 59): any LIVE trace of the omarchy-osk era still
+  # The rename: any LIVE trace of the omarchy-osk era still
   # standing — old unit enabled/active or on disk, old registration,
   # old PATH shadow, the old package's unit file. An old unit under
   # ~/.config would override the packaged one exactly like the legacy
@@ -720,11 +717,11 @@ migrates the old world), then remove the old package if pacman lists it"
 }
 
 doctor_keymap_share() {
-  # §35: the compositor must compile the helper's published keymap for
+  # The compositor must compile the helper's published keymap for
   # every physical keyboard, or two keymaps swap on every focus change
-  # and each swap resets clients' group (the Telegram-typing-the-wrong-
-  # alphabet defect). §46: a kb_file the USER set is legitimate input —
-  # name the divergence, do not erase the distinction.
+  # and each swap resets clients' group (types-the-wrong-alphabet
+  # defect). A kb_file the USER set is legitimate input — name the
+  # divergence, do not erase the distinction.
   local what="keymap share (input:kb_file)" raw kb
   local published="${DOCTOR_SOCKET%/*}/keymap.xkb"
   if command -v hyprctl >/dev/null 2>&1; then
@@ -765,9 +762,9 @@ panel adopts it on its next configure; otherwise try: omarchy restart shell"
 }
 
 doctor_keycap_fallback() {
-  # Ticket 39's silent degradation: the caps fall back to built-in tables
-  # (drawn != typed on non-US layouts) and the only trace is a journal
-  # line. The panel logs it once per layout through the shell's journal.
+  # A silent degradation: the caps fall back to built-in tables (drawn
+  # != typed on non-US layouts) and the only trace is a journal line.
+  # The panel logs it once per layout through the shell's journal.
   local what="keycap fallback (last hour)" text hits first
   if [[ -n "$DOCTOR_JOURNAL_FILE" ]]; then
     text="$(cat "$DOCTOR_JOURNAL_FILE" 2>/dev/null || true)"
@@ -784,9 +781,8 @@ doctor_keycap_fallback() {
   fi
   # The -m1 early exit SIGPIPEs printf under pipefail the moment the
   # journal text outgrows the pipe buffer past the hit — aborting the
-  # run with 141 exactly when the degradation IS found (the ticket-49
-  # review reproduced it with a 2.4 MB journal). Same guard the
-  # socket probes already use.
+  # run with 141 exactly when the degradation IS found, reproducible
+  # with a multi-MB journal. Same guard the socket probes already use.
   first="$(printf '%s\n' "$text" | grep -m1 "keycap fallback" || true)"
   doc_fail "$what" "$hits line(s) in the last hour — the caps are silently \
 degraded to the built-in tables (drawn != typed; ticket 39's class). \
@@ -865,8 +861,8 @@ omarchy restart shell"
 
 doctor_theme_deps() {
   # The panel imports qs.Commons / qs.Ui from the Omarchy shell's own
-  # tree — a shell without them (or no quickshell at all) is the
-  # fresh-user invisible-panel class of ticket 47.
+  # tree — a shell without them (or no quickshell at all) leaves the
+  # panel invisible with no error a fresh user would see.
   local what="theme dependencies" missing=()
   if ! command -v quickshell >/dev/null 2>&1; then
     doc_fail "$what" "quickshell is not installed — nothing can load the \
@@ -887,7 +883,7 @@ invisible-panel class, ticket 47); try: reinstall the omarchy shell package"
 }
 
 doctor_drift() {
-  # The protocol gate is the designed drift detector (§8): a panel
+  # The protocol gate is the designed drift detector: a panel
   # updated without its helper fails hello instead of typing nothing.
   # Version comparisons beyond that are evidence, not verdicts — a same-
   # version source edit leaves mtimes behind while the pair still agrees.

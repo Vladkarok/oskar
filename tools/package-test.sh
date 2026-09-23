@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Ticket 32's acceptance choreography — run INSIDE the VM (it installs
+# The packaging acceptance choreography — run INSIDE the VM (it installs
 # packages and drives a live session; see docs/vm-handoff.md first).
 #
 #   tools/package-test.sh <phase>
 #
-# Phases, in the audit's order (docs/audit-2026-09-13.md §32):
+# Phases, in order:
 #
 #   build        package the CURRENT TREE (tarball source, no developer
 #                checkout inside the build), namcap + ldd inspection
@@ -210,7 +210,7 @@ phase_chroot_build() {
 
 phase_install() {
   [[ -f "$PKGOUT" ]] || { no "no package built"; summary; return; }
-  # The rename walk (ticket 59): pacman -U does NOT honor replaces=
+  # The rename walk: pacman -U does NOT honor replaces=
   # (that is -Syu's, and an AUR helper's, job) and conflicts= makes a
   # plain -U a hard error while the old package stands — so the
   # pre-rename omarchy-osk package comes out first, the documented
@@ -377,7 +377,7 @@ phase_coldboot() {
   summary
 }
 
-# The regression wall's packaged-panel layer (ticket 43): the REAL panel
+# The regression wall's packaged-panel layer: the REAL panel
 # from the synced tree, hosted in this lab session, drawing against the
 # tree's daemon — zero keycap fallbacks, no new QML warnings, facts for
 # every group, ua draws й. The phase IS the deliberate invocation the

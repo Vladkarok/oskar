@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Emits the AUR-ready PKGBUILD for the current tag: the in-tree recipe with
 # sha256sums=('SKIP') replaced by the REAL tarball checksum. Release-note
-# checksums are documentation makepkg never enforces (the 2026-09-19
-# review, round 3); the AUR copy must verify for real, and this builds it
+# checksums are documentation makepkg never enforces; the AUR copy must
+# verify for real, and this builds it
 # mechanically instead of by hand. Run AFTER the tag is pushed:
 #   tools/make-aur-recipe.sh            # to stdout
 #   tools/make-aur-recipe.sh out/PKGBUILD

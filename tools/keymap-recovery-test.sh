@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ticket 06's acceptance choreography — run INSIDE the VM, against the
+# The custom-keymap acceptance choreography — run INSIDE the VM, against the
 # live session (see docs/vm-handoff.md first).
 #
 #   tools/keymap-recovery-test.sh run|cleanup
@@ -77,7 +77,7 @@ get_kbfile() {
 # tabs to the record section, 0x1F between a record's fields, and the
 # first level field is a type tag ('t') followed by the glyph.
 cap_for() {
-  # hello rides the same connection (round eight): the helper gates
+  # hello rides the same connection: the helper gates
   # every command behind a completed handshake, and a bare caps query
   # answers "err hello first" — the first reply line is the hello's.
   { printf 'hello 6\ncaps 0 %s\n' "$1" | timeout 2 socat -t1 - \

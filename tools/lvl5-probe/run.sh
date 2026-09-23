@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Levels 5-8 probe entry point (ticket 20, first task). Run ONLY through the
+# Levels 5-8 probe entry point. Run ONLY through the
 # nested session, inside omarchy-vm:
 #
 #   cd ~/oskar && tools/nested-session.sh bash ~/lvl5-probe/run.sh

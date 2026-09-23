@@ -1,4 +1,4 @@
-/* Public Wayland client used by the §35 nested-session regression.
+/* Public Wayland client used by the nested-session regression.
  *
  * WAYLAND_DEBUG supplies the wire trace.  This listener adds the one fact the
  * generic logger cannot: an identity of every wl_keyboard keymap fd's bytes.

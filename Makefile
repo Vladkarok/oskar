@@ -1,4 +1,4 @@
-# Packaging seams for oskar (release plan §7/D2).
+# Packaging seams for oskar.
 #
 #   make build   — release helper binary (cargo, locked)
 #   make check   — the host-runnable suites (offscreen JS + helper unit)
@@ -12,7 +12,7 @@
 #
 # User activation (plugin registration, unit enable) is deliberately NOT
 # here: package() writes only files; activation is the explicit, idempotent
-# user action `oskar setup` (audit 2026-09-13, ticket 32).
+# user action `oskar setup`.
 
 HELPER := daemon/target/release/oskar-daemon
 DESTDIR ?=

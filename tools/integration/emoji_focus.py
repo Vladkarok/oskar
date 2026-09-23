@@ -405,7 +405,7 @@ def main():
 
             target = TypingTarget()
 
-            # ARM. Opening the page arms the search by open (§52); the
+            # ARM. Opening the page arms the search by open; the
             # 75 ms Exclusive prime grabs the keyboard for the layer and
             # OnDemand settles in.
             panel.command("emoji", "emoji-open true")
@@ -475,8 +475,8 @@ def main():
 
             # The honoured mode, behaviourally: the layer HELD the keyboard
             # through the whole armed phase (strokes 1-3 never reached the
-            # client) and returned it on the binding's None — the §52
-            # prediction (primed Exclusive, settled OnDemand). A held
+            # client) and returned it on the binding's None — primed
+            # Exclusive, settled OnDemand. A held
             # Exclusive would refuse the return; it did not.
             panel.command("emoji-close", "emoji-close false")
             panel.command("close", "closed")

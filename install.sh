@@ -21,7 +21,7 @@ cargo build --locked --release --manifest-path "$here/daemon/Cargo.toml"
 install -Dm755 "$here/daemon/target/release/oskar-daemon" "$binary"
 install -Dm644 "$here/systemd/oskar.service" "$unit"
 
-# The lifecycle command (ticket 32): same script the package installs as
+# The lifecycle command: same script the package installs as
 # /usr/bin/oskar, exposed under the user's path. A symlink, so a
 # checkout stays its own source of truth while it is the registered
 # payload.

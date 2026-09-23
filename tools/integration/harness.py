@@ -63,7 +63,7 @@ class Client:
                     raise
                 time.sleep(0.05)
         # UTF-8 on purpose, independent of the guest's locale: the `text`
-        # command's payload is the user's string (ticket 24), and a TextIOWrapper
+        # command's payload is the user's string, and a TextIOWrapper
         # left at the locale default would encode emoji as ASCII or die trying
         # on a C-locale guest.
         self._stream = self._socket.makefile("rw", encoding="utf-8")

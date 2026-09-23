@@ -62,12 +62,12 @@ LAB_HOSTNAME = "testprod"
 
 
 def guard():
-    # Live-only, and PROVEN live: the nested polygon cannot host the panel
-    # (ticket 37's venue finding), so this leg runs only in the lab session
+    # Live-only, and PROVEN live: the nested polygon cannot host the panel,
+    # so this leg runs only in the lab session
     # itself — and a wrong machine must refuse before it can stop a service,
     # unlink a control socket or open a panel on someone's working
-    # compositor. The old check (a directory the working HOST also has)
-    # passed exactly there (ticket-40 review, block): two gates now, the
+    # compositor. A check based only on a directory the working HOST also
+    # has would pass there too, so two gates are used: the
     # deliberate human opt-in the hold_column leg already uses, and the
     # lab's documented hostname (docs/vm-handoff.md) as the positive proof.
     if os.environ.get("OSK_PANEL_CANARY_LIVE", "") != "1":
@@ -386,11 +386,9 @@ class Panel:
 
 
 def assert_no_growth(baseline, final, where):
-    # The baseline is PINNED TO ZERO (ticket 57's review): F1 removed the
-    # notice bar's illegal cross-hierarchy anchors and the canary measured
-    # the pair gone — a dynamic baseline would silently re-grandfather a
-    # future regression that emits anchor warnings from boot. Zero means
-    # zero, in every phase, forever.
+    # The baseline is PINNED TO ZERO: a dynamic baseline would silently
+    # re-grandfather a future regression that emits anchor warnings from
+    # boot. Zero means zero, in every phase, forever.
     base_grand, base_new = baseline
     final_grand, final_new = final
     if final_new:
@@ -571,10 +569,10 @@ def _run_leg(repo, window_start):
             print(f"ok    keyboard open and ready, codes {state['codes']}, "
                   f"group {state['group']}, facts in hand")
 
-            # ---- ticket 47's visibility tripwire (the H2 canary) ----
-            # The install-from-zero stranger's panel read as
-            # "near-invisible dark-on-dark", and no log line names a panel
-            # that draws nothing at all (transparent tokens, a lost font).
+            # ---- the visibility tripwire ----
+            # A panel that draws nothing at all (transparent tokens, a
+            # lost font) can read as "near-invisible dark-on-dark" with
+            # no log line naming it.
             # This is the pixels' own assertion: the open band must carry
             # cap text and a colour spread, whatever the logs say. The
             # thresholds are calibrated live on this lab's 1280x800
@@ -609,7 +607,7 @@ def _run_leg(repo, window_start):
                               "changed under this leg")
             ua_group = codes.index("ua")
 
-            # The product's §35 share: an accepted caps reply points the
+            # The product's share contract: an accepted caps reply points the
             # compositor at the published keymap. The group toggle is only
             # meaningful once that share has landed — before it, the seat
             # may still compile a stale map whose group count cannot carry
@@ -677,16 +675,14 @@ def _run_leg(repo, window_start):
             print("ok    us group drawn again: AD01 = "
                   + us_state["factsAD01"])
 
-            # ---- ticket 47's regression net: the daemon-bounce wedge ----
-            # The stranger's BLOCKER, replayed: a GRACEFUL daemon stop under
-            # a connected panel. Quickshell's socket can keep reporting
-            # `connected: true` on the peer-closed transport (observed live
-            # twice; see SocketWatch.js), and the old reconnect policy only
-            # ever re-helloed an open-looking socket — wedging the panel at
-            # "Starting oskar.service…" with every key click a silent
-            # no-op until a shell restart. The hello watchdog must recover
-            # it on its own; a panel that stays unready here is exactly
-            # this ticket returning.
+            # ---- the daemon-bounce wedge: regression net ----
+            # A GRACEFUL daemon stop under a connected panel. Quickshell's
+            # socket can keep reporting `connected: true` on the
+            # peer-closed transport (see SocketWatch.js); a reconnect
+            # policy that only ever re-helloes an open-looking socket
+            # wedges the panel at "Starting oskar.service…" with every
+            # key click a silent no-op until a shell restart. The hello
+            # watchdog must recover it on its own.
             daemon.process.terminate()
             daemon.process.wait(timeout=10)
             daemon.log.close()
@@ -786,7 +782,7 @@ def restore_service():
 
 
 # --------------------------------------------------------------------------
-# Ticket 48: the QMP legs (mask click-through, real-click). These run on
+# The QMP legs (mask click-through, real-click). These run on
 # the LAB HOST, not in the guest: the input only exists as virsh QMP
 # events (the guest has no pointer synthesis), so the legs are two-sided
 # by physics. The guest half is tools/integration/qmp_guest_frame.py,
@@ -798,16 +794,16 @@ def restore_service():
 #       python3 tools/integration/panel_canary.py
 #
 # OSK_CANARY_TREE is the GUEST-side tree to host (default: the tree the
-# guest frame is launched from). For the red run, point it at a pre-47
-# archive and pass OSK_CANARY_RED=1 to expect the real-click leg to
-# fail after a daemon bounce (the ticket-47 wedge: dead clicks).
+# guest frame is launched from). For the red run, point it at a tree
+# without the reconnect fix and pass OSK_CANARY_RED=1 to expect the
+# real-click leg to fail after a daemon bounce (dead clicks: the wedge).
 # --------------------------------------------------------------------------
 
 QMP_DOMAIN = "oskar"
 GUEST = "omarchy-vm"
-# Calibrated live on this lab's 1280x800 output (ticket 46 run 2,
-# evidence/46/run2-11: the cap at (320,621) delivered 'q' four-for-four
-# through the real panel; (272,621) is the TAB cap). The band is
+# Calibrated live on this lab's 1280x800 output (the cap at (320,621)
+# delivered 'q' four-for-four through the real panel; (272,621) is the
+# TAB cap). The band is
 # 0,499 1280x301 on this layout; both values are re-verified at runtime
 # by the daemon-side press assertion, never trusted blind.
 CAP_Q = (320, 621)
@@ -826,9 +822,9 @@ def _host_guard():
                        "ConnectTimeout=5", GUEST, "true"],
                       capture_output=True).returncode != 0:
         raise Failure("cannot ssh the guest (omarchy-vm)")
-    # Credential BEFORE any leg touches the lab (round-2 review): the
-    # strace oracle's refusal used to fire only at the real-click leg,
-    # after the mask leg had already stopped the service.
+    # Credential BEFORE any leg touches the lab: checking only at the
+    # real-click leg would let the mask leg stop the service first,
+    # leaving the strace oracle's refusal too late to prevent teardown.
     if not os.environ.get("OSK_LAB_SUDO_PASSWORD", ""):
         raise Failure("the QMP legs need OSK_LAB_SUDO_PASSWORD (the lab "
                       "guest's throwaway password, docs/vm-handoff.md) — "
@@ -846,10 +842,10 @@ def _guest(command, timeout=30):
 
 
 def _qmp(json_arg):
-    # Loud and bounded (ticket 48 review): virsh reports failure on
+    # Loud and bounded: virsh reports failure on
     # stderr with a nonzero rc — a wedged monitor must abort the leg,
     # not hang the host half forever (the guest frame self-heals at
-    # 600 s; this side had no bound at all).
+    # 600 s; this side needs its own bound).
     try:
         result = subprocess.run(
             ["virsh", "-c", "qemu:///session", "qemu-monitor-command",
@@ -939,8 +935,7 @@ def _oracle_presses(title):
 
 def _strace_on(pid):
     # The lab guest's throwaway password, from the environment — never
-    # a literal in a publishable tree (ticket 48 review); docs/vm-handoff.md
-    # owns the value.
+    # a literal in a publishable tree; docs/vm-handoff.md owns the value.
     pw = os.environ.get("OSK_LAB_SUDO_PASSWORD", "")
     if not pw:
         raise Failure("the strace oracle needs OSK_LAB_SUDO_PASSWORD "

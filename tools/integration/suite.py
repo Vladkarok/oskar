@@ -54,8 +54,7 @@ CONFIGURE_GROUP0 = "configure\tevdev\tpc105\tus,ua\t\tgrp:caps_toggle\t\t0"
 CONFIGURE_SWAPPED = "configure\tevdev\tpc104\tus,ua\t\tgrp:caps_toggle\t\t1"
 
 # Three layouts, so a cycle has a third group to reach and wrapping has
-# somewhere to wrap from (ticket 10: the chooser popup is v2, but cycling
-# through three groups has to be proven before the panel goes public).
+# somewhere to wrap from.
 THREE_GROUP = "configure\tevdev\tpc105\tus,ua,de\t\tgrp:caps_toggle\t\t0"
 # Byte-identical keymap, different group: the path a `group <n>` mirrors
 # takes when the panel re-sends its configure after a compositor switch.
@@ -65,11 +64,11 @@ THREE_GROUP_ON_DE = "configure\tevdev\tpc105\tus,ua,de\t\tgrp:caps_toggle\t\t2"
 # <LFSH> in the Lock modifier map, and reading the modifier map instead of
 # asking xkb is what made held Shift produce lowercase letters (a730c99).
 #
-# This was the owner's option string until 2026-09-03, when it was reverted to
-# `compose:caps,grp:alt_shift_toggle` — `grp:caps_toggle` turned out to break
-# layout switching for fcitx5 clients. The fixture stays exactly as it is: it
+# `grp:caps_toggle` breaks layout switching for fcitx5 clients, which is
+# why the shipped session uses `compose:caps,grp:alt_shift_toggle`
+# instead. The fixture stays exactly as it is: it
 # is the regression guard for a730c99, and its value is that it is *not* the
-# session the panel ships into. Do not "update" it to match the owner.
+# session the panel ships into. Do not "update" it to match the shipped session.
 CONFIGURE_CAPSLOCK_CANCEL = (
     "configure\tevdev\tpc105\tus,ua\t\tshift:both_capslock_cancel,grp:caps_toggle\t\t0"
 )
@@ -96,7 +95,7 @@ def three_group_cycling(helper, keyboard):
     helper.expect_log("listening on")
     # First test on a fresh helper, deliberately: the only compiles in the
     # log are the startup default and the three-group keymap, so the count
-    # taken at the end proves cycling recompiled nothing (spec-v1 §3.3: group
+    # taken at the end proves cycling recompiled nothing (group
     # switching is never a recompile).
     client = helper.connect()
     client.expect("hello 6", "hello 6")
@@ -125,9 +124,9 @@ def three_group_cycling(helper, keyboard):
 
 @test("supplied keycap facts match what a focused native client receives")
 def facts_match_typed_output(helper, keyboard):
-    # Ticket 04's seam comparison: the facts the helper supplies for a group
+    # The seam comparison: the facts the helper supplies for a group
     # and the characters a real client actually reads, side by side, for
-    # both groups of the owner's setup. The caps the panel will draw are
+    # both groups. The caps the panel will draw are
     # only honest if THIS holds.
     client = helper.connect()
     client.expect("hello 6", "hello 6")
@@ -141,8 +140,8 @@ def facts_match_typed_output(helper, keyboard):
         raise Failure(f"caps reply for the wrong world: {facts}")
     if facts["by_position"]["AD01"] != [{"text": "q"}, {"text": "Q"}]:
         raise Failure(f"group 0 AD01 facts: {facts['by_position']['AD01']}")
-    # Ticket 20 keeps the position's original levels 1-4 and adds the
-    # reserved-symbol block at levels 5-8 (decisions §33). This early seam
+    # The position keeps its original levels 1-4 and adds the
+    # reserved-symbol block at levels 5-8. This early seam
     # still checks the whole facts reply so it cannot silently regress to the
     # pre-block two-level shape before the dedicated chord test runs below.
     if facts["by_position"]["AE01"] != [
@@ -232,8 +231,8 @@ def group_follows_protocol(helper, keyboard):
 
 @test("out-of-range groups are refused without touching the installed map")
 def out_of_range_groups_fail_closed(helper, keyboard):
-    # Ticket 31's daemon defence in depth: `caps` already refused a group
-    # the keymap does not carry (decisions §23); configure and `group` —
+    # Daemon defence in depth: `caps` already refuses a group
+    # the keymap does not carry; configure and `group` —
     # the two commands that MOVE the group — refuse it the same way, with
     # no device state change, no recompile, and the previously installed
     # generation intact.
@@ -257,7 +256,7 @@ def out_of_range_groups_fail_closed(helper, keyboard):
 
 @test("a release sent from inside the not-ready window lifts the key immediately")
 def release_crosses_the_unready_window(helper, keyboard):
-    # The socket boundary under the round-2 blocker. On the panel side the
+    # The socket boundary under the unready window. On the panel side the
     # unready window is self-inflicted: a compositor event re-sends the
     # configure and the panel refuses to treat itself as ready until
     # `configured` is read back. A same-keymap configure keeps the helper's
@@ -342,9 +341,9 @@ def claims_are_owned(helper, keyboard):
 
 @test("a held modifier reaches a focused client as a chord")
 def modifiers_reach_the_client(helper, keyboard):
-    # The gap that let ticket 03 ship broken: every other assertion in this
-    # file is about a key going out, and a key going out is exactly what did
-    # work — bare taps typed while every chord arrived modifierless, because
+    # Every other assertion in this file is about a key going out, but a
+    # bare tap typing is not enough proof: a chord can arrive
+    # modifierless even though the tap works, because
     # a wlroots compositor takes a virtual keyboard's modifier state from the
     # `modifiers` request and not from watching key events. Only a client
     # reading characters can tell the two apart.
@@ -375,7 +374,7 @@ def modifiers_reach_the_client(helper, keyboard):
         client.expect("tap RTRN", "ok")
         target.expect_text("q\nQ\nq\n")
 
-        # Modifiers stack (spec-v1 §5): two held at once must both be in the
+        # Modifiers stack: two held at once must both be in the
         # mask, not the last one to arrive. A terminal shows Alt as the ESC
         # prefix and Shift as the capital, so one line carries both. Super is
         # the fourth modifier and produces no character anywhere, so it stays
@@ -388,7 +387,7 @@ def modifiers_reach_the_client(helper, keyboard):
         client.expect("tap RTRN", "ok")
         target.expect_text("q\nQ\nq\n\x1bQ\n")
 
-        # A locked modifier survives a language switch (spec-v1 §5): the group
+        # A locked modifier survives a language switch: the group
         # rides on the same request as the mask, so a `group` command that
         # sent a zero would silently drop what is held. Ukrainian's shifted
         # AD01 is a capital Й, which is only reachable with both the switch
@@ -414,7 +413,7 @@ def layout_reaches_the_compositor(helper, keyboard):
 
 @test("a hello in another protocol version is refused, not greeted")
 def protocol_mismatch_is_refused(helper, keyboard):
-    # The hello gate (decisions §23, ticket 04): version 4 moved reply
+    # The hello gate: a protocol version bump moves reply
     # shapes on both sides in one change, so a mixed pairing must be named
     # before any configure is sent — the exact refusal the panel's
     # "service needs updating" state keys off. No configure rides with this
@@ -428,7 +427,7 @@ def protocol_mismatch_is_refused(helper, keyboard):
     client.close()
 
 
-# ---- the review rounds' overlap contract (rounds 2–7), against the REAL
+# ---- the overlap contract, against the REAL
 # helper: the host suites exercise the machines alone; these pin the seams
 # where one operation overlaps another on the same socket.
 
@@ -471,7 +470,7 @@ def coalesced_batch_is_fully_served(helper, keyboard):
         raise Failure("the err'd group did not spend exactly its own slot")
     if client.read_line() != "pong":
         raise Failure("the reply after the err was not pong")
-    # The round-three batch finding: valid coalesced commands totalling
+    # Valid coalesced commands totalling
     # far past the 4 KiB frame cap are ALL served — the cap is per line.
     client.write_unread("ping\n" * 1500)
     for i in range(1500):
@@ -507,7 +506,7 @@ def handshake_window_survives_traffic(helper, keyboard):
     dropped = None
     # Stream frames without a hello for longer than the five-second
     # window: the daemon must drop the connection at the window, however
-    # busy the read side keeps it (round two's finding).
+    # busy the read side keeps it.
     while time.monotonic() - started < 9:
         try:
             raw.write_unread("ping\n" * 64)
@@ -635,7 +634,7 @@ def facts_carry_generation(helper, keyboard):
     client.close()
 
 
-# A variant the owner's setup could carry: the second copy of `us` is
+# A variant a real seat could carry: the second copy of `us` is
 # `euro`, whose AltGr level puts the euro sign on 5. Same layout code for
 # both groups — the case where guessing a group from the code is wrong.
 CONFIGURE_VARIANT = "configure\tevdev\tpc105\tus,us\t,euro\t\t\t0"
@@ -721,7 +720,7 @@ def shift_capitalises_under_capslock_cancel(helper, keyboard):
 
 @test("a non-modifier held past the cap is released by the helper and logged")
 def cap_releases_a_stuck_key(helper, keyboard):
-    # The wedged-panel case (spec-v1 §6). Nothing arrives on the socket after
+    # The wedged-panel case. Nothing arrives on the socket after
     # the `down`, which is exactly the shape a panel that is alive but stuck
     # has — so the release cannot come from the panel and cannot come from a
     # heartbeat, because there is none.
@@ -740,7 +739,7 @@ def cap_releases_a_stuck_key(helper, keyboard):
 
 @test("a modifier held past the cap is left alone and still modifies")
 def cap_exempts_modifiers(helper, keyboard):
-    # A locked Shift is deliberately held for minutes (spec-v1 §5), so the cap
+    # A locked Shift is deliberately held for minutes, so the cap
     # must not touch a modifier code. "The lock indicator still matches
     # reality" is a panel-side statement, but the fact underneath it is
     # visible here: after twice the cap the modifier is still claimed, and a
@@ -885,7 +884,7 @@ def repeat_belongs_to_the_compositor(helper, keyboard):
 
 @test("a configure the helper refuses never drains a held key")
 def refused_configure_never_drains(helper, keyboard):
-    # The round-6 blocker's never-drained ordering, at the socket. A failed
+    # The never-drained ordering, at the socket. A failed
     # configure (a kb_file that cannot compile) is answered by install_config
     # BEFORE it would drain anything, so the connection's holds and the mask
     # they imply survive intact — the fact the panel's failure settle counts
@@ -987,15 +986,15 @@ def facts_match_xwayland_output(helper, keyboard):
 
 @test("reserved symbols type the same characters in every group")
 def reserved_symbols_are_layout_independent(helper, keyboard):
-    # Ticket 18, moved by ticket 20. The helper adds a block of symbols no
+    # The helper adds a block of symbols no
     # configured layout carries to every keymap it installs. The claim is that
     # they are not a layout's business: the same cap produces the same
     # character in `us` and in `ua`.
     #
-    # Since decisions §33 the block rides on levels five to eight of the digit
+    # The block rides on levels five to eight of the digit
     # row rather than on free keycodes of its own — Chromium's Ozone/Wayland
-    # DomCode table drops those, so they typed here and nowhere the owner
-    # works. `<LVL5>` opens the levels; Shift and `<LVL3>` choose among them.
+    # DomCode table drops those, so they would not type in Chromium-based
+    # clients. `<LVL5>` opens the levels; Shift and `<LVL3>` choose among them.
     #
     # Nothing here installs a fixture keymap. The configure is the ordinary
     # one every other test uses, so what is asserted is what ships.
@@ -1017,8 +1016,8 @@ def reserved_symbols_are_layout_independent(helper, keyboard):
     if block != [{"text": "!"}, {"text": "1"},
                  {"text": "@"}, {"text": "2"}]:
         raise Failure(f"AE01 levels 5-8 are not the block: {block}")
-    # And what the layout itself put on levels 1-4 is still there. This is
-    # ticket 20's other half: the block is an addition, never an edit.
+    # And what the layout itself put on levels 1-4 is still there: the
+    # block is an addition, never an edit.
     below = levels[:4]
     if below[0] != {"text": "1"} or below[1] != {"text": "!"}:
         raise Failure(f"AE01 lost its own levels 1-2: {below}")
@@ -1083,7 +1082,8 @@ def reserved_symbols_are_layout_independent(helper, keyboard):
 
         # No `us` group at all: the direct punctuation remains the same
         # because it comes from the reserved block rather than a temporary
-        # group switch. This is ticket 19's formerly dishonest `@` case.
+        # group switch — `@` must not silently depend on a `us` group
+        # being present.
         client.configure("configure\tevdev\tpc105\tua,ru\t\tgrp:caps_toggle\t\t1")
         keyboard.expect_group(1)
         no_us = client.caps(1, ["AE01"])["by_position"].get("AE01")
@@ -1387,7 +1387,7 @@ def focus_keeps_one_keymap_and_group(helper, keyboard):
 
 @test("a custom keymap edited at its own path installs, unchanged does not")
 def custom_keymap_content_refresh(helper, keyboard):
-    # Ticket 06. A configure carries the PATH of a custom keymap; the user
+    # A configure carries the PATH of a custom keymap; the user
     # edits the FILE. Comparing configure fields alone reports "same keymap"
     # for a map whose every key may have changed, and the helper goes on
     # typing yesterday's while the panel draws caps for it — the two agreeing
@@ -1397,12 +1397,10 @@ def custom_keymap_content_refresh(helper, keyboard):
     # helper's own and a file written there is one the helper cannot see.
     path = os.path.join(os.path.expanduser("~"), "osk-custom-keymap.xkb")
 
-    # §91's re-order: the typed-delivery legs this suite lost used to
-    # space the compile-hungry neighbours out of this test's churn
-    # window; without them the custom-map configures share ten seconds
-    # with the preceding tests' compiles and the honest budget refuses.
-    # Drain the window first — the budget is the product's, not the
-    # fixture's.
+    # The custom-map configures share the churn window with the
+    # preceding tests' compiles; without draining it first the honest
+    # budget refuses. Drain the window first — the budget is the
+    # product's, not the fixture's.
     time.sleep(10.5)
 
     def write(layouts):
@@ -1483,12 +1481,12 @@ def custom_keymap_content_refresh(helper, keyboard):
 def shutdown_releases_a_hold(helper, keyboard):
     # Last in the file because it stops the helper: nothing can run after it.
     #
-    # The defect (ticket 17, found by the owner): SIGTERM killed the process
-    # with `shared.held` still full, so the virtual keyboard was destroyed
-    # holding the key. The compositor left it down and the focused client
-    # repeated it for the rest of the session; `Retry` could not clear it,
-    # because a restarted helper gets a NEW keyboard object and cannot lift
-    # another one's press.
+    # SIGTERM must not kill the process with `shared.held` still full:
+    # that would destroy the virtual keyboard while holding the key,
+    # leaving it down for the focused client to repeat for the rest of
+    # the session — and `Retry` cannot clear it, because a restarted
+    # helper gets a NEW keyboard object and cannot lift another one's
+    # press.
     #
     # Two things make this test prove the shutdown path specifically:
     #

@@ -82,7 +82,7 @@ host_runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 # script. An ssh shell carries no WAYLAND_DISPLAY, and libwayland's default
 # (wayland-0) is not where this session publishes its socket — the nested
 # Hyprland then dies in CBackend::create() before its own socket ever
-# appears (measured 2026-09-09, ticket 20's levels-5-8 probe). Default to
+# appears. Default to
 # the live session's own display; a per-run override still wins.
 if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
     for sock in "$host_runtime"/wayland-*; do
@@ -203,63 +203,28 @@ status=$?
 #     us,ua(normal); ua,ru; us,ua(normal).
 #   That is 11 including startup. The Electron gate then changes the
 #   compositor input identity empty -> published (its preceding clear is an
-#   empty -> empty no-op). The §35 gate changes published -> empty -> published.
-#   Those are 3 more: 14 possible identity changes in total.
+#   empty -> empty no-op). The shared-keymap gate changes published -> empty
+#   -> published. Those are 3 more: 14 possible identity changes in total.
 #
-#   14 possible identity changes x 2 lines = 28.
+#   16 identity changes (14 above, plus the shared-keymap leg's kb_file
+#   rewrite-and-restore, which reaches Xwayland and logs its own pair even
+#   though it changes no seat identity) x 2 lines = 32, + 1 pair (2 lines)
+#   for compositor startup variance = 34.
 #
-#   Ticket 06's custom-keymap test installs four more keymaps in the HELPER
-#   (a kb_file rewritten twice and the restore), and deliberately adds nothing
-#   here: those never reach the seat, which is the distinction this count
-#   turns on. A run that starts counting them is a run where something began
-#   re-pointing the compositor, and that is worth failing over.
+#   The custom-keymap test's HELPER installs (a kb_file rewritten twice and
+#   the restore) deliberately add nothing to this count: those never reach
+#   the seat, which is the distinction this count turns on. A run that
+#   starts counting them is a run where something began re-pointing the
+#   compositor, and that is worth failing over.
 #
-# 34 allows one more pair for compositor startup variance. A feedback loop
-# grows by dozens almost immediately — the incident above was 56,547 in five
-# minutes — so 34 still fails closed on the churn this guard exists to catch.
+# 34 allows one more pair for compositor startup variance; observed on
+# this guest 28-30 green. The budget keeps triple headroom for guest
+# variance, and a feedback loop grows at ~190 pairs per second (a prior
+# incident hit 56,547 in five minutes), so 34 still fails closed on the
+# churn this guard exists to catch.
 #
-# Re-derived 2026-09-10 at 16 identity changes: the shared-keymap leg
-# (ticket 06) re-points the seat's kb_file and restores it, which reaches
-# Xwayland where the old derivation counted nothing. Each Xwayland keymap
-# load logs one xkbcomp ERROR-REPORT pair on this guest — Xwayland warns on
-# the extended map whatever it compiles — and the typing legs pass, so the
-# reports are warnings, not failures. 16 x 2 = 32, + 1 pair (2 lines) = 34.
-#
-# If this number has to move again, re-derive it: count the identity changes,
-# not the maps.
-#
-# (The derivation journal from here to the 2026-09-21 re-derivation is
-# pre-§91 history, kept for the measurement method; the re-derivation is
-# the living one.)
-# Re-derived 2026-09-10 for ticket 24's text-pick legs (foot delivery, x11cat
-# delivery, and the §35 invariant across a pick). A `text` pick uploads the
-# transient keymap and then the installed one back to the helper's own
-# virtual keyboard: two seat keymap loads that change NO identity — the
-# installed map ends where it started — but each costs one Xwayland
-# ERROR-REPORT pair on this guest, measured in isolation (2 picks: baseline
-# 4 lines, then 10, then 14). Five picks in the suite, so the uploads alone
-# are 5 x 2 pairs x 2 lines = 20. Measured whole-suite costs wobble around
-# that enumeration with the legs' focus choreography — 44 lines for three
-# picks when the first two legs landed, 36 for three picks once the x11cat
-# leg ran red at its first pick and the observer leg never started — so the
-# allotment is 4 pairs per pick rather than the uploads alone:
-#
-#   32 (identity changes, unchanged above) + 5 picks x 4 pairs x 2 lines
-#   = 40, + 2 (one startup-variance pair) = 74.
-#
-# Re-derived 2026-09-21 for the §91 suite: the THIRTEEN typed picks the
-# deleted 2026-09-11 stage-C derivation counted are GONE with the legs (every
-# emoji pick rides the clipboard now; the helper uploads no transient
-# keymap for picks at all). The remaining churn is the identity-change
-# budget above plus one startup-variance pair (the mid-delivery stop
-# respawn that once added two more pairs went with §91's legs):
-#
-#   32 + 2 = 34; observed on this guest 28-30 green (§91's runs).
-#   The budget keeps triple headroom for guest variance.
-#
-# A feedback loop
-# grows at ~190 pairs per second (the incident above), so any real loop still fails
-# closed on the churn this guard exists to catch.
+# If this number has to move again, re-derive it: count the identity
+# changes, not the maps.
 after_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 rebuilds=$((after_xkb - before_xkb))
 echo "--- exited with $status; compositor keymap rebuilds during run: $rebuilds ---"

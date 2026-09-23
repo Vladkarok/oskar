@@ -249,8 +249,8 @@ def run_steps(helper, reader):
         if kind == "char":
             ok = needle in delta
         elif kind == "nochar" and LEG not in MARKERS:
-            # foot resolves keysyms itself: I219 typing there is the known
-            # blind spot ticket 20 records, not a finding — record, don't fail
+            # foot resolves keysyms itself: I219 typing there is a known
+            # blind spot, not a finding — record, don't fail
             ok, kind = True, "info"
         else:
             singles = [tok.split("\u00b7")[0] for tok in delta.split()
@@ -376,7 +376,7 @@ def main():
             say(f"ABORT  [{LEG}] chromium never took focus; "
                 f"/tmp/chromeprobe-{LEG}.log follows")
             sys.exit(4)
-        # the owner's hand-run probe clicked into the page; a synthetic run
+        # A hand-run probe clicks into the page; a synthetic run
         # has no click, and a focused window whose web contents were never
         # activated swallows every keydown — wake it with a Tab and verify
         # the page is actually receiving before the battery starts
