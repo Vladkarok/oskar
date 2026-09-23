@@ -1,9 +1,9 @@
 .pragma library
 .import "HoldColumn.js" as HoldColumn
 
-// Ticket 50: dwell-to-type — hover a cap for D milliseconds and it types,
-// press+release as one click. The pure state machine, kept out of QML so
-// the host suite can pin it (tests/dwell.qml), the ModifierReducer.js and
+// Dwell-to-type: hover a cap for D milliseconds and it types, press+release
+// as one click. The pure state machine, kept out of QML so the host suite
+// can pin it (tests/dwell.qml), following the ModifierReducer.js and
 // HoldColumn.js discipline. The QML side delivers enter/move/leave events,
 // runs one deadline timer, and maps the returned action onto the SAME
 // press paths a physical click takes — the machine owns every
@@ -26,27 +26,27 @@
 //     board must never close the panel, flip the page, open a picker, or
 //     toggle a semantic layer under the pointer's feet, because those
 //     actions re-render or destroy the surface the pointer is resting on.
-//     A gated keyboard dwells nothing (spec-v1.1 §6: no press path), and
-//     the emoji search arm never dwells — the page is excluded chrome, and
-//     its search is immediate by contract (ticket 37 refused the defer for
-//     the same reason).
+//     A gated keyboard dwells nothing (no press path), and the emoji
+//     search arm never dwells — the page is excluded chrome, and its
+//     search is immediate by contract.
 //
-//   holdDefers — the 37 interplay. In dwell mode no cap defers its typing
-//     to mouse-release: the dwell IS the click, a press types immediately,
-//     and the column menu is reached by dwelling PAST the type, never by
-//     holding a button. With dwell off, holdDefers is HoldColumn.shouldDefer
-//     unchanged — today's press/release/menu behaviour is regression-pinned
-//     by tests/hold-column.qml and tests/dwell.qml together.
+//   holdDefers — the interplay with the hold-column menu. In dwell mode no
+//     cap defers its typing to mouse-release: the dwell IS the click, a
+//     press types immediately, and the column menu is reached by dwelling
+//     PAST the type, never by holding a button. With dwell off, holdDefers
+//     is HoldColumn.shouldDefer unchanged — today's press/release/menu
+//     behaviour is regression-pinned by tests/hold-column.qml and
+//     tests/dwell.qml together.
 //
 //   the menu window — the span between the type and the menu is DERIVED
 //     from HoldColumn.HOLD_THRESHOLD_MS, not copied: one hold vocabulary,
 //     and the two numbers cannot drift.
 //
-//   the menu's own entries (slice two) — a pure-dwell user opened the
-//     column menu by resting past the type; the entries are dwell targets
-//     too, or one click is still owed to PICK. An entry is not a cap, so
-//     eligibility is its own rule, and the rest has no second threshold:
-//     the pick is the destination.
+//   the menu's own entries — a pure-dwell user opened the column menu by
+//     resting past the type; the entries are dwell targets too, or one
+//     click is still owed to PICK. An entry is not a cap, so eligibility
+//     is its own rule, and the rest has no second threshold: the pick is
+//     the destination.
 
 /// The delay's designed window, in milliseconds: 400 is faster than a
 /// deliberate pause, 2000 slower than anyone would wait, ~800 reads as
@@ -56,9 +56,9 @@ var DELAY_MIN_MS = 400
 var DELAY_MAX_MS = 2000
 var DELAY_DEFAULT_MS = 800
 
-/// How long the continued rest after a type keeps arming ticket 37's
-/// column menu. Read from HoldColumn so it stays 37's own window by
-/// construction — see the module header.
+/// How long the continued rest after a type keeps arming the column menu.
+/// Read from HoldColumn so it stays that window by construction — see the
+/// module header.
 var MENU_WINDOW_MS = HoldColumn.HOLD_THRESHOLD_MS
 
 /// The caps that are the panel's own commands rather than input. This
@@ -97,7 +97,7 @@ function eligible(capData, searchMode, inputReady) {
     return COMMAND_CAPS[capData.key] !== true
 }
 
-/// Whether ticket 37's release-defer stands for this cap: never in dwell
+/// Whether the release-defer stands for this cap: never in dwell
 /// mode (the dwell is the click), exactly HoldColumn.shouldDefer outside
 /// it. The composition is here, not in the QML, so the interplay is a
 /// pinned decision rather than an untestable wiring detail.
@@ -106,16 +106,16 @@ function holdDefers(dwellEnabled, capData, entries, searchMode, inputReady) {
     return HoldColumn.shouldDefer(capData, entries, searchMode, inputReady)
 }
 
-/// Whether a hold-menu ENTRY is a dwell target (ticket 50, slice two):
-/// a pure-dwell user OPENED the column menu by resting past the type,
-/// and needing one click to PICK breaks the click-free promise. An
-/// entry is not a cap — no xkb position, no key, no chrome exclusion —
-/// so this is its own rule, not `eligible`'s: dwell must be on, and the
-/// pick's own gate applies (pickHoldEntry's guard, restated — a gated
-/// entry draws dim and refuses its click, and its dwell refuses
-/// identically). The menu's padding and the gaps between entries are
-/// not entries: the hover shield (0105888) swallows a rest there whole,
-/// and only the entry hit areas ever carry an entry here.
+/// Whether a hold-menu ENTRY is a dwell target: a pure-dwell user OPENED
+/// the column menu by resting past the type, and needing one click to
+/// PICK breaks the click-free promise. An entry is not a cap — no xkb
+/// position, no key, no chrome exclusion — so this is its own rule, not
+/// `eligible`'s: dwell must be on, and the pick's own gate applies
+/// (pickHoldEntry's guard, restated — a gated entry draws dim and refuses
+/// its click, and its dwell refuses identically). The menu's padding and
+/// the gaps between entries are not entries: the hover shield swallows a
+/// rest there whole, and only the entry hit areas ever carry an entry
+/// here.
 function entryEligible(entry, dwellEnabled, searchMode, inputReady) {
     if (!entry) return false
     if (dwellEnabled !== true) return false
@@ -186,8 +186,7 @@ function tick(state, now) {
 /// Milliseconds from `now` to the live state's NEXT deadline — the type
 /// deadline (t0 + delay) while "armed", the menu deadline (t0 + menuDelay)
 /// once "spent" — restating tick's own two comparisons so the wiring's
-/// re-arm and the machine's crossing cannot drift (the 55 follow-up: the
-/// arithmetic lived twice in dwellTick under two spellings). Floored at
+/// re-arm and the machine's crossing cannot drift. Floored at
 /// 1 because the answer is a timer interval: a deadline already reached
 /// or passed at the moment of asking — the wiring's one-delivery reality,
 /// where a single late fire can cross a threshold nobody re-armed for —

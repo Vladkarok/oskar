@@ -3,11 +3,10 @@
 // The keymap-share scheduler, pure: one share run is in flight at a
 // time, launched FOR a generation; a newer generation arriving mid-run
 // only updates the wish. The run's success records the generation IT
-// launched (decisions §69 — an old run's exit used to mark a newer map
-// shared and the required rerun never happened), and — §71's half of
-// the same defect — a pending wish is CONSUMED on success: the next run
-// is scheduled immediately, so the newest map cannot sit unshared with
-// nothing running and nothing retrying.
+// launched — an old run's exit must never mark a newer map shared — and
+// a pending wish is CONSUMED on success: the next run is scheduled
+// immediately, so the newest map cannot sit unshared with nothing
+// running and nothing retrying.
 //
 // Failures do not consume the wish: the retry loop belongs to the
 // caller (same generation, same run), and a caller that gives up loudly
@@ -42,8 +41,8 @@ function acked(state, generation) {
 }
 
 /// The run's verdict. Success shares EXACTLY what this run launched and
-/// schedules the pending wish if it is newer (§71); failure keeps the
-/// run alive for the caller's retry, wish untouched.
+/// schedules the pending wish if it is newer; failure keeps the run
+/// alive for the caller's retry, wish untouched.
 function runFinished(state, succeeded) {
     if (!state.running) return { state: state, start: false }
     if (!succeeded) return { state: state, start: false }

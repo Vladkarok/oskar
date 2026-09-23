@@ -1,10 +1,9 @@
 .pragma library
 
-// The text-glyph shelf (§85): the owner asked for the simple, classic
-// glyphs — heart, smiling face, star — in the picker. These are BARE
-// single BMP scalars — one character, one glyph, no sequences to
-// split — delivered by the clipboard transaction like every pick
-// (§91: the one channel). The generated catalogue cannot
+// The text-glyph shelf: the simple, classic glyphs — heart, smiling face,
+// star — in the picker. These are BARE single BMP scalars — one
+// character, one glyph, no sequences to split — delivered by the
+// clipboard transaction like every pick. The generated catalogue cannot
 // hold them by construction (it keeps only fully-qualified emoji
 // sequences — the heart WITH its variation selector is there, the
 // bare one is not), so this shelf is hand-curated and the generator

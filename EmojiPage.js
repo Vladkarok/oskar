@@ -1,11 +1,10 @@
 .pragma library
 
-// The merged shelf seam (§85): one place answers "everything pickable" —
-// the generated catalogue plus the hand-curated text-glyph shelf (the
-// owner's bare-BMP classics: heart, smiling face, star). The shelf is a
-// THIRD tab, before the animals, per the owner's placement; its entries
+// One place answers "everything pickable" — the generated catalogue plus
+// the hand-curated text-glyph shelf (bare-BMP classics: heart, smiling
+// face, star). The shelf is a THIRD tab, before the animals; its entries
 // are lone BMP scalars — one character, no sequences — delivered by the
-// clipboard transaction like every pick (§91: the one channel).
+// clipboard transaction like every pick, the one channel.
 .import "EmojiCatalog.js" as Catalog
 .import "TextGlyphs.js" as TextGlyphs
 
@@ -20,23 +19,23 @@ function allGroups() {
 }
 
 function searchEverything(query, limit) {
-    // The catalogue side is capped with COLLAPSE HEADROOM (§88: a raw
-    // cap of the page's own limit left tone families eating up to six
-    // raw hits per tile — broad "hand"/"person" queries filled the
-    // viewport with ~20 distinct of 64); the shelf's hits ride after it
-    // WHOLE (§86: concatenating uncapped-then-capping starved every
-    // glyph past broad terms' flood).
+    // The catalogue side is capped with COLLAPSE HEADROOM: a raw cap of
+    // the page's own limit lets tone families eat up to six raw hits per
+    // tile, leaving broad "hand"/"person" queries with only ~20 distinct
+    // tiles of 64; the shelf's hits ride after it WHOLE — concatenating
+    // uncapped-then-capping would starve every glyph past a broad term's
+    // flood.
     var cap = limit > 0 ? limit * 3 : 0
     return Catalog.search(query, cap).concat(TextGlyphs.search(query))
 }
 
-// Pure logic behind the panel's own emoji page (ticket 24). The suites
-// cannot load QML (decisions §36), so everything the page computes — the
-// tab model over the catalogue's groups, the group slice the grid shows,
-// the step-3 rule that turns one intercepted keyboard cap into the next
-// search query, and the column arithmetic that fits the grid to the page —
-// lives here, where tests/emoji-page.qml can drive it. Ranked search itself
-// is the catalogue's (EmojiCatalog.js); delivery is step 4.
+// Pure logic behind the panel's own emoji page. The suites cannot load
+// QML, so everything the page computes — the tab model over the
+// catalogue's groups, the group slice the grid shows, the rule that turns
+// one intercepted keyboard cap into the next search query, and the column
+// arithmetic that fits the grid to the page — lives here, where
+// tests/emoji-page.qml can drive it. Ranked search itself is the
+// catalogue's (EmojiCatalog.js); delivery happens elsewhere.
 
 var CATEGORY_ICONS = {
     "Smileys & Emotion": "😀",
@@ -86,10 +85,9 @@ function toneFamilyKey(sequence) {
 function familyBases(entries) {
     var bases = {}
     for (var i = 0; i < entries.length; i++) {
-        // The text-glyph shelf NEVER joins a family (§86, all three
-        // reviewers of the shelf's own round): toneFamilyKey strips the
-        // variation selector, so a bare glyph and its emoji twin share a
-        // key — and a glyph winning the key would redraw the twin's tab
+        // The text-glyph shelf NEVER joins a family: toneFamilyKey strips
+        // the variation selector, so a bare glyph and its emoji twin share
+        // a key — and a glyph winning the key would redraw the twin's tab
         // monochrome and deliver the bare scalar where the user picked
         // the emoji. First (catalogue) write wins; glyphs pass through
         // unmatched in both directions.
@@ -113,12 +111,11 @@ function visibleEntries(entries, catalog, limit) {
         var entry = entries[i]
         var key = toneFamilyKey(entry.emoji)
         var base = bases[key]
-        // "Both directions" means BOTH (§87, three reviewers again): a
-        // Text entry is never REMAPPED either — its family key still
-        // resolves to the catalogue twin's base, and substituting that
-        // drew ♥️ on the Text tab and delivered twin bytes down the
-        // clipboard route. The shelf's tiles are exactly what the shelf
-        // says they are.
+        // "Both directions" means BOTH: a Text entry is never REMAPPED
+        // either — its family key still resolves to the catalogue twin's
+        // base, and substituting that would draw ♥️ on the Text tab and
+        // deliver twin bytes down the clipboard route. The shelf's tiles
+        // are exactly what the shelf says they are.
         var visible = String(entry.group) !== "Text" && base
             && String(base.group) !== "Text" ? base : entry
         var identity = visible.emoji
@@ -137,10 +134,10 @@ function visibleEntries(entries, catalog, limit) {
 function entryForTone(entry, tone, catalog) {
     var selected = String(tone || "")
     if (selected === "" || hasTone(entry.emoji)) return entry
-    // A text glyph has no tones and borrows none (§86): ✌ on the shelf
-    // shares its family key with the catalogue's toned victory hands,
-    // and resolving the selector would deliver ✌🏽 — a different
-    // character than the tile drew.
+    // A text glyph has no tones and borrows none: ✌ on the shelf shares
+    // its family key with the catalogue's toned victory hands, and
+    // resolving the selector would deliver ✌🏽 — a different character
+    // than the tile drew.
     if (String(entry.group) === "Text") return entry
     var key = toneFamilyKey(entry.emoji)
     var bases = familyBases(catalog)
@@ -164,8 +161,8 @@ function entryForTone(entry, tone, catalog) {
     return best || entry
 }
 
-// A grid tile's origin decides whether its pick re-applies the skin tone
-// (review R1). Catalogue tiles — a group slice, or search results collapsed
+// A grid tile's origin decides whether its pick re-applies the skin tone.
+// Catalogue tiles — a group slice, or search results collapsed
 // to their family bases — resolve the selector; usage history repeats its
 // exact stored sequence, so a Recent tile that drew 👍 delivers 👍 and not
 // 👍🏿. The grid's one delegate serves both models, so it asks here with the
@@ -175,7 +172,7 @@ function appliesTone(searching, activeGroup) {
     return !!searching || String(activeGroup) !== "__usage__"
 }
 
-// What a paste may hand the search query (R2 review follow-up): the
+// What a paste may hand the search query: the
 // clipboard serves whatever it holds — bytes that are not really text, or
 // an entire document — and the query is typed text. Whitespace collapses
 // to single separators (the shape search() splits its terms on) and the
@@ -205,7 +202,7 @@ function groupEntries(entries, group) {
     return visibleEntries(out, entries, 0)
 }
 
-// Step 3's seam: one intercepted keyboard cap applied to the standing
+// One intercepted keyboard cap applied to the standing
 // query. The keyboard resolves what a cap draws (Layout.charUnderModifiers —
 // what you see is what the search gets, in every configured layout and
 // group) and names the action; this only updates the string.
@@ -229,30 +226,29 @@ function nextQuery(query, action, text) {
     return q
 }
 
-// Ticket 42's seam: one PHYSICAL key event, named with the action
-// vocabulary nextQuery (and Keyboard.searchInput) already speak — "char",
-// "backspace", "escape" — or "" when the key produces nothing. `event` is
-// event-shaped (key: the Qt key code, text: the decoded character or ""),
-// never a live KeyEvent, so tests/emoji-page.qml drives it with plain
-// objects (decisions §36). "char" hands the caller back to event.text
-// verbatim — the physical layout's character, Cyrillic included, case
-// included, exactly the rule the caps' resolution follows. Control
-// payloads never type: Return/Enter (\r), Delete (U+007F) and everything
-// below space are "" — Enter picking the first result stays out (the
-// ticket's nice-to-have), and a key with no text (modifiers, arrows, Tab,
-// function keys) has nothing to append. Key codes are matched before text
-// so Escape's or Backspace's own control payload cannot be mistaken for
-// a character. The literals are Qt.Key_Escape (0x01000000) and
-// Qt.Key_Backspace (0x01000003). A chord is not typing: Ctrl (0x04000000),
-// Alt (0x08000000) and Meta/Super (0x10000000) all produce nothing — while
-// armed the layer holds the keyboard and the chord cannot reach the app
-// anyway, but it must not leave a stray character in the query (the
-// ticket-42 review caught the first cut gating 0x08000000 as Meta and
-// letting Super chords through). AltGr is untouched: on the Wayland stack
-// it arrives as GroupSwitchModifier (0x40000000), so é/§ still type.
-// Shift is typing — "A" is what was typed. Whether an event reaches here
-// at all — the armed gate, the scope's focus — is the page's QML, not
-// this rule.
+// One PHYSICAL key event, named with the action vocabulary nextQuery (and
+// Keyboard.searchInput) already speak — "char", "backspace", "escape" —
+// or "" when the key produces nothing. `event` is event-shaped (key: the
+// Qt key code, text: the decoded character or ""), never a live KeyEvent,
+// so tests/emoji-page.qml drives it with plain objects. "char" hands the
+// caller back to event.text verbatim — the physical layout's character,
+// Cyrillic included, case included, exactly the rule the caps'
+// resolution follows. Control payloads never type: Return/Enter (\r),
+// Delete (U+007F) and everything below space are "" (Enter picking the
+// first result is deliberately out), and a key with no text (modifiers,
+// arrows, Tab, function keys) has nothing to append. Key codes are
+// matched before text so Escape's or Backspace's own control payload
+// cannot be mistaken for a character. The literals are Qt.Key_Escape
+// (0x01000000) and Qt.Key_Backspace (0x01000003). A chord is not typing:
+// Ctrl (0x04000000), Alt (0x08000000) and Meta/Super (0x10000000) all
+// produce nothing — while armed the layer holds the keyboard and the
+// chord cannot reach the app anyway, but it must not leave a stray
+// character in the query, so 0x08000000 must be checked as Alt, not
+// folded into the Meta test, or Super chords leak through. AltGr is
+// untouched: on the Wayland stack it arrives as GroupSwitchModifier
+// (0x40000000), so é/§ still type. Shift is typing — "A" is what was
+// typed. Whether an event reaches here at all — the armed gate, the
+// scope's focus — is the page's QML, not this rule.
 function searchKeyAction(event) {
     var key = event ? (event.key || 0) : 0
     var modifiers = event ? (event.modifiers || 0) : 0
@@ -270,7 +266,7 @@ function searchKeyAction(event) {
 // (The layout-keyed placeholder rule is gone: the placeholder is drawn
 // from UiStrings in the override-aware UI language — see languageFor.)
 
-// The tone picker's names, localized (ticket 52): SKIN_TONES keeps its
+// The tone picker's names, localized: SKIN_TONES keeps its
 // English label as the data fallback (the field contract is pinned to
 // value/label/hand), and this maps each tone VALUE to its UiStrings id —
 // the picker draws tr(toneNameId(value), lang). An unknown value answers
@@ -350,12 +346,12 @@ function usageAfterSuccess(records, emoji) {
     return out
 }
 
-// Ticket 34: the usage category renders a snapshot of the records, taken
+// The usage category renders a snapshot of the records, taken
 // when the view is entered and only then — positional stability while
-// clicking beats live re-ranking. The store stays live (its per-delivery
-// update is untouched, decisions §44); a pick's evidence appears at the
-// next entry. The copy is deep: no record may alias the store's, or a
-// later success would leak into a view that promised not to move.
+// clicking beats live re-ranking. The store stays live; a pick's evidence
+// appears at the next entry. The copy is deep: no record may alias the
+// store's, or a later success would leak into a view that promised not to
+// move.
 function usageViewOnOpen(records) {
     var out = []
     for (var i = 0; i < records.length; i++)

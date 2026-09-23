@@ -3,21 +3,19 @@ import QtQuick
 Item {
     id: menu
 
-    // The hold column's menu (ticket 37), split out of Keyboard.qml (the
-    // structural split's step six): the everywhere-outside catch area,
-    // the popup card over the held cap's column, and the entry
-    // delegates with their own dwell underline affordance (ticket 50,
-    // slice two). What stayed in the keyboard is everything a pick is
-    // ABOUT: the pending hold and its threshold timer (holdCap/
-    // holdDelegate, beginCapHold/endCapHold — the release typing
-    // path), the column facts (capHoldColumn, handed in as `columnFor`
-    // so the menu's content and the caps' corner dot cannot disagree
-    // about what the keymap carries), and the pick's dispatch to
-    // typing (pickHoldEntry, handed in as `pickEntry` — the chord is
-    // the keyboard's, through applyModifierEvent exactly as a glyph
-    // cap's press). The dwell MACHINE stayed too: the entry arm's
-    // enter/leave/reset ride the callbacks below, and only this
-    // menu's own affordance and hit-area wiring live here.
+    // The hold column's menu: the everywhere-outside catch area, the
+    // popup card over the held cap's column, and the entry delegates
+    // with their own dwell underline affordance. What stayed in the
+    // keyboard is everything a pick is ABOUT: the pending hold and its
+    // threshold timer (holdCap/holdDelegate, beginCapHold/endCapHold —
+    // the release typing path), the column facts (capHoldColumn, handed
+    // in as `columnFor` so the menu's content and the caps' corner dot
+    // cannot disagree about what the keymap carries), and the pick's
+    // dispatch to typing (pickHoldEntry, handed in as `pickEntry` — the
+    // chord is the keyboard's, through applyModifierEvent exactly as a
+    // glyph cap's press). The dwell MACHINE stayed too: the entry arm's
+    // enter/leave/reset ride the callbacks below, and only this menu's
+    // own affordance and hit-area wiring live here.
     //
     // The menu's baked state (cap, delegate, entries, geometry) lives
     // here because the grid the delegate lives in can rebuild under a
@@ -99,15 +97,14 @@ Item {
         menu.entries = []
     }
 
-    // ---- the hold column's menu (ticket 37) ----
+    // ---- the hold column's menu ----
     //
-    // Card-local, like ticket 35's chooser (commit 86a57b7's lesson): the
-    // panel window's input mask is the card rect, so the menu lives
-    // INSIDE the keyboard's own bounds — above it in z, over the held
-    // cap's column. The catch area underneath eats every press that is
-    // not on the menu itself: one click anywhere else dismisses without
-    // typing, and no cap underneath can start a press of its own while
-    // the menu stands.
+    // Card-local: the panel window's input mask is the card rect, so the
+    // menu lives INSIDE the keyboard's own bounds — above it in z, over
+    // the held cap's column. The catch area underneath eats every press
+    // that is not on the menu itself: one click anywhere else dismisses
+    // without typing, and no cap underneath can start a press of its own
+    // while the menu stands.
     MouseArea {
         anchors { fill: parent }
         enabled: menu.menuOpen
@@ -123,10 +120,10 @@ Item {
 
         // Above the held cap when the column fits there, below it when it
         // does not (a row-0 hold has no room above), and never outside
-        // the keyboard's rect — that is what keeps the menu inside the
-        // card, i.e. inside the input mask, docked or floating. Anchors
-        // are baked at open (the component's open); like the language
-        // chooser, the menu does not follow a card dragged under it.
+        // the keyboard's rect — that keeps the menu inside the card, i.e.
+        // inside the input mask, docked or floating. Anchors are baked at
+        // open (the component's open); the menu does not follow a card
+        // dragged under it.
         readonly property real aboveY: menu.capTop - height - menu.cellGap
         readonly property real belowY: menu.capBottom + menu.cellGap
         x: Math.max(menu.cellGap,
@@ -144,13 +141,11 @@ Item {
         // read — and not the upstream sketch's border line.
         border.width: menu.keyBorderWidth
 
-        // The hover shield (ticket 50 review): the menu's padding and
-        // the gaps between entries accept HOVER, not just presses, so a
-        // resting pointer cannot fall through onto the caps hidden
-        // underneath — dwell was the first hover-action and weaponized
-        // that fall-through, typing characters the user could not see.
-        // The entries' own hit areas sit above this shield (declared
-        // later inside the Column).
+        // The hover shield: the menu's padding and the gaps between
+        // entries accept HOVER, not just presses, so a resting pointer
+        // cannot fall through onto the caps hidden underneath and type
+        // characters the user could not see. The entries' own hit areas
+        // sit above this shield (declared later inside the Column).
         MouseArea {
             anchors { fill: parent }
             hoverEnabled: true
@@ -184,12 +179,11 @@ Item {
                     color: entryHit.containsMouse && !gated
                         ? menu.hoverFill : "transparent"
 
-                    // The dwell affordance's two handles, the caps' own
-                    // (ticket 50, slice two): start grows the foot
-                    // underline over the rest's delay, stop snaps it
-                    // away — methods rather than bindings for the same
-                    // reason the caps' are (restart on every arm, die
-                    // instantly on every cancel).
+                    // The dwell affordance's two handles, the caps' own:
+                    // start grows the foot underline over the rest's
+                    // delay, stop snaps it away — methods rather than
+                    // bindings so they restart on every arm and die
+                    // instantly on every cancel.
                     function startDwellFill(delay) {
                         entryDwellUnderline.visible = true
                         entryDwellFillAnim.duration = Math.max(1, delay)
@@ -209,13 +203,12 @@ Item {
                         font.pixelSize: menu.capGlyphSize
                     }
 
-                    // The dwell progress affordance (ticket 50, slice
-                    // two): the caps' own underline in the caps' own
-                    // register — textDim ink, a hint of opacity, never
-                    // an accent fill — because it is the same PROGRESS
-                    // the caps promise: it exists only while a rest is
-                    // live and vanishes the instant the rest ends,
-                    // picked, cancelled or left.
+                    // The dwell progress affordance: the caps' own
+                    // underline in the caps' own register — textDim ink, a
+                    // hint of opacity, never an accent fill — because it
+                    // is the same PROGRESS the caps promise: it exists
+                    // only while a rest is live and vanishes the instant
+                    // the rest ends, picked, cancelled or left.
                     Rectangle {
                         id: entryDwellUnderline
                         visible: false
@@ -252,12 +245,10 @@ Item {
                         // still picks instantly, gate first.
                         onPressed: menu.dwellReset()
                         onCanceled: menu.dwellReset()
-                        // The dwell path's entry arm (ticket 50, slice
-                        // two): the hit area's own bounds decide the
-                        // rest; moving between entries re-targets (the
-                        // enter supersedes), the gap crossing is the
-                        // shield's, and a leave cancels — the machine's
-                        // rules, entry edition.
+                        // The dwell path's entry arm: the hit area's own
+                        // bounds decide the rest; moving between entries
+                        // re-targets (the enter supersedes), the gap
+                        // crossing is the shield's, and a leave cancels.
                         onEntered: menu.dwellEnterEntry(entry, entryCard)
                         onExited: menu.dwellLeave(entryCard)
                         onClicked: {

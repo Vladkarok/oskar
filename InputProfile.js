@@ -1,17 +1,17 @@
 .pragma library
 .import "Dwell.js" as Dwell
 
-// Ticket 58: the input profile — the panel knows which pointer world is
-// talking to it. Two decisions live here, both pure data so the host suite
-// can pin them (tests/input-profile.qml, the Dwell.js/HoldColumn.js
+// The input profile — the panel knows which pointer world is talking to
+// it. Two decisions live here, both pure data so the host suite can pin
+// them (tests/input-profile.qml, following the Dwell.js/HoldColumn.js
 // discipline) and the QML only wires:
 //
 //   resolve — the effective profile. The setting is "auto" (default) /
 //     "mouse" / "touch"; auto activates the touch affordances when the
 //     panel OBSERVED touch events, so a 2-in-1 flipping modes never visits
-//     Settings (the owner's framing). An explicit mouse/touch wins over
-//     the observation; anything else (a value that slipped past the file's
-//     validation) degrades to auto's semantics — observed decides.
+//     Settings. An explicit mouse/touch wins over the observation;
+//     anything else (a value that slipped past the file's validation)
+//     degrades to auto's semantics — observed decides.
 //
 //   affordances — what each profile switches, as a table: which caps type
 //     on release, whether dwell may arm, what a tooltip does without
@@ -21,14 +21,13 @@
 //
 // Three decisions inside it:
 //
-//   Stickiness: ONCE SEEN, per SUMMON (amended by ticket 62's council:
-//     the panel hides => the observation forgets). Within a summon the
-//     observation is a monotonic fact (touchObserved flips true exactly
-//     once, no decay — a touchscreen laptop's stray mouse click must not
-//     flap the profile back mid-session; a flip the other way is the
-//     explicit setting's job). And with dwell ENABLED auto never flips
-//     at all (the a11y guard) — a chosen access method is not disarmed
-//     by a stray touch.
+//   Stickiness: ONCE SEEN, per SUMMON — the panel hiding resets the
+//     observation. Within a summon the observation is a monotonic fact
+//     (touchObserved flips true exactly once, no decay — a touchscreen
+//     laptop's stray mouse click must not flap the profile back
+//     mid-session; a flip the other way is the explicit setting's job).
+//     And with dwell ENABLED auto never flips at all — a chosen access
+//     method must not be disarmed by a stray touch.
 //
 //   The observation itself: Qt synthesizes the mouse events a MouseArea
 //     sees from touch (and tablet) input, and the event's `source` is the
@@ -37,16 +36,16 @@
 //     hover-less pointer the same way a finger is, and the touch
 //     affordances (release-typing, no dwell) are what it wants too.
 //
-//   Tooltips, decided per control (the ticket's pin): the header's GLYPH
-//     chrome (gear, close, paste) answers a touch-and-hold with its
-//     tooltip — "hold" — and the release still acts, help-then-action as
-//     one gesture; the TEXT chrome (the mode chip) hides it — "hidden" —
-//     because its label already states what it is, and the hold vocabulary
-//     stays reserved for input. Everything else that is hover-only today
-//     (the emoji cells' names, the settings chrome) is hidden on touch by
-//     the EXPLICIT tooltipHoverShows gate (ticket 62's review: synthesized
-//     hover may follow a stationary finger — "hidden by absence" was an
-//     assumption, and every hover arm is gated now, not assumed away).
+//   Tooltips, decided per control: the header's GLYPH chrome (gear, close,
+//     paste) answers a touch-and-hold with its tooltip — "hold" — and the
+//     release still acts, help-then-action as one gesture; the TEXT chrome
+//     (the mode chip) hides it — "hidden" — because its label already
+//     states what it is, and the hold vocabulary stays reserved for input.
+//     Everything else that is hover-only today (the emoji cells' names,
+//     the settings chrome) is hidden on touch by the EXPLICIT
+//     tooltipHoverShows gate: synthesized hover can follow a stationary
+//     finger, so every hover arm must be gated, never assumed hidden by
+//     absence.
 
 /// The setting's value space. One list here, so validation (Config.js),
 /// the popover's segments and the tests cannot disagree — the SUPER_MARKS
@@ -62,12 +61,11 @@ var MOUSE_SOURCE_NOT_SYNTHESIZED = 0
 
 /// The effective profile: an explicit override wins over the observation,
 /// auto (and any junk that degraded to it) follows the observed fact —
-/// EXCEPT that dwell answers first (the touch council's a11y guard,
-/// ticket 62): a user who ENABLED dwell chose their access method, and
-/// one stray touch (theirs, a caregiver's, the cat's) must not disarm
-/// it for the panel's life while the recovery path needs the very
-/// input that was lost. Auto never flips away from mouse while dwell
-/// is on; an explicit touch pin still wins (a deliberate choice).
+/// EXCEPT that dwell answers first: a user who ENABLED dwell chose their
+/// access method, and one stray touch (theirs, a caregiver's, the cat's)
+/// must not disarm it for the panel's life while the recovery path needs
+/// the very input that was lost. Auto never flips away from mouse while
+/// dwell is on; an explicit touch pin still wins (a deliberate choice).
 function resolve(setting, touchObserved, dwellEnabled) {
     if (setting === "mouse") return "mouse"
     if (setting === "touch") return "touch"
@@ -82,11 +80,11 @@ function isTouchSource(mouseSource) {
     return mouseSource !== MOUSE_SOURCE_NOT_SYNTHESIZED
 }
 
-/// The mouse world, byte-today: press-typing with 37's column-only defer
-/// (composed through Dwell.holdDefers), a deferred cap's release typing
-/// wherever it lands, dwell following its own setting, hover tooltips, hit
-/// areas exactly as drawn, no stealing guarantees. The regression pin as
-/// data — tests/input-profile.qml deepEquals this whole table.
+/// The mouse world: press-typing with the column-only defer (composed
+/// through Dwell.holdDefers), a deferred cap's release typing wherever it
+/// lands, dwell following its own setting, hover tooltips, hit areas
+/// exactly as drawn, no stealing guarantees. The regression pin as data —
+/// tests/input-profile.qml deepEquals this whole table.
 var MOUSE_AFFORDANCES = {
     profile: "mouse",
     typesOnRelease: false,
@@ -97,9 +95,9 @@ var MOUSE_AFFORDANCES = {
     hoverHighlight: true,
     minChromeTargetPx: 0,
     preventStealing: false,
-    // Explicit, never 'by absence' (the touch council's finding): hover
-    // shows tooltips only in the mouse profile — Qt may synthesize hover
-    // from a stationary finger, and the touch answer is hold, not hover.
+    // Explicit, never 'by absence': hover shows tooltips only in the
+    // mouse profile — Qt may synthesize hover from a stationary finger,
+    // and the touch answer is hold, not hover.
     tooltipHoverShows: true
 }
 
@@ -110,9 +108,9 @@ var MOUSE_AFFORDANCES = {
 /// surfaces never steal a sliding finger.
 var TOUCH_AFFORDANCES = {
     profile: "touch",
-    // Explicit, never "by absence" (the touch council): hover never
-    // shows a tooltip in touch — possibly-synthesized hover included;
-    // the glyph chrome answer is touch-and-hold, text stays hidden.
+    // Explicit, never "by absence": hover never shows a tooltip in
+    // touch — possibly-synthesized hover included; the glyph chrome
+    // answer is touch-and-hold, text stays hidden.
     tooltipHoverShows: false,
     typesOnRelease: true,
     slideOffCancels: true,
@@ -134,9 +132,9 @@ function affordances(profile) {
 
 /// Whether this cap defers its typing to the pointer's RELEASE — the
 /// one typing decision the profile owns. Mouse: Dwell.holdDefers verbatim
-/// (ticket 37's column-only defer, ticket 50's dwell veto over it — the
-/// composition lives here so the interplay is pinned, not re-wired). Touch:
-/// every character cap defers, on the rule below.
+/// (the column-only defer, with dwell's veto over it — the composition
+/// lives here so the interplay is pinned, not re-wired). Touch: every
+/// character cap defers, on the rule below.
 function defersTyping(profile, dwellEnabled, capData, entries,
     searchMode, inputReady) {
     if (affordances(profile).typesOnRelease !== true)
@@ -150,11 +148,11 @@ function defersTyping(profile, dwellEnabled, capData, entries,
 /// at press and types at the lift; leaving the cap before the lift cancels
 /// (the wiring's slide-off check, affordances().slideOffCancels). What
 /// keeps press semantics is what repeat is the point of: `key` caps
-/// (BackSpace, the arrows, the modifiers — the compositor's own repeat,
-/// spec-v1 §6) and fixed-label caps (Space, the most-held key on the
-/// board). The hold-menu threshold rides the same machinery (beginCapHold
-/// / endCapHold): a columnless hold stays pending past the threshold and
-/// the release then types, exactly 37's columnless shape. The moment gates
+/// (BackSpace, the arrows, the modifiers — the compositor's own repeat)
+/// and fixed-label caps (Space, the most-held key on the board). The
+/// hold-menu threshold rides the same machinery (beginCapHold /
+/// endCapHold): a columnless hold stays pending past the threshold and
+/// the release then types, exactly the columnless shape. The moment gates
 /// (readiness, the press-fed emoji search, availability, spacers) are the
 /// gates the press path already keeps, restated here so the two cannot
 /// drift.

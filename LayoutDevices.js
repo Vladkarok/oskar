@@ -3,24 +3,20 @@
 /// Which keyboard the panel reads its layout from, and which ones the
 /// language button moves.
 ///
-/// This lived in a jq program inside a shell string in Keyboard.qml, where
-/// nothing could test it, and it broke three times: a mouse poisoned the
-/// indicator (decisions §5), a guessed device was advanced while another kept
-/// typing the old group (ticket 19), and then the reading came from a set the
-/// switch did not move (ticket 21) — `ideapad-extra-buttons` and a Razer
-/// mouse's keyboard interface sat on group 1 forever, so the panel read
-/// Ukrainian off a device that cannot type while the real keyboards produced
-/// English. Same shape every time, and every time invisible to the suites.
+/// A non-typing device (a mouse's keyboard interface, an extra-buttons
+/// pseudo-device) can sit on a stale group forever; reading through it
+/// makes the panel show a language nobody is actually typing while the
+/// real keyboards disagree. This module exists so that failure mode is
+/// exercised by tests rather than caught by inspection of a jq pipeline.
 ///
-/// It is ordinary domain logic and it belongs where it can be exercised. The
-/// shell now only dumps `hyprctl devices -j`; every decision below is here.
+/// The shell only dumps `hyprctl devices -j`; every decision is here.
 
 /// Names that are never a typed keyboard.
 ///
 /// Power and sleep buttons, lid switches and video buses are keyboards to
 /// evdev and carry an XKB group nobody advances. `hl-virtual-keyboard` is any
 /// virtual keyboard on the seat, this helper's own included — the compositor
-/// must not become a second writer of a group `configure` owns (§6).
+/// must not become a second writer of a group `configure` owns.
 var PSEUDO = /(^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus))|oskar/i
 
 function isTyped(name) {
@@ -59,12 +55,11 @@ function switchSetFor(reading, safe) {
 
 /// The group the safe set is on when its members disagree.
 ///
-/// The most common index, and the lowest of those when it is a tie. The old
-/// answer was the highest index any of them had reached — "layout progress" —
-/// and it read group 1 off one stuck keyboard while the two the user actually
-/// types on sat on group 0. A majority cannot be dragged by one member; the
-/// lowest-wins tie-break only decides a genuine 50/50, where either answer is
-/// a guess and the same guess every time is worth more than the larger one.
+/// The most common index, and the lowest of those when it is a tie. A
+/// majority cannot be dragged by one stuck member reporting a higher
+/// index; the lowest-wins tie-break only decides a genuine 50/50, where
+/// either answer is a guess and the same guess every time is worth more
+/// than the larger one.
 function consensusGroup(devices) {
     var counts = {}
     var best = -1
@@ -83,8 +78,8 @@ function consensusGroup(devices) {
 /// The number of layouts a device's own list actually carries: the
 /// non-empty entries. A trailing or doubled separator is not a layout,
 /// and an absent list carries nothing. A remembered group is only
-/// meaningful while it is smaller than this (audit 31): a session whose
-/// layout list shrank cannot carry an index from the wider one.
+/// meaningful while it is smaller than this: a session whose layout
+/// list shrank cannot carry an index from the wider one.
 function layoutCount(device) {
     if (!device) return 0
     return String(device.layout || "").split(",")
@@ -138,24 +133,22 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice) {
     // One twin moves and the rest sleep: an external per-device toggle
     // (Hyprland's own grp:alt_shift_toggle) does it — and so does the
     // compositor itself flipping a group on a keystroke that carries no
-    // toggle at all (measured 2026-09-18 20:07: a plain Shift press, no
-    // Alt anywhere, no actor in the journal). With a pseudo vkb holding
-    // `main`, the reading is then only the NAMED anchor:
+    // toggle at all. With a pseudo vkb holding `main`, the reading is
+    // then only the NAMED anchor:
     //
-    // - The mover IS the anchor (ticket 64's inverse, the 20:07 desync):
-    //   the keyboard under the user's hands is the one that just moved,
-    //   and its own live index answers through the fall-through return.
-    //   The ticket-64 arm used to outvote it with consensus + remembered
+    // - The mover IS the anchor: the keyboard under the user's hands is
+    //   the one that just moved, and its own live index answers through
+    //   the fall-through return. Outvoting it with consensus + remembered
     //   — two devices that never receive keys voting down the typist —
-    //   and every indicator said English while the fingers typed
+    //   would leave every indicator saying English while the fingers type
     //   Ukrainian, resyncing only on the next Alt+Shift.
     //
     // - The mover is NOT the anchor, or there is no mover at all: the
-    //   anchor may itself name a sleeper (ticket 64: seeded by
-    //   enumeration or an old layout event, not typing evidence), or a
-    //   sleeping twin is the one that moved. Its live index is not
-    //   trustworthy either way, so consensus device + remembered group
-    //   answer — the same tie-break the cold-start arm uses.
+    //   anchor may itself name a sleeper (seeded by enumeration or an old
+    //   layout event, not typing evidence), or a sleeping twin is the one
+    //   that moved. Its live index is not trustworthy either way, so
+    //   consensus device + remembered group answer — the same tie-break
+    //   the cold-start arm uses.
     var moved = String(movedDevice || "")
     var moverIsAnchor = moved !== "" && moved === named
     var divergedWithAnchor = !moverIsAnchor && reading && !current
@@ -165,13 +158,12 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice) {
 
     // The safe set DISAGREES with itself when Hyprland's group toggle has
     // moved the keyboard the user types on while its sleeping siblings never
-    // receive it (the toggle is per-device). A majority of sleepers then
-    // votes the panel into the wrong group on every shell restart — the
-    // owner's desync: caps English while typing Ukrainian (2026-09-12). The
+    // receive it (the toggle is per-device). A majority of sleepers would
+    // then vote the panel into the wrong group on every shell restart. The
     // panel's remembered group, persisted with the rest of its state, is the
     // honest tie-breaker in that window; the helper's own device index
     // cannot serve (Hyprland reports a virtual keyboard's layout slot, never
-    // the group its modifiers set — measured live).
+    // the group its modifiers set).
     var diverged = safe.length > 1 && safe.some(function (device) {
         return groupOf(device) !== groupOf(safe[0])
     })
@@ -187,7 +179,7 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice) {
         // The remembered group is bounded by the CURRENT map: a session
         // that shrank its layout list (four→two, two→one) cannot carry an
         // index from the wider one, and asking for it would leave caps
-        // refused and typing gated (audit 31). Fall through to the
+        // refused and typing gated. Fall through to the
         // consensus fallback — the same answer a panel with no memory
         // gives — instead of honoring a group the keymap does not have.
         if (remembered < Math.max(layoutCount(facts), 1)) {

@@ -22,7 +22,7 @@ Item {
     id: root
     implicitWidth: grid.implicitWidth + 0
     // Pinned to the taller of the two pages rather than to whichever is on
-    // screen. Docked mode reserves this height (§7), so letting it follow the
+    // screen. Docked mode reserves this height, so letting it follow the
     // current page would shove every window on the output up and down each time
     // &123 is pressed. The grid is anchored to the bottom, so the command row —
     // modifiers, space, arrows, and the page key itself — stays under the
@@ -33,11 +33,11 @@ Item {
     signal dismissalAsked()
     // Emitted for every keystroke-shaped press — letters, arrows, modifier
     // clicks, Caps Lock — and never for the panel's own UI actions. The panel
-    // plays the key click sound on it (spec-v1 §10).
+    // plays the key click sound on it.
     signal keyPressed()
     // The ☺ cap was pressed. The panel answers by toggling its own emoji
     // page — the only picker there is; the external-picker machinery this
-    // signal once armed is gone (ticket 24 step 5, decisions §24).
+    // signal once armed is gone.
     signal emojiCapActivated()
 
     // While the emoji page stands (searchMode, wired from the panel's
@@ -47,14 +47,14 @@ Item {
     // is what the search gets, in every configured layout and group),
     // "backspace", "space", or "escape" from the Esc cap. The panel applies
     // it to the page's query; Escape closes the page. The helper receives
-    // nothing for an intercepted press (ticket 24, step 3).
+    // nothing for an intercepted press.
     signal searchInput(string action, string text)
     // The panel's emoji-page state, mirrored. Binding, not assignment: the
     // page closing by any route — cap, Escape, leftover click, gear, the
     // panel itself — ends the interception with it.
     property bool searchMode: false
     onSearchModeChanged: {
-        // The search arm of typeCap is immediate by contract (ticket 37):
+        // The search arm of typeCap is immediate by contract:
         // a hold that began before the page opened must not grow a menu
         // over it, and its release can only lift what its press sent —
         // which for a deferred hold is nothing. A dwell dies with it:
@@ -67,13 +67,13 @@ Item {
         }
     }
 
-    // ---- the hold column (ticket 37) ----
+    // ---- the hold column ----
     //
     // A character cap whose keymap position carries extra levels (3-4)
     // defers its typing from mouse-press to mouse-release. The press
     // starts a hold timer and sends NOTHING — no stray character, and no
     // compositor repeat can start, because repeat belongs to a key that
-    // went down (spec-v1 §6) and a deferred cap never sends a press line
+    // went down and a deferred cap never sends a press line
     // before the threshold. A release before the threshold sends the
     // usual press+release pair (one character, today's chord rules,
     // current latches); the threshold firing opens the column menu, and
@@ -96,13 +96,13 @@ Item {
     readonly property bool holdMenuOpen: holdMenu.menuOpen
     readonly property var holdMenuEntries: holdMenu.entries
 
-    // ---- dwell-to-type (ticket 50) ----
+    // ---- dwell-to-type ----
     //
     // Hover a cap for the configured delay and it types — press+release
     // as one click, exactly the pair a physical press and release of that
     // cap send — and resting PAST the type on a cap whose position
-    // carries a hold column opens ticket 37's menu: the menu deadline is
-    // the delay plus 37's own hold window, one vocabulary. The pure
+    // carries a hold column opens the hold menu: the menu deadline is
+    // the delay plus the hold column's own hold window, one vocabulary. The pure
     // machine (thresholds, cancellation, which caps dwell at all — the
     // chrome exclusions) is Dwell.js with tests/dwell.qml; this is the
     // state and the chrome: hover events in, one deadline timer, the
@@ -124,7 +124,7 @@ Item {
     // path reads — null for a cap rest, the entry for an entry rest.
     property var dwellEntry: null
 
-    // ---- the input profile (ticket 58) ----
+    // ---- the input profile ----
     //
     // Which pointer world this keyboard answers as. The panel resolves
     // the setting over the OBSERVATION (InputProfile.resolve — auto flips
@@ -148,8 +148,8 @@ Item {
         effectiveInputProfile, dwellEnabled)
     onEffectiveInputProfileChanged: dwellReset()
 
-    // The size preset's multiplier on top of the theme's own scaling
-    // (spec-v1 §7). Everything the grid measures in pixels goes through it, so
+    // The size preset's multiplier on top of the theme's own scaling.
+    // Everything the grid measures in pixels goes through it, so
     // a preset changes the whole keyboard proportionally — key height, gaps and
     // glyphs together — rather than stretching keys into letterboxes.
     property real uiScale: 1.0
@@ -158,8 +158,8 @@ Item {
     // Zero means unconstrained (nothing has measured yet).
     property real availableWidth: 0
 
-    // The panel's Theme facade over Omarchy's shared style tokens (spec-v1
-    // §8). Passed in rather than reading `Color`/`Style` here, so that
+    // The panel's Theme facade over Omarchy's shared style tokens.
+    // Passed in rather than reading `Color`/`Style` here, so that
     // `follow_theme` is decided in one place and the grid cannot end up
     // half-frozen.
     required property Theme theme
@@ -168,7 +168,7 @@ Item {
     readonly property real cellGap: Math.max(1, Math.round(root.theme.spacingMd * uiScale))
     readonly property real capRowHeight: root.theme.space(42) * uiScale
     // Key radius is the facade's resolved 0–24 value at medium, scaled by
-    // the size preset so 24 stays a circle at L/XL (spec-v1.1 §4). Panel
+    // the size preset so 24 stays a circle at L/XL. Panel
     // radius is a separate pixel control and does not use this.
     readonly property real capCorner: ConfigFile.effectiveKeyRadius(
         root.theme.capCorner, uiScale)
@@ -180,7 +180,7 @@ Item {
     // `padding: var(--gap)` around `.keyboard-grid`.
     readonly property real gridWidthUnits: containerMaxWidth - 2 * cellGap
 
-    // ---- Shared grid pitch (ticket 03, owner round 3) ----
+    // ---- Shared grid pitch ----
     //
     // Every row is laid out on one cell size: a cap spans `w` cells, each
     // `cellPitch` wide including one gap, so its drawn width is
@@ -200,7 +200,7 @@ Item {
     readonly property real gridUnits: 15.5
     readonly property real cellPitch: (root.gridWidthUnits + root.cellGap) / root.gridUnits
 
-    // ---- Hit geometry (ticket 15) ----
+    // ---- Hit geometry ----
     //
     // The gaps are visual only. A cap is drawn at its own size, but the area
     // that answers the mouse reaches to the midpoint of the gap on every side
@@ -242,7 +242,7 @@ Item {
     readonly property color capEdge: Util.alpha(root.theme.foreground, root.theme.pressedFillAlpha)
     readonly property color accentColor: Util.alpha(root.theme.accent, root.theme.pressedFillAlpha)
     // The three modifier states, told apart by fill weight rather than by two
-    // shades of one colour (spec-v1 §5): idle is the ordinary key, latched is
+    // shades of one colour: idle is the ordinary key, latched is
     // an accent tint under a thick accent outline, locked is solid accent with
     // the label knocked out.
     readonly property color latchedFill: root.theme.selectedAccentFill
@@ -262,10 +262,10 @@ Item {
     readonly property int latchedBorderWidth: Math.max(2 * keyBorderWidth, root.theme.focusBorderWidth)
     readonly property int capGlyphSize: Math.max(1, Math.round(root.theme.fontBody * uiScale))
     readonly property int capGlyphSmall: Math.max(1, Math.round(root.theme.fontBodySmall * uiScale))
-    // Super's mark (ticket 22, decisions §27 as amended): one arm of the
+    // Super's mark: one arm of the
     // settings choice draws. `superMark` is the effective setting the panel
     // passes in; the pure choice in KeyboardLayout.js names the arm. The
-    // Omarchy arm keeps §27's gate — U+E900 / family `omarchy`, the same
+    // Omarchy arm draws U+E900 / family `omarchy`, the same
     // request the bar menu launcher makes, only after the packaged TTF is
     // present, because Qt.fontFamilies(), FontLoader, fontInfo.family and a
     // zero-width paint miss or substitute this private family. A missing
@@ -291,13 +291,13 @@ Item {
         Math.round(root.capRowHeight * 0.5))
 
     // Every modifier's idle/latched state, Shift's additional locked state,
-    // and Caps' dedicated boolean state, owned by the reducer (spec-v1 §15,
-    // seam 2). The panel draws it; transitions and lines are the module's.
+    // and Caps' dedicated boolean state, owned by the reducer. The panel
+    // draws it; transitions and lines are the module's.
     property var modifierState: Modifiers.initialState()
     property string activeLayoutCode: "us"
     property var layoutCodes: ["us"]
     // The active GROUP index, taken from the compositor's own
-    // active_layout_index (spec-v1 §9's "compositor decides"). Selects the
+    // active_layout_index. Selects the
     // variant and kb_file group the keycap compile answers with; a repeated
     // layout code (`us,us` with distinct variants) makes code-position
     // guessing wrong, so nothing here derives the group from the code.
@@ -339,6 +339,11 @@ Item {
     property string activeLayoutName:
         LanguageControl.displayName(activeLayoutCode,
             layoutTitles[activeLayoutCode])
+    // The keyboard session (KeyboardSession.js): connection handshake,
+    // configure transactions, and the keymap-generation correlation for the
+    // keycap facts. Reassigned wholesale on every transition, so every
+    // binding that reads it re-fires.
+    //
     // Configure transaction bookkeeping for the device-held-modifier
     // handshake. The helper drains every key it holds for us when — and only
     // when — a configure CHANGES the keymap (its same-keymap short-circuit
@@ -349,54 +354,37 @@ Item {
     // The socket is ordered, so a reply always settles the OLDEST
     // outstanding configure — configures pipeline (an event storm around a
     // reload refreshes layouts faster than replies come back), so pairing
-    // a reply with the newest sent payload attributed the wrong identity
-    // whenever two were in flight. This object owns the whole ledger so the
-    // enqueue/settle/rebase/readiness rules have exactly one home:
+    // a reply with the newest sent payload would attribute the wrong
+    // identity whenever two were in flight. The session owns the whole
+    // ledger so the enqueue/settle/rebase/readiness rules have exactly one
+    // home:
     //
     // `queue` — {payload, identity, changed, seq}, one per configure
-    //   written, oldest first. A `configured` reply pops the oldest and
-    //   applies THAT entry's consequences; a configure's own failure
-    //   (`err cannot configure keymap` — the only err a well-formed
-    //   configure can earn) drops its own entry and rebases the survivors
-    //   against the keymap the helper still has installed.
+    // written, oldest first. A `configured` reply pops the oldest and
+    // applies THAT entry's consequences; a configure's own failure
+    // (`err cannot configure keymap` — the only err a well-formed
+    // configure can earn) drops its own entry and rebases the survivors
+    // against the keymap the helper still has installed.
     // `acked` — the keymap identity the helper last acknowledged. The drain
-    //   question is relative to what the helper has INSTALLED: the last
-    //   acked identity when the queue is empty, otherwise the newest
-    //   queued entry's identity.
+    // question is relative to what the helper has INSTALLED: the last
+    // acked identity when the queue is empty, otherwise the newest
+    // queued entry's identity.
     // `sends` — a monotonic send counter, incremented when the configure is
-    //   WRITTEN. Chords are stamped with it at press (the pending record
-    //   carries it), so an equal stamp means the configure was sent before
-    //   the press — the helper drains it ahead of the press lines — and a
-    //   press stamped later happened after the send. This is also the
-    //   readiness answer: typing stays gated until the queue is fully
-    //   settled, because an outstanding configure may still be compiling
-    //   the keymap a press would land in.
-    // The keyboard session (KeyboardSession.js, ticket 04): connection
-    // handshake, configure transactions, and the keymap-generation
-    // correlation for the keycap facts. Reassigned wholesale on every
-    // transition, so every binding that reads it re-fires. The invariants
-    // the queue carries are unchanged:
-    //
-    // The socket is ordered, so a reply always settles the OLDEST
-    // outstanding configure — configures pipeline (an event storm around a
-    // reload refreshes layouts faster than replies come back), so pairing
-    // a reply with the newest sent payload attributed the wrong identity
-    // whenever two were in flight.
-    //
-    // `sends` — a monotonic send counter, incremented when the configure is
-    //   WRITTEN. Chords are stamped with it at press (the pending record
-    //   carries it), so an equal stamp means the configure was sent before
-    //   the press — the helper drains it ahead of the press lines — and a
-    //   press stamped later happened after the send.
-    //
-    // Version 4 adds the generation: every `configured` reply names the
-    // keymap install it produced and every `caps` reply names the install
-    // its facts were computed from (decisions §23). The session accepts
-    // facts only when generation AND group match the acknowledged world,
-    // which is what makes a superseded reply discardable and keeps the
-    // drawn caps from ever describing a keymap the helper no longer has.
+    // WRITTEN. Chords are stamped with it at press (the pending record
+    // carries it), so an equal stamp means the configure was sent before
+    // the press — the helper drains it ahead of the press lines — and a
+    // press stamped later happened after the send. This is also the
+    // readiness answer: typing stays gated until the queue is fully
+    // settled, because an outstanding configure may still be compiling
+    // the keymap a press would land in.
+    // The generation: every `configured` reply names the keymap install it
+    // produced and every `caps` reply names the install its facts were
+    // computed from. The session accepts facts only when generation AND
+    // group match the acknowledged world, which is what makes a superseded
+    // reply discardable and keeps the drawn caps from ever describing a
+    // keymap the helper no longer has.
     property var session: Session.initial()
-    // The restart-settle guard's ledger (ticket 38): which group the panel
+    // The restart-settle guard's ledger: which group the panel
     // last FOLLOWED into a configure, what the click's own loop last
     // commanded, and the uncommanded flip currently held out. Everything
     // the reading path consults before following a group change; pure, in
@@ -404,13 +392,12 @@ Item {
     // connection (the fresh-hello arm below) — never by the repair
     // timer's re-hello of a live socket, whose world is intact.
     property var settleGuard: SettleGuard.initial()
-    // Every drawn cap's facts (decisions §23). Since ticket 18 there is no
-    // second source: the §11 xkbcli pipeline that used to supply the curated
-    // page was removed once every cap became a glyph cap, so nothing spawns a
-    // compile per layout change and nothing can report a keymap unavailable
-    // for a map no cap draws from. Null while the acknowledged world has no
-    // facts — the built-in table then draws as the gated last-resort fallback,
-    // silently (the status line owns saying why).
+    // Every drawn cap's facts. There is no second source: every cap is a
+    // glyph cap, so nothing spawns a compile per layout change and nothing
+    // can report a keymap unavailable for a map no cap draws from. Null
+    // while the acknowledged world has no facts — the built-in table then
+    // draws as the gated last-resort fallback, silently (the status line
+    // owns saying why).
     readonly property var capsFacts: Session.capsMap(session)
     // Set when a caps request went unanswered in a way that proves
     // disagreement (an unreadable reply, `err bad group`), and cleared only
@@ -421,10 +408,7 @@ Item {
     // position list a caps request carries. The helper resolves what the
     // panel actually shows, not every key the keymap happens to define.
     // The derivation lives in KeyboardLayout.js beside the declarations it
-    // reads (ticket 39): this used to re-walk the pages here and read a
-    // field the §43 rename had called something else, so the list degraded
-    // to RALT alone and the built-in tables drew over twenty-six good
-    // letters.
+    // reads.
     readonly property string capsPositions: Layout.declaredPositions().join(" ")
 
     /// The caps request for one group: the group, then the declared
@@ -463,7 +447,7 @@ Item {
         // with it — its underline died with the delegate — and never
         // fires into a cap that no longer exists. A PRESS mid-hold dies
         // the same way, and its release lived only in the delegate's own
-        // handlers (the QML round's poison): hold Backspace with the
+        // handlers: hold Backspace with the
         // mouse, flip the language with the other hand, and the rows
         // rebuilt under the grab — the `up` never came, and the key
         // repeated into the focused window until the daemon's 15 s cap.
@@ -506,14 +490,11 @@ Item {
 
     // `rowModel` is the Repeater's model, and reassigning it destroys and
     // rebuilds every row and every cap delegate under it — a few hundred QML
-    // objects, enough main-thread work to be seen. A language switch used to
-    // do that four times over: once for the load, once when the facts were
-    // invalidated, once when they came back, once when the symbol pipeline
-    // exited. Most of those rebuilds produced rows identical to the ones
-    // already on screen, so compare first and only reassign when the caps
-    // actually differ. The caps are flat objects of primitives built from the
-    // same declarations in the same order, so serialising is a sound identity
-    // test and costs far less than the rebuild it avoids.
+    // objects, enough main-thread work to be seen. Compare first and only
+    // reassign when the caps actually differ. The caps are flat objects of
+    // primitives built from the same declarations in the same order, so
+    // serialising is a sound identity test and costs far less than the
+    // rebuild it avoids.
     function rebuildRowModel() {
         if (page !== "main" && page !== "symbols")
             page = "main"
@@ -578,7 +559,7 @@ Item {
     /// reset without emitting); a same-keymap entry leaves holds and
     /// reducer state exactly as they are. The reply's generation becomes
     /// the acknowledged one, which is also what instantly invalidates any
-    /// keycap facts computed from the superseded install (decisions §23).
+    /// keycap facts computed from the superseded install.
     function settleConfigureReply(gen) {
         // The FIFO head is the transaction this reply settles; the session
         // pops the same entry, so capture its facts first — the previous
@@ -593,7 +574,7 @@ Item {
         if (!entry) return
         // A GENERATION JUMP on a same-identity ack means the helper took
         // the FULL path behind the panel's back — the voided-install
-        // repair after a failed restore (the behaviour audit's RISKY): it
+        // repair after a failed restore: it
         // drained every held claim and zeroed the mask, and a ledger that
         // still believes them draws a locked Shift over a device holding
         // nothing. The jump IS the drain, whatever the entry promised.
@@ -612,14 +593,14 @@ Item {
     // One keymap on the seat or two: with two, the compositor hands a focused
     // client whichever keyboard is active and the client's group resets on
     // every swap, so applications that do not re-read it type the previous
-    // alphabet until any modifier key arrives (decisions §35). Pointing
+    // alphabet until any modifier key arrives. Pointing
     // `input:kb_file` at what the helper installed makes the compositor
     // compile the same keymap for every physical keyboard, and the swap has
     // nothing left to swap between.
     readonly property string publishedKeymap: "/oskar/keymap.xkb"
     property int sharedKeymapGen: 0
     // The share scheduler's state (ShareQueue.js): running/launched/wished
-    // live here, `sharedKeymapGen` above mirrors its .shared for the
+    // live here, `sharedKeymapGen` above mirrors its.shared for the
     // paths that predate the module.
     property var shareQueue: ShareQueue.initial()
     // The `kb_file` the USER configured, remembered across the moment this
@@ -639,11 +620,10 @@ Item {
     // seed's own record fighting the clear).
     property bool userKeymapObserved: false
     function shareKeymapWithCompositor() {
-        // The scheduler is pure (ShareQueue.js, decisions §69/§71): a run
-        // is launched FOR a generation, a newer generation mid-run only
-        // updates the wish, success records what the run launched AND
-        // schedules the pending wish — the round-ten finding was exactly
-        // a wish that nobody consumed, the newest map unshared with
+        // The scheduler is pure (ShareQueue.js): a run is launched FOR a
+        // generation, a newer generation mid-run only updates the wish,
+        // and success records what the run launched AND schedules the
+        // pending wish, so the newest map is never left unshared with
         // nothing running and nothing retrying.
         var next = ShareQueue.acked(root.shareQueue, session.ackedGen)
         root.shareQueue = next.state
@@ -660,11 +640,11 @@ Item {
     /// Points the compositor at the published keymap, and only records the
     /// generation as shared when it actually landed.
     ///
-    /// The first version marked the generation before running and threw every
-    /// error away: a file not yet published, an `hyprctl eval` a compositor
-    /// refused, anything at all, and the panel would never try that generation
-    /// again and never say so. The seat then carries two keymaps for the rest
-    /// of the session, which is the defect §35 exists to end.
+    /// The generation is only marked shared once the run actually succeeds —
+    /// marking it before running would let any failure (file not yet
+    /// published, an `hyprctl eval` the compositor refuses) go unnoticed and
+    /// unretried, leaving the seat carrying two keymaps for the rest of the
+    /// session.
     Process {
         id: shareProcess
         property int attempts: 0
@@ -672,7 +652,7 @@ Item {
             // The path comes from the same normalizing builder the
             // identity comparison uses (Session.publishedKeymapPath), so
             // what is SET and what is compared as "ours" can never drift
-            // apart over an environment spelling (audit 06).
+            // apart over an environment spelling.
             // The published path rides as $1 (data, never spliced into
             // either quoting layer) and enters its Lua literal through
             // Session.luaQuote — the security audit's finding: an env
@@ -696,9 +676,9 @@ Item {
                 Quickshell.env("XDG_RUNTIME_DIR")))]
         onExited: (code, status) => {
             // A run the scheduler no longer owns (a connection reset
-            // stopped it) exits as a no-op — the triage's finding 2:
-            // the handler used to count it as a failed attempt and
-            // restart the very retries the reset had cancelled.
+            // stopped it) exits as a no-op rather than counting as a
+            // failed attempt and restarting retries the reset already
+            // cancelled.
             if (!root.shareQueue.running) {
                 attempts = 0
                 return
@@ -709,7 +689,7 @@ Item {
             root.sharedKeymapGen = done.state.shared
             if (ok) {
                 attempts = 0
-                // A pending newer generation is scheduled NOW (§71): the
+                // A pending newer generation is scheduled NOW: the
                 // newest map must never sit unshared with nothing running.
                 if (done.start) shareProcess.running = true
                 return
@@ -736,8 +716,8 @@ Item {
                 + " reset on every focus change (decisions §35).")
             // The journal line is for us; the user's symptom (layouts
             // flipping on focus change) is one of the most visible
-            // misbehaviors the panel has — the flows round's finding:
-            // journal-only is silence. The panel owns the visible half.
+            // misbehaviors the panel has, so the panel also owns saying
+            // so where the user can see it.
             keymapShareGivenUp()
         }
     }
@@ -747,7 +727,7 @@ Item {
         interval: 400
         repeat: false
         // A retry tick that finds the previous run STILL running must
-        // not consume the ladder (the protocol round's finding): a wedged
+        // not consume the ladder: a wedged
         // hyprctl would otherwise leave the newest acknowledged map
         // unshared for the rest of the session with nothing supervising
         // the run. The tick re-arms; the run's own exit resumes the
@@ -764,7 +744,7 @@ Item {
         }
     }
 
-    // Ticket 06: the recovery read. The helper records the user's own
+    // The recovery read. The helper records the user's own
     // kb_file as a sibling of its runtime directory, before the panel ever
     // points the compositor at the published one; a shell that died
     // without its destruction hook (SIGKILL, crash) has nothing in memory,
@@ -783,14 +763,13 @@ Item {
         printErrors: false
     }
 
-    // Ticket 57: the existence half of the recovery. What the sidecar
-    // remembers may be GONE — the restart-settle leg's private runtime
-    // dies with its keymap while the record survives, and adopting the
-    // dead pointer wedged every later panel with the same two-second
-    // "cannot compile" loop the wall's first run measured. The probe is
-    // pointed at the remembered path and read once (blockLoading makes
-    // text() a synchronous loadSync, so the decision point stays atomic);
-    // the present idiom is omarchyIconFontFile's.
+    // The existence half of the recovery. What the sidecar remembers may
+    // be GONE — the restart-settle leg's private runtime dies with its
+    // keymap while the record survives, and adopting a dead pointer would
+    // wedge the panel in a "cannot compile" loop. The probe is pointed at
+    // the remembered path and read once (blockLoading makes text() a
+    // synchronous loadSync, so the decision point stays atomic); the
+    // idiom matches omarchyIconFontFile's.
     FileView {
         id: rememberedKeymapProbe
         blockLoading: true
@@ -807,7 +786,7 @@ Item {
     // the compositor's own setting, so live knowledge always wins and the
     // file is only a recovery source for a shell that died before it could
     // observe anything. A remembered path that no longer exists is not a
-    // user keymap (ticket 57): refusing it lets this configure compile
+    // user keymap: refusing it lets this configure compile
     // from the compositor's RMLVO, and the helper clears the stale record
     // on the next empty-kb_file configure — the seat heals itself instead
     // of wedging on a file nothing can compile.
@@ -819,7 +798,7 @@ Item {
             root.userKeymapFile = remembered
     }
 
-    // The one existence rule both keymap-source readers obey (ticket 57):
+    // The one existence rule both keymap-source readers obey:
     // a path that names no file is not a keymap source, wherever it was
     // remembered from — the sidecar's record, or the compositor's own
     // setting observed live. The probe loads synchronously (blockLoading
@@ -838,8 +817,8 @@ Item {
     // Whatever the compositor had before this panel pointed it at the
     // published keymap. A session that ends with the OSK closed must not be
     // left compiling every physical keyboard from a file no running process
-    // owns — §35's claim that a stale `kb_file` cannot outlive the thing that
-    // set it is only true if something puts it back.
+    // owns: a stale `kb_file` cannot outlive the thing that set it, so
+    // something has to put it back.
     Component.onDestruction: {
         if (sharedKeymapGen === 0) return
         // The restore interpolates a USER-side path (the compositor's
@@ -908,7 +887,7 @@ Item {
         console.log("[oskar] layout reading:", reading.name, "group:", configGroup,
             "named:", anchorKeyboardName || "(none)",
             "remembered:", root.rememberedLayoutGroup)
-        // The restart-settle guard (ticket 38): for a short window after
+        // The restart-settle guard: for a short window after
         // the establishing configure that follows a daemon (re)connect, an
         // UNcommanded group flip is Hyprland's own keymap re-application
         // churn — a fresh vkb registration makes the compositor re-apply
@@ -951,7 +930,7 @@ Item {
         // Ours or the user's. When the compositor is on the published keymap
         // the helper is fed whatever the user had configured — remembered
         // above, or recovered from the helper's sidecar after a shell that
-        // died without its destruction hook (ticket 06) — so `kb_layout`
+        // died without its destruction hook — so `kb_layout`
         // edits and a custom keymap both keep working. When it is NOT on the
         // published keymap, something dropped it: a `hyprctl reload` for a
         // theme change resets a runtime `kb_file` to whatever the config
@@ -961,7 +940,7 @@ Item {
         //
         // Exact identity, never a substring: a user's own file under a
         // directory ending in our suffix is the user's, and the substring
-        // test adopted it as ours (audit 06). The seed read happens HERE,
+        // test adopted it as ours. The seed read happens HERE,
         // at the decision point, so no snapshot can build its configure
         // before the recovered source has landed in memory.
         recoverUserKeymapSource()
@@ -971,7 +950,7 @@ Item {
             // A live observation of the user's own setting — including an
             // explicit empty: from here the recovery seed stays silent.
             userKeymapObserved = true
-            // The live arm of ticket 57's rule: a compositor setting that
+            // The live arm of the existence rule: a compositor setting that
             // names a file which does not exist — a foreign runtime's
             // published map, deleted with it while this panel watched —
             // is not a user keymap either, and adopting it wedges every
@@ -993,24 +972,22 @@ Item {
             }
         }
 
-        // Always follow the system. The old code adopted the layout once and
-        // then froze, so a switch made with Caps Lock or the bar indicator left
-        // the caps showing the previous alphabet while the compositor produced
-        // the new one — the two looked swapped.
+        // Always follow the system: adopting the layout once and freezing
+        // would leave the caps showing the previous alphabet after a switch
+        // made with Caps Lock or the bar indicator, while the compositor
+        // produced the new one.
         var codeShown = active || detected[0] || ""
         if (codeShown) {
             // The compositor is authoritative for both the group and its
-            // human-facing layout code. The old keycap loader used to assign
-            // this as a side effect; after that pipeline was removed the
-            // header stayed on the initial "us" forever.
+            // human-facing layout code.
             activeLayoutCode = codeShown
             // The group index is the compositor's own `active_layout_index`,
             // not the position of the active layout code in the list. The
             // two differ exactly when a code repeats — `us,us` with distinct
-            // variants is the ordinary case — and `indexOf` there always
-            // found the first twin, so the keycap compile below kept
-            // answering group 0's variant while typing used the active
-            // group. The index is authoritative; the code is a label.
+            // variants is the ordinary case — and `indexOf` would find only
+            // the first twin, making the keycap compile below answer group
+            // 0's variant while typing used the active group. The index is
+            // authoritative; the code is a label.
             groupCursor = configGroup
             var configure = "configure\t" + xkbRules + "\t" + xkbModel
                 + "\t" + xkbLayouts + "\t" + xkbVariants + "\t" + xkbOptions
@@ -1051,11 +1028,11 @@ Item {
         // The switch target ("DEVICE", the device the language button
         // advances) comes from those same two tiers. At startup the named tier
         // is seeded by the helper's positive physical-device snapshot; a real
-        // layout event replaces it. Advancing a guessed device is what
-        // poisoned the seat before: a mouse advanced
-        // once, the indicator read it forever after, and the label stopped
-        // saying what typing produced. Until there is positive evidence, the
-        // language button does nothing.
+        // layout event replaces it. Advancing a guessed device would let a
+        // false positive (e.g. a mouse) become the permanent switch target,
+        // with the indicator reading it forever after and the label no
+        // longer saying what typing produced. Until there is positive
+        // evidence, the language button does nothing.
         //
         // The active-keyboard flag ("main" in devices JSON) is literally the
         // seat's current keyboard — HyprCtl prints IKeyboard::m_active as
@@ -1075,9 +1052,8 @@ Item {
         // per-device keymaps (device:name { kb_layout }).
         // The shell only fetches. Which device answers for the layout, and
         // which ones the language button moves, is decided in
-        // LayoutDevices.js — where it can be tested. It used to be a jq
-        // program inside this string, and it broke three times without a
-        // single suite noticing (tests/layout-devices.qml carries the zoo).
+        // LayoutDevices.js — where it can be tested
+        // (tests/layout-devices.qml carries the zoo).
         //
         // Layout names are looked up for every code any keyboard carries,
         // not just the chosen device's, so the selection can happen after
@@ -1089,14 +1065,13 @@ Item {
             + "'[.keyboards[] | {name, main, active_layout_index, layout, rules, model, variant, options}]' 2>/dev/null); "
             + "[[ -n \"$compact\" ]] || exit 1; "
             + "printf 'DEVICES\\t%s\\n' \"$compact\"; "
-            // The KBFILE half aborts on a FAILED read like the devices
-            // half does (round 17's finding): a transient getoption
-            // failure used to read as an observed-empty kb_file — the
-            // panel then forgot a real custom keymap permanently (the
-            // recovery seed silenced, the share overwriting the user's
-            // map, the destruction restore writing ''). Empty JSON
-            // output with a live call is the honest "unset" and still
-            // passes through as [[EMPTY]].
+            // The KBFILE half aborts on a FAILED read like the devices half
+            // does: a transient getoption failure must never be read as an
+            // observed-empty kb_file, or the panel forgets a real custom
+            // keymap permanently (the recovery seed silenced, the share
+            // overwriting the user's map, the destruction restore writing
+            // ''). Empty JSON output with a live call is the honest "unset"
+            // and still passes through as [[EMPTY]].
             + "kb_json=$(hyprctl getoption input:kb_file -j 2>/dev/null)"
             + " || exit 1; "
             + "[[ -n \"$kb_json\" ]] || exit 1; "
@@ -1114,7 +1089,7 @@ Item {
 
     // The one switch primitive both language-control shapes use: move every
     // device in the switch set to one ABSOLUTE group. The chooser passes the
-    // picked index (ticket 35); stepLayout passes the two-layout cycle.
+    // picked index; stepLayout passes the two-layout cycle.
     function switchToGroup(next) {
         // The group index is the seat's truth — xkb lists can repeat a code
         // across variants, so a code is not an address. Bounded against the
@@ -1456,7 +1431,7 @@ Item {
     // persistence through groupConfirmed.
     property int rememberedLayoutGroup: 0
     signal groupConfirmed(int group)
-    // Panel-status facts over the socket client's own states (spec-v1.1 §6),
+    // Panel-status facts over the socket client's own states,
     // read by the panel's hint line. `serviceConnected` mirrors the live
     // socket: false before the first dial, while the loader rebuilds it, and
     // after a drop — the "not running" state, whatever the reason.
@@ -1486,7 +1461,7 @@ Item {
     // failed hyprctl runs): the seat is carrying two keymaps and clients
     // will flip layout on focus changes until the next share succeeds.
     // The panel listens and says it on the hint line — the journal is
-    // not a user-visible channel (the flows round's finding).
+    // not a user-visible channel.
     signal keymapShareGivenUp()
 
     // The helper connection's transport: the socket object in its
@@ -1556,7 +1531,7 @@ Item {
         // the socket object down.
         function onRebuilt() {
             // The disconnect arm's first act, carried here for the same
-            // reason (ticket 54 review F1): the watchdog can order a rebuild
+            // reason: the watchdog can order a rebuild
             // while inputReady still reads true (readiness moves only on
             // traffic outcomes, and 5 s of silence proves none), and a click
             // in the teardown window would otherwise queue onto a drained
@@ -1721,7 +1696,7 @@ Item {
                     // would land in — a chord allowed through now would
                     // straddle that drain and lose its release. It also
                     // waits for keycap facts that answer the generation
-                    // this reply just installed (decisions §23): request
+                    // this reply just installed: request
                     // them the moment the queue is settled and anything
                     // current has been invalidated.
                     if (Session.settled(root.session)) {
@@ -1744,7 +1719,7 @@ Item {
                 }
             } else if (reply.indexOf("caps\t") === 0) {
                 // The helper's keycap facts for the world it has
-                // installed (decisions §23). The session refuses any
+                // installed. The session refuses any
                 // reply whose generation or group no longer matches
                 // the acknowledged one — a superseded answer computed
                 // from a keymap the helper no longer has can never
@@ -1916,7 +1891,7 @@ Item {
                     sendCommandUnchecked("mods 0")
                     root.inputReady = false
                 } else if (reply === "err unknown command") {
-                    // Version 6 (§91) deleted the typed delivery
+                    // Version 6 deleted the typed delivery
                     // verbs; this refusal now says the two sides
                     // disagree about the command set one way or
                     // the other — a v5 helper predates the
@@ -1959,7 +1934,7 @@ Item {
         return true
     }
 
-    // ---- the hold column's event path (ticket 37) ----
+    // ---- the hold column's event path ----
     //
     // The column one cap would offer right now: the position's extra
     // levels, read from the live caps facts. Both the defer decision and
@@ -2008,7 +1983,7 @@ Item {
     /// drop between press and release — then nothing is typed, like a
     /// canceled hold, rather than sounding a dead key.
     ///
-    /// `inside` is the touch profile's slide-off half (ticket 58): false
+    /// `inside` is the touch profile's slide-off half: false
     /// means the pointer LIFTED outside the cap's hit area, and a lifted
     /// finger that left first cancels — the drift a touch screen is for
     /// must never type. Undefined (the mouse profile's call) keeps
@@ -2095,7 +2070,7 @@ Item {
         applyModifierEvent({ type: "release" })
     }
 
-    // ---- the dwell event path (ticket 50) ----
+    // ---- the dwell event path ----
     //
     // The chrome around Dwell.js's machine: enter/leave ride the cap's
     // hit area (the same bounds hover lights), one timer per threshold
@@ -2112,11 +2087,11 @@ Item {
     /// the hold menu cannot disagree about what a position offers.
     function dwellEnter(capData, delegate) {
         dwellReset()
-        // dwellActive, not the raw setting (ticket 58): a touch finger
+        // dwellActive, not the raw setting: a touch finger
         // cannot hover, so the touch profile never arms a rest — the
         // profile's veto, composed in InputProfile.dwellArms.
         if (!dwellActive) return
-        // The pure-dwell user's menu dismissal (ticket 50 review): the
+        // The pure-dwell user's menu dismissal: the
         // standing hold menu's own dismissal routes are all clicks or
         // external folds, and a lingering rest is exactly this
         // audience's cadence — so a dwell arming anywhere else folds
@@ -2142,7 +2117,7 @@ Item {
         dwellReset()
     }
 
-    /// The entry arm (ticket 50, slice two): the hold menu's ENTRIES are
+    /// The entry arm: the hold menu's ENTRIES are
     /// dwell targets — a pure-dwell user opened the column menu by
     /// resting PAST the type, and needing one click to PICK breaks the
     /// click-free promise. Same machine, same delay, same quiet
@@ -2336,7 +2311,7 @@ Item {
             // treatment as Caps Lock: real modifier presses around the key,
             // never a character the panel picked for itself — Shift for
             // level 2, AltGr (with Shift) for the curated page's levels 3
-            // and 4 (spec-v1.1 §3). The reducer decides how those presses
+            // and 4. The reducer decides how those presses
             // wrap around the key and what a lock does to them. Curated
             // caps are `exact`: a latched Shift or AltGr is never APPLIED
             // by one — the chord is the level's, not the latch's — but it
@@ -2352,7 +2327,7 @@ Item {
             // modifier than one resolved below and nothing else changes.
             level5: Layout.levelChord(level).level5,
             // Which key carries AltGr for THIS chord. A glyph cap resolved at
-            // level 3 or 4 (ticket 18) needs ISO_Level3_Shift, and RALT is
+            // level 3 or 4 needs ISO_Level3_Shift, and RALT is
             // only that on some layouts — `us` makes it Alt_R, which is the
             // layout dependence the reserved block exists to remove. <LVL3>
             // is ISO_Level3_Shift in every group of every compiled keymap.
@@ -2381,7 +2356,7 @@ Item {
     function triggerSpecial(capData, doubleClick) {
         switch (capData.key) {
         case "close": dismissalAsked(); return
-        // The ☺ cap (ticket 24) toggles the panel's own emoji page: open on
+        // The ☺ cap toggles the panel's own emoji page: open on
         // press, dismiss on a second press. No PATH probe stands in the
         // way — the page is ours and the only picker there is.
         case "emoji":
@@ -2474,7 +2449,7 @@ Item {
                             ? root.edgeOutset : root.halfGap
 
                         // The dwell affordance's two handles, called only
-                        // by the keyboard's dwell path (ticket 50): start
+                        // by the keyboard's dwell path: start
                         // grows the foot underline over the rest's delay,
                         // stop snaps it away. Methods rather than
                         // bindings because the animation must restart on
@@ -2504,8 +2479,8 @@ Item {
                             anchors { fill: parent }
                             radius: root.capCorner
 
-                            // Three states have to be told apart at a glance
-                            // (spec-v1 §5), so they differ in more than
+                            // Three states have to be told apart at a glance,
+                            // so they differ in more than
                             // shade: latched is an accent outline over the
                             // ordinary fill, locked is filled accent. One
                             // reads as armed, the other as held down.
@@ -2539,7 +2514,7 @@ Item {
                             // still refuses protocol-bearing events.
                             //
                             // `unavailable` is the other arm of the same
-                            // treatment (spec-v1.1 §3): a level cap whose
+                            // treatment: a level cap whose
                             // position resolved to nothing in the active
                             // keymap — a valid partial keymap's hole — must
                             // never sit there blank and clickable. It draws
@@ -2556,7 +2531,7 @@ Item {
                             property bool disabled: unavailable || inputGated
                             property bool isSuper: capData.key === "logo"
                             // One ink binding for every Super-mark arm
-                            // (ticket 22): the cap's own state machine —
+                            //: the cap's own state machine —
                             // disabled dims, locked/on knocks out, otherwise
                             // the plain glyph colour — tints the word, the
                             // Omarchy glyph and the drawn vectors alike.
@@ -2574,7 +2549,7 @@ Item {
                                 : root.capEdge
                             border.width: latched ? root.latchedBorderWidth : root.keyBorderWidth
 
-                            // ---- the Super cap's mark (ticket 22) ----
+                            // ---- the Super cap's mark ----
                             //
                             // One arm of the settings choice draws, chosen by
                             // the pure superMarkArm in KeyboardLayout.js; the
@@ -2839,10 +2814,10 @@ Item {
                                 opacity: capRect.disabled ? 0.3 : 0.8
                             }
 
-                            // The dwell progress affordance (ticket 50):
+                            // The dwell progress affordance:
                             // a thin underline growing along the cap's
                             // foot while the rest counts toward the type.
-                            // The corner dot's own register (ticket 45) —
+                            // The corner dot's own register —
                             // textDim ink, a hint of opacity, never an
                             // accent fill and never a dimmed glyph: this
                             // is PROGRESS, not state, so it exists only
@@ -2939,8 +2914,8 @@ Item {
                                 // of the signals: for two fast taps a real
                                 // MouseArea emits
                                 //
-                                //   pressed, released, clicked,
-                                //   pressed, doubleClicked, released
+                                // pressed, released, clicked,
+                                // pressed, doubleClicked, released
                                 //
                                 // so `doubleClicked` arrives on the way *down*
                                 // of the second press, before its own
@@ -2975,8 +2950,8 @@ Item {
                                     // it has today (in dwell mode no cap
                                     // defers — Dwell.holdDefers).
                                     root.dwellReset()
-                                    // Not-ready gating (spec-v1.1 §6) and the
-                                    // unavailable mark (§3) are properties of
+                                    // Not-ready gating and the
+                                    // unavailable mark are properties of
                                     // the cap, so the whole press path —
                                     // including the click sound and the
                                     // pressed fill — never starts for a cap
@@ -3012,7 +2987,7 @@ Item {
                                 // The key is held for as long as the button
                                 // is, so the compositor repeats it at the
                                 // user's own repeat_delay and repeat_rate
-                                // (spec-v1 §6) and the panel runs no repeat
+                                // and the panel runs no repeat
                                 // timer of its own. `canceled` matters as much
                                 // as `released`: a grab lost to a popup or to
                                 // the panel closing has to lift the key too,
@@ -3023,7 +2998,7 @@ Item {
                                 // even if the panel went not-ready mid-press,
                                 // or the compositor repeats it forever.
                                 // The release of a deferred hold comes first
-                                // (ticket 37): before the threshold it sends
+                                //: before the threshold it sends
                                 // the press+release pair; after the threshold
                                 // it is the hold's own and types nothing,
                                 // leaving the menu standing for its pick.
@@ -3045,7 +3020,7 @@ Item {
                                         return
                                     if (capRect.types) root.releaseKey()
                                     // A release with the pointer still on
-                                    // the cap re-arms the dwell (ticket 50):
+                                    // the cap re-arms the dwell:
                                     // a click-and-rest user — or a click
                                     // that ends where it began, as they all
                                     // do — must not need to leave the key
@@ -3067,7 +3042,7 @@ Item {
                                     if (capRect.types) root.releaseKey()
                                 }
 
-                                // The dwell path's enter/leave (ticket 50):
+                                // The dwell path's enter/leave:
                                 // the hit area's own bounds — the same ones
                                 // hover lights — decide when a rest begins
                                 // and ends; cancellation is on leave, never
@@ -3085,8 +3060,8 @@ Item {
                                 // which is survivable because nobody
                                 // double-clicks Close to close twice.
                                 //
-                                // The page control (spec-v1.1 §3) and the
-                                // emoji cap (ticket 24) are no longer among
+                                // The page control and the
+                                // emoji cap are no longer among
                                 // them: waiting for `clicked` lost every
                                 // second press of a rapid pair to the same
                                 // suppression — fatal now the emoji cap
@@ -3125,7 +3100,7 @@ Item {
         id: capHoldTimer
         // The one timer ticket 37 adds, and it repeats nothing: it fires
         // once per hold to open the column menu. Key repeat stays the
-        // compositor's own (spec-v1 §6) — and a deferred cap, having sent
+        // compositor's own — and a deferred cap, having sent
         // no press line at threshold, has no repeat to manage at all.
         interval: HoldColumn.HOLD_THRESHOLD_MS
         repeat: false
@@ -3134,7 +3109,7 @@ Item {
 
     Timer {
         id: dwellTimer
-        // The dwell path's one timer (ticket 50), and like ticket 37's it
+        // The dwell path's one timer, and like ticket 37's it
         // repeats nothing by itself: it is deadline-driven — the delay,
         // then the menu window for a column cap — and Dwell.tick decides
         // what a crossing means. A crossing may take several fires: Qt's
@@ -3149,7 +3124,7 @@ Item {
         onTriggered: root.dwellTick()
     }
 
-    // The hold column's menu (ticket 37) — the card, its catch area
+    // The hold column's menu — the card, its catch area
     // and its entry delegates, in HoldMenu.qml (the structural split's
     // step six). Card-local, like ticket 35's chooser: the panel
     // window's input mask is the card rect, so the component fills the

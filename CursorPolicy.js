@@ -1,6 +1,6 @@
 .pragma library
 
-// Cursor-hiding policy (spec-v1 §9): while the panel is open, Hyprland's
+// Cursor-hiding policy: while the panel is open, Hyprland's
 // `cursor:hide_on_key_press` is suspended and restored on close, because the
 // keys the panel sends are real ones and the cursor vanished under the very
 // finger aiming it.
@@ -12,13 +12,14 @@
 // carries the generation (seq) that asked for it, so an answer can only ever
 // act on the lifecycle that is still current.
 //
-// Why this exists — review finding R6: the previous wiring lived in
-// Panel.qml as a free callback. Closing before the probe completed ran the
-// restore first (nothing recorded yet, so a no-op) and the probe's callback
-// landed afterwards, disabling hiding with the panel closed. Worse, the
-// stale override survived: the next open probed the already-disabled value,
-// recorded nothing, and had nothing to restore. One lifecycle owner that
-// serializes probe, override and restore closes that class.
+// Why one serialized owner matters: if probe, override and restore could
+// run as independent, uncoordinated steps, closing before a probe
+// completes could run the restore first (nothing recorded yet, so a
+// no-op) with the probe's answer landing afterwards, disabling hiding
+// with the panel already closed — and the stale override would survive,
+// since the next open would probe the already-disabled value, record
+// nothing, and have nothing to restore. Serializing the three steps
+// through one owner closes that class of race.
 //
 // Explicit outcomes the policy commits to:
 //
@@ -158,8 +159,8 @@ function open(m) {
 function close(m) {
     if (!m.opened) return []
     m.opened = false
-    // Retiring the generation is the R6 fix: an in-flight or deferred probe
-    // of this lifecycle can no longer apply, whatever it answers.
+    // Retiring the generation: an in-flight or deferred probe of this
+    // lifecycle can no longer apply, whatever it answers.
     m.probeSeq = 0
     m.probeQueued = false
     if (!m.overrideLive) {
@@ -348,10 +349,11 @@ function configReloaded(m) {
     m.outcome = superseded ? "override superseded by config reload"
                           : "config reload; no override in place"
     if (m.opened && m.probeSeq === 0 && !m.probeQueued) {
-        // Spec-v1 §9 holds for the whole open, not just until the first
-        // reload: the reload put the config's own value back, so re-measure.
-        // If the config itself now says false, the probe honestly answers
-        // "nothing to suspend"; otherwise the suspension is re-established.
+        // The suspension policy holds for the whole open, not just until
+        // the first reload: the reload put the config's own value back, so
+        // re-measure. If the config itself now says false, the probe
+        // honestly answers "nothing to suspend"; otherwise the suspension
+        // is re-established.
         return startProbe(m)
     }
     return resumeProbeIfQueued(m)

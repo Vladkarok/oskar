@@ -2,7 +2,7 @@ import QtQuick
 import qs.Commons
 import "Config.js" as ConfigFile
 
-// The panel's one reader of Omarchy's shared style tokens (spec-v1 §8).
+// The panel's one reader of Omarchy's shared style tokens.
 //
 // Every colour, font and radius the keyboard draws with comes from `Color`
 // and `Style`, which are singletons the shell reassigns when the theme
@@ -11,8 +11,8 @@ import "Config.js" as ConfigFile
 // keymap or the helper socket. That is the whole of `follow_theme: true`, and
 // it is why there are no colour literals anywhere in the panel.
 //
-// The indirection exists for the other half: `follow_theme: false` (spec-v1
-// §10) stops the keyboard tracking theme changes and does nothing else in v1.
+// The indirection exists for the other half: `follow_theme: false` stops the
+// keyboard tracking theme changes and does nothing else in v1.
 // It is implemented by holding one snapshot of the tokens and reading from it
 // instead of from the singletons — a binding that never reads `Color` cannot
 // be re-evaluated when `Color` changes, so the keyboard simply stays as it
@@ -28,8 +28,8 @@ import "Config.js" as ConfigFile
 // following-off freezes the tokens as they are THEN — each stop holds the
 // moment it stopped at, never a replay of an older look.
 //
-// Overrides are the third tier of spec-v1.1 §5's precedence: user override,
-// then the live (or frozen) shared token, then the shipped fallback. The
+// Overrides resolve in three tiers: user override, then the live (or
+// frozen) shared token, then the shipped fallback. The
 // panel binds this facade's `overrides` to its sparse user-override map, and
 // the resolved properties below check their override first and fall back to
 // exactly the token they resolved to before overrides existed — so an
@@ -58,7 +58,7 @@ QtObject {
         return ConfigFile.owns(overrides, name)
     }
 
-    // §5's third precedence tier: with no override and no token answer, an
+    // The third precedence tier: with no override and no token answer, an
     // appearance field resolves to what Config.js ships — read from Config.js
     // rather than spelled here, so the shipped defaults keep their one home.
     // The shell answers every token in a normal session, so the tier only
@@ -123,8 +123,8 @@ QtObject {
     readonly property color themeAccent: colorAnswered(frozen ? held.accent : Color.accent)
         ? (frozen ? held.accent : Color.accent)
         : shippedColor("accentColor")
-    // The accent and the latched "selected" tint are one override field
-    // (spec-v1.1 §5's "accent/active colour"): an explicit accent wins for
+    // The accent and the latched "selected" tint are one override field:
+    // an explicit accent wins for
     // both, with the selected fill re-tinted at the same alpha the theme's
     // own selected fill carries, so latched keys stay a lighter wash of the
     // accent and locked keys stay solid — one hue choice, the state weights
@@ -209,8 +209,8 @@ QtObject {
     // stays a valid answer — it arrives as a validated override (checked
     // first below) or from a theme that really declared zero.
     readonly property var cornerRadius: frozen ? held.cornerRadius : Style.cornerRadius
-    // Key and panel rounding split the one shared cornerRadius token into the
-    // two fields spec-v1.1 §5 names; with no override both are the token, so
+    // Key and panel rounding split the one shared cornerRadius token into two
+    // fields; with no override both are the token, so
     // a following keyboard rounds exactly as it did before overrides existed.
     readonly property int capCorner: hasOverride("capCorner")
         ? overrides.capCorner
@@ -239,7 +239,7 @@ QtObject {
     // gradient through `[hyprland] active-border`. Held whole rather than
     // re-derived from the frozen accent: what the shell hands out is one spec,
     // and taking it apart here would be this file inventing a border. The
-    // precedence chain is §5's, complete for the border as one field: an
+    // precedence chain is complete for the border as one field: an
     // explicit border override replaces the whole spec with a flat one at
     // the card's shipped border weight; the theme's own token — the
     // `[hyprland] active-border` value, or the `[notifications] border`

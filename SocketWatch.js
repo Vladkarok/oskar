@@ -1,18 +1,16 @@
 .pragma library
 
-// The socket reconnect decision (ticket 47), split out of
-// Keyboard.qml's reconnect timer as a pure seam.
+// The socket reconnect decision, split out of Keyboard.qml's reconnect
+// timer as a pure seam.
 //
 // Why this exists. Quickshell 0.3.1's Socket can fail to report a peer
 // close: the daemon stops, the transport dies, and the `connected`
-// property still reads true — Keyboard.qml's error handler documents the
-// live observation, and the install-from-zero stranger's whole session
-// (2026-09-14, lab journal) ran inside the resulting wedge: the panel
-// re-helloed a dead object every two seconds, nothing ever answered, the
-// typing gate stayed shut with "Starting oskar.service…" standing
-// and every key click a silent no-op, and only a shell restart escaped.
-// The one escape the code had — the path check that rebuilds the socket —
-// is guarded by `!connected`, so a socket that lies true never reaches it.
+// property still reads true. Left unguarded this wedges the panel: it
+// re-helloes a dead object forever, nothing ever answers, the typing gate
+// stays shut, and every key click is a silent no-op — only a restart
+// escapes. The one escape the code had — the path check that rebuilds the
+// socket — is guarded by `!connected`, so a socket that lies true never
+// reaches it.
 //
 // The watchdog here closes that hole from the other side: the caller
 // marks a hello as outstanding the moment it is written and clears the
@@ -75,17 +73,15 @@ function reconnectAction(state) {
     return state.idle === true ? "ping" : "hello"
 }
 
-/// Ticket 54: what the rebuild path resets beyond the socket object
-/// itself. The whole point of a rebuild is that the disconnect arm never
-/// runs — a socket that lies `connected` is why "rebuild" exists — so the
-/// disconnect arm's compositor-share-generation reset cannot be left to
-/// it: a restarted daemon counts its installs from one again, so the
-/// fresh connection's ack can repeat the generation the panel last
-/// shared; the once-per-generation guard would compare equal and skip a
-/// re-share of a file the compositor never saw from this daemon — and
-/// nothing else re-reads an unchanged path: two keymaps on the seat,
-/// silently. (§91 took the text-reply FIFO with the typed delivery
-/// routes; this ledger shrank to the one field that remains.)
+/// What the rebuild path resets beyond the socket object itself. The whole
+/// point of a rebuild is that the disconnect arm never runs — a socket
+/// that lies `connected` is why "rebuild" exists — so the disconnect arm's
+/// compositor-share-generation reset cannot be left to it: a restarted
+/// daemon counts its installs from one again, so the fresh connection's
+/// ack can repeat the generation the panel last shared; the
+/// once-per-generation guard would compare equal and skip a re-share of a
+/// file the compositor never saw from this daemon — and nothing else
+/// re-reads an unchanged path: two keymaps on the seat, silently.
 ///
 /// The ledger lives beside the verdict that orders it so the decision and
 /// its resets cannot drift apart; the caller packs its properties in and

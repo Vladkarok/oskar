@@ -1,9 +1,8 @@
 // Pure configuration logic lives beside the existing panel reducer tests.
 // This is not a product seam: it checks parsing and serialization without
-// inventing a mock panel or filesystem protocol (spec-v1.1 §8). The curated
-// page's pure resolution (the token reverse index and the row builder) rides
-// in this file for the same reason: it is pure module logic, and a third
-// suite file would be a new seam (spec-v1.1 §8).
+// inventing a mock panel or filesystem protocol. The curated page's pure
+// resolution (the token reverse index and the row builder) rides in this
+// file for the same reason: it is pure module logic.
 import QtQml
 import "../Config.js" as Config
 import "../KeyboardLayout.js" as Layout
@@ -17,22 +16,22 @@ QtObject {
                 sizePreset: "medium",
                 sound: false,
                 followTheme: true,
-                // Omarchy 4.0.2's own default emoji picker (2026-09-05).
+                // Matches Omarchy's own default emoji picker behaviour.
                 emojiCloseAfterPick: false,
                 emojiPageSize: "medium",
                 // The emoji page's free drag is opt-in: off is exactly
                 // the computed leftover-centre placement that shipped.
                 emojiDrag: false,
-                // The Super cap says what the key is (ticket 22).
+                // The Super cap says what the key is.
                 superMark: "word",
-                // Ticket 50: dwell-to-type is off until the user opts in.
+                // Dwell-to-type is off until the user opts in.
                 dwellEnabled: false,
                 dwellDelayMs: 800,
-                // Ticket 52: the UI language follows the active layout
-                // until the user pins it.
+                // The UI language follows the active layout until the
+                // user pins it.
                 uiLanguage: "auto",
-                // Ticket 58: the panel answers as a mouse until a finger
-                // (or the user) says otherwise.
+                // The panel answers as a mouse until a finger (or the
+                // user) says otherwise.
                 inputProfile: "auto",
                 capCorner: 8,
                 panelRadius: 12,
@@ -67,7 +66,7 @@ QtObject {
             // The emoji page's free drag: a boolean, off by default — off
             // is exactly the computed leftover-centre placement that
             // shipped, no affordance added. Canonical snake_case and the
-            // camelCase alias are the same field with the same rule (R5).
+            // camelCase alias are the same field with the same rule.
             var parsed = Config.reloadOverrides({}, '{"emoji_drag":true}')
             T.equal(parsed.error, "")
             T.deepEqual(parsed.value, { emojiDrag: true })
@@ -77,7 +76,7 @@ QtObject {
             T.equal(alias.error, "")
             T.deepEqual(alias.value, { emojiDrag: false })
             // Booleans only: a number or a stray string is a malformed
-            // edit with the §5 preservation semantics.
+            // edit, and the previous value is preserved.
             T.equal(Config.reloadOverrides({}, '{"emoji_drag":1}').error,
                 "Invalid value for emoji_drag")
             T.equal(Config.reloadOverrides({}, '{"emoji_drag":"yes"}').error,
@@ -94,11 +93,11 @@ QtObject {
         })
 
         T.test("the remembered emoji page centre is validated state, never an override", function () {
-            // The free-drag ticket's persisted placement: the page's
-            // CENTRE in overlay-local coordinates, beside the floating
-            // card's centre and on the same write path — parsed with the
-            // same point rule, malformed with the §5 preservation
-            // semantics, unknown to the override store.
+            // The page's remembered CENTRE, in overlay-local coordinates,
+            // beside the floating card's centre and on the same write path
+            // — parsed with the same point rule; a malformed edit preserves
+            // the previous value, and the field is unknown to the override
+            // store.
             var parsed = Config.reloadState(Config.stateDefaults(),
                 '{"emoji_center":{"x":640,"y":381.5}}')
             T.equal(parsed.error, "")
@@ -141,10 +140,9 @@ QtObject {
         })
 
         T.test("layout state fields reject malformed values", function () {
-            // The remembered layout identity (ticket 19's restart fallback):
-            // the group is a whole XKB index 0-3, the device any string; a
-            // malformed edit preserves the previous state with the §5
-            // semantics, exactly like every other state field.
+            // The remembered layout identity: the group is a whole XKB
+            // index 0-3, the device any string; a malformed edit preserves
+            // the previous state, exactly like every other state field.
             var previous = { center: null, emojiUsage: [],
                 emojiSkinTone: "", layoutGroup: 2,
                 layoutDevice: "ite-keyboard" }
@@ -174,7 +172,7 @@ QtObject {
             // clamps into; the FILE holds the same bounds so an external
             // edit cannot smuggle a 10-second or zero rest past the
             // popover). Canonical and camelCase alias validate
-            // identically, exactly like every other field (R5).
+            // identically, exactly like every other field.
             var parsed = Config.reloadOverrides({},
                 '{"dwell_enabled":true,"dwell_delay_ms":1200}')
             T.deepEqual(parsed.value,
@@ -229,10 +227,10 @@ QtObject {
         T.test("the input profile is auto by default, one of three words", function () {
             // Ticket 58: "auto" activates the touch affordances when the
             // panel observes touch events; mouse/touch pin the world. One
-            // list (INPUT_PROFILES) is the value space — the SUPER_MARKS
-            // rule. Junk is a malformed edit with the §5 preservation
-            // semantics; InputProfile.resolve owns the degrade-to-auto at
-            // the seam.
+            // list (INPUT_PROFILES) is the value space, matching the
+            // SUPER_MARKS rule. Junk is a malformed edit and the previous
+            // value is preserved; InputProfile.resolve owns the
+            // degrade-to-auto at the seam.
             T.deepEqual(Config.INPUT_PROFILES, ["auto", "mouse", "touch"])
             var parsed = Config.reloadOverrides({}, '{"input_profile":"touch"}')
             T.equal(parsed.error, "")
@@ -280,8 +278,8 @@ QtObject {
                     '{\n  "super_mark": "' + marks[i] + '"\n}\n')
             }
 
-            // An unknown value is a malformed edit with the §5 preservation
-            // semantics — the last valid map stands, the file is not touched.
+            // An unknown value is a malformed edit — the last valid map
+            // stands, the file is not touched.
             // The QML independently treats an unknown string as the word, so
             // a value that could not reach the file cannot blank the cap.
             var previous = { superMark: "penguin" }
@@ -319,18 +317,17 @@ QtObject {
         })
 
         T.test("a boolean written as a JSON string heals instead of poisoning", function () {
-            // The owner's live config carried "emoji_close_after_pick":
-            // "true" (string) from the omarchy-osk era; the validator's
-            // boolean contract then failed EVERY load forever, and the
-            // reset chip could not reach it (§5 keeps the bad value
-            // alive). The heal: the writer always meant the boolean.
+            // A boolean field can arrive as the JSON string "true"/"false"
+            // instead of a real boolean; the writer always meant the
+            // boolean, so this heals it rather than rejecting the whole
+            // edit and leaving the bad value stuck forever.
             var parsed = Config.reloadOverrides({},
                 '{"emoji_close_after_pick":"true","mode":"docked"}')
             T.equal(parsed.error, "")
             T.equal(parsed.value.emojiCloseAfterPick, true)
-            // The review's finding: sound is BOOLEAN-typed and was
-            // wrongly excluded — {"sound":"true"} must heal like every
-            // other boolean, or the banner pathology survives on a sibling.
+            // Every BOOLEAN-typed field must heal the same way —
+            // {"sound":"true"} included — or a sibling field keeps the
+            // same stuck-forever failure.
             var snd = Config.reloadOverrides({}, '{"sound":"true"}')
             T.equal(snd.error, "")
             T.equal(snd.value.sound, true)
@@ -340,7 +337,7 @@ QtObject {
             T.equal(falseCase.error, "")
             T.equal(falseCase.value.emojiCloseAfterPick, false)
             // A string that is NOT a boolean spelling still poisons —
-            // garbage stays loud (§5's preservation, unchanged).
+            // garbage stays loud and the previous value is preserved.
             var junk = Config.reloadOverrides({},
                 '{"emoji_close_after_pick":"sure"}')
             T.equal(junk.error, "Invalid value for emoji_close_after_pick")
@@ -391,8 +388,8 @@ QtObject {
         })
 
         T.test("an empty overrides file is malformed, not an empty map", function () {
-            // Truncating config.json to zero bytes is an external edit that
-            // destroyed the file's content (§5): it must preserve the last
+            // Truncating config.json to zero bytes is an external edit
+            // that destroyed the file's content: it must preserve the last
             // valid runtime and flag the error, exactly like any other
             // malformed text — reading `{}` here would silently clear every
             // override. Whitespace-only is the same file with padding.
@@ -429,9 +426,9 @@ QtObject {
         })
 
         T.test("appearance values validate as hex colours and whole-pixel radii", function () {
-            // A named colour is a malformed value with the §5 preservation
-            // semantics, not a guess to be accepted: the popover writes hex
-            // and external edits are held to the same rule.
+            // A named colour is a malformed value, not a guess to be
+            // accepted: the popover writes hex and external edits are held
+            // to the same rule.
             var previous = { keyBackground: "#303030" }
             var named = Config.reloadOverrides(previous, '{"key_background":"red"}')
             T.equal(named.value, previous)
@@ -475,12 +472,10 @@ QtObject {
         })
 
         T.test("a camelCase alias validates exactly like its canonical field", function () {
-            // R5's root door: the camelCase runtime spelling of an approved
-            // field used to fall through every predicate as an "unknown" key
-            // and land raw in the override map (spec-v1.1 §5, 2026-09-06).
-            // An alias is the same field, so the same rule applies — an
-            // invalid alias is a malformed edit with the §5 preservation
-            // semantics, never a silently accepted guess.
+            // An alias is the same field as its canonical spelling, so
+            // the same rule applies — an invalid alias is a malformed edit
+            // and the previous value is preserved, never a silently
+            // accepted guess.
             var previous = { capCorner: 8, sound: true }
             var cases = [
                 ['{"capCorner":-20}', "Invalid value for capCorner"],
@@ -514,12 +509,12 @@ QtObject {
         })
 
         T.test("canonical and camelCase collisions resolve canonically in both JSON orders", function () {
-            // The exact R5 reproduction: whichever order the file names the
-            // two spellings in, an invalid alias can neither override a
-            // validated field nor ride through serialization as one. The
-            // edit is malformed as a whole; the runtime keeps its last valid
-            // map and the file keeps its exact text (the FileView never
-            // writes while an error stands).
+            // Whichever order the file names the two spellings in, an
+            // invalid alias can neither override a validated field nor
+            // ride through serialization as one. The edit is malformed as
+            // a whole; the runtime keeps its last valid map and the file
+            // keeps its exact text (the FileView never writes while an
+            // error stands).
             var previous = { capCorner: 8 }
             var orderA = Config.reloadOverrides(previous, '{"key_radius":8,"capCorner":-20}')
             T.equal(orderA.value, previous)
@@ -547,7 +542,7 @@ QtObject {
             // GUI save under their own names, never name-mapped through the
             // field table. A camelCase key that names no approved field is
             // just as unknown as a snake_case one — being camelCase grants
-            // nothing, which is what closed R5.
+            // nothing.
             var overrides = Config.reloadOverrides({},
                 '{"future_setting":{"enabled":true},"oddCamelName":-3,'
                 + '"panelRadius":10}').value
@@ -607,10 +602,10 @@ QtObject {
             var malformed = Config.reloadState(first.value, '{"center":{"x":12}}')
             T.equal(malformed.value, first.value)
             T.equal(malformed.error, "Invalid value for center")
-            // The pre-08 state file stored the dragged top-left under
-            // "position"; with no migration promised (spec-v1.1 §5) it reads
-            // as an absent centre — the card simply falls back to docked
-            // placement rules instead of restoring a stale top-left.
+            // An older state file stored the dragged top-left under
+            // "position"; with no migration promised it reads as an absent
+            // centre — the card simply falls back to docked placement rules
+            // instead of restoring a stale top-left.
             var legacy = Config.reloadState(Config.stateDefaults(), '{"position":{"x":12,"y":34}}')
             T.deepEqual(legacy.value, {
                 center: null, emojiCenter: null, emojiUsage: [],
@@ -629,7 +624,7 @@ QtObject {
                 + '\n  "layout_device": ""\n}\n')
         })
 
-        // ---- the curated symbols page (spec-v1.1 §3, decisions §17) ----
+        // ---- the curated symbols page ----
         //
         // Availability is decided by a reverse index over the keycap
         // pipeline's own symbolMap: a curated entry is a keysym token, and it
@@ -638,12 +633,10 @@ QtObject {
         // synthetic keymaps.
         //
         T.test("the floating anchor round-trips and clamps to the output", function () {
-            // spec-v1.1 §4's deterministic anchor: a saved centre restores
-            // the top-left from the centre and clamps only enough to keep
-            // the whole card on its output. Restored from the pre-squash
-            // history after the audit found it the one untested spec-v1.1
-            // seam — the clamp arithmetic is configuration, not host
-            // evidence, and belongs here.
+            // A saved centre restores the top-left from the centre and
+            // clamps only enough to keep the whole card on its output —
+            // the clamp arithmetic is configuration, not host evidence, and
+            // belongs here.
             var anchor = Config.floatingAnchor({ x: 640, y: 400 },
                 500, 200, 1280, 800)
             T.equal(anchor.x, 640 - 250)
@@ -663,8 +656,8 @@ QtObject {
             // a resolved `s`, is what the panel's isStackedPair reads, so the
             // cap stays stacked and enabled with its miss reported.
             //
-            // Levels arrive as the helper's resolved facts, which is the only
-            // shape there is since ticket 05 retired the keysym-token path.
+            // Levels arrive as the helper's resolved facts, which is the
+            // only shape there is.
             var misses = []
             var cap = Layout.capOverlay({ xkb: "AD11", dual: true },
                 [{ text: "[" }, { none: "" }], misses)
@@ -675,10 +668,10 @@ QtObject {
         })
 
         T.test("the symbols page's dual caps draw both levels from the keymap", function () {
-            // Symbols v2 (2026-09-05): the page's caps are main-page caps
-            // with both levels taken from the compiled keymap — the stacked
-            // shifted/base pair the main page draws, with the level typed
-            // following Shift. No built-in character behind either level.
+            // The symbols page's caps are main-page caps with both levels
+            // taken from the compiled keymap — the stacked shifted/base pair
+            // the main page draws, with the level typed following Shift. No
+            // built-in character behind either level.
             var pair = Layout.capOverlay({ xkb: "AD11", dual: true },
                 [{ text: "[" }, { text: "{" }], [])
             T.equal(pair.chr, "[")
@@ -732,10 +725,10 @@ QtObject {
 
         // ---- the colour rows' recommended swatches and the hex draft ----
         //
-        // The 2026-09-06 amendment's pure layer: which swatches a theme
-        // recommends, and the one normal form an Apply button commits
-        // through. Presentation rides on these in Panel.qml; here they are
-        // pinned as module logic beside the rest of Config.js's contract.
+        // Which swatches a theme recommends, and the one normal form an
+        // Apply button commits through. Presentation rides on these in
+        // Panel.qml; here they are pinned as module logic beside the rest
+        // of Config.js's contract.
 
         T.test("recommended swatches answer theme colours in fixed order, lowercased", function () {
             // One swatch per theme source — background, foreground, accent,
@@ -811,9 +804,9 @@ QtObject {
         })
 
         T.test("hex-edit dismiss drops item focus so hide cannot recapture keys", function () {
-            // Spec-v1.1 §5: ending the typed-hex exception returns the
-            // surface to WlrKeyboardFocus.None and leaves no focused
-            // TextInput. Custom/Cancel/outside clicks are dismissals too.
+            // Ending the typed-hex exception returns the surface to
+            // WlrKeyboardFocus.None and leaves no focused TextInput.
+            // Custom/Cancel/outside clicks are dismissals too.
             // A hide that still leaves a hex field focused hands Qt focus
             // to a row field (beginHexEdit recaptures OSK keys) or keeps
             // the caret after the pad is gone (letters go to the last app).
@@ -824,8 +817,8 @@ QtObject {
             })
         })
 
-        // Key hover/press fills (live-host ticket 01): mix the resting cap
-        // toward the foreground; never replace the cap with the foreground.
+        // Key hover/press fills mix the resting cap toward the
+        // foreground; never replace the cap with the foreground.
         T.test("key hover mix is a modest lift; press is stronger and not white", function () {
             T.equal(Config.keyHoverMix(0.08), 0.08)
             T.equal(Config.keyHoverMix(1), 0.16)
@@ -868,8 +861,8 @@ QtObject {
             T.equal(Config.toHex(fromHex).toLowerCase(), "#dcdcdc")
         })
 
-        // Paste chip (live-host ticket 02): classify CLIPBOARD types; flatten
-        // a text payload to a single-line preview. Elision is the chip width.
+        // The paste chip classifies CLIPBOARD types and flattens a text
+        // payload to a single-line preview. Elision is the chip width.
         T.test("clipboard kinds hide empty, preview text, and keep a glyph for non-text", function () {
             T.equal(Config.clipboardKind("", 1), "empty")
             T.equal(Config.clipboardKind("Nothing is copied\n", 1), "empty")
@@ -888,8 +881,8 @@ QtObject {
 
         // Chip visibility is types-kind + preview + whether wl-paste
         // --no-newline succeeded. Text stays hidden until a non-empty
-        // preview exists (adversarial 81d138b: no 30px flash, no glyph
-        // for whitespace, no leftover "text" on a failed paste).
+        // preview exists: no flash on layout, no glyph for whitespace-only
+        // clipboards, no leftover "text" on a failed paste.
         T.test("paste chip hides until a non-empty text preview exists", function () {
             T.equal(Config.pasteChipKind("empty", "", false), "empty")
             T.equal(Config.pasteChipKind("other", "", false), "other")
@@ -903,8 +896,8 @@ QtObject {
                 "text")
         })
 
-        // Key radius (live-host ticket 04): 0–24 is a medium-key proportion;
-        // the drawn radius scales with the size preset so 24 stays a circle.
+        // Key radius 0–24 is a medium-key proportion; the drawn radius
+        // scales with the size preset so 24 stays a circle.
         T.test("key radius 24 scales with the size preset", function () {
             T.equal(Config.SIZE_PRESET_SCALES.medium, 1)
             T.equal(Config.SIZE_PRESET_SCALES.large, 1.2)
@@ -915,8 +908,8 @@ QtObject {
             T.equal(Config.effectiveKeyRadius(0, 1.45), 0)
         })
 
-        // Custom colour editor (live-host ticket 07): HS square + V slider
-        // keep RGB/HSV/hex in sync. Worked example is the WinUI reference
+        // The custom colour editor's HS square + V slider keep
+        // RGB/HSV/hex in sync. Worked example is the WinUI reference
         // swatch #34CF2B (R 52, G 207, B 43).
         T.test("hsv and rgb round-trip the WinUI green and keep hex in sync", function () {
             var rgb = { r: 52 / 255, g: 207 / 255, b: 43 / 255 }

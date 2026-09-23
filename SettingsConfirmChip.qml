@@ -1,8 +1,7 @@
 import QtQuick
 import qs.Commons
 
-// Compact confirm control (live-host ticket 06): a finished check chip
-// beside the hex field. Mouse-only; the word-button Apply is gone.
+// Compact mouse-only confirm chip beside the hex field.
 Rectangle {
     id: chip
 

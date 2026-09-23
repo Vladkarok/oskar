@@ -1,7 +1,7 @@
 .pragma library
 
-// The keyboard session (ticket 04): one pure owner for everything the panel
-// must correlate across the helper connection — the configure transaction
+// The keyboard session: one pure owner for everything the panel must
+// correlate across the helper connection — the configure transaction
 // queue, the handshake, and the keymap generation the keycap facts belong to.
 // Events in, next state out; nothing ambient is read, no line is written
 // here. The socket object, the writes and the reducer's click semantics stay
@@ -9,33 +9,28 @@
 // decides what the replies MEAN, which is why it can be tested without a
 // compositor (tests/keyboard-session.qml).
 //
-// Why the generation exists. The main and ordinary-symbols pages now draw
-// from facts supplied by the same compiled keymap that performs typing
-// (decisions §23, which reopens §11's separate pipeline for those pages
-// while retaining §3's independent complete-keymap compilation). A reply
-// computed from keymap N must never enable caps for a world where the
-// helper installed N+1, so every `configured` and every `caps` reply
+// Why the generation exists. The main and ordinary-symbols pages draw
+// from facts supplied by the same compiled keymap that performs typing.
+// A reply computed from keymap N must never enable caps for a world where
+// the helper installed N+1, so every `configured` and every `caps` reply
 // carries the helper's install generation, and facts are accepted only
 // when both the generation AND the group match what the helper last
 // acknowledged. Superseded replies are dropped; while no accepted facts
 // exist for the acknowledged world, typing is not ready — an unresolved
 // mismatch is a visible unavailable state, never a silent fallback.
 //
-// Extensibility contract for ticket 05 (chord reachability): records are
-// positional and fields are tag-dispatched, so a future field kind or a
-// trailing record field can be added without breaking the parsers here.
-// The only response to an unknown field tag is refusal — parseCapsReply
-// returns null and the panel treats the reply as unresolved, never as an
-// empty level it might silently draw over.
+// Extensibility contract: records are positional and fields are
+// tag-dispatched, so a future field kind or a trailing record field can be
+// added without breaking the parsers here. The only response to an unknown
+// field tag is refusal — parseCapsReply returns null and the panel treats
+// the reply as unresolved, never as an empty level it might silently draw
+// over.
 
-/// Bumped with the helper's PROTOCOL_VERSION. Version 5 (HISTORICAL)
-/// added the Chromium-specific `text-unicode` delivery command; version 4 added `caps`
-/// reply and the generation on `configured`; the hello gate refuses a
+/// Bumped with the helper's PROTOCOL_VERSION. The hello gate refuses a
 /// pairing of old and new before any configure is sent, which is what lets
-/// both sides change reply shapes in one release.
-// Version 6 (§91): the typed delivery verbs are gone from the helper —
-// every emoji pick rides the clipboard transaction. A helper that still
-// answers 5 predates the deletion and is a reinstall, not a peer.
+/// both sides change reply shapes in one release. A helper answering an
+/// older version than this predates the current wire format and is a
+/// reinstall, not a peer.
 var PROTOCOL_VERSION = 6
 
 function initial() {
@@ -193,7 +188,7 @@ function typingReady(state) {
 
 /// The facts to draw with, or null while the world is unresolved. The panel
 /// never draws stale facts: a null here means the built-in table draws only
-/// as the logged last-resort fallback (spec-v1 §3.5) with input gated.
+/// as the logged last-resort fallback, with input gated.
 function capsMap(state) {
     return capsCurrent(state) ? state.caps.byGroup[state.group] : null
 }
@@ -217,18 +212,17 @@ function applyCapsReply(state, parsed) {
     }
 }
 
-/// spec-v1.1 §6 lifecycle kind the header notice keys off. A connected
-/// helper whose facts failed is unavailable, never "starting": decisions
-/// §23 requires a visible mismatch, not the service-boot notice.
+/// The lifecycle kind the header notice keys off. A connected helper whose
+/// facts failed is unavailable, never "starting": a stale-keymap mismatch
+/// must be a visible mismatch, not the service-boot notice.
 function lifecycleKind(flags) {
     if (flags.serviceIncompatible) return "incompatible"
     if (!flags.inputReady && !flags.serviceConnected) return "stopped"
-    // `keycapsFailed` is gone with the §11 pipeline (ticket 18): it reported a
-    // compile nothing drew from, so a failure there raised "keymap
-    // unavailable" over caps that were entirely the helper's facts and
-    // perfectly good. `capsFactsFailed` is the one that describes what is
-    // drawn. A caller still passing the old flag is honoured so the two sides
-    // can move independently.
+    // `keycapsFailed` reported a compile nothing drew from, so a failure
+    // there raised "keymap unavailable" over caps that were entirely the
+    // helper's facts and perfectly good. `capsFactsFailed` is the one that
+    // describes what is drawn. A caller still passing the old flag is
+    // honoured so the two sides can move independently.
     if (flags.capsFactsFailed || flags.keycapsFailed) return "unavailable"
     if (!flags.inputReady) return "starting"
     return "ready"
@@ -354,7 +348,7 @@ function parseCapsReply(line) {
     return { gen: gen, group: group, byPosition: byPosition }
 }
 
-/// Ticket 06: the published keymap's absolute path, built exactly from the
+/// The published keymap's absolute path, built exactly from the
 /// runtime directory the helper publishes into. Trailing separators on the
 /// environment value are normalized so the identity comparison below is
 /// about the path, not the spelling; an empty environment answers empty and
@@ -367,21 +361,20 @@ function publishedKeymapPath(runtimeDir) {
 
 /// Whether a compositor-reported kb_file IS the published keymap — exact
 /// identity, never a substring. A user's own file under a directory that
-/// happens to end in our suffix is the user's: the substring test adopted
-/// it as ours and silently dropped it (audit 06).
+/// happens to end in our suffix is the user's; a substring test would wrongly
+/// adopt it as ours and silently drop it.
 function isPublishedKeymap(kbFile, runtimeDir) {
     var path = String(kbFile || "")
     return path !== "" && path === publishedKeymapPath(runtimeDir)
 }
 
 /// Quote a path for interpolation into a single-quoted Lua string literal
-/// (hyprctl eval's config values). The security audit's finding 3: a
-/// filename carrying ' or a closing brace sequence escaped the literal
-/// and executed as config-side Lua — verified in a stub by the auditor.
-/// Lua single-quoted literals escape \\ and \'; every other unsafe byte
-/// (quotes, braces, control characters — filenames may legally carry
-/// newlines) becomes a \\ddd decimal escape, which no filename spelling
-/// can close. The empty string still quotes as ''.
+/// (hyprctl eval's config values). A filename carrying ' or a closing
+/// brace sequence would otherwise escape the literal and execute as
+/// config-side Lua. Lua single-quoted literals escape \\ and \'; every
+/// other unsafe byte (quotes, braces, control characters — filenames may
+/// legally carry newlines) becomes a \\ddd decimal escape, which no
+/// filename spelling can close. The empty string still quotes as ''.
 function luaQuote(value) {
     var text = String(value === undefined || value === null ? "" : value)
     var out = "'"
@@ -394,8 +387,7 @@ function luaQuote(value) {
             // Every non-ASCII/non-printable codepoint rides as its UTF-8
             // bytes, each as a \\ddd decimal escape — valid in every Lua
             // version (\\u{} needs 5.3+), correct for Cyrillic and
-            // accented paths (the cross-round caught \\1103 misreading
-            // as \\110 + '3'), and inert in the bash double-quote layer.
+            // accented paths, and inert in the bash double-quote layer.
             var bytes = []
             if (code < 0x80) bytes.push(code)
             else if (code < 0x800) {
@@ -408,8 +400,7 @@ function luaQuote(value) {
                     0x80 | ((code >> 6) & 0x3F), 0x80 | (code & 0x3F))
             }
             // Padded to three digits: Lua reads exactly three, so an
-            // unpadded \3 followed by the path's next '4' would corrupt
-            // (the cross-round's catch).
+            // unpadded \3 followed by the path's next '4' would corrupt.
             for (var b = 0; b < bytes.length; b++)
                 out += "\\" + ("00" + bytes[b]).slice(-3)
         }

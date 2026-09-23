@@ -24,7 +24,7 @@ Item {
 
     // ---- configuration ----
     //
-    // v1.1 gives configuration three non-overlapping roles: complete shipped
+    // Configuration has three non-overlapping roles: complete shipped
     // defaults in Config.js, sparse choices in config.json, and geometry in
     // state.json. Both writable files are watched below; no polling is used.
     readonly property string configDir: (Quickshell.env("XDG_CONFIG_HOME")
@@ -47,30 +47,29 @@ Item {
     property string configurationError: ""
     property string stateError: ""
     // The per-path save-failure notice state (the list, its history and
-    // the mark/landed transitions) lives in PrivateSaves below (the
-    // structural split's step three); the panel keeps the hint line's
-    // own derivation, the only reader the monolith had.
+    // the mark/landed transitions) lives in PrivateSaves below; the panel
+    // keeps only the hint line's own derivation.
     readonly property bool saveFailedNotice: saves.saveFailedPaths.length > 0
     // Every control that writes the overrides file stands down while a
-    // malformed external edit is standing (spec-v1.1 §5): the popover keeps
-    // showing the last valid runtime values and says so, and the bad file is
-    // never overwritten (saveOverrides refuses). The watched reload clears
-    // the error the moment the file is fixed; nothing is polled.
+    // malformed external edit is standing: the popover keeps showing the
+    // last valid runtime values and says so, and the bad file is never
+    // overwritten (saveOverrides refuses). The watched reload clears the
+    // error the moment the file is fixed; nothing is polled.
     readonly property bool configHealthy: root.configurationError === ""
 
-    // Geometry (spec-v1 §7). Docked — the default, because it needs no
-    // positioning decision from someone who just installed the plugin —
-    // reserves a full-width strip along the bottom edge so windows move up
-    // instead of being covered; floating overlays and is dragged around.
-    // `center` is geometry state; `size_preset` is a user preference. They
+    // Geometry. Docked — the default, because it needs no positioning
+    // decision from someone who just installed the plugin — reserves a
+    // full-width strip along the bottom edge so windows move up instead of
+    // being covered; floating overlays and is dragged around. `center` is
+    // geometry state; `size_preset` is a user preference. They
     // intentionally persist to different files even though both affect the
     // floating card.
     property string mode: maintainedDefaults.mode
     property var floatingCenter: null
     property string sizePreset: maintainedDefaults.sizePreset
 
-    // Size presets (spec-v1 §7): chosen from a direct M/L/XL chooser
-    // (spec-v1.1 §4), not a resize handle. `medium` is the geometry the
+    // Size presets: chosen from a direct M/L/XL chooser, not a resize
+    // handle. `medium` is the geometry the
     // keyboard shipped with and the smallest of the three — the presets only
     // go up, because the hit targets are already sized for touch at `medium`
     // and a smaller preset would trade that away. An unknown name in the
@@ -81,8 +80,8 @@ Item {
     readonly property var sizePresetLabels: ({ "medium": "M", "large": "L", "x-large": "XL" })
     readonly property real sizeScale: root.sizePresetScales[root.sizePreset] || 1.0
 
-    // The colour rows' recommended swatches (spec-v1.1 §5, 2026-09-06
-    // amendment): up to four theme-derived colours — background, foreground,
+    // The colour rows' recommended swatches: up to four theme-derived
+    // colours — background, foreground,
     // accent, muted — with maintained fallbacks and duplicates removed,
     // resolved through Config.js. A swatch click writes its resolved colour
     // as an explicit override, so a later theme change never silently
@@ -120,28 +119,29 @@ Item {
 
     property bool emojiCloseAfterPick: maintainedDefaults.emojiCloseAfterPick
     property string emojiPageSize: maintainedDefaults.emojiPageSize
-    // The emoji page's free drag (the emoji-drag ticket): off by
-    // default — off IS today's page, computed leftover-centre placement
-    // and no affordance. Override, else the maintained default, the same
-    // plain preference shape as the picking pair above.
+    // The emoji page's free drag: off by default — off IS today's page,
+    // computed leftover-centre placement and no affordance. Override, else
+    // the maintained default, the same plain preference shape as the
+    // picking pair above.
     property bool emojiDrag: maintainedDefaults.emojiDrag
-    // The Super cap's mark (ticket 22): the word by default, a chosen mark
-    // otherwise. Override, else the maintained default — the same plain
-    // preference shape as the mode and the emoji app.
-    property string superMark: maintainedDefaults.superMark
-    // Dwell-to-type (ticket 50): off by default, the delay bounded by
-    // Dwell.js's window and validated to the same bounds at the file.
+    // The Super cap's mark: the word by default, a chosen mark otherwise.
     // Override, else the maintained default — the same plain preference
-    // shape as the mode and the Super mark.
+    // shape as the mode and the emoji app.
+    property string superMark: maintainedDefaults.superMark
+    // Dwell-to-type: off by default, the delay bounded by Dwell.js's
+    // window and validated to the same bounds at the file. Override, else
+    // the maintained default — the same plain preference shape as the mode
+    // and the Super mark.
     property bool dwellEnabled: maintainedDefaults.dwellEnabled
     property int dwellDelayMs: maintainedDefaults.dwellDelayMs
-    // The UI's language (ticket 52): "auto" follows the active layout,
-    // en/ru/uk/it pin it, offered when the seat carries the layout. `uiLang` is the resolved two-letter answer every
-    // tr() call site reads — override over layout, English for anything
-    // we do not ship, the searchPlaceholder rule generalised.
+    // The UI's language: "auto" follows the active layout, en/ru/uk/it pin
+    // it, offered when the seat carries the layout. `uiLang` is the
+    // resolved two-letter answer every tr() call site reads — override
+    // over layout, English for anything we do not ship, the
+    // searchPlaceholder rule generalised.
     property string uiLanguage: maintainedDefaults.uiLanguage
     // The seat's installed layout list, exposed for the popover's row
-    // (the offered languages mirror it — the owner's 2026-09-17 rule).
+    // (the offered languages mirror it).
     readonly property var seatLayoutCodes: keyboard.layoutCodes
     readonly property string uiLang: UiStrings.languageFor(
         keyboard.activeLayoutCode, root.uiLanguage, keyboard.layoutCodes)
@@ -153,13 +153,12 @@ Item {
         return offered.indexOf(root.uiLanguage) !== -1
             ? root.uiLanguage : "auto"
     }
-    // The input profile (ticket 58): which pointer world the panel answers
-    // as. The setting is auto/mouse/touch; the OBSERVATION is monotonic
-    // PER SUMMON — the first synthesized (touch/pen) mouse event any panel
-    // surface sees flips touchObserved, and a HIDDEN panel forgets it
-    // (ticket 62: a touch on one monitor must not park release-typing on
-    // another for the whole session; "restart forgets" was too coarse).
-    // Within a summon it never decays — a touchscreen laptop's stray
+    // The input profile: which pointer world the panel answers as. The
+    // setting is auto/mouse/touch; the OBSERVATION is monotonic PER SUMMON
+    // — the first synthesized (touch/pen) mouse event any panel surface
+    // sees flips touchObserved, and a HIDDEN panel forgets it — a touch on
+    // one monitor must not park release-typing on another for the whole
+    // session. Within a summon it never decays — a touchscreen laptop's stray
     // mouse click must not flap the profile back — and with dwell ENABLED
     // auto never flips at all (the a11y guard; the explicit setting is the
     // deliberate switch). The resolution and everything it switches is
@@ -172,8 +171,8 @@ Item {
     readonly property var inputAfford: InputProfile.affordances(
         root.effectiveInputProfile)
 
-    // Ticket 58's chrome targets, invisible growth only (no visual
-    // redesign): the arithmetic is InputProfile.chromeHitGrowth's — the
+    // Chrome hit targets, invisible growth only (no visual redesign): the
+    // arithmetic is InputProfile.chromeHitGrowth's — the
     // per-side need toward the profile's floor (0 in mouse, so the chips
     // are byte-today there), capped by the room each control truly owns.
     // The header's standing chips are 30px tall with cellGap*2 of bar
@@ -201,9 +200,9 @@ Item {
         console.log("[oskar] input profile: touch events observed "
             + "(auto resolves to touch until the panel hides)")
     }
-    // Colour-field entry (spec-v1.1 §5) and the armed emoji search
-    // (ticket 42) — the panel's only TWO sanctioned keyboard-focus
-    // exceptions, both on the settings overlay, never at once. False
+    // Colour-field entry and the armed emoji search are the panel's only
+    // TWO sanctioned keyboard-focus exceptions, both on the settings
+    // overlay, never at once. False
     // except while a hex/RGB/HSV field is the active entry: the popover
     // or editor window that holds that field then asks for Exclusive
     // then OnDemand so the main OSK types into it.
@@ -213,8 +212,8 @@ Item {
     property string hexEditField: ""
 
     function beginHexEdit(field) {
-        // Hex wins the keyboard (ticket 42): an armed emoji search would
-        // both eat the caps' input in the query and hold the layer focus
+        // Hex wins the keyboard: an armed emoji search would both eat the
+        // caps' input in the query and hold the layer focus
         // this entry needs. Disarm first — the keyboardFocus binding then
         // hands the surface to the hex prime untouched.
         if (emojiPage.searchArmed) emojiPage.searchArmed = false
@@ -234,8 +233,9 @@ Item {
         root.hexEditing = released.hexEditing
         root.hexEditField = released.hexEditField
         // Park on a stable non-TextInput in the window that held the field
-        // so a later hide cannot recapture §5. Custom/Cancel/leftover call
-        // this because their MouseAreas do not steal focus on their own.
+        // so a later hide cannot recapture keyboard focus. Custom/Cancel/
+        // leftover call this because their MouseAreas do not steal focus
+        // on their own.
         if (released.dropItemFocus) {
             if (root.customEditorField !== "")
                 editorFocusSink.forceActiveFocus()
@@ -244,8 +244,8 @@ Item {
         }
     }
 
-    // The custom colour editor (spec-v1.1 §5): which field it is open for,
-    // empty when closed. It sits on its own overlay window, never on the grid.
+    // The custom colour editor: which field it is open for, empty when
+    // closed. It sits on its own overlay window, never on the grid.
     property string customEditorField: ""
     property string customEditorLabel: ""
     // Snapshot of the effective colour at open — the editor's "old". A live
@@ -253,22 +253,22 @@ Item {
     // the hex draft stale, and Apply would then commit that stale hex.
     property color customEditorOldColor: "transparent"
 
-    // The panel's own emoji page (ticket 24, step 2): the ☺ cap toggles it,
-    // the settings layer hosts it at leftover centre, and it never covers
-    // the keys — step 3 types its search from those very keys. Panel-local
-    // state; nothing persists.
+    // The panel's own emoji page: the ☺ cap toggles it, the settings layer
+    // hosts it at leftover centre, and it never covers the keys — its
+    // search types from those very keys. Panel-local state; nothing
+    // persists.
     property bool emojiOpen: false
-    // Ticket 29: the page's search is the keys' target only while armed —
-    // one flag drives the caps' routing, the paste chip's target rule,
-    // the field's visible state, and (ticket 42) whether the settings
-    // overlay holds keyboard focus and its key scope routes physical
-    // typing, so what the user sees is what decides.
+    // The page's search is the keys' target only while armed — one flag
+    // drives the caps' routing, the paste chip's target rule, the field's
+    // visible state, and whether the settings overlay holds keyboard focus
+    // and its key scope routes physical typing, so what the user sees is
+    // what decides.
     readonly property bool emojiSearchActive: root.emojiOpen
         && emojiPage.searchArmed
     readonly property var emojiUsage: geometryState.emojiUsage || []
     readonly property string emojiSkinTone: geometryState.emojiSkinTone || ""
-    // The emoji page's remembered centre (the emoji-drag ticket):
-    // persisted UI state beside the floating card's centre, on the same
+    // The emoji page's remembered centre: persisted UI state beside the
+    // floating card's centre, on the same
     // write path. Kept, never erased — turning the setting off returns
     // to computed placement without forgetting where the hand left the
     // page, so flipping it back on restores the remembered spot.
@@ -293,22 +293,21 @@ Item {
         root.emojiOpen = next
     }
 
-    // Ticket 29: a focus change while the page stands disarms the search —
-    // the client the owner clicked becomes the keys' target until the
-    // search field is clicked again. Hyprland announces focus changes as
-    // the `activewindow` raw event (the same stream Keyboard's layout
-    // tracker reads; there is no activeToplevel property-change signal to
-    // connect to — the first cut connected to one that does not exist and
-    // never fired).
+    // A focus change while the page stands disarms the search — the
+    // client the owner clicked becomes the keys' target until the search
+    // field is clicked again. Hyprland announces focus changes as the
+    // `activewindow` raw event (the same stream Keyboard's layout tracker
+    // reads; there is no activeToplevel property-change signal to connect
+    // to).
     Connections {
         target: Hyprland
         function onRawEvent(event) {
             if (!event || !event.name) return
             var eventName = String(event.name)
             if (eventName === "activewindow") {
-                // The class half of the compositor's own focus stream
-                // (ticket 56): `activewindow>>CLASS,TITLE`, and an empty
-                // one (focus moved to a layer surface) must not erase
+                // The class half of the compositor's own focus stream:
+                // `activewindow>>CLASS,TITLE`, and an empty one (focus
+                // moved to a layer surface) must not erase
                 // the memory — activeToplevel is already null there, and
                 // the memory is exactly what carries the pick's target
                 // through an armed search.
@@ -316,9 +315,10 @@ Item {
                 if (focusClass) root.lastClientClass = focusClass
             }
             if (eventName !== "activewindow" || !root.emojiOpen) return
-            // Deferred out of the event dispatch: a quickshell SIGSEGV
-            // once landed inside a bound-signal frame on this path, and the
-            // state change has no reason to run inside it.
+            // Deferred out of the event dispatch: running a state change
+            // inside a bound-signal frame on this path can crash the shell
+            // with a SIGSEGV, and there is no reason for it to run inside
+            // one.
             Qt.callLater(function () {
                 if (root.emojiOpen && emojiPage.searchArmed) {
                     emojiPage.searchArmed = false
@@ -329,26 +329,25 @@ Item {
         }
     }
 
-    // A delivered pick (ticket 29's flow): the keys go back to the chat the
-    // emoji landed in — disarmed, and the standing query retires so the
-    // next field click starts a fresh search instead of appending to the
-    // old one.
+    // A delivered pick: the keys go back to the chat the emoji landed in
+    // — disarmed, and the standing query retires so the next field click
+    // starts a fresh search instead of appending to the old one.
     function emojiPickSettled() {
         emojiPage.searchArmed = false
         emojiPage.query = ""
     }
 
-    // One applied search input, whatever hand named it (ticket 42): the
-    // OSK caps arrive as Keyboard.searchInput, physical typing as the
-    // page's physicalSearchInput — both carry the same action vocabulary,
-    // so both run this rule. Escape disarms once and closes only on the
-    // next press; every other action is the pure seam's query update.
+    // One applied search input, whatever hand named it: the OSK caps
+    // arrive as Keyboard.searchInput, physical typing as the page's
+    // physicalSearchInput — both carry the same action vocabulary, so both
+    // run this rule. Escape disarms once and closes only on the next
+    // press; every other action is the pure seam's query update.
     function applyEmojiSearchInput(action, text) {
         if (action === "escape") {
             // Esc is the natural "leave the search" gesture the platform
             // cannot give a click: the first press hands the keys back to
-            // the focused chat (ticket 29; ticket 42 releases the layer's
-            // hold with it), the second closes the page as before.
+            // the focused chat and releases the layer's hold with it, the
+            // second closes the page as before.
             if (emojiPage.searchArmed) {
                 emojiPage.searchArmed = false
                 emojiPage.query = ""
@@ -362,9 +361,9 @@ Item {
     }
 
     // Every geometryState write goes through here: one place that knows
-    // the full field set, so a new field cannot be silently dropped by the
-    // next writer (the drag-remember site wiped the layout identity fields
-    // the day they were born — the owner's keyboards desynced again).
+    // the full field set, so a new field cannot be silently dropped by a
+    // future writer (a missed field here desyncs keyboards across
+    // restarts).
     function mergedGeometryState(overrides) {
         var next = {
             center: root.geometryState.center,
@@ -396,8 +395,7 @@ Item {
 
     // The helper acknowledged a configure: its world, group included, now
     // matches the panel's. Persisted as the restart fallback — a majority
-    // of sleeping keyboards must not outvote it after a shell restart
-    // (the 2026-09-12 desync).
+    // of sleeping keyboards must not outvote it after a shell restart.
     // The seat named a (safe) keyboard as its last typist: persist the
     // identity — a shell restart re-picks `main` by enumeration order, and
     // the named tier reading the LIVE device is worth more than any
@@ -466,18 +464,18 @@ Item {
         }
     }
 
-    // Ticket 42's focus prime: the same machinery, keyed on the armed emoji
-    // search instead of hex editing. Arming (a field click, or the page
-    // opening armed) may happen with the pointer parked on the keyboard
-    // band — a surface whose interactivity is None — so OnDemand alone
-    // would wait for a hover that may never come; the 75 ms Exclusive prime
-    // acquires focus deterministically at commit, and OnDemand settles in
-    // for the rest of the arm. The settle is the clean world the ticket
-    // asked for: Hyprland's refocusLastWindow skips OnDemand layer
-    // surfaces, so a click into any client takes keyboard focus back, the
-    // activewindow watcher disarms, and the binding below returns the
-    // surface to None — which the compositor answers by refocusing the
-    // last window (the colour-field release's proven path).
+    // The focus prime: the same machinery, keyed on the armed emoji search
+    // instead of hex editing. Arming (a field click, or the page opening
+    // armed) may happen with the pointer parked on the keyboard band — a
+    // surface whose interactivity is None — so OnDemand alone would wait
+    // for a hover that may never come; the 75 ms Exclusive prime acquires
+    // focus deterministically at commit, and OnDemand settles in for the
+    // rest of the arm. The settle is the clean world this needs:
+    // Hyprland's refocusLastWindow skips OnDemand layer surfaces, so a
+    // click into any client takes keyboard focus back, the activewindow
+    // watcher disarms, and the binding below returns the surface to None —
+    // which the compositor answers by refocusing the last window (the
+    // colour-field release's proven path).
     property bool emojiFocusPrimed: false
     Timer {
         id: emojiFocusPrimeTimer
@@ -493,15 +491,15 @@ Item {
         }
     }
 
-    // The resize anchors (spec-v1.1 §4, decisions §21). Docked is a
-    // bottom-anchored full-width strip, so a preset change preserves
-    // bottom-centre by construction: the window's height binding follows the
-    // keyboard and the compositor moves the top edge, never the bottom (see
-    // the PanelWindow below). Floating keeps the card CENTRE: the top-left is
-    // rederived from the saved centre by ConfigFile.floatingAnchor, which
-    // clamps only enough to keep the complete card on its output. The chips
-    // live in the settings popover (spec-v1.1 §5), which stays open through
-    // a choice — a settings surface is dismissed, not spent, by using it —
+    // The resize anchors. Docked is a bottom-anchored full-width strip, so
+    // a preset change preserves bottom-centre by construction: the
+    // window's height binding follows the keyboard and the compositor
+    // moves the top edge, never the bottom (see the PanelWindow below).
+    // Floating keeps the card CENTRE: the top-left is rederived from the
+    // saved centre by ConfigFile.floatingAnchor, which clamps only enough
+    // to keep the complete card on its output. The chips live in the
+    // settings popover, which stays open through a choice — a settings
+    // surface is dismissed, not spent, by using it —
     // so choosing the active preset is simply a no-op: no movement, no
     // config write; a different preset re-derives exactly once, through
     // setOverride's applyEffectiveSettings.
@@ -515,9 +513,9 @@ Item {
     // default — the stated use case is watching a film, and the mouse already
     // makes a click.
     property bool sound: maintainedDefaults.sound
-    // v1 escape hatch for the independent colour schema (spec-v1 §8); it
-    // follows the theme and does nothing else yet, but is persisted so the
-    // key exists from the start.
+    // Escape hatch for the independent colour schema; it follows the
+    // theme and does nothing else yet, but is persisted so the key exists
+    // from the start.
     property bool followTheme: maintainedDefaults.followTheme
     // Absolute path of the PCM copy the click effect plays; empty until
     // resolved or when the theme has no such event.

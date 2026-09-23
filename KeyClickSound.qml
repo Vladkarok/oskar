@@ -1,12 +1,10 @@
 import QtMultimedia
 
-// The key click itself. The sound is the freedesktop sound theme's event
-// sound rather than a bundled sample — no asset to ship, no taste to defend —
-// and it is played in-process through QtMultimedia: a spawned process per
-// keystroke is the wtype mistake again (decisions §1). The panel resolves the
-// theme file once through the sound theme's own search paths and transcodes
-// it to PCM for this effect (SoundEffect plays uncompressed WAV only); this
-// component only holds the result.
+// The key click itself. Plays the freedesktop sound theme's event sound
+// in-process through QtMultimedia rather than spawning a process per
+// keystroke. The panel resolves the theme file once through the sound
+// theme's search paths and transcodes it to PCM (SoundEffect plays
+// uncompressed WAV only); this component only holds the result.
 //
 // Loaded by Panel.qml behind a Loader so a system without qt6-multimedia
 // loses only the click and not the keyboard: a failed import would otherwise

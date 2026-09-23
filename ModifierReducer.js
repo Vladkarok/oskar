@@ -27,9 +27,9 @@
 /// the reverse order, the way a hand would let go.
 ///
 /// `level5` is in the roster but on no cap: it is the reserved symbol block's
-/// own level opener (decisions §33), asked for by an exact-level press and by
-/// nothing else. It never latches and never locks, so every loop that reads a
-/// modifier's state simply passes over it.
+/// own level opener, asked for by an exact-level press and by nothing else.
+/// It never latches and never locks, so every loop that reads a modifier's
+/// state simply passes over it.
 var ORDER = ["ctrl", "alt", "logo", "level5", "altgr", "shift"]
 
 /// The roster minus `level5`: the modifiers a cap can name and a user click.
@@ -195,12 +195,11 @@ var TERMINAL_CLIPBOARD_CLASSES = {
 /// cannot send PRIMARY into a terminal.
 ///
 /// Wine/Proton binds paste to plain Ctrl+V: Shift+Insert reaches the game
-/// as an unbound key and the terminal CLIPBOARD chord is not Wine's binding
-/// either — the owner's Proton report on ticket 28's acceptance day, where
-/// only manual Ctrl+V pasted.
+/// as an unbound key, and the terminal CLIPBOARD chord is not Wine's
+/// binding either.
 ///
-/// V is AB04 (z x c v). AB06 is N. Ctrl+Shift+N opens a new window in
-/// kitty, ghostty, and agterm — the chord this used to send.
+/// V is AB04 (z x c v). AB06 is N; Ctrl+Shift+N opens a new window in
+/// kitty, ghostty, and agterm.
 function pasteChordForClass(wmClass) {
     var cls = String(wmClass || "").toLowerCase()
     if (usesWinePasteChord(cls))
@@ -250,7 +249,7 @@ function click(state, modifier) {
     if (!isModifier(modifier)) return unchanged(state)
     // Latched and locked both fall back to idle; idle latches. Promotion to
     // locked is the double-click path only, so a second single click undoes
-    // the first rather than escalating it (spec-v1 §5).
+    // the first rather than escalating it.
     var target = state[modifier] === "idle" ? "latched" : "idle"
     var out = transition(state, modifier, target)
     if (modifier === "shift") {
@@ -265,7 +264,7 @@ function click(state, modifier) {
 
 /// Where the gesture that is ending in this double click began.
 ///
-/// Modifiers act on the way down (issue 17), so by the time Qt tells us the
+/// Modifiers act on the way down, so by the time Qt tells us the
 /// gesture was a double click, both of its presses have already been applied
 /// as clicks — the first latching, the second bouncing that latch back to
 /// idle. The answer we want is the state before the *first* of them, which is
@@ -307,16 +306,16 @@ function doubleClick(state, modifier) {
 /// What to do with Shift around this press: "wrap" (down before, up after),
 /// "leave-down" (a lock the level wants — no line, it is already down),
 /// "lift-around" (a lock the press does not want: up before, back down
-/// after), or "ignore" (nothing held, nothing wanted). Ordinary presses
-/// follow §5: Caps interplay on letters, a latched Shift wrapping every
-/// non-letter press, Caps Lock emulated with a real Shift press because the
-/// CAPS position is rarely Caps Lock (`grp:caps_*` and `compose:caps` own
-/// it). An exact-level press (the curated page's caps, `exact` on the event)
+/// after), or "ignore" (nothing held, nothing wanted). Ordinary presses:
+/// Caps interplay on letters, a latched Shift wrapping every non-letter
+/// press, Caps Lock emulated with a real Shift press because the CAPS
+/// position is rarely Caps Lock (`grp:caps_*` and `compose:caps` own it).
+/// An exact-level press (the curated page's caps, `exact` on the event)
 /// answers only from the level it carries: Shift wraps when the level is 2
 /// or 4, a lock the level does not want is lifted around the press, and a
 /// latch never decides the chord — a latched Shift or AltGr is not applied
-/// by an exact press, but it is still consumed by one, as §2 spends the
-/// latches of any non-modifier key.
+/// by an exact press, but it is still consumed by one, as every
+/// non-modifier key spends its latches.
 function shiftForPress(state, event) {
     if (event.exact === true) {
         if (state.shift === "locked") {
@@ -341,8 +340,8 @@ function press(state, event) {
     // types exactly the level it draws: the chord is the level's decision —
     // Shift and AltGr wrap when and only when the level wants them, never
     // because a latch is armed. What the level does not decide is the
-    // latch's lifetime. A curated cap is an ordinary non-modifier key to
-    // §2, so it spends latched Shift/AltGr exactly as an ordinary press
+    // latch's lifetime. A curated cap is an ordinary non-modifier key, so
+    // it spends latched Shift/AltGr exactly as an ordinary press
     // would — never applied, always consumed — or the latch would sit armed
     // past a symbol and shift the next ordinary key behind the user's back.
     var exact = event.exact === true
@@ -369,7 +368,7 @@ function press(state, event) {
     for (var i = 0; i < ORDER.length; i++) {
         var modifier = ORDER[i]
         if (state[modifier] !== "latched") continue
-        // Every latch is spent by a non-modifier press, exact or not (§2).
+        // Every latch is spent by a non-modifier press, exact or not.
         next[modifier] = "idle"
         // Whether a spent latch also joins the chord: Shift had its say
         // above and is never decided twice; AltGr on an exact press follows
@@ -387,8 +386,8 @@ function press(state, event) {
     // Level 3 or 4 needs AltGr held around the key the same way level 2
     // needs Shift: a real press of the position's own modifier, never a
     // character chosen by the panel — latch or no latch, the wrap is what
-    // selects the level. A locked AltGr cannot happen (§16 — only Shift
-    // locks) and is left alone regardless.
+    // selects the level. A locked AltGr cannot happen — only Shift locks —
+    // and is left alone regardless.
     if (event.altgr === true
             && (exact || (state.altgr !== "latched" && state.altgr !== "locked"))) {
         wants.altgr = true
@@ -408,7 +407,7 @@ function press(state, event) {
     // Which key actually carries each modifier for THIS press. AltGr is the
     // one that can move: the panel's AltGr cap means RALT, whatever the
     // layout makes of it, but a cap resolved at level 3 or 4 of the reserved
-    // symbol block (ticket 18) needs a position that is ISO_Level3_Shift in
+    // symbol block needs a position that is ISO_Level3_Shift in
     // every group — RALT is not, on `us`. The event names it; nothing else
     // about the chord changes, and the release below lifts what was pressed
     // rather than what POSITIONS says today.
@@ -429,7 +428,7 @@ function press(state, event) {
     }
     // `down`, not `tap`: the key stays down for as long as the mouse button
     // does, and the compositor repeats it at the user's own repeat_delay and
-    // repeat_rate (spec-v1 §6). A tap could only ever type once, and a panel
+    // repeat_rate. A tap could only ever type once, and a panel
     // timer that made up the difference could not match the user's settings.
     lines.push("down " + position)
     // The configure-send count when this chord went down. A configure queued
@@ -541,7 +540,7 @@ function shiftWanted(state, event, shiftLatched) {
     return state.caps ? !shiftLatched : shiftLatched
 }
 
-/// An explicit current-content paste (spec-v1.1 §1): a complete exact chord
+/// An explicit current-content paste: a complete exact chord
 /// in one event, never a held cap. `ctrl`/`shift`/`position` are the chord
 /// the caller chose; latched Ctrl/Alt/Super are spent and never mixed in,
 /// and locked Shift is lifted around a chord that does not want it so a

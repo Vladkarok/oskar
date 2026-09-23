@@ -1,6 +1,6 @@
 .pragma library
 
-// Ticket 37: hold a character cap — its keymap column, not a repeat.
+// Hold a character cap to open its keymap column, not a repeat.
 //
 // Two pure decisions, kept out of QML so the host suite can pin them
 // (tests/hold-column.qml), in the spirit of ModifierReducer.js:
@@ -10,14 +10,14 @@
 //     menu content: it is the cap's own drawn Shift face (capOverlay
 //     writes the keymap's level 2 into chrShift), so offering it would
 //     duplicate a character the cap already types and — worse — give
-//     every two-level letter cap a menu, when the ticket's own honest
-//     expectation is that stock `us`/`ua`/`ru` letters hold-repeat as
-//     today and the menu lights up only where the map actually carries
-//     levels 3-4. Levels 5..8 are the reserved symbol block's (decisions
-//     §33) and stay on the &123 page: ONE route per character, no split
-//     authority. A level that carries no drawable text is skipped, and a
-//     position left with nothing offers no column at all — such a cap
-//     keeps press-types plus the compositor's own repeat (spec-v1 §6).
+//     every two-level letter cap a menu, when stock `us`/`ua`/`ru`
+//     letters must hold-repeat as today and the menu should light up
+//     only where the map actually carries levels 3-4. Levels 5..8 belong
+//     to the reserved symbol block and stay on the &123 page: ONE route
+//     per character, no split authority. A level that carries no
+//     drawable text is skipped, and a position left with nothing offers
+//     no column at all — such a cap keeps press-types plus the
+//     compositor's own repeat.
 //
 //   shouldDefer — which caps move their typing from mouse-press to
 //     mouse-release so a hold can open the column menu without typing
@@ -43,8 +43,8 @@ var HOLD_THRESHOLD_MS = 320
 /// The hold column for one position's caps facts: an array of
 /// `{ level, text }` for levels 3..4 in level order, or an empty array
 /// when the position has nothing to offer. `facts` is the position's
-/// record from the caps facts map (decisions §23) — an array with one
-/// `{ text }` / `{ none }` entry per level, exactly as the helper
+/// record from the caps facts map — an array with one `{ text }` /
+/// `{ none }` entry per level, exactly as the helper
 /// resolved them against the installed keymap. Levels past the record's
 /// length are no symbol at this level, same as a `{ none }` entry.
 function columnEntries(facts) {
@@ -87,9 +87,9 @@ function shouldDefer(capData, entries, searchMode, inputReady) {
     return Array.isArray(entries) && entries.length > 0
 }
 
-/// Whether a cap CARRIES a hold column — the corner-dot marker's fact
-/// (the owner's 2026-09-14 call: mark what is worth holding, very
-/// lightly; never draw the variants themselves). The structural twin
+/// Whether a cap CARRIES a hold column — the corner-dot marker's fact:
+/// mark what is worth holding, very lightly; never draw the variants
+/// themselves. The structural twin
 /// of shouldDefer MINUS the moment gates (search arming, readiness,
 /// the unavailable mark): the dot is static information about the
 /// keymap, so it stands on caps that would not defer RIGHT NOW (a

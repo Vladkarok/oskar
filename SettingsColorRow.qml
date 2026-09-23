@@ -3,10 +3,10 @@ import qs.Commons
 import "Config.js" as ConfigFile
 import "UiStrings.js" as UiStrings
 
-// One colour row (spec-v1.1 §5): label, then one control group — the
-// current-colour indicator square, swatches, hex draft, compact confirm,
-// Custom, reset. Swatches belong to this row, not a shared strip. The hex
-// field is a local draft until confirm.
+// One colour row: label, then one control group — the current-colour
+// indicator square, swatches, hex draft, compact confirm, Custom, reset.
+// Swatches belong to this row, not a shared strip. The hex field is a
+// local draft until confirm.
 Item {
     id: colorRow
 
@@ -15,13 +15,12 @@ Item {
     property string fieldName: ""
     property string labelText: ""
     property color effectiveColor: "transparent"
-    // The committed colour as the row last wrote it (ticket 23): the
-    // indicator square's fill. effectiveColor's binding does not notify
-    // (see adoptHex below), so the square must not read it; every commit
+    // The committed colour as the row last wrote it: the indicator
+    // square's fill. effectiveColor's binding does not notify (see
+    // adoptHex below), so the square must not read it; every commit
     // point that writes the hex field writes this too — always a value a
     // commit path already validated, never a raw draft. Transparent, not
-    // "": QML renders an empty-string colour as opaque black, and this sits
-    // one missed init away from the screen.
+    // "": QML renders an empty-string colour as opaque black.
     property string currentHex: "#00000000"
     property real controlX: 0
     signal customRequested()
@@ -122,9 +121,9 @@ Item {
             width: parent.width
             spacing: tokens.space(6)
 
-            // The colour currently in force (ticket 23): one square that
-            // shows the committed colour as a colour, first in the row so a
-            // scan of the five rows reads five colours, not five hexes.
+            // The colour currently in force: one square that shows the
+            // committed colour as a colour, first in the row so a scan
+            // of the five rows reads five colours, not five hexes.
             // Deliberately space(24) — the control line height, one step
             // distinct from the 18-space preset swatches beside it. An
             // indicator, not a control: no MouseArea, nothing clickable.

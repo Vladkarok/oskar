@@ -4,29 +4,28 @@ import qs.Commons
 import "EmojiPage.js" as EmojiGrid
 import "UiStrings.js" as UiStrings
 
-// The panel's own emoji page (ticket 24). Lives on the settings overlay
-// window beside the settings card and rides the same mechanism
-// (spec-v1.1 §5): the panel places it at leftover centre through
-// SettingsPlacement, clamps it inside the leftover strip, and the keyboard
-// band is never part of either — the keys stay on screen and clickable
-// underneath, which is the point. (With `emoji_drag` on — §103 — the
-// page grows a drag strip, moves freely and MAY cover the band; the
-// clamp is the visible overlay, not the leftover.) Grid cells size from tokens and the
-// keyboard's uiScale; whatever content does not fit scrolls inside the page.
+// The panel's own emoji page. Lives on the settings overlay window beside
+// the settings card and rides the same placement mechanism: the panel
+// places it at leftover centre through SettingsPlacement, clamps it inside
+// the leftover strip, and the keyboard band is never part of either — the
+// keys stay on screen and clickable underneath, which is the point. (With
+// `emoji_drag` on, the page grows a drag strip, moves freely and MAY cover
+// the band; the clamp is the visible overlay, not the leftover.) Grid cells
+// size from tokens and the keyboard's uiScale; whatever content does not
+// fit scrolls inside the page.
 //
 // The keyboard's own caps feed the query while the page stands — searchMode
 // routes them here before anything reaches the daemon — and the query
 // drives the catalogue's ranked search across every group; an empty query
 // shows the active group. Choosing an entry asks the panel to deliver it;
-// this page is the only picker (the external-app machinery is history,
-// decisions §24).
+// this page is the only picker.
 Rectangle {
     id: emojiRoot
 
     visible: false
 
     // The panel's live Theme facade — every colour, font and spacing here
-    // comes from it and from nowhere else (spec-v1 §8).
+    // comes from it and from nowhere else.
     property var tokens
     property string pageSize: "medium"
     property var usageRecords: []
@@ -38,7 +37,7 @@ Rectangle {
     property real hostWidth: 0
     property real hostHeight: 0
 
-    // The free-drag affordance (the emoji-drag ticket), wired from the
+    // The free-drag affordance, wired from the
     // panel's emoji_drag setting. Off (the default) means no strip, no
     // drag, exactly the page that shipped; on grows a drag strip along
     // the top edge, above the search header, wearing the keyboard
@@ -49,8 +48,8 @@ Rectangle {
     // layer's own size, not the leftover: free placement may cover the
     // keyboard band). The strip's MouseArea clamps the drag to it.
     // The FULL box shape {x, y, w, h} — the placement module's validBox
-    // refuses a bounds without x/y (§104's poison: clampedTopLeft
-    // answered null and the settle threw). The drag clamp reads w/h;
+    // refuses a bounds without x/y (otherwise clampedTopLeft answers null
+    // and the settle throws). The drag clamp reads w/h;
     // both consumers take the one object.
     property var dragBounds: null
     // Whether a strip drag is live. The panel's placement guard reads
@@ -68,33 +67,31 @@ Rectangle {
     // rule). A blank string is no query: the group slice shows, and search
     // is not asked (its empty answer is for found-nothing, not not-searching).
     property string query: ""
-    // Ticket 29: whether the keys feed the search. Armed when the page
-    // opens and when the search field is clicked (2026-09-13: a click is
-    // ALWAYS an arm — the old toggle handed the keys to the app beneath
-    // the owner's pointer the moment he clicked the field to focus it);
-    // disarmed when another client takes the pointer's focus (the panel
-    // watches Hyprland), after a delivered pick, and by Escape — the Esc
-    // cap's or, since ticket 42, a physical one.
+    // Whether the keys feed the search. Armed when the page opens and
+    // whenever the search field is clicked — a click always arms it, since
+    // a click on the field means "type here"; disarmed when another client
+    // takes the pointer's focus (the panel watches Hyprland), after a
+    // delivered pick, and by Escape — the Esc cap's or a physical one.
     property bool searchArmed: true
     // The active xkb layout code, wired from the panel: the placeholder
     // word speaks the language the owner is typing in (Пошук/Поиск/
     // Search — UiStrings.tr("emoji.searchPlaceholder", emojiRoot.uiLang)).
     property string layoutCode: ""
-    // The effective profile's hover-tooltip rule (ticket 62), wired from
+    // The effective profile's hover-tooltip rule, wired from
     // the panel: in touch, possibly-synthesized hover never names
     // anything — the chrome rule, mirrored for the page's tooltips.
     property bool tooltipHoverShows: true
-    // The panel's resolved UI language (ticket 52: override over layout):
+    // The panel's resolved UI language (override wins over layout):
     // every word of the page's chrome — placeholder included — follows
     // it, so a pinned choice moves the placeholder with the rest.
     property string uiLang: "en"
     // Panel-local tab state, never persisted; defaults to the first group.
     property string activeGroup: "__usage__"
-    // Ticket 34: the usage category renders this snapshot of the records,
+    // The usage category renders this snapshot of the records,
     // not the live store — refreshed on open and on re-entry into the
     // usage group only, so repeated picks never move a tile under the
     // pointer. A plain copy with no binding on usageRecords; the store
-    // itself stays live (decisions §44).
+    // itself stays live.
     property var usageSnapshotRecords: []
     readonly property var usageRecordSections: EmojiGrid.usageSections(
         usageSnapshotRecords, gridColumnCount)
@@ -113,16 +110,16 @@ Rectangle {
     readonly property int searchRows: 8
     readonly property int searchLimit: Math.max(1, gridColumnCount) * searchRows
 
-    // Step 4's seam: a cell press names its entry; the panel delivers.
+    // A cell press names its entry; the panel delivers.
     signal emojiChosen(var entry, bool applyTone)
     signal skinToneChosen(string tone)
     signal dismissed()
-    // Ticket 42: one routed PHYSICAL key event, in the same action
+    // One routed PHYSICAL key event, in the same action
     // vocabulary Keyboard.searchInput speaks ("char" with event.text,
     // "backspace", "escape"). The panel applies it with the very rule the
     // caps' input uses, so Escape's disarm has one definition.
     signal physicalSearchInput(string action, string text)
-    // Ticket 58: the page's presses report their pointer source to the
+    // The page's presses report their pointer source to the
     // panel's input-profile observation — a touch on the emoji page teaches
     // auto exactly a touch on the caps does.
     signal pointerSourceObserved(var source)
@@ -134,7 +131,7 @@ Rectangle {
         emojiRoot.query = EmojiGrid.nextQuery(emojiRoot.query, action, text)
     }
 
-    // The paste chip's panel-local target while the page is open (R2): the
+    // The paste chip's panel-local target while the page is open: the
     // search is the active input — every key types into it — so a paste
     // appends what the clipboard served, collapsed and bounded by the pure
     // rule (EmojiGrid.searchPasteText): the query is typed text, not
@@ -155,14 +152,14 @@ Rectangle {
                 ? "__usage__" : EmojiGrid.allGroups()[0]
             emojiRoot.usageSnapshotRecords = EmojiGrid.usageViewOnOpen(
                 emojiRoot.usageRecords)
-            // Ticket 42: the page opens armed, so the key scope takes the
+            // The page opens armed, so the key scope takes the
             // scene's focus at open — the last assignment wins, and it
             // must be the scope, not this Rectangle.
             searchKeyScope.forceActiveFocus()
         }
     }
 
-    // Ticket 42: the scope holds the scene's focus exactly while the
+    // The scope holds the scene's focus exactly while the
     // search is armed. Re-arm (a field click) re-focuses it; every disarm
     // — the focus watcher, a delivered pick, the Esc caps, physical
     // Escape — hands it back, and the panel's keyboardFocus binding drops
@@ -174,7 +171,7 @@ Rectangle {
             searchKeyScope.focus = false
     }
 
-    // Ticket 34's second refresh point: re-entry into the usage category
+    // Re-entry into the usage category
     // re-snapshots the store's accumulated picks; leaving it keeps the
     // standing view. Only entry changes the snapshot — picks while the
     // usage category shows re-order nothing.
@@ -184,7 +181,7 @@ Rectangle {
             emojiRoot.usageSnapshotRecords)
     }
 
-    // Escape's two meanings now both live (ticket 42): while the surface
+    // Escape's two meanings both live: while the surface
     // holds keyboard focus and the search is armed, the key scope routes
     // Escape to the panel — clear + disarm + release, the same rule the
     // Esc cap runs; disarmed, it dismisses the page, as the Esc cap's
@@ -193,7 +190,7 @@ Rectangle {
     Keys.onEscapePressed: emojiRoot.dismissed()
 
     // The focusable target physical typing lands on while the search is
-    // armed (ticket 42). Nothing visual, nothing clickable: the drawn
+    // armed. Nothing visual, nothing clickable: the drawn
     // field above stays the single visual truth, and no TextInput exists
     // to grab or pre-edit. The routing itself is EmojiGrid.searchKeyAction
     // — this handler only gates on the arm and passes the named action
@@ -293,7 +290,7 @@ Rectangle {
         anchors.margins: emojiRoot.pageMargin
         spacing: emojiRoot.contentSpacing
 
-        // ---- the free-drag strip (the emoji-drag ticket) ----
+        // ---- the free-drag strip ----
         //
         // The keyboard card's own drag grammar wearing a new host: the
         // shared DragLine along the page's top edge, ABOVE the search
@@ -351,7 +348,7 @@ Rectangle {
         //
         // A field and its clear affordance. The field shows what was
         // typed — case included; the ranked search lowercases its own
-        // side (§37).
+        // side.
         Item {
             id: headerRow
             width: parent.width
@@ -367,7 +364,7 @@ Rectangle {
                 }
                 radius: tokens.cornerRadius
                 color: Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-                // Ticket 29: the field says whether the keys are typing into
+                // The field says whether the keys are typing into
                 // it — accent outline and a caret while armed, the resting
                 // look while another client owns the input.
                 border.color: emojiRoot.searchArmed
@@ -401,7 +398,7 @@ Rectangle {
                     elide: Text.ElideRight
                 }
 
-                // The caret (ticket 29): a quiet bar at the query's end —
+                // The caret: a quiet bar at the query's end —
                 // the field is not a TextInput, so the caret is drawn.
                 Rectangle {
                     visible: emojiRoot.searchArmed
@@ -416,8 +413,8 @@ Rectangle {
                     }
                 }
 
-                // Clicking the field ARMS the search, always (2026-09-13;
-                // was a toggle, ticket 29). A click on a search field means
+                // Clicking the field ARMS the search, always. A click on
+                // a search field means
                 // "type here" — the owner's pointer gesture said so — and
                 // an armed field stays armed. Handing the keys back to the
                 // app is the focus watcher's job (a real focus change) and
@@ -756,7 +753,7 @@ Rectangle {
                             emojiRoot.uiLang, [modelData.name])
                         // The tile's origin — catalogue tile or usage
                         // history — decides the tone flag, with exactly the
-                        // two facts that chose this grid's model (R1):
+                        // two facts that chose this grid's model:
                         // history repeats its exact stored sequence.
                         onClicked: function (mouse) {
                             emojiRoot.pointerSourceObserved(mouse.source)

@@ -2,9 +2,9 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// The bar entry for the panel (spec-v1 §2): one icon that flips the
-// keyboard's visibility through the shell IPC, so the bar and the panel
-// itself can never disagree about who owns the toggle.
+// The bar entry for the panel: one icon that flips the keyboard's
+// visibility through the shell IPC, so the bar and the panel itself can
+// never disagree about who owns the toggle.
 BarWidget {
     id: root
     moduleName: "io.github.vladkarok.oskar"
@@ -18,8 +18,6 @@ BarWidget {
             fill: parent
         }
         bar: root.bar
-        // The keyboard glyph as a literal, and the shell-API handler
-        // spelled with the arg omitted where the contract allows.
         text: "⌨"
         tooltipText: "Show or hide the on-screen keyboard"
         onPressed: function() {

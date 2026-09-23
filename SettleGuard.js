@@ -1,23 +1,21 @@
 .pragma library
 
-// The restart-settle guard (ticket 38): which observed layout-group
-// readings the panel may FOLLOW — move the helper's virtual keyboard and
-// the persisted `remembered` group with — and which are the compositor's
-// own keymap re-application churn echoed at a panel that just re-registered
-// its virtual keyboard.
+// The restart-settle guard: which observed layout-group readings the panel
+// may FOLLOW — move the helper's virtual keyboard and the persisted
+// `remembered` group with — and which are the compositor's own keymap
+// re-application churn echoed at a panel that just re-registered its
+// virtual keyboard.
 //
-// The incident this owns (2026-09-13 18:53, journal in the ticket): the
-// shell restarted 18:53:07, the daemon 18:53:17, the first configure
-// 18:53:19. One language click at 18:53:22 moved all three keyboards to
-// group 1, the panel correctly followed — and then a devices read returned
-// the reading keyboard at 0 (Hyprland re-applying keymaps around a fresh
-// vkb registration; the mover was outside the panel), the panel FOLLOWED
-// the flip too, and the seat stayed split (two ITE keyboards on 1,
-// at-translated on 0) with the panel label agreeing with the churn instead
-// of the click, until the owner converged it by hand. The click's own
-// `switchxkblayout` loop is not the defect and is not touched anywhere in
-// this module: the guard only stops the panel from echoing churn back into
-// the helper's group and `remembered`.
+// Without this guard, a language click shortly after a shell/daemon
+// restart can be followed correctly and then immediately overwritten: a
+// devices read can return a keyboard reset to group 0 by Hyprland
+// re-applying keymaps around the fresh vkb registration (the mover is
+// outside the panel), and the panel would follow that flip too, splitting
+// the seat and leaving the label agreeing with the churn instead of the
+// click until the user converges it by hand. The click's own
+// `switchxkblayout` loop is not touched anywhere in this module: the guard
+// only stops the panel from echoing churn back into the helper's group and
+// `remembered`.
 //
 // The decision is pure: connect-age, the last group the panel COMMANDED
 // (the click's hyprctl loop), and the sequence of observed readings in,
@@ -30,7 +28,7 @@
 // Hyprland — a different input stream and a different decision, with the
 // same one-module-per-decision shape as LayoutDevices and ModifierReducer.
 //
-// The cold-start constraint (decisions §47) is structural here: the
+// The cold-start constraint is structural here: the
 // remembered-group tie-breaker answers from LayoutDevices as part of the
 // FIRST reading a new world establishes, and the establishing reading is
 // always followed — never held — so a genuinely diverged-sleeper seat on a
@@ -38,16 +36,16 @@
 // what happens AFTER the establishing configure, inside the window, is
 // guarded.
 
-/// How long after the establishing configure the guard stands. The
-/// incident's click came three seconds after the first configure and the
-/// churn flip within the same second as the click; ten seconds covers both
-/// with margin while staying short enough that an ordinary session spends
-/// its whole life outside the window.
+/// How long after the establishing configure the guard stands. A user
+/// click can follow the first configure within a few seconds with
+/// re-application churn landing within the same second; ten seconds covers
+/// both with margin while staying short enough that an ordinary session
+/// spends its whole life outside the window.
 var WINDOW_MS = 10000
 
 /// How long an uncommanded flip must PERSIST — observed again, this far
 /// after its first sighting — before the panel follows it inside the
-/// window. The incident's churn produced sub-second repeat reads; a real
+/// window. Re-application churn produces sub-second repeat reads; a real
 /// external switch (a keybind, another panel) persists, and the caller's
 /// one re-read after this interval supplies the second agreeing reading.
 var QUIESCE_MS = 1000
@@ -190,10 +188,9 @@ function decide(state, observed, now) {
     // An uncommanded flip inside the window: HOLD it. First sighting, a
     // different value than the one held (the churn is still moving), or
     // the same value still inside its quiesce — every held decision
-    // re-anchors the candidate's clock, so continuous churn (the
-    // incident's repeat reads were sub-second) never accumulates into
-    // agreement. Only a reading this far past the LAST sighting of the
-    // SAME value counts as the flip having persisted.
+    // re-anchors the candidate's clock, so continuous sub-second churn
+    // never accumulates into agreement. Only a reading this far past the
+    // LAST sighting of the SAME value counts as the flip having persisted.
     if (out.candidate !== observed || now - out.candidateAt < QUIESCE_MS) {
         out.candidate = observed
         out.candidateAt = now

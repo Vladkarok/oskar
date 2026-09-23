@@ -6,7 +6,7 @@
 // switchKeyboards) and to the same absolute-group move stepLayout has
 // always issued.
 //
-// Shapes (owner's 2026-09-13 call, ticket 35):
+// Shapes:
 //  - one layout: hidden. Nothing to switch; an inert chip is noise and a
 //    false affordance.
 //  - two layouts: direct. Click toggles to the other group — the shape
@@ -25,9 +25,9 @@ function controlState(layoutCount, switchSetLength) {
     return switchSetLength > 0 ? (count > 2 ? "menu" : "direct") : "disabled"
 }
 
-// A language is named in its own language (owner's 2026-09-19 call): the
-// chip and the chooser show endonyms — English, Українська, Русский,
-// Italiano — not base.lst's English descriptions. Curated and keyed by xkb
+// A language is named in its own language: the chip and the chooser show
+// endonyms — English, Українська, Русский, Italiano — not base.lst's
+// English descriptions. Curated and keyed by xkb
 // layout code; a code the table does not carry falls back to base.lst and
 // then to the code itself, so an exotic layout is never blank. `us` and
 // `gb` stay distinct ("English" / "English (UK)") for seats carrying both.

@@ -1,24 +1,20 @@
 .pragma library
 
 // The paste lifecycle, pure: ONE paste at a time, from the first click
-// to the verdict. The busy-gate, the region boundary and the cancel
-// ordering that rounds seven through nine kept finding in the QML glue
-// live here as data the glue executes:
+// to the verdict, expressed as data the QML glue executes:
 //
 //   idle → dispatching → paced ─┐
 //          dispatching → ───────┴→ awaiting → idle
 //
 // - `begin` refuses while ANY phase but idle is live — a paste-chip
-//   click during an unfinished chord no longer resets anything, it
-//   bounces (round nine).
+//   click during an unfinished chord must not reset anything; it bounces.
 // - The caller marks `chordStart` on the correlation ledger between
 //   `begin` and the first send — the region belongs to the whole
-//   dispatch, not its last line (round eight).
-// - `cancel` answers WHAT to do and in which order (§91 history:
-//   test-pinned now — see its mark): abort the pacer
-//   first (its own path compensates the sent prefix and releases the
-//   world — round nine's timer kept pressing V onto a held Ctrl),
-//   then clear the armed verdict wait (round seven's late-reply hole).
+//   dispatch, not its last line.
+// - `cancel` aborts the pacer first (its own path compensates the sent
+//   prefix and releases the world — otherwise a live timer keeps
+//   pressing V onto a held Ctrl), then clears the armed verdict wait
+//   (otherwise a late reply can land after cancel already gave up).
 //
 // The timer and socket machinery stays in the QML; this module is the
 // invariant they cannot violate.
@@ -65,12 +61,11 @@ function verdictDone(state) {
     return { phase: "idle" }
 }
 
-/// A cancellation (§91 history: production callers are gone; the
-/// tests pin the semantics for any future cancel path). The ANSWER is an ordered
-/// program: abort the pacer first — its own path owes the device its
-/// compensations and releases — then clear the armed verdict wait.
-/// Dispatching cannot be cancelled from outside (its block is atomic in
-//  the single thread); the defensive answer releases everything anyway.
+/// A cancellation: an ordered program. Abort the pacer first — its own
+/// path owes the device its compensations and releases — then clear the
+/// armed verdict wait. Dispatching cannot be cancelled from outside (its
+/// block is atomic in the single thread); the defensive answer releases
+/// everything anyway.
 function cancel(state) {
     return {
         state: { phase: "idle" },

@@ -126,10 +126,9 @@ class LabSession:
 LAB_HOSTNAME = "testprod"
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "")
 # Deliberately short: quickshell builds "<runtime>/hypr/<sig>/.socket.sock"
-# and a unix socket address must fit 108 bytes — the first cut of this leg
-# ("osk-settle-leg-rt") pushed that path to 112 and quickshell's Hyprland
-# IPC failed with ServerNotFoundError while plain hyprctl runs (a shorter
-# env) kept working. Measured live.
+# and a unix socket address must fit 108 bytes, so a longer runtime dir
+# name makes quickshell's Hyprland IPC fail with ServerNotFoundError while
+# plain hyprctl (using a shorter env) still works.
 PRIVATE = os.path.join(RUNTIME, "osk-sl-rt")
 STATE_FILE = os.path.expanduser("~/.local/state/oskar/state.json")
 
@@ -683,7 +682,7 @@ def control_cold_start(repo, env, switch_set, holder, anchor,
     # anchor (the daemon's first `keyboards` name) when the switch set
     # has it — the holder's own anchor only keeps the HOLDER's configures
     # at 1, and a fresh panel that seeds a majority device answers the
-    # majority (ticket 57's rerun measured exactly that).
+    # majority instead.
     seeded = seeded_anchor_name(daemon_socket)
     if seeded in switch_set:
         sleeper = seeded
@@ -693,22 +692,22 @@ def control_cold_start(repo, env, switch_set, holder, anchor,
         sleeper = switch_set[0]
     majority = [n for n in switch_set if n != sleeper]
     # Majority at 0, one sleeper at 1, remembered 1: the sleepers' majority
-    # must NOT outvote the remembered group (the 2026-09-12 desync).
+    # must NOT outvote the remembered group.
     for name in majority:
         hyprctl("switchxkblayout", name, "0")
     hyprctl("switchxkblayout", sleeper, "1")
     # Let the holder's split-triggered churn drain BEFORE the state is
     # written: the split is an uncommanded flip from the holder's side,
     # its settle guard holds the follow, and every held re-configure's
-    # ACK persists the held group back into the state file (measured
-    # live, ticket 57) — clobbering any remembered value written too
-    # early. SettleGuard's window is 10 s; a wait past it plus a
-    # stability check makes the write the last word.
+    # ACK persists the held group back into the state file — clobbering
+    # any remembered value written too early. SettleGuard's window is
+    # 10 s; a wait past it plus a stability check makes the write the
+    # last word.
     time.sleep(12)
     # `main` held on the leg daemon's virtual keyboard by the holder's
     # key — a device every safe set refuses. The key goes down AFTER the
-    # split: `switchxkblayout` takes `main` for its own target (measured
-    # live), so an earlier hold would be stolen right back.
+    # split: `switchxkblayout` takes `main` for its own target, so an
+    # earlier hold would be stolen right back.
     holder.command("tap down", "down ")
     wait_for(vkb_holds_main, 10,
              "the held OSK key to take main onto the leg vkb")
@@ -827,14 +826,14 @@ def main():
             # ITS runtime's published file whenever it observes a change —
             # including a one-group default left by a daemon restart its
             # panel never reconfigured. A hosted panel whose runtime
-            # differs cannot recognize that file as OSK-published (exact
-            # identity, decisions §6/§35), adopts it as the user's own,
-            # and the whole leg then compiles one group: caps for the
-            # other groups refused, the toggle out of range (all measured
-            # live). The deterministic fix is to heal THAT file for the
-            # leg's lifetime — the seat's own four-layout list — with the
-            # found bytes backed up and restored at the end (the packaged
-            # daemon also rewrites it at its next install).
+            # differs cannot recognize that file as OSK-published (needs
+            # exact identity), adopts it as the user's own, and the whole
+            # leg then compiles one group: caps for the other groups
+            # refused, the toggle out of range. The deterministic fix is
+            # to heal THAT file for the leg's lifetime — the seat's own
+            # four-layout list — with the found bytes backed up and
+            # restored at the end (the packaged daemon also rewrites it
+            # at its next install).
             try:
                 with open(packaged_keymap, "rb") as handle:
                     packaged_backup = handle.read()
@@ -887,13 +886,13 @@ def main():
                                 0 if final != 0 else ua_group, len(codes),
                                 "restart-3")
 
-            # The §47 cold-start control: fresh panel, pre-split seat.
-            # One OSK key HELD DOWN (inside the control, after the split)
-            # keeps the seat's `main` flag on the leg daemon's own virtual
-            # keyboard — pseudo, refused by every safe set — because the
-            # §47 branch answers only when no live evidence exists. A
-            # plain tap is not enough: the flag returns to the last real
-            # keyboard within the moment (measured live).
+            # The cold-start control: fresh panel, pre-split seat. One OSK
+            # key HELD DOWN (inside the control, after the split) keeps
+            # the seat's `main` flag on the leg daemon's own virtual
+            # keyboard — pseudo, refused by every safe set — because that
+            # branch answers only when no live evidence exists. A plain
+            # tap is not enough: the flag returns to the last real
+            # keyboard within the moment.
             switch_set = panel.state()["switchSet"]
             anchor = panel.state()["anchor"]
             control_cold_start(repo, rt.env, switch_set, panel, anchor,
@@ -912,13 +911,12 @@ def main():
             # the packaged panel's published file, the compositor's
             # kb_file, the service, the per-device groups (LabSession's
             # exit). The kb_file restore runs before the service restart
-            # so the republished packaged keymap cannot race it — and it
-            # ALWAYS runs now (ticket 57): the old guard skipped an empty
-            # pre-leg value and never verified the eval landed, so the
-            # compositor could keep compiling the leg's private keymap
-            # after the private runtime died — the §47 wedge. The helper's
-            # sidecar under the private runtime dies with it (made
-            # explicit here: the record must not outlive what it names).
+            # so the republished packaged keymap cannot race it, and it
+            # always runs: skipping an empty pre-leg value or never
+            # verifying the eval landed lets the compositor keep compiling
+            # the leg's private keymap after the private runtime died.
+            # The helper's sidecar under the private runtime dies with it
+            # too — the record must not outlive what it names.
             if state_backup is not None:
                 with open(STATE_FILE, "w", encoding="utf-8") as handle:
                     json.dump(state_backup, handle, indent=2)

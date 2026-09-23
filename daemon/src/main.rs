@@ -1,20 +1,13 @@
 //! Persistent virtual keyboard for the on-screen keyboard plugin.
 //!
-//! Why this exists. The plugin used to spawn a `wtype` process per keystroke,
-//! which cost 30-80ms a key and, worse, never reached XWayland clients at all:
-//! wtype builds a small synthetic keymap holding just the character it needs,
-//! and XWayland ignores that, so keys vanished into Proton games and Electron
-//! apps. One long-lived helper with a real, complete keymap fixes both. Measured
-//! at 0.4ms average per keystroke against 37.8ms for a wtype spawn.
+//! One long-lived helper holding a complete keymap: per-keystroke spawns are
+//! slow, and a small synthetic keymap is ignored by XWayland, so keys would
+//! never reach X11 clients.
 //!
-//! Why it compiles its own keymap. An earlier version subscribed to the seat's
-//! keymap and mirrored it into its virtual keyboard. That coupling was a
-//! mistake and produced two separate failures: uploading changed the seat, the
-//! compositor rebuilt its keymap and sent it back, and the cycle drove xkbcomp
-//! 56,547 times in five minutes until the desktop froze; and holding a layout
-//! group in step with the seat disturbed layout switching for unrelated
-//! applications. There is no subscription now, so neither is possible. wvkbd
-//! has worked this way for years without upsetting a session.
+//! The helper compiles its own keymap and never subscribes to the seat's.
+//! Mirroring the seat keymap forms a feedback loop (upload changes the seat,
+//! the compositor rebuilds and sends it back) and disturbs layout switching
+//! for other applications.
 //!
 //! One compiled keymap carries every configured layout as a group, so switching
 //! language selects a group rather than compiling again. The panel tells the
@@ -36,7 +29,7 @@
 //!             <TAB>kb_file<TAB>group
 //!   caps <group> [positions...]
 //!                     keycap facts for the named group of the installed
-//!                     keymap (decisions §23): one line, records separated by
+//!                     keymap: one line, records separated by
 //!                     0x1E, fields by 0x1F, each field `t<text>` (resolved
 //!                     character text), `x<keysym>` (a symbol that produces no
 //!                     character) or `n` (no symbol at this level). Without a
@@ -51,10 +44,8 @@
 //! reconfigure keeps the generation (the installed keymap did not change), a
 //! changed one bumps it, so a facts reply computed from a superseded keymap is
 //! detectable and discardable. The panel and the helper move protocol
-//! versions together, which is what keeps an updated panel and an
-//! installed old helper from ever negotiating the wrong reply shapes
-//! (decisions §23; version 6 — the typed delivery verbs are gone, a v5
-//! peer is a reinstall).
+//! versions together, so a mismatched pair fails the hello gate instead of
+//! negotiating the wrong reply shapes.
 //!
 //! Key repeat belongs to the compositor: a press is `down`, a release is `up`,
 //! and nothing here or in the panel repeats anything. What the helper does add
@@ -78,23 +69,14 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
     zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
 };
 
-/// Bumped whenever the command set changes, so a plugin updated without
-/// reinstalling the helper says so instead of failing silently. Version 4 adds
-/// the keycap-facts reply and the generation on `configured`; the panel learned
-/// both in the same release, so the version gate is what keeps the pair honest.
-/// Version 5 (HISTORICAL) added `text-unicode`: unlike ticket 24's initially additive
-/// `text`, it is selected automatically for Chromium-family clients, so an
-/// updated panel must fail the hello gate against an older helper instead of
-/// accepting clicks that can only earn `err unknown command`.
-/// Version 6 (§91): the typed delivery verbs (`text`, `text-unicode`)
-/// and their `text-ok`/`text-err` replies are GONE — every emoji pick
-/// rides the clipboard; the protocol is configure/caps/keyboards/group/
-/// mods/down/up/tap/ping/hello. A v5 panel still sending text verbs
-/// fails loudly per line instead of silently mistyping.
+/// Bumped whenever the command set or a reply shape changes, so a plugin
+/// updated without reinstalling the helper fails the hello gate instead of
+/// failing silently. The command set is configure/caps/keyboards/group/
+/// mods/down/up/tap/ping/hello; any other verb earns `err unknown command`.
 const PROTOCOL_VERSION: u32 = 6;
 
-/// How long a non-modifier code may stay held before the helper lifts it
-/// (spec-v1 §6). Fifteen seconds of held backspace is about six hundred
+/// How long a non-modifier code may stay held before the helper lifts it.
+/// Fifteen seconds of held backspace is about six hundred
 /// repeats; nobody does that with a mouse button, so a hold that long means
 /// the panel is alive but wedged.
 const DEFAULT_HOLD_CAP: Duration = Duration::from_secs(15);
@@ -163,25 +145,15 @@ impl XkbConfig {
     }
 }
 
-/// What the bytes behind a `kb_file` path currently are, as one number.
-///
-/// Ticket 06: a custom keymap is edited at the same path and the compositor
-/// is reloaded. The path has not changed, so a comparison of configure fields
-/// says "same keymap" and the helper keeps typing yesterday's map while the
-/// panel draws caps for it — the two agreeing with each other and with
-/// nothing the user can see.
-///
 /// The highest keycode this helper will ever walk. Stock evdev tops out
-/// at 709; xkbcommon accepts keycodes to 4294967294 and a hostile 60-byte
-/// keymap declaring one pinned the shared lock for ~9 s of pure iteration
-/// per configure (round eleven's blocker) — the gate refuses such maps at
-/// both compile doors, and the keycap walk iterates NAMED keys only.
+/// at 709; xkbcommon accepts keycodes to 4294967294, and walking such a span
+/// would pin the shared lock for seconds per configure. Both compile paths
+/// refuse larger maps, which keeps the keycap walk over the span bounded.
 const MAX_SANE_KEYCODE: u32 = 4096;
 
-/// The largest `kb_file` this helper will ever read. The 2026-09-19 audit:
-/// the mark and the compile each read the whole file, unbounded, under the
-/// shared lock — a huge file exhausted memory and a FIFO blocked the
-/// keyboard for everyone. One bounded read now feeds both callers.
+/// The largest `kb_file` this helper will ever read. The read happens under
+/// the shared lock, so an unbounded one could exhaust memory. One bounded
+/// read feeds both the mark and the compile.
 const KB_FILE_LIMIT: u64 = 2 * 1024 * 1024;
 
 /// A custom keymap's bytes, read once and bounded: a regular file no larger
@@ -195,12 +167,10 @@ fn read_kb_file_bounded(path: &str) -> Option<Vec<u8>> {
     if path.is_empty() {
         return None;
     }
-    // Open NONBLOCKING before anything else, then validate the DESCRIPTOR
-    // (fstat), not the path: resolving the path twice — stat, then open —
-    // leaves a window where a FIFO swapped in between parks this thread
-    // under the shared lock (the review's second round). With the open
-    // first and nonblocking, a FIFO opens instantly and the fstat refuses
-    // it; what is read is exactly what was checked.
+    // Open nonblocking first, then validate the descriptor (fstat), not the
+    // path: a stat-then-open leaves a window where a FIFO swapped in parks
+    // this thread under the shared lock. Opened nonblocking, a FIFO opens
+    // instantly and the fstat refuses it; what is read is what was checked.
     let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK)
@@ -229,12 +199,16 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
 /// never arrives from a real panel, but the socket is same-user input and
 /// the panic fires under the shared lock: the mutex poisons, every later
 /// `lock().unwrap()` panics, and the helper stays alive while doing
-/// nothing — systemd sees no crash and never restarts it (2026-09-19
-/// audit, finding 1). Refused exactly like a failing compile.
+/// nothing — systemd sees no crash and never restarts it. Refused exactly
+/// like a failing compile.
 fn xkb_field_clean(text: &str) -> bool {
     !text.contains('\0')
 }
 
+/// What the bytes behind a `kb_file` path currently are, as one number. A
+/// custom keymap is edited at the same path, so equal configure fields do not
+/// mean an equal keymap.
+///
 /// The whole file, not its mtime or its length: an editor that writes in
 /// place keeps the length identical often enough (one glyph for another), and
 /// mtime is what a `cp -p` or a restored backup does not change. Production
@@ -266,16 +240,12 @@ fn compile_keymap_with(config: &XkbConfig, kb_file_bytes: Option<&[u8]>) -> Opti
         return None;
     }
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    // Never our own published file. It is this helper's OUTPUT (§35), and
-    // taking it as input freezes whatever version wrote it: upgrade the
-    // helper while the compositor still points at yesterday's file and the
-    // new one reads it back, recognises the block, keeps it verbatim and
-    // republishes it — the old keymap outliving the code that made it. The
+    // Never our own published file. It is this helper's output, and taking
+    // it as input freezes whatever version wrote it: the block is recognised
+    // and kept verbatim, so an old keymap outlives the code that made it. The
     // compositor's RMLVO is the source; the file is only ever the answer.
-    // Compared after canonicalising both, because the panel names this path
-    // by building it from `$XDG_RUNTIME_DIR` and the two spellings need not
-    // be byte-identical — a doubled separator or a symlinked runtime
-    // directory would otherwise let our own output back in as an input.
+    // `is_published_keymap` compares canonical paths, because the panel builds
+    // this path from `$XDG_RUNTIME_DIR` and the spellings need not match.
     let from_file = !config.kb_file.is_empty() && !is_published_keymap(&config.kb_file);
     if from_file {
         let text = String::from_utf8(kb_file_bytes?.to_vec()).ok()?;
@@ -323,10 +293,8 @@ fn compile_keymap_with(config: &XkbConfig, kb_file_bytes: Option<&[u8]>) -> Opti
         options,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )?;
-    // The same keycode gate as the file doors (round twelve's blocker):
-    // the RMLVO branch resolves the user's own ~/.config/xkb includes,
-    // and a planted keycodes file brought maximum = 2000000000 through
-    // this door — resurrecting the span-walk DoS the file gates closed.
+    // The same keycode gate as the file path: RMLVO resolves the user's own
+    // ~/.config/xkb includes, which can declare an arbitrarily high maximum.
     if keymap.max_keycode().raw() > MAX_SANE_KEYCODE {
         return None;
     }
@@ -368,13 +336,13 @@ fn upload_keymap(keyboard: &ZwpVirtualKeyboardV1, text: &str) -> std::io::Result
     Ok(())
 }
 
-/// The symbols the panel may offer whatever language is configured (ticket 18).
+/// The symbols the panel may offer whatever language is configured.
 ///
 /// A layout answers for its own alphabet and for whatever its designer put on
 /// AltGr; nothing makes `us` produce `£` or `ua` produce `÷`. These are not a
 /// layout's business at all, so the helper carries them itself, identically in
 /// every group. Four per position, on levels five to eight: level five, Shift,
-/// level three, Shift+level three (decisions §33).
+/// level three, Shift+level three.
 ///
 /// Ordered by what the user would miss most, because the catalogue does not
 /// always fit: it wants fourteen four-entry slots, and a layout that cannot
@@ -388,16 +356,14 @@ fn upload_keymap(keyboard: &ZwpVirtualKeyboardV1, text: &str) -> std::io::Result
 /// accepts is not the same as a name an X11 client can turn into text:
 /// `approximate` and `permille` reach a native Wayland client and produce
 /// NOTHING in a GTK X11 one, reproducibly, while other non-Latin-1 entries
-/// here come through fine. Spelling them as Unicode keysyms fixes both
-/// (.scratch/unicode-symbols/README.md, gate round 2).
+/// here come through fine. Spelling them as Unicode keysyms fixes both.
 ///
 /// `U2248` rather than `U223C`: the legacy `approximate` keysym is U+223C
 /// TILDE OPERATOR (∼), which is not the almost-equal sign (≈) a symbols page
 /// wants and is a near-twin of the ASCII `~` already on the page.
 const RESERVED_SYMBOLS: [&str; 56] = [
-    // Everything drawn on the direct punctuation page comes first. Keeping
-    // these in the helper-owned block removes the temporary switch to a `us`
-    // group and makes a layout list such as `ua,ru` honest as well.
+    // Everything drawn on the direct punctuation page comes first, so the
+    // page types without switching to a `us` group, even for `ua,ru`.
     "exclam",
     "1",
     "at",
@@ -458,15 +424,13 @@ const RESERVED_SYMBOLS: [&str; 56] = [
     "infinity",
 ];
 
-/// Where the catalogue lives (decisions §33): levels five to eight of the
-/// digit row, then the two free positions that survive every consumer measured.
+/// Where the catalogue lives: levels five to eight of the digit row, then the
+/// two free positions that survive every consumer measured.
 ///
 /// The digit row because a keycode is not a contract — a table lookup is.
 /// Chromium's Ozone/Wayland path drops an evdev code its `DomCode` table does
-/// not carry and Wine substitutes for one, so the exotic free positions ticket
-/// 18 chose typed in a terminal and produced nothing (or a `?`) in the
-/// applications the owner actually uses. `AE01`-`AE12` are in every one of
-/// those tables. Letters are deliberately not here: an eight-level type
+/// not carry and Wine substitutes for one, so exotic free positions type
+/// nothing (or a `?`) there. `AE01`-`AE12` are in every one of those tables. Letters are deliberately not here: an eight-level type
 /// without `map[Lock]` costs a letter position its CapsLock, and `carried_
 /// levels` refuses any position whose answer moves under Lock anyway.
 const CATALOGUE_ROW: [&str; 12] = [
@@ -487,8 +451,8 @@ const CATALOGUE_SPARE: [&str; 10] = [
     "AD11", "AD12", "AC10", "AC11", "AB08", "AB09", "AB10", "TLDE", "BKSL", "LSGT",
 ];
 
-/// The two of the fourteen free positions ticket 20 measured through: `AB11`
-/// is evdev 89, `AE13` is 124, and both reach a native-Wayland Chromium. They
+/// Free positions that reach a native-Wayland Chromium: `AB11` is evdev 89,
+/// `AE13` is 124. They
 /// carry the catalogue on the same levels five to eight as the digit row, so
 /// there is one chord shape and not two; their own levels one to four are left
 /// empty, which is what they already were.
@@ -589,15 +553,10 @@ fn free_positions(keymap: &str) -> Vec<String> {
 /// The modifier masks the block's own type answers to, and the ones it must
 /// prove a position ignores.
 ///
-/// Masks, not keys. The first version of this held down `<CAPS>`, `<LALT>` and
-/// `<LWIN>` to ask "does this position answer to Lock, Alt or Super?", and
-/// under `grp:caps_toggle` — the owner's own option, and the VM's, and the one
-/// every integration configure uses — pressing `<CAPS>` switches the GROUP, so
-/// every digit-row position looked like it answered to something and every one
-/// of them was refused. The catalogue collapsed to the two free positions.
-/// The question was never about a key: it is whether the LOCK MODIFIER changes
-/// what the position types, and an option is free to move Lock to any key or
-/// to no key at all.
+/// Masks, not keys: the question is whether the Lock modifier changes what a
+/// position types, and an option is free to move Lock to any key or none.
+/// Probing by pressing `<CAPS>` breaks under `grp:caps_toggle`, where it
+/// switches the group and every position looks like it answers to something.
 struct LevelProbe {
     /// The four chords the block's type reuses for levels one to four.
     chords: [u32; 4],
@@ -628,9 +587,8 @@ impl LevelProbe {
         let super_ = mask("Mod4")?;
         Some(LevelProbe {
             chords: [0, shift, level_three, shift | level_three],
-            // Lock is the one ticket 20's rig named — an eight-level type
-            // without `map[Lock]` costs an ALPHABETIC position its uppercasing
-            // — and the other three are the modifier families the canonical
+            // Lock because an eight-level type without `map[Lock]` costs an
+            // alphabetic position its uppercasing; the other three are the modifier families the canonical
             // types use for a second level: PC_ALT_LEVEL2, CTRL+ALT,
             // PC_SUPER_LEVEL2. A position answering to any of them cannot be
             // hosted by a type that carries none of them.
@@ -713,8 +671,8 @@ fn syms_with_mods(
 ///
 /// `lv5:ralt_switch_lock` and its cousins hand a physical key the modifier the
 /// block's own levels answer to. Adding levels five to eight to a position
-/// would then change what that key types — the one thing §33 promises it never
-/// does — so when this is true the block stays off ordinary positions and
+/// would then change what that key types, which the block must never do, so
+/// when this is true the block stays off ordinary positions and
 /// takes only the free ones, which had nothing to change.
 fn a_physical_key_carries_level_five(
     compiled: &xkbcommon::xkb::Keymap,
@@ -796,11 +754,8 @@ fn extend_with_reserved(keymap: &str) -> Option<String> {
     let probe = LevelProbe::new(&compiled)?;
 
     // Which of the free positions this keymap actually leaves free, counted
-    // BEFORE the ordinary ones are taken. `jp` defines both of them and `br`
-    // defines `AB11`, so holding two slots back for them unconditionally
-    // spent the catalogue's tail on positions that were never going to be
-    // available — `jp` lost `× ≈ ÷ ≠` off the visible page with fourteen
-    // hostable positions sitting unused.
+    // before the ordinary ones are taken, so slots are held back only for
+    // positions that exist: `jp` defines both of them and `br` defines `AB11`.
     let free = free_positions(keymap);
     let available: Vec<&str> = CATALOGUE_FREE
         .into_iter()
@@ -944,29 +899,21 @@ fn parse_keycodes(keymap: &str) -> std::collections::HashMap<String, u32> {
 /// Lock, Control, Mod1..Mod5.
 ///
 /// Asked of a real xkb state rather than read out of `modifier_map`, because
-/// the modifier map is not what a keypress means. It is the union of every
-/// modifier a position can reach on any level, and xkb resolves a press
-/// through the action on the level actually selected. `shift:both_capslock_
-/// cancel` is the case that broke: it puts Caps_Lock on the Shift keys'
-/// second level, so with `grp:caps_toggle` also in play the keymap says
-/// `modifier_map Lock { <LFSH> }`, and a union said a held Shift meant
-/// Shift+Lock. Shift+Lock on an ALPHABETIC key is level 1 — the letters came
-/// out lowercase while the TWO_LEVEL number row, which ignores Lock, shifted
-/// correctly.
+/// the modifier map is the union of every modifier a position can reach on
+/// any level, while xkb resolves a press through the level actually selected.
+/// Under `shift:both_capslock_cancel` with `grp:caps_toggle` the map says
+/// `modifier_map Lock { <LFSH> }`; a union would report a held Shift as
+/// Shift+Lock, and letters would come out lowercase.
 ///
 /// Pressing the position in a clean state and serializing what comes out is
 /// what the compositor would do for a physical keyboard, so it agrees by
-/// construction — and it picks up the positions that become modifiers through
-/// a compat interpret rather than a modifier map, which the old reading
-/// admitted it could not see.
+/// construction, and it sees positions that become modifiers through a compat
+/// interpret rather than a modifier map.
 ///
-/// The probe runs once per GROUP, not once per keymap: a position's modifier
-/// meaning is a fact about the group it resolves in, and multi-group keymaps
-/// disagree. Under `us,ua` without an `lv3:` option, RALT is Alt_R (Mod1) in
-/// the us group and ISO_Level3_Shift (Mod5) in the ua group — a group-0 probe
-/// made every AltGr chord report Alt at group ua, and the level-3 keysyms
-/// came out as their level-1 selves. `Shared::modifier_mask` picks the entry
-/// for the group the device is typing in.
+/// The probe runs once per group: a position's modifier meaning depends on
+/// the group it resolves in. Under `us,ua` without an `lv3:` option, RALT is
+/// Alt_R (Mod1) in us and ISO_Level3_Shift (Mod5) in ua. `Shared::modifier_mask`
+/// picks the entry for the group the device is typing in.
 fn modifier_masks_for_keymap(
     keymap: &str,
     codes: &std::collections::HashMap<String, u32>,
@@ -993,11 +940,8 @@ fn modifier_masks_for_keymap(
             // would leave its bit set for every position probed after it. The
             // group rides in the locked-layout slot only: the three layout
             // arguments of update_mask are depressed+latched+locked and xkb
-            // adds them, so repeating the group in all three asked for it
-            // three times — right in a two-group keymap only because 3g wraps
-            // back to g, and collapsed to group 0 at three. One ask, in the
-            // locked slot, is exact for any layout count; it is also the slot
-            // the compositor fills from the virtual-keyboard protocol.
+            // adds them, so the group must appear in exactly one. The locked
+            // slot is the one the compositor fills from the protocol.
             let mut state = xkb::State::new(&compiled);
             let group = group as u32;
             state.update_mask(0, 0, 0, 0, 0, group);
@@ -1028,7 +972,7 @@ enum Command {
     Group(u32),
     /// Atomically installs complete XKB state and selects its active group.
     Configure(XkbConfig),
-    /// Keycap facts (decisions §23): the requested positions' per-level text
+    /// Keycap facts: the requested positions' per-level text
     /// in the named group of the installed keymap. No positions means every
     /// named key the keymap carries.
     Caps {
@@ -1047,9 +991,8 @@ const CAPS_FIELD_SEP: char = '\u{001f}';
 /// Resolves every named key's levels to text through libxkbcommon, one
 /// record string per GROUP of the keymap, so a group switch answers from
 /// storage with no recompile and no upload. Built once per keymap install,
-/// from the very text that was uploaded — the facts and the typing share one
-/// compiled keymap authority (decisions §23), which is the whole point of
-/// moving them off the panel's separate xkbcli pipeline.
+/// from the very text that was uploaded, so the facts and the typing share one
+/// compiled keymap.
 ///
 /// Field grammar, one per level in level order: `t<text>` for a level whose
 /// symbols resolve to character text (concatenated when a level carries
@@ -1073,12 +1016,9 @@ fn keycap_facts_for_groups(keymap: &str) -> Vec<String> {
     let groups = compiled.num_layouts();
     let mut per_group = vec![String::new(); groups as usize];
 
-    // The span walk itself is safe ONLY behind the compile gates: a map
-    // that reached here has max_keycode at most MAX_SANE_KEYCODE (4096 —
-    // stock evdev tops at 709), so this loop is bounded small. The gates
-    // refuse anything bigger precisely because this loop would not be
-    // (round eleven's blocker — and a text-level named-keys walk was tried
-    // and reverted: include-based keymaps carry no declarations to read).
+    // The span walk is bounded only because the compile gates refuse any map
+    // with max_keycode above MAX_SANE_KEYCODE. A text-level named-keys walk is
+    // not an alternative: include-based keymaps carry no declarations to read.
     debug_assert!(compiled.max_keycode().raw() <= MAX_SANE_KEYCODE);
     for raw in compiled.min_keycode().raw()..=compiled.max_keycode().raw() {
         let code = xkb::Keycode::from(raw);
@@ -1122,7 +1062,7 @@ fn keycap_facts_for_groups(keymap: &str) -> Vec<String> {
 /// the group they describe, and the requested positions' records in the order
 /// they were asked. A position the keymap does not carry answers as a bare
 /// record with no level fields — the panel's "no keymap entry", distinct from
-/// a carried key whose level is empty (spec-v1.1 §3's honest hole). `None`
+/// a carried key whose level is empty. `None`
 /// says the group is past the keymap's own count, which no panel should ask
 /// for: xkb would silently wrap it to another group's facts.
 fn caps_reply(gen: u64, per_group: &[String], group: u32, positions: &[String]) -> Option<String> {
@@ -1231,16 +1171,12 @@ impl Shared {
         kb_file_bytes: Option<&[u8]>,
         precompiled: Option<&str>,
     ) -> bool {
-        // Same fields AND, for a kb_file, the same bytes behind them. The
-        // bytes arrive from the caller — ONE read validates the group
-        // ceiling and installs the map (the review's fourth round: the
-        // count and the install each reading the path left a swap between
-        // them validating one file and installing another); the `group`
-        // command reaches none of this and still moves a group without
-        // touching the file (ticket 06). `precompiled` is the SAME text
-        // the caller's ceiling counted (round 18: one compile serves
-        // both) — None means compile here, the way the default install
-        // always did.
+        // Same fields and, for a kb_file, the same bytes behind them. The
+        // bytes arrive from the caller so one read both validates the group
+        // ceiling and installs the map; two reads would let a swap between
+        // them validate one file and install another. `precompiled` is the
+        // same text the caller's ceiling counted; None means compile here.
+        // The `group` command reaches none of this and never reads the file.
         let file_bytes = kb_file_bytes.map(|bytes| bytes.to_vec());
         let mark = file_bytes.as_deref().map(hash_bytes);
         if self
@@ -1379,9 +1315,8 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        // The seat keyboard is deliberately not bound. Reading its keymap is
-        // what coupled this helper to the seat, and that coupling caused both
-        // the rebuild storm and the layout-switching interference.
+        // The seat keyboard is deliberately not bound: reading its keymap
+        // couples this helper to the seat (see the module header).
     }
 }
 
@@ -1410,17 +1345,13 @@ impl Dispatch<ZwpVirtualKeyboardV1, ()> for State {
 }
 
 /// Where the helper publishes the keymap it installed, for the compositor to
-/// compile the very same one (decisions §35).
+/// compile the very same one.
 ///
 /// Two keymaps on a seat is not a cosmetic difference. The compositor hands a
-/// focused client whichever keyboard is active, so with the block making ours
-/// differ, a client was handed one keymap and then the other on every focus
-/// change — and every swap resets the group it resolves keys in. Measured on
-/// the owner's machine: six focus changes, nine keymap events, two distinct
-/// keymaps; with the block off, one. Applications that do not re-read the
-/// group after a keymap swap then type the previous alphabet until any
-/// modifier key arrives, which is exactly what Telegram, WhatsApp and Viber
-/// did while Discord and the browser were fine.
+/// focused client whichever keyboard is active, so if ours differs a client
+/// gets a keymap swap on every focus change, and every swap resets the group
+/// it resolves keys in. Applications that do not re-read the group after a
+/// swap then type the previous alphabet until a modifier key arrives.
 ///
 /// Under `$XDG_RUNTIME_DIR` beside the socket: the unit sets `PrivateTmp` so
 /// `/tmp` is the helper's own, and `ProtectHome=read-only` rules out `$HOME`.
@@ -1433,28 +1364,20 @@ fn published_keymap_path() -> Option<PathBuf> {
     Some(dir.join("keymap.xkb"))
 }
 
+/// Whether a group index can be carried by the installed keymap. The
+/// caps facts are per-group, so their count is the group count; with nothing
+/// installed, no group is valid. An out-of-range `group` from any client is
+/// refused without touching device state.
+fn group_in_range(group: u32, installed_groups: usize) -> bool {
+    installed_groups > 0 && (group as usize) < installed_groups
+}
+
 /// Whether a `kb_file` names the file this helper publishes.
 ///
 /// Compared after canonicalising, because the panel builds this path from
 /// `$XDG_RUNTIME_DIR` and the two spellings need not be byte-identical — a
 /// doubled separator or a symlinked runtime directory would otherwise let our
 /// own output back in as an input.
-/// Whether a group index can be carried by the installed keymap. The
-/// caps facts are per-group, so their count IS the group count; nothing
-/// installed validates nothing (ticket 31: the daemon is the defence in
-/// depth — the panel bounds its remembered group at the selection seam,
-/// and an out-of-range `group` command from ANY client is refused here
-/// without touching device state).
-fn group_in_range(group: u32, installed_groups: usize) -> bool {
-    installed_groups > 0 && (group as usize) < installed_groups
-}
-
-/// The group count a configure DECLARES for itself: the non-empty
-/// entries of its layouts field. A configure's group is bounded by the
-/// map it is INSTALLING, not the one already installed — bounding by the
-/// old map refuses every grow (a one-group map installing two), which is
-/// a client acting correctly. Zero declared layouts still carries group
-/// 0: a file-only configure owes no layout list.
 fn is_published_keymap(path: &str) -> bool {
     let Some(ours) = published_keymap_path() else {
         return false;
@@ -1467,18 +1390,14 @@ fn is_published_keymap(path: &str) -> bool {
         }
 }
 
-/// Ticket 06: the recovery record's file name, beside the published keymap
-/// in the runtime directory this helper owns — the one place
-/// `ProtectSystem=strict` leaves writable. The unit preserves that
-/// directory across service stops (`RuntimeDirectoryPreserve=yes`) because
-/// the record must survive helper restarts within the graphical session —
-/// `oskar upgrade` restarts the helper as a routine step — while
-/// systemd still removes it when the session ends, which is exactly the
-/// record's intended lifetime. The helper survives a shell crash; the
-/// panel does not, and the panel's in-memory `userKeymapFile` was the only
-/// record — a SIGKILLed shell left the compositor still compiling the
-/// published keymap with the source lost, and the custom keymap silently
-/// dropped for the session.
+/// The recovery record's file name, beside the published keymap in the
+/// runtime directory this helper owns — the one place `ProtectSystem=strict`
+/// leaves writable. The unit preserves that directory across service stops
+/// (`RuntimeDirectoryPreserve=yes`) so the record survives helper restarts
+/// (`oskar upgrade` restarts it) while systemd still removes it when the
+/// session ends. The helper outlives a shell crash; the panel does not, and
+/// without this record a crashed shell would lose the user's custom keymap
+/// source while the compositor keeps compiling the published keymap.
 const SOURCE_SIDECAR: &str = "user-keymap-source";
 
 /// What a configure's `kb_file` says about the user's own keymap source.
@@ -1549,11 +1468,10 @@ fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let dir = PathBuf::from(dir).join("oskar");
     std::fs::create_dir_all(&dir)?;
     let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-    // The daemon's own guarantee, not systemd's (the audit's 1.5/7.1):
-    // the directory must belong to THIS uid and carry no group/other
-    // bits — a pre-created group-writable directory (or one another
-    // user planted before our first start, binding their own socket
-    // for the panel to talk to) is refused loudly instead of trusted.
+    // The daemon's own guarantee, not systemd's: the directory must belong
+    // to this uid and carry no group/other bits. A pre-created
+    // group-writable directory, or one another user planted to bind their
+    // own socket for the panel, is refused loudly instead of trusted.
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let meta = std::fs::metadata(&dir)?;
     if meta.uid() != nix_uid() || (meta.mode() & 0o077) != 0 {
@@ -1712,11 +1630,10 @@ fn startup_keyboard_reply() -> String {
     }
 }
 
-/// The hello handshake's exact grammar (F6): precisely `hello <u32>`.
+/// The hello handshake's exact grammar: precisely `hello <u32>`.
 /// `Some(Ok(v))` is a well-formed version request, `Some(Err(()))` is a
 /// hello-shaped line that is not (bare, trailing words, non-numeric
-/// version — the old parser defaulted all three to the current version),
-/// and `None` is not a hello line at all, belonging to the verb parser.
+/// version), and `None` is not a hello line at all, belonging to the verb parser.
 fn parse_hello(line: &str) -> Option<Result<u32, ()>> {
     let mut words = line.split_whitespace();
     if words.next()? != "hello" {
@@ -1765,7 +1682,7 @@ fn parse(line: &str) -> Option<Command> {
     let mut parts = line.split_whitespace();
     let verb = parts.next()?;
     let raw = parts.next()?;
-    // Fixed-arity verbs take exactly one argument (F6): a third word is a
+    // Fixed-arity verbs take exactly one argument: a third word is a
     // malformed line, not a silently truncated one. The variable-arity
     // verb (`caps`) and the tab-separated `configure` are peeled off
     // above with their own rules.
@@ -1792,10 +1709,9 @@ fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
     for stream in listener.incoming().flatten() {
         if clients.fetch_add(1, Ordering::AcqRel) >= MAX_CLIENTS {
             clients.fetch_sub(1, Ordering::AcqRel);
-            // Refuse LOUDLY (the audit: the silent drop kept the panel
-            // believing the helper healthy while it could not get in).
-            // The message names the condition; SocketWatch's rebuild
-            // path reads any error the same way it always did.
+            // Refuse loudly: a silent drop leaves the panel believing the
+            // helper healthy while it cannot get in. The panel's rebuild
+            // path treats any error line alike.
             let _ = writeln!(&mut { stream }, "err too many clients");
             continue;
         }
@@ -1812,20 +1728,18 @@ fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
                 .is_err()
         };
         if spawned {
-            // The client is dropped, never the helper (round eleven's
-            // finding 10): exit(70) skipped every release path a live
-            // connection's keys still depended on — and the slot the
-            // failed spawn never returned is four failures from a
-            // permanent lockout (round twelve's finding 5).
+            // The client is dropped, never the helper: exiting would skip
+            // the release paths live connections' keys depend on. The slot
+            // must be returned, or four failed spawns lock everyone out.
             eprintln!("cannot spawn socket client worker; dropping the client");
             clients.fetch_sub(1, Ordering::AcqRel);
         }
     }
 }
 
-/// The pre-handshake window and the write bound are both ABSOLUTE: neither
+/// The pre-handshake window and the write bound are both absolute: neither
 /// a client that streams frames without pausing nor one that stops reading
-/// may extend them (2026-09-19 audit, finding 4).
+/// may extend them.
 const HANDSHAKE_WINDOW: Duration = Duration::from_secs(5);
 const WRITE_BOUND: Duration = Duration::from_secs(5);
 
@@ -1836,8 +1750,7 @@ fn handshake_expired(handshaked: bool, connected_for: Duration) -> bool {
     !handshaked && connected_for >= HANDSHAKE_WINDOW
 }
 
-/// One bounded reply. `bound` is the caller's REMAINING time (the review's
-/// second round): while the handshake window is open, a write may not
+/// One bounded reply. `bound` is the caller's remaining time: while the handshake window is open, a write may not
 /// outlive it — a parked write would let a late hello complete long past
 /// the window. `false` means the bound is spent or the client is not
 /// draining its pipe; the connection is dropped either way.
@@ -1900,43 +1813,29 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         Err(_) => return,
     });
     // Bytes of the line in flight. A raw byte buffer, not a String: the
-    // manual chunk loop below enforces the frame cap per read (the
-    // cross-round's finding — read_line accumulates without bound
-    // inside ONE call while an active sender streams newline-free
-    // bytes, so every post-hoc length check arrived too late).
+    // manual chunk loop below enforces the frame cap per read, because
+    // read_line accumulates without bound inside one call while a sender
+    // streams newline-free bytes.
     let mut pending: Vec<u8> = Vec::new();
     let mut handshaked = false;
     let connected_at = Instant::now();
-    // Round 17: an idle NEGOTIATED client also owes traffic. Before
-    // this, only the pre-handshake window was absolute — a client that
-    // hello'd and never spoke again parked one of the four slots for
-    // the process lifetime, and three hung probe clients would lock
-    // the real panel out with `err too many clients` until a restart.
-    // 60 s of post-handshake silence drops the connection through the
-    // ordinary release path; the real panel survives by construction —
-    // §80's never-stopping probe speaks every 15 s, healthy or not,
-    // and a held key already arms its own tighter deadline.
+    // A negotiated client also owes traffic: otherwise a client that
+    // hello'd and went silent would park one of the four slots for the
+    // process lifetime. 60 s of post-handshake silence drops the connection
+    // through the ordinary release path. The real panel's health probe
+    // speaks every 15 s, and a held key arms its own tighter deadline.
     let mut last_activity = Instant::now();
     const NEGOTIATED_IDLE: Duration = Duration::from_secs(60);
     loop {
         // The only thing this connection ever waits on is its own next line.
         // Arming that wait with the cap's deadline is what enforces the cap
         // without a timer thread: no hold means no deadline and the read
-        // blocks the way it always did, and a hold means exactly one wakeup,
-        // at the moment the key is due to be lifted.
-        // The pre-handshake window (the audit's slot-starvation
-        // finding): four idle connections that never send a byte used
-        // to hold every slot forever — the socket stayed alive, the
-        // panel's probes reported the helper healthy, and the real
-        // client could not get in. Until this connection has completed
-        // a `hello`, its read deadline is 5 s out; a hold's deadline
-        // still wins when it is sooner.
-        // The pre-handshake window is ABSOLUTE (the cross-round: a
-        // renewed timeout evicted nobody — an idle connection woke
-        // every 5 s and held its slot forever). 5 s from CONNECT to a
-        // completed `hello`, then the window is gone. A hold's deadline
-        // still wins when it is sooner; post-handshake with no holds
-        // the read blocks the way it always did.
+        // blocks, and a hold means exactly one wakeup, at the moment the key
+        // is due to be lifted.
+        // The pre-handshake window is absolute: 5 s from connect to a
+        // completed `hello`, measured from `connected_at` rather than
+        // renewed per read, so idle connections cannot hold the four slots
+        // forever. A hold's deadline still wins when it is sooner.
         let handshake = if handshaked {
             None
         } else {
@@ -1974,11 +1873,10 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         if stream.set_read_timeout(timeout).is_err() {
             break;
         }
-        // Deadline enforcement must not depend on the traffic going quiet
-        // (2026-09-19 audit): a client that streams frames keeps the read
-        // succeeding forever, and checks that lived only in the timeout arm
-        // never ran. Both deadlines are evaluated here too, every turn,
-        // whether or not bytes arrived.
+        // Deadline enforcement must not depend on the traffic going quiet:
+        // a client that streams frames keeps the read succeeding forever,
+        // so the deadlines are evaluated here every turn, not only in the
+        // timeout arm.
         if handshake_expired(handshaked, connected_at.elapsed()) {
             break;
         }
@@ -1996,16 +1894,13 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         {
             break;
         }
-        // The frame cap, enforced per CHUNK (the cross-round's core
-        // finding: the audits' HIGH realization of known item 7 — an
-        // active newline-free stream grew `pending` without bound inside
-        // a single read_line call, and MemoryMax plus StartLimitBurst
-        // turned that into a permanent lockout a keyboard user cannot
-        // type their way out of). 4 KiB is generous (the longest live
-        // line — a configure naming a kb_file path plus its layouts —
-        // is a few hundred bytes); one chunk is one buffer
-        // fill, so `pending` is bounded by cap + 8 KiB whatever the
-        // sender's pace. Overflow answers once and closes.
+        // The frame cap, enforced per chunk: a newline-free stream must not
+        // grow `pending` without bound (under MemoryMax that becomes a
+        // restart loop and then a lockout). 4 KiB is generous — the longest
+        // real line, a configure with a kb_file path, is a few hundred
+        // bytes. One chunk is one buffer fill, so `pending` is bounded by
+        // cap + 8 KiB whatever the sender's pace. Overflow answers once and
+        // closes.
         const MAX_LINE: usize = 4096;
         let mut chunk = [0u8; 8192];
         let read = match reader.read(&mut chunk) {
@@ -2019,23 +1914,18 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             {
                 // The deadline came due. Pre-handshake past the window:
                 // this connection never said hello — drop it, freeing
-                // the slot (the audits' starvation finding). Post-
-                // handshake with no hold due, it is the negotiated-idle
-                // window closing — same cure, same release path.
+                // the slot. Post-handshake with no hold, it may be the
+                // negotiated-idle window closing — same release path.
                 // Otherwise this is the hold cap's wakeup: lift what is
                 // due and keep waiting for the rest of the line.
                 if handshake_expired(handshaked, connected_at.elapsed()) {
                     break;
                 }
-                // Round 18's audit: the arm used to break on
-                // handshaked-and-holdless ALONE, but the read deadline
-                // was computed BEFORE the loop-top hold expiry — a
-                // claim that expired between the two (its key hit the
-                // 15 s cap, or another client's install drained it)
-                // leaves a stale past-due timeout that wakes this read
-                // instantly, and a connection whose last traffic was
-                // milliseconds ago would be dropped for "idleness" it
-                // does not have. Only the real window closes it.
+                // Being handshaked and holdless is not enough: the read
+                // deadline was computed before the loop-top hold expiry,
+                // so a claim that vanished in between (cap, or another
+                // client's install draining it) leaves a stale past-due
+                // timeout. Only the real idle window closes the connection.
                 if handshaked
                     && hold_deadline(&shared, conn_id).is_none()
                     && last_activity.elapsed() >= NEGOTIATED_IDLE
@@ -2051,21 +1941,19 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         };
         last_activity = Instant::now();
         pending.extend_from_slice(&chunk[..read]);
-        // Dispatch every COMPLETE line the buffer now holds; the tail
+        // Dispatch every complete line the buffer now holds; the tail
         // without its newline stays for the next chunk.
         let mut poisoned = false;
         let mut write_dead = false;
         while let Some(nl) = pending.iter().position(|byte| *byte == b'\n') {
-            // A COMPLETE line is capped here, before it is parsed (the
-            // review's fourth round: moving the cap after dispatch let a
-            // 5 000-byte line with its newline through untouched). Breaking
+            // A complete line is capped here, before it is parsed. Breaking
             // without draining leaves the oversized bytes in `pending` for
             // the tail check below, which answers and closes.
             if nl + 1 > MAX_LINE {
                 break;
             }
-            // Deadlines between commands, not only between reads (the
-            // review's second round): one chunk can carry a whole burst,
+            // Deadlines between commands, not only between reads: one chunk
+            // can carry a whole burst,
             // paced slow enough to cross the window, and its late hello
             // must not complete. Breaking here drops the rest of the
             // buffer; the loop-top check finishes dropping the connection.
@@ -2080,19 +1968,17 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             let mut line_bytes = pending.drain(..=nl).collect::<Vec<u8>>();
             line_bytes.pop(); // the newline itself
             let Ok(line_str) = String::from_utf8(line_bytes) else {
-                // Invalid UTF-8 disconnects rather than guesses — but
-                // THROUGH the release path (the final review's stray-bug
-                // finding: a bare `return` here jumped release_all and
-                // stranded every key this client held, locked modifiers
-                // included, until a daemon restart).
+                // Invalid UTF-8 disconnects rather than guesses, through
+                // the release path: a bare `return` would skip release_all
+                // and strand every key this client holds.
                 poisoned = true;
                 break;
             };
             let line = line_str.trim();
             if line.is_empty() {
-                // Even this answers one line (round eleven's finding 7):
-                // the reply-per-command invariant has no silent case, and
-                // the correlation queue on the other end pops on it.
+                // Even this answers one line: the reply-per-command
+                // invariant has no silent case, and the panel's correlation
+                // queue pops on it.
                 if !write_reply(&mut out, "err empty",
                     reply_bound(handshaked, connected_at.elapsed()))
                 {
@@ -2104,7 +1990,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             // `hello` reports more than "the process is up": a keyboard without a
             // keymap accepts commands and drops every key, so the client must not
             // enable keys until one is loaded. `ping` stays a plain liveness check.
-            // The grammar is exactly `hello <u32>` (F6): the handshake is a
+            // The grammar is exactly `hello <u32>`: the handshake is a
             // version gate, not a default, so an old or broken client fails
             // closed instead of negotiating the current version by omission.
             if let Some(hello) = parse_hello(line) {
@@ -2126,14 +2012,13 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                     write_dead = true;
                     break;
                 }
-                // Set, never cleared (round eleven's finding 8): a
-                // post-handshake wrong-version hello is a protocol
+                // Set, never cleared: a post-handshake wrong-version hello is a protocol
                 // confusion, not a de-negotiation.
                 handshaked |= matches!(hello, Ok(wanted) if wanted == PROTOCOL_VERSION);
                 continue;
             }
-            // Protocol negotiation is a gate, not a suggestion (round
-            // seven): until this connection has completed a `hello` the
+            // Protocol negotiation is a gate, not a suggestion: until this
+            // connection has completed a `hello` the
             // version it speaks for is unknown, and nothing — not ping,
             // not keyboards, and above all not a command that moves keys
             // or keymaps — executes. A client that never negotiates gets
@@ -2179,11 +2064,10 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         if poisoned || write_dead {
             break;
         }
-        // The frame cap is per LINE, not per batch (the review's third
-        // round): coalesced complete commands share this chunk legally, so
-        // the cap is measured on what REMAINS — the tail without its
-        // newline, which is the one line still growing. A newline-free
-        // stream still trips it exactly as before.
+        // The frame cap is per line, not per batch: coalesced complete
+        // commands share this chunk legally, so the cap is measured on what
+        // remains — the tail without its newline, the one line still
+        // growing.
         if pending.len() > MAX_LINE {
             let _ = writeln!(out, "err line too long");
             break;
@@ -2214,10 +2098,9 @@ fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>, conn
         );
         released_any |= before;
     }
-    // The mask is zeroed only when THIS connection's departure actually
-    // lifted something (round eleven's finding 6): a manual `mods <mask>`
-    // carries no claim, and a connection that held nothing used to wipe a
-    // survivor's mask on its way out.
+    // The mask is zeroed only when this connection's departure actually
+    // lifted something: a manual `mods <mask>` carries no claim, and a
+    // connection that held nothing must not wipe a survivor's mask.
     if released_any && shared.held.is_empty() {
         apply_locked(&mut shared, connection, Command::Mods(0), None, conn_id);
     }
@@ -2296,13 +2179,13 @@ fn shutdown_signal_set() -> libc::sigset_t {
 /// runs `release_all`, a wedged one is caught by the cap in
 /// `expire_stuck_keys`, a keymap-changing configure drains in
 /// `install_config` — and all three run on a thread that dies with the
-/// process. A SIGTERM landing mid-press therefore destroyed the virtual
-/// keyboard with the key still down, and Hyprland does not lift a destroyed
-/// keyboard's presses: the key repeated for the rest of the session, and a
-/// restarted helper could not clear it because its keyboard is a new object.
+/// process. Hyprland does not lift a destroyed keyboard's presses, so without
+/// this a SIGTERM mid-press leaves the key repeating for the rest of the
+/// session, and a restarted helper cannot clear it (its keyboard is a new
+/// object).
 ///
 /// Unconditional rather than per-claim, like the cap: the device holds a key
-/// once, so lifting it means dropping every claim on it. Modifiers are NOT
+/// once, so lifting it means dropping every claim on it. Modifiers are not
 /// exempt here — the cap exempts them because a locked Shift is meant to stay
 /// down, and that reason ends with the process.
 ///
@@ -2335,11 +2218,8 @@ fn release_everything(shared_arc: &SharedRef, connection: &Connection) -> Vec<u3
     // A round trip, not a flush. `flush` only writes the bytes; the process
     // then exits and closes the connection, and a compositor that reaches the
     // disconnect with the release still unread destroys the virtual keyboard
-    // holding the key — which is the defect, unchanged. Measured in the VM:
-    // with `flush` alone, a stop triggered by the very Enter still held left
-    // the key repeating (50 -> 131 -> 211 bytes captured after the helper had
-    // gone). The sync callback is the proof that the compositor processed the
-    // release before this process leaves.
+    // holding the key. The sync callback is the proof that the compositor
+    // processed the release before this process leaves.
     let _ = connection.roundtrip();
     held
 }
@@ -2351,9 +2231,8 @@ fn apply(
     held: Option<&mut Vec<u32>>,
     conn_id: u64,
 ) -> String {
-    // Every command runs under the lock (the typed deliveries that once
-    // paced lock-free between beats are gone with §91); the lock is held
-    // only for bounded work — compiles pay the churn budget at the gate.
+    // Every command runs under the lock; the lock is held only for bounded
+    // work — compiles pay the churn budget at the gate.
     let mut guard = shared.lock().unwrap();
     apply_locked(&mut guard, connection, command, held, conn_id)
 }
@@ -2369,8 +2248,8 @@ fn apply_locked(
         return "err shutting down".to_string();
     }
     if let Command::Configure(ref config) = command {
-        // Ticket 06: record the user's own `kb_file` source BEFORE
-        // anything else happens to it. Recorded from what the panel sends
+        // Record the user's own `kb_file` source before anything else
+        // happens to it. Recorded from what the panel sends
         // — the intent — and not from whether this compile succeeds: even
         // a refused configure is evidence of what the user had configured,
         // and the recovery read happens on a shell that no longer has the
@@ -2389,15 +2268,12 @@ fn apply_locked(
                 eprintln!("[oskar] could not record the user keymap source: {error}");
             }
         }
-        // Ticket 31's defence in depth: a group the configure's OWN map
-        // cannot carry is refused whole, with no device state changed —
-        // the same refusal `caps` already made, extended to the two
-        // commands that MOVE the group. Bounded by the INCOMING map, never
-        // the installed one: a shrink-then-grow would otherwise refuse a
-        // correct grow. For RMLVO the layouts string IS the map (same count
-        // once compiled); a custom keymap's groups are the FILE's — asked
-        // of the ONE bounded snapshot that will also be installed, so the
-        // ceiling and the map cannot describe two different files.
+        // A group the configure's own map cannot carry is refused whole,
+        // with no device state changed. Bounded by the incoming map, never
+        // the installed one, or a correct grow (one group to two) would be
+        // refused. A custom keymap's groups are asked of the one bounded
+        // snapshot that will also be installed, so the ceiling and the map
+        // cannot describe two different files.
         let kb_file_bytes = if config.kb_file.is_empty() {
             None
         } else {
@@ -2408,19 +2284,16 @@ fn apply_locked(
                 None => return "err cannot configure keymap".to_string(),
             }
         };
-        // An unchanged keymap skips the ceiling compile entirely (round
-        // eleven's finding 4): identical reconfigures — group flips — used
-        // to pay a full file compile under the lock each, at no rate cap.
-        // The installed map's own group count is the ceiling that fits it.
+        // An unchanged keymap skips the ceiling compile entirely, so group
+        // flips never pay a compile under the lock. The installed map's own
+        // group count is the ceiling that fits it.
         let mark = kb_file_bytes.as_deref().map(hash_bytes);
         let unchanged = shared.config.as_ref().is_some_and(|c| c.same_keymap(config))
             && shared.kb_file_mark == mark;
         if !unchanged {
-            // Compile ATTEMPTS pay the churn budget here, before any work
-            // (round eleven's finding 4): a file engineered to fail late
-            // in parse used to burn the full compile cost at no cap, and
-            // only successful installs were ever counted. install_config's
-            // own accounting is retired in favour of this one gate.
+            // Compile attempts pay the churn budget here, before any work,
+            // so a file engineered to fail late in parse is still rate
+            // limited. This is the only churn accounting.
             let now = Instant::now();
             while shared
                 .uploads
@@ -2435,15 +2308,10 @@ fn apply_locked(
             }
             shared.uploads.push_back(now);
         }
-        // ONE compile serves the whole changed path (round 18's audit):
-        // the ceiling counts it, the install uploads it. The gate used
-        // to compile for its count and throw the result away — four xkb
-        // passes per changed configure under the lock where two
-        // sufficed before §82 — and the two compiles were the only
-        // channel for a gate-counts-one-map, install-uploads-another
-        // TOCTOU (the system xkb database changing between them). One
-        // text now decides both, so the ceiling IS the installed map's
-        // count by construction.
+        // One compile serves the whole changed path: the ceiling counts it,
+        // the install uploads it. Two compiles would cost double under the
+        // lock and could disagree if the system xkb database changed in
+        // between; one text makes the ceiling the installed map's count.
         let group_ceiling;
         let compiled: Option<String>;
         if unchanged {
@@ -2461,7 +2329,7 @@ fn apply_locked(
         }
         let installed = shared.install_config(config, kb_file_bytes.as_deref(), compiled.as_deref());
         let _ = connection.flush();
-        // The generation rides on the reply (decisions §23): it is what the
+        // The generation rides on the reply: it is what the
         // panel correlates its keycap facts against, and a same-keymap
         // reconfigure deliberately answers with the generation it kept.
         return if installed {
@@ -2479,8 +2347,7 @@ fn apply_locked(
     }
 
     // Held-key bookkeeping below mutates `shared`, so drop the borrow the
-    // proxy carries by cloning it — proxies are cheap handles, and the Group
-    // arm already does this.
+    // proxy carries by cloning it — proxies are cheap handles.
     let keyboard = keyboard.clone();
 
     // Codes go out as evdev numbers, the xkb keycode minus 8.
@@ -2581,8 +2448,7 @@ fn apply_locked(
         // Facts, not keys: nothing is pressed, nothing is held, and the
         // answer is read out of the installed keymap's pre-resolved records.
         // The group is validated rather than wrapped — xkb would silently
-        // answer another group's facts for a past-the-count group, and the
-        // panel must never be handed a lie (decisions §23).
+        // answer another group's facts for a past-the-count group.
         Command::Caps { group, positions } => {
             let _ = keyboard;
             return match caps_reply(shared.caps_gen, &shared.caps_per_group, group, &positions) {
@@ -2595,10 +2461,9 @@ fn apply_locked(
 
     // A key event carries no modifier state of its own. The compositor learns
     // what is held from `modifiers` and from nothing else, so a chord that was
-    // only ever pressed and released arrives modifierless: `down LFSH / tap
-    // AD01 / up LFSH` typed `q`, which is how this shipped broken. Re-assert
-    // the mask whenever a modifier code goes down or comes up, and the tap in
-    // between lands under it.
+    // only ever pressed and released arrives modifierless (`down LFSH / tap
+    // AD01 / up LFSH` would type `q`). Re-assert the mask whenever a modifier
+    // code goes down or comes up, and the tap in between lands under it.
     if let Some(code) = pressed.or(released) {
         if shared.modifier_masks.contains_key(&code) {
             keyboard.modifiers(shared.modifier_mask(), 0, 0, shared.group);
@@ -2694,17 +2559,13 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| StartupFailure(format!("cannot bind {}: {error}", path.display())))?;
     eprintln!("listening on {}", path.display());
 
-    // The shutdown wait. It does the release with ordinary Wayland writes on
-    // a thread of its own — the socket threads already write to this same
-    // connection, so this is the shape the file already has, and it is the
-    // only sound one: a signal handler may not touch a mutex or a Wayland
+    // The shutdown wait does the release with ordinary Wayland writes on a
+    // thread of its own: a signal handler may not touch a mutex or a Wayland
     // queue.
-    // Blocked HERE, not at the top of main: everything above this point is
-    // startup, holds no key, and has nothing to release — so the default
-    // disposition is the right answer for a signal arriving during it, and
-    // blocking that early only made the process ignore SIGTERM for the whole
-    // of a connect, eight roundtrips and a bind. A startup that hangs would
-    // then have sat out systemd's stop timeout waiting for SIGKILL.
+    // Blocked here, not at the top of main: everything above this point is
+    // startup, holds no key, and has nothing to release, so the default
+    // disposition is right for a signal arriving during it. Blocking earlier
+    // would make a hung startup sit out systemd's stop timeout.
     //
     // Before the threads below, so each inherits the block and the wait
     // thread is the only place these signals are ever delivered. Blocking
@@ -2780,9 +2641,9 @@ fn main() {
             eprintln!("oskar-daemon: {error}");
             std::process::exit(78);
         }
-        // A RUNTIME failure (a dispatch error with the session standing):
-        // exit 1 keeps Restart=always — a stopped-here 78 would leave the
-        // keyboard dead until a manual restart (review finding).
+        // A runtime failure (a dispatch error with the session standing):
+        // exit 1 keeps Restart=always — 78 would leave the keyboard dead
+        // until a manual restart.
         eprintln!("oskar-daemon: runtime failure: {error}");
         std::process::exit(1);
     }
@@ -2793,10 +2654,9 @@ mod tests {
     use super::*;
 
     /// Layout and option sets the block has to survive. The options are the
-    /// point: the first version of this probe held down `<CAPS>` to ask about
-    /// Lock, and under `grp:caps_toggle` — the owner's own option, and the
-    /// VM's, and every integration configure's — that switches the group and
-    /// refused the whole digit row. Option-free fixtures cannot see it.
+    /// point: a probe that presses `<CAPS>` to ask about Lock switches the
+    /// group under `grp:caps_toggle` and refuses the whole digit row, and
+    /// option-free fixtures cannot see that.
     const BLOCK_FIXTURES: [(&str, &str); 10] = [
         ("us", ""),
         ("us,ua", ""),
@@ -2806,9 +2666,8 @@ mod tests {
         ("ua,ru", "grp:caps_toggle"),
         ("de,fr", "lv3:alt_switch"),
         ("us,it,ua,ru", "grp:alt_shift_toggle"),
-        // `jp` defines both free positions and `br` defines `AB11`, which is
-        // the case the allocator used to hold slots back for and then never
-        // fill. Without these two the guard below cannot see it.
+        // `jp` defines both free positions and `br` defines `AB11`: the
+        // allocator must not hold slots back for positions that are taken.
         ("jp", ""),
         ("br", ""),
     ];
@@ -2829,7 +2688,7 @@ mod tests {
         .get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1)
     }
 
-    /// The positions the block ACTUALLY landed on, read back out of the
+    /// The positions the block actually landed on, read back out of the
     /// extended keymap rather than recomputed.
     ///
     /// A helper that re-ran the allocation would agree with itself whatever
@@ -2907,7 +2766,7 @@ mod tests {
         )
         .expect("the extended keymap compiles");
 
-        // The symbols resolve, on levels five to eight, in EVERY group — which
+        // The symbols resolve, on levels five to eight, in every group — which
         // is the point of the block: they do not belong to a layout.
         let codes = parse_keycodes(&extended);
         let groups = compiled.num_layouts();
@@ -2943,7 +2802,7 @@ mod tests {
     ///
     /// Thirteen of the fourteen slots carry the fifty-two characters `&123`
     /// draws, so "the block landed" is not the claim — "the page is complete"
-    /// is, and it is the one that broke when the probe refused the digit row.
+    /// is.
     #[test]
     fn every_fixture_hosts_the_whole_visible_page() {
         for (layouts, options) in BLOCK_FIXTURES {
@@ -2962,7 +2821,7 @@ mod tests {
     ///
     /// `key_get_syms_by_level` says where a symbol sits; it does not say that
     /// holding `<LVL5>` gets there. That needs the modifier to have an action
-    /// behind it, and the whole move rests on it — so the chord is asked of a
+    /// behind it, and the catalogue rests on it — so the chord is asked of a
     /// state the way `ModifierReducer` builds it: LevelFive, plus Shift and
     /// LevelThree, around the position.
     #[test]
@@ -3016,14 +2875,14 @@ mod tests {
         }
     }
 
-    /// Ticket 20's acceptance criterion, as an assertion: levels one to four of
-    /// every position still produce exactly what they produced before, under
-    /// every modifier the panel or a hand can hold.
+    /// Levels one to four of every position still produce exactly what they
+    /// produced before the block, under every modifier the panel or a hand
+    /// can hold.
     ///
     /// Behaviour, not text: a hosted key is rewritten by definition, so
     /// comparing its source would only restate that. What must not move is
-    /// what it types — the CapsLock trap ticket 20's rig named is invisible in
-    /// a symbol list and obvious here.
+    /// what it types — the CapsLock trap is invisible in a symbol list and
+    /// obvious here.
     #[test]
     fn levels_one_to_four_are_untouched_on_every_layout_the_block_hosts() {
         use xkbcommon::xkb;
@@ -3053,7 +2912,7 @@ mod tests {
             // where a wrong key type shows: Lock alone is the CapsLock trap
             // and Lock+Shift is what an ALPHABETIC type does differently from
             // a plain one. LevelFive is left out because it is the block's
-            // own — that is what levels five to eight ARE, and what holding it
+            // own — that is what levels five to eight are, and what holding it
             // must do is asserted in
             // `holding_lvl5_selects_the_catalogue_the_way_the_panel_holds_it`.
             // A keymap where a physical key already carries it is refused
@@ -3094,8 +2953,8 @@ mod tests {
 
     /// A position whose answer moves under CapsLock is refused, not hosted.
     ///
-    /// The trap ticket 20's rig found and a symbol list cannot show: an
-    /// eight-level type with no `map[Lock]` silently costs an ALPHABETIC
+    /// The trap a symbol list cannot show: an
+    /// eight-level type with no `map[Lock]` silently costs an alphabetic
     /// position its uppercasing. The digit row is not alphabetic in any stock
     /// layout, so the refusal is proved against a keymap that puts a letter
     /// there deliberately.
@@ -3171,17 +3030,13 @@ mod tests {
 
     /// The helper's own published keymap is never an input.
     ///
-    /// The compositor is pointed at that file so the seat has one keymap
-    /// (§35), and the path comes back on the next configure. Reading it would
-    /// freeze whichever version wrote it: upgrade the helper while the
-    /// compositor still points at yesterday's file and the new one adopts it
-    /// verbatim and republishes it, the old keymap outliving the code that
-    /// made it. Found in the VM doing exactly that.
+    /// The compositor is pointed at that file so the seat has one keymap,
+    /// and the path comes back on the next configure. Reading it would
+    /// freeze whichever version wrote it: the old keymap would outlive the
+    /// code that made it.
     ///
-    /// Asked of the decision and not of the filesystem: the earlier version of
-    /// this test wrote a fixture to the REAL published path and deleted it
-    /// again, which is the live session's keymap — `cargo test` took the
-    /// running compositor's keymap out from under it.
+    /// Asked of the decision and not of the filesystem: the real published
+    /// path is the live session's keymap, and the suite must not touch it.
     #[test]
     fn the_helpers_own_published_keymap_is_never_read_back() {
         let Some(ours) = published_keymap_path() else {
@@ -3208,9 +3063,9 @@ mod tests {
         );
     }
 
-    /// Ticket 06: the recovery record's three-way decision. A user's own
+    /// The recovery record's three-way decision. A user's own
     /// `kb_file` is remembered verbatim — including a path that merely
-    /// CONTAINS our suffix, which is a user's file by exact identity, not
+    /// contains our suffix, which is a user's file by exact identity, not
     /// ours by substring. An RMLVO configure (no file) clears the record:
     /// the recovery value must not outlive the user's own setting. Our
     /// published path is neither remembered nor forgotten — feeding our own
@@ -3224,8 +3079,8 @@ mod tests {
             }
             other => panic!("a user path is Remember, got {other:?}"),
         }
-        // The audit's misclassification: an unrelated custom path whose
-        // suffix resembles the published path.
+        // An unrelated custom path whose suffix resembles the published path
+        // is still the user's.
         let lookalike = "/home/u/backups/oskar/keymap.xkb";
         assert!(matches!(
             user_source_decision(lookalike),
@@ -3242,8 +3097,8 @@ mod tests {
         }
     }
 
-    /// Ticket 31: the installed keymap's group count is the authority for
-    /// what a `configure` or `group` command may carry. Nothing installed
+    /// The installed keymap's group count is the authority for what a
+    /// `group` command may carry. Nothing installed
     /// (an empty caps table) validates nothing.
     #[test]
     fn group_bounds_come_from_the_installed_keymap() {
@@ -3256,11 +3111,10 @@ mod tests {
 
     #[test]
     fn a_configures_group_is_bounded_by_its_own_compiled_map() {
-        // The INCOMING map is the authority (round 17 made that literal:
-        // the ceiling counts what the configure compiles to, never the
-        // declaration — classic evdev drops layouts past the fourth).
-        // A grow from one group to two must not be refused for the old
-        // map's count.
+        // The incoming map is the authority: the ceiling counts what the
+        // configure compiles to, never the declaration — classic evdev drops
+        // layouts past the fourth. A grow from one group to two must not be
+        // refused for the old map's count.
         let count = |layouts: &str| {
             match parse(&format!("configure\tevdev\tpc105\t{layouts}\t\t\t\t0")) {
                 Some(Command::Configure(config)) => {
@@ -3282,7 +3136,7 @@ mod tests {
         assert!(group_in_range(0, 1));
     }
 
-    /// Ticket 06: the sidecar sits BESIDE the published keymap — the one
+    /// The sidecar sits beside the published keymap — the one
     /// directory `ProtectSystem=strict` leaves the helper writable, and
     /// the one the unit preserves across service stops so a routine
     /// `oskar upgrade` cannot wipe the record.
@@ -3299,7 +3153,7 @@ mod tests {
         assert_ne!(sidecar, published, "the record is not the keymap itself");
     }
 
-    /// Ticket 06: the sidecar itself. Written atomically (temp + rename),
+    /// The sidecar itself. Written atomically (temp + rename),
     /// re-written in place, and removed on clear — a reader either sees the
     /// old complete value, the new complete value, or nothing.
     #[test]
@@ -3315,7 +3169,7 @@ mod tests {
             "/home/u/custom.xkb"
         );
         // An edited custom file at the same path is the same record shape:
-        // the sidecar holds the PATH, content is read fresh each compile.
+        // the sidecar holds the path; content is read fresh each compile.
         persist_user_source(&dir, Some("/home/u/custom.xkb")).unwrap();
         persist_user_source(&dir, Some("/home/u/two.xkb")).unwrap();
         assert_eq!(
@@ -3331,7 +3185,7 @@ mod tests {
 
     /// A custom keymap edited at its own path is a different keymap.
     ///
-    /// Ticket 06. The path is what a configure carries and the file behind it
+    /// The path is what a configure carries and the file behind it
     /// is what the user edits, so comparing configure fields alone reports
     /// "same keymap" for a map whose every key may have changed — and the
     /// helper goes on typing the old one while the panel draws caps for it.
@@ -3399,7 +3253,7 @@ mod tests {
     ///
     /// `lv5:ralt_switch_lock` makes AltGr the level-five switch. Hosting the
     /// catalogue above the digit row would then change what AltGr types on it,
-    /// which is the one thing §33 promises never happens.
+    /// which the block must never do.
     #[test]
     fn an_lv5_option_keeps_the_block_off_ordinary_positions() {
         let keymap = fixture_keymap("us", "lv5:ralt_switch_lock");
@@ -3426,9 +3280,8 @@ mod tests {
 
     #[test]
     fn section_bounds_survives_the_nested_braces_a_split_cannot() {
-        // The bug this replaced: splitting on "};" lands inside the first
-        // nested key definition, and splitting on the last one lands past the
-        // keymap's own close.
+        // Splitting on "};" lands inside the first nested key definition,
+        // and splitting on the last one lands past the keymap's own close.
         let text = "xkb_types \"t\" {\n type \"X\" { a; };\n};\nxkb_symbols \"s\" {\n key <A> { [ a ] };\n};\n";
         let (lo, hi) = section_bounds(text, "xkb_types").expect("types found");
         assert!(text[lo..hi].contains("type \"X\""));
@@ -3623,9 +3476,8 @@ mod tests {
 
     #[test]
     fn a_position_that_is_a_modifier_only_by_interpret_still_carries_its_bit() {
-        // The limit the old modifier-map reading admitted to: under
-        // `lv3:ralt_switch` AltGr emits ISO_Level3_Shift and reaches Mod5
-        // through a compat interpret, with no modifier-map entry to read.
+        // Under `lv3:ralt_switch` AltGr emits ISO_Level3_Shift and reaches
+        // Mod5 through a compat interpret, with no modifier-map entry to read.
         let text = compile_keymap(&XkbConfig {
             options: "lv3:ralt_switch".into(),
             ..XkbConfig::default()
@@ -3643,11 +3495,9 @@ mod tests {
 
     #[test]
     fn an_altgr_position_carries_the_bit_of_the_group_it_resolves_in() {
-        // The curated page's AltGr levels exposed this: under the owner's
-        // `us,ua` without an `lv3:` option, RALT is Alt_R (Mod1) in the us
-        // group and ISO_Level3_Shift (Mod5) in the ua group. A group-0 probe
-        // served Mod1 to both, and every level-3 chord came out as the
-        // position's level-1 self — Alt_R+5 typed `5`, not `°`.
+        // Under `us,ua` without an `lv3:` option, RALT is Alt_R (Mod1) in the
+        // us group and ISO_Level3_Shift (Mod5) in the ua group. A group-0
+        // probe would serve Mod1 to both, and Alt_R+5 would type `5`, not `°`.
         use xkbcommon::xkb;
 
         let text = compile_keymap(&XkbConfig {
@@ -3693,14 +3543,11 @@ mod tests {
     #[test]
     fn the_probe_sets_the_group_once_on_a_three_layout_keymap() {
         // `update_mask`'s last three arguments are the depressed, latched and
-        // locked LAYOUT indices, and xkb adds them into the effective group.
-        // Asking for the probed group in all three therefore asked for it
-        // three times: a two-layout keymap absorbed the triple in its wrap
-        // (3g mod 2 == g for every g the probe visits) and came out right by
-        // luck, while a three-layout keymap collapses 3g mod 3 to 0 and every
-        // group probed as the first. One ask, in the locked slot — the same
-        // slot the compositor receives the helper's group in over the
-        // virtual-keyboard protocol.
+        // locked layout indices, and xkb adds them into the effective group.
+        // Asking in all three asks three times: a two-layout keymap wraps
+        // 3g back to g, but a three-layout one collapses every group to the
+        // first. One ask, in the locked slot — the slot the compositor
+        // receives the helper's group in over the protocol.
         use xkbcommon::xkb;
 
         let text = compile_keymap(&XkbConfig {
@@ -3727,8 +3574,7 @@ mod tests {
         // Stand in for the compositor once more, now at the third group and
         // told the helper's own answer for it: the level-3 chord must type
         // the de group's own AltGr character, not group us's plain `5` or
-        // group ua's `°` — under the tripled ask every probe resolved at
-        // group 0 and this came out `5`.
+        // group ua's `°`.
         let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
         let keymap = xkb::Keymap::new_from_string(
             &context,
@@ -3748,18 +3594,16 @@ mod tests {
     }
 
     /// Asserts on the characters a client would read, not on a bit pattern:
-    /// the mask was wrong in a way that still looked plausible, and only the
-    /// letter came out wrong.
+    /// a wrong mask can look plausible while only the letter comes out wrong.
     ///
-    /// The owner's options are the case that broke.
     /// `shift:both_capslock_cancel` puts Caps_Lock on the second level of the
     /// Shift keys and `grp:caps_toggle` takes CAPS out of Lock, so the
     /// compiled keymap ends up with `modifier_map Lock { <LFSH> }` alongside
     /// `modifier_map Shift { <LFSH>, <RTSH> }`. A mask OR-ed straight out of
-    /// the modifier map therefore reported Shift+Lock for a held Shift — and
+    /// the modifier map would report Shift+Lock for a held Shift — and
     /// Shift+Lock on an ALPHABETIC key selects level 1, a lowercase letter.
-    /// The number row is TWO_LEVEL and ignores Lock, which is exactly why
-    /// digits shifted while letters did not.
+    /// The number row is TWO_LEVEL and ignores Lock, so digits would still
+    /// shift while letters did not.
     #[test]
     fn a_held_shift_types_a_capital_under_the_owners_options() {
         use xkbcommon::xkb;
@@ -3793,8 +3637,7 @@ mod tests {
 
         let typed = |name: &str| state.key_get_utf8(xkb::Keycode::from(codes[name] + 8));
         assert_eq!(typed("AD01"), "Q", "a held Shift must capitalise a letter");
-        // The half that kept working, asserted so a fix that breaks it fails
-        // here rather than on the next hand test.
+        // The TWO_LEVEL number row shifts too.
         assert_eq!(typed("AE01"), "!", "a held Shift must shift the number row");
     }
 
@@ -3814,7 +3657,7 @@ mod tests {
 
     #[test]
     fn hello_is_exactly_one_version_word() {
-        // F6: the handshake is a gate, not a default. A bare hello, trailing
+        // The handshake is a gate, not a default. A bare hello, trailing
         // words, or a non-numeric version word is a malformed hello — an
         // err protocol answer — and only `hello <u32>` negotiates.
         assert_eq!(parse_hello("hello 6"), Some(Ok(6)));
@@ -3831,7 +3674,7 @@ mod tests {
 
     #[test]
     fn fixed_arity_verbs_refuse_extra_arguments() {
-        // F6: tap/down/up/mods/group take exactly one argument; a third
+        // tap/down/up/mods/group take exactly one argument; a third
         // word is a malformed line, not a silently truncated command.
         assert!(parse("tap AD01").is_some());
         assert!(parse("tap AD01 extra").is_none());
@@ -3858,8 +3701,8 @@ mod tests {
 
     #[test]
     fn keycap_facts_resolve_text_for_every_group_of_the_installed_keymap() {
-        // The heart of ticket 04: the same compiled keymap that types answers
-        // for its caps, per group, with the real characters. Group 0 of us,ua
+        // The same compiled keymap that types answers for its caps, per
+        // group, with the real characters. Group 0 of us,ua
         // is Latin; group 1 is the Ukrainian alphabet on the same positions.
         let text = compile_keymap(&XkbConfig {
             layouts: "us,ua".into(),
@@ -3877,10 +3720,9 @@ mod tests {
             record_fields(&facts, 1, "AD01"),
             ["AD01", "tй", "tЙ", "tј", "tЈ"]
         );
-        // The number row: shifted and unshifted, same across these groups —
-        // and, since ticket 20 moved the reserved block onto it (§33), four
-        // more levels carrying the block's first catalogue slot. Levels one to
-        // four are what `us` always had; five to eight are the helper's.
+        // The number row: shifted and unshifted, same across these groups,
+        // plus four levels carrying the reserved block's first catalogue
+        // slot. Levels one to four are `us`'s own; five to eight the helper's.
         assert_eq!(
             record_fields(&facts, 0, "AE01"),
             ["AE01", "t1", "t!", "t1", "t!", "t!", "t1", "t@", "t2"]
@@ -3983,7 +3825,7 @@ mod tests {
     /// four levels per position, reached by the block's own chords, Lock
     /// answering nothing, and the level modifiers bound the way every
     /// compiled keymap binds them — their keysyms on the level keys, over
-    /// `modifier_map Mod5 { <LVL3> }` and `Mod3 { <LVL5> }` (decisions §33).
+    /// `modifier_map Mod5 { <LVL3> }` and `Mod3 { <LVL5> }`.
     /// Without the keysyms the virtual modifiers never reach the types, the
     /// chords go inert and nothing is hostable — a property of the fixture,
     /// not of the gates. `<AB11>` is declared and carries no key statement,
@@ -4063,12 +3905,11 @@ mod tests {
         );
     }
 
-    /// Round 17: the RMLVO ceiling counts the COMPILED map, never the
-    /// declaration — classic evdev rules resolve only layout[1..=4], so
-    /// five declared layouts compile to four groups and a group-4
-    /// configure must be refused (before, it silently typed group 0's
-    /// alphabet under the fifth language's name). Round 18 unified the
-    /// gate: this is the exact path apply's configure arm walks.
+    /// The RMLVO ceiling counts the compiled map, never the declaration —
+    /// classic evdev rules resolve only layout[1..=4], so five declared
+    /// layouts compile to four groups and a group-4 configure must be
+    /// refused, or it would type group 0's alphabet under the fifth
+    /// language's name. This is the path apply's configure arm walks.
     #[test]
     fn rmlvo_ceiling_counts_the_compiled_map_not_the_declaration() {
         let layouts = "us,ru,ua,it,fr";
@@ -4084,14 +3925,14 @@ mod tests {
         }
     }
 
-    // ---- the 2026-09-19 audit: malformed input must never wedge the helper ----
+    // ---- malformed input must never wedge the helper ----
 
     #[test]
     fn nul_in_rmlvo_fields_is_refused_not_fatal() {
         // xkbcommon's CString conversion panics on an interior NUL, and the
         // compile runs under the shared lock — one poisoned mutex and the
         // helper is alive-but-dead until a restart systemd never orders.
-        // Refused like any compile failure now, from every field.
+        // Refused like any compile failure, from every field.
         let config = XkbConfig {
             layouts: "us\x00ua".into(),
             ..XkbConfig::default()
@@ -4156,7 +3997,7 @@ mod tests {
         assert!(!handshake_expired(true, Duration::from_secs(600)));
     }
 
-    // ---- the review's second round: the descriptor is the truth ----
+    // ---- the descriptor is the truth ----
 
     #[test]
     fn a_fifo_is_refused_through_the_opened_descriptor() {
@@ -4178,7 +4019,7 @@ mod tests {
     #[test]
     fn reply_writes_are_bounded_by_the_remaining_handshake_window() {
         // Handshaked, the fixed write bound stands. Inside the window the
-        // write gets only what is LEFT of it; past the window, nothing —
+        // write gets only what is left of it; past the window, nothing —
         // a parked write must not carry a late hello home.
         assert_eq!(reply_bound(true, Duration::from_secs(600)), WRITE_BOUND);
         assert_eq!(reply_bound(false, Duration::from_secs(1)), Duration::from_secs(4));
@@ -4186,15 +4027,14 @@ mod tests {
         assert_eq!(reply_bound(false, Duration::ZERO), HANDSHAKE_WINDOW);
     }
 
-    // ---- the review's third round ----
+    // ---- keycode and group bounds ----
 
     #[test]
     fn a_keycode_beyond_the_sane_range_is_refused_at_every_gate() {
-        // Round eleven's blocker: a 60-byte keymap declaring a keycode near
-        // u32::MAX made the keycap walk iterate for seconds under the
-        // shared lock. Every compile door refuses it now — this one
-        // drives the unified gate path (round 18: one compile serves the
-        // ceiling and the install).
+        // A tiny keymap declaring a keycode near u32::MAX would make the
+        // keycap walk iterate for seconds under the shared lock. Every
+        // compile path refuses it; this one drives the configure gate, where
+        // one compile serves the ceiling and the install.
         let sane = fixture_keymap("us,ua", "");
         let hostile = sane.replace(
             "<ESC> = 9;",
@@ -4215,19 +4055,17 @@ mod tests {
             None,
             "the compile refuses the huge keycode"
         );
-        // The walk itself only ever visits NAMED keys: a map that declares
-        // none answers no facts, in bounded time by construction.
+        // A map that declares no keys answers no facts.
         assert_eq!(keycap_facts_for_groups("xkb_keymap {}"), Vec::<String>::new());
     }
 
     #[test]
     fn a_custom_keymaps_groups_come_from_the_compiled_map() {
-        // A real two-group fixture read through the whole bounded path: a
-        // layouts string of one entry used to refuse group 1 for a map the
-        // file itself carries two groups on (the review's finding 3). The
-        // compiled keymap is the authority — the SAME text round 18's
-        // unified gate counts and hands to install_config, so the ceiling
-        // and the installed map can never be two different files.
+        // A real two-group fixture read through the whole bounded path: the
+        // file's own groups count, whatever the layouts string says. The
+        // compiled keymap is the authority — the same text the configure
+        // gate counts and hands to install_config, so the ceiling and the
+        // installed map can never be two different files.
         let path = std::env::temp_dir()
             .join(format!("osk-groups-{}.xkb", std::process::id()));
         std::fs::write(&path, fixture_keymap("us,ua", ""))

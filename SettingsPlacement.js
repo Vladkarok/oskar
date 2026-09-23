@@ -1,10 +1,10 @@
 .pragma library
 
-// Settings leftover-centre (live-host tickets 05/07, spec-v1.1 §5).
-// Pure rect arithmetic: leftover is the larger full-width strip above or
-// below the keyboard band; the popover/editor sits at that strip's centre.
-// Leftover input is leftover-only. A card taller than leftover is fitted
-// (scroll inside); it must not cover the keyboard band.
+// Settings leftover-centre. Pure rect arithmetic: leftover is the larger
+// full-width strip above or below the keyboard band; the popover/editor
+// sits at that strip's centre. Leftover input is leftover-only. A card
+// taller than leftover is fitted (scroll inside); it must not cover the
+// keyboard band.
 
 function validBox(box) {
     return !!(box
@@ -83,13 +83,13 @@ function overlayInputRect(output, band) {
     return leftoverRect(output, band)
 }
 
-// ---- the emoji page's free drag (the emoji-drag ticket) ----
+// ---- the emoji page's free drag ----
 //
 // The same deterministic-anchor rule the floating card owns
-// (spec-v1.1 §4, ConfigFile.floatingAnchor), in this module's rect
-// vocabulary: the visible area here is the whole overlay the page may
-// be dragged in, not the leftover — free placement may cover the
-// keyboard band; that is what "free" means.
+// (ConfigFile.floatingAnchor), in this module's rect vocabulary: the
+// visible area here is the whole overlay the page may be dragged in, not
+// the leftover — free placement may cover the keyboard band; that is
+// what "free" means.
 
 // Clamp a w×h surface's top-left so it stays fully inside bounds. A
 // surface larger than the bounds pins to the origin rather than
@@ -113,10 +113,10 @@ function clampedTopLeft(point, size, bounds) {
 // bounds: an unchanged centre, size and bounds restore the exact same
 // top-left every time, and a smaller overlay, a different monitor or a
 // different page size moves the page no further than staying fully
-// visible demands — a remembered top-left instead restored to a
-// different visible spot, the defect the card's own centre rule cured.
-// No centre (or a degenerate size/bounds) answers null: the caller's
-// fallback is today's computed leftover centre.
+// visible demands. A remembered top-left would instead restore to a
+// different visible spot. No centre (or a degenerate size/bounds)
+// answers null: the caller's fallback is today's computed leftover
+// centre.
 function centreRestore(center, size, bounds) {
     var w = size && isFinite(size.w) ? size.w : 0
     var h = size && isFinite(size.h) ? size.h : 0

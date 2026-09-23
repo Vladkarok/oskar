@@ -2,12 +2,10 @@ import QtQuick
 import qs.Commons
 import "UiStrings.js" as UiStrings
 
-// The per-override reset chip (spec-v1.1 §5): ↺ in a bordered square, shown
-// only while the sparse file actually carries this override. Ticket 09's
-// part, extracted here by ticket 07's settings/colour-editor prefactor so
-// the popover's plain rows and the compact colour rows speak one reset
-// language. Pure chrome over the panel API: the click calls clearOverride
-// and nothing else — no persistence policy lives here.
+// Per-override reset chip: ↺ in a bordered square, shown only while the
+// sparse config file actually carries this override. Pure chrome over the
+// panel API — the click calls clearOverride and nothing else; no
+// persistence policy lives here.
 Rectangle {
     id: resetChip
 

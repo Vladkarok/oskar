@@ -7,14 +7,13 @@ import "ClipboardPaste.js" as ClipboardPaste
 Item {
     id: root
 
-    // The paste chords' machinery, split out of Keyboard.qml (the
-    // structural split's step two): pasteCurrent's dispatch (the
+    // The paste chords' machinery: pasteCurrent's dispatch (the
     // PasteFlow gate, the chord-shape derivation, the wine pacer and
     // the immediate branch), the paced tick, the acknowledgement guard
     // and the flow state live here. What stayed in the keyboard is the
     // input gate (applyModifierEvent — the paste event and the abort's
-    // compensating releaseAll reach it through `applyEvent`, and its
-    // §92 abort reaches back through `abortPacedPaste`), the reply
+    // compensating releaseAll reach it through `applyEvent`, and the
+    // abort reaches back through `abortPacedPaste`), the reply
     // dispatch (it pops the ledger and hands the verdict here through
     // `chordAckCompleted`/`chordAckTimedOut`), and the correlation
     // ledger's one choke point: every write crosses `sendChoked`
@@ -32,17 +31,14 @@ Item {
     // chordStart, chordArmed, chordSettled — back through the
     // `setChordAcks(state)` callback: one assignment, one home. A var
     // property reassigned locally would have severed the binding at
-    // the first chordStart and left two divergent queues; the { get,
-    // set } ledger-object alternative turns the reads into calls too,
-    // while the bound property keeps the moved code's reads shaped
-    // exactly as the monolith wrote them.
+    // the first chordStart and left two divergent queues.
     //
     // OUT, consumed by the keyboard and the panel's frozen surface:
-    // `pastePacing` (the input gate's §92 abort and the transport's
-    // probe hold), `pasteFlow` (the §88 lane gate, by phase),
-    // `abortPacedPaste` (the input gate and the close path), the two
-    // verdict paths above, and `pasteCurrent` itself, which the
-    // keyboard forwards under its own name.
+    // `pastePacing` (the input gate's abort and the transport's probe
+    // hold), `pasteFlow` (the lane gate, by phase), `abortPacedPaste`
+    // (the input gate and the close path), the two verdict paths above,
+    // and `pasteCurrent` itself, which the keyboard forwards under its
+    // own name.
 
     // ---- IN from the keyboard ----
     //
@@ -62,7 +58,7 @@ Item {
     // paste event runs through it with a collector in the wine branch
     // and bare in the immediate branch, and the abort's compensating
     // releaseAll is always-live there by construction, so it cannot
-    // re-enter the §92 abort that spawned it.
+    // re-enter the abort that spawned it.
     property var applyEvent: null
     // The readiness fact the pacer's assumptions check reads at every
     // tick.
@@ -72,9 +68,9 @@ Item {
     // captured at dispatch entry.
     property var modifierState: null
 
-    /// Current-content paste (spec-v1.1 §1): an exact chord through the
-    /// reducer, never a held cap and never mixed with latched Ctrl/Alt/Super.
-    /// `wmClass` selects the CLIPBOARD chord (terminals: Ctrl+Shift+V; else
+    /// Current-content paste: an exact chord through the reducer, never a
+    /// held cap and never mixed with latched Ctrl/Alt/Super. `wmClass`
+    /// selects the CLIPBOARD chord (terminals: Ctrl+Shift+V; else
     /// Shift+Insert). Empty class uses the terminal chord so PRIMARY is not
     /// sent into a terminal the lookup failed to name.
     // The wine chord's delivery: one line per tick, never a burst. Wine
@@ -85,16 +81,14 @@ Item {
     // writes are paced, and a second paste while one is pacing is
     // refused rather than interleaved.
     //
-    // Ticket 28's transaction contract (audit 2026-09-13): a paste is no
-    // longer fire-and-forget. The optional `completed` callback fires
-    // exactly once — on the helper's acknowledgement of the chord's
-    // final line, both paths (the review's third round: success is the
-    // counterpart answering, not the write returning), and
-    // synchronously with false on any refusal (already pacing, a held
-    // key, an unready input, a dead socket mid-pace). The
-    // emoji page records usage only from a real completion; every
-    // caller passes one (§89: the chip and the txn both do — a missing
-    // one is a no-op report and the flow still awaits the verdict).
+    // A paste is not fire-and-forget: the optional `completed` callback
+    // fires exactly once — on the helper's acknowledgement of the chord's
+    // final line, both paths (success is the counterpart answering, not
+    // the write returning), and synchronously with false on any refusal
+    // (already pacing, a held key, an unready input, a dead socket
+    // mid-pace). The emoji page records usage only from a real
+    // completion; every caller passes one — a missing one is a no-op
+    // report and the flow still awaits the verdict.
     property bool pastePacing: false
     property var pastePacedLines: []
     // The full chord and how much of it went out, so an abort can owe the
@@ -202,11 +196,10 @@ Item {
 
     Timer {
         id: chordAckGuard
-        // Longer than the daemon's 5 s worst case (the external audit's
-        // finding 10): a guard that fired first reported failure while
-        // the daemon still delivered the chord late — pasting the next
-        // pick's clipboard, the exact A→B race the transaction exists to
-        // prevent.
+        // Longer than the daemon's 5 s worst case: a guard that fired
+        // first would report failure while the daemon still delivered the
+        // chord late — pasting the next pick's clipboard, the A→B race the
+        // transaction exists to prevent.
         interval: 8 * 1000
         repeat: false
         onTriggered: () => {
@@ -232,19 +225,16 @@ Item {
     }
 
     function pasteCurrent(wmClass, completed) {
-        // Every dispatched chord awaits its verdict (§89): a
-        // callback-less call used to return the flow to idle the
-        // instant the writes returned — the wl-copy-vs-in-flight-V
-        // race the fifth lane was closed against, reborn for any
-        // future caller following the old comment. There is no such
-        // caller today (the chip and the txn both pass callbacks); a
-        // missing one is a no-op report and the flow still awaits the
-        // verdict.
+        // Every dispatched chord awaits its verdict: a callback-less call
+        // would return the flow to idle the instant the writes returned,
+        // reopening the wl-copy-vs-in-flight-V race. Every caller today
+        // (the chip and the txn) passes one; a missing callback is a no-op
+        // report and the flow still awaits the verdict.
         var done = completed || function () {}
         var cls = String(wmClass || "")
-        // One paste at a time (PasteFlow owns the gate; round nine's
-        // finding was this check living beside a chordStart that reset
-        // the running chord's tracking): refused clean, nothing touched.
+        // One paste at a time (PasteFlow owns the gate — this check must
+        // not live beside a chordStart that resets the running chord's
+        // tracking): refused clean, nothing touched.
         var begun = PasteFlow.begin(root.pasteFlow)
         if (begun.refuse) {
             if (done) done(false)
@@ -255,10 +245,10 @@ Item {
         console.log("[oskar] paste chord for", cls === "" ? "(unknown class)" : cls,
             "->", (chord.ctrl ? "Ctrl+" : "") + (chord.shift ? "Shift+" : "")
             + chord.position)
-        // The chord's region begins here (round eight): every command
-        // sent from now until the verdict is the chord's business, and an
-        // err anywhere inside it poisons the success — a final ok alone
-        // proved nothing when the middle of the chord failed.
+        // The chord's region begins here: every command sent from now
+        // until the verdict is the chord's business, and an err anywhere
+        // inside it poisons the success — a final ok alone proves nothing
+        // if the middle of the chord failed.
         root.setChordAcks(ChordAcks.chordStart(root.chordAcks))
         var event = {
             type: "paste",
@@ -267,10 +257,10 @@ Item {
             position: chord.position
         }
         if (Modifiers.usesWinePasteChord(cls.toLowerCase())) {
-            // The flag arms AFTER the opening dispatch (§93, the audit's
-            // poison): it stands guard against events that arrive while
-            // the paste DRAINS — arming it before would make the paste's
-            // own {type: "paste"} event the first thing the gate aborts.
+            // The flag arms AFTER the opening dispatch: it stands guard
+            // against events that arrive while the paste DRAINS — arming
+            // it before would make the paste's own {type: "paste"} event
+            // the first thing the gate aborts.
             root.pastePacedLines = []
             root.applyEvent(event, function (line) {
                 root.pastePacedLines.push(line)
@@ -308,13 +298,12 @@ Item {
             return false
         }
         // Success is the helper's acknowledgement of the final line, not
-        // the write returning (the review's third round): the next emoji
-        // must not replace the clipboard before the paste events have at
-        // least reached the compositor. `done` is always a function (the
-        // §89 default): a missing callback is a NO-OP REPORT — the flow
-        // still awaits the verdict and the guard still runs, so the gate
-        // can never silently reopen (the agent audit's blocker) and can
-        // never wedge on an unarmed wait either.
+        // the write returning: the next emoji must not replace the
+        // clipboard before the paste events have at least reached the
+        // compositor. `done` is always a function: a missing callback is a
+        // no-op report — the flow still awaits the verdict and the guard
+        // still runs, so the gate can never silently reopen and can never
+        // wedge on an unarmed wait either.
         root.pasteFlow = PasteFlow.awaiting(root.pasteFlow)
         settleChordThroughHelper(done)
         return true

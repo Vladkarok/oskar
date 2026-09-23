@@ -1,7 +1,6 @@
-// Seam 2 of the two the project has (spec-v1 §15): the modifier state
-// machine, driven as a pure function. Run with tools/run-tests.sh — it needs
-// no compositor and no display, which is the point of keeping the reducer
-// free of QML imports.
+// The modifier state machine, driven as a pure function. Run with
+// tools/run-tests.sh — it needs no compositor and no display, which is the
+// point of keeping the reducer free of QML imports.
 import QtQml
 import "../ModifierReducer.js" as Reducer
 import "harness.js" as T
@@ -29,8 +28,8 @@ QtObject {
             T.equal(out.state.ctrl, "idle")
             T.deepEqual(out.lines, ["down AD03"])
             // And the release is what lifts it. `down` rather than `tap` is
-            // the whole of key repeat (spec-v1 §6): the key stays down for as
-            // long as the button does and the compositor repeats it.
+            // what key repeat relies on: the key stays down for as long as
+            // the button does and the compositor repeats it.
             T.deepEqual(Reducer.reduce(out.state, { type: "release" }).lines, ["up AD03"])
         })
 
@@ -86,10 +85,9 @@ QtObject {
             T.equal(lifted.state.shift, "locked")
         })
 
-        // ---- the double-click gesture, as the real MouseArea delivers it
-        // (issue 17) ----
+        // ---- the double-click gesture, as the real MouseArea delivers it ----
         //
-        // Modifiers latch on the way down now, so the reducer no longer sees a
+        // Modifiers latch on the way down, so the reducer does not see a
         // tidy one-click-per-gesture stream. A real MouseArea emits, measured:
         //
         //   single click   pressed, released, clicked
@@ -98,11 +96,11 @@ QtObject {
         //
         // Both presses reach the reducer as `click`; `clicked` is routed
         // nowhere for modifiers because Qt withholds it for the second press
-        // anyway (issue 13). So a lock arrives as click, click, doubleClick,
-        // and the second click has already bounced a fresh latch back to idle
-        // by the time the lock is known. `doubleClick` therefore rolls the
-        // gesture back to where it started rather than reading the state it
-        // happens to find, and emits only the difference against the device.
+        // anyway. So a lock arrives as click, click, doubleClick, and the
+        // second click has already bounced a fresh latch back to idle by the
+        // time the lock is known. `doubleClick` therefore rolls the gesture
+        // back to where it started rather than reading the state it happens
+        // to find, and emits only the difference against the device.
 
         T.test("Shift click, click, doubleClick ends locked and held once", function () {
             var state = Reducer.reduce(idle, { type: "click", modifier: "shift" })
@@ -110,9 +108,9 @@ QtObject {
             T.deepEqual(state.lines, [])
             var second = Reducer.reduce(state.state, { type: "click", modifier: "shift" })
             // The second press of the double click is seen first as a click on
-            // a latched modifier, which §5 says returns it to idle without
-            // passing through locked. It must not emit anything either, or the
-            // lock's `down` would be preceded by a stray `up`.
+            // a latched modifier, which returns it to idle without passing
+            // through locked. It must not emit anything either, or the lock's
+            // `down` would be preceded by a stray `up`.
             T.equal(second.state.shift, "idle")
             T.deepEqual(second.lines, [])
             var out = Reducer.reduce(second.state, { type: "doubleClick", modifier: "shift" })
@@ -196,15 +194,14 @@ QtObject {
         })
 
         T.test("no click is ever charged a delay: every click answers in one call", function () {
-            // The point of issue 17. There is no timer left to wait on, so the
-            // latch is in the returned state, not in a state some interval
-            // later. Pinned as a property of the reducer's shape: a click
-            // event's answer is complete when `reduce` returns.
+            // There is no timer to wait on: the latch is in the returned
+            // state, not in a state some interval later. A click event's
+            // answer is complete when `reduce` returns.
             var out = Reducer.reduce(idle, { type: "click", modifier: "ctrl" })
             T.equal(Reducer.isActive(out.state, "ctrl"), true)
         })
 
-        // ---- stacking (spec-v1 §5) ----
+        // ---- stacking ----
 
         T.test("Super+Shift+Alt+E leaves as one chord and clears all three", function () {
             var state = idle
@@ -258,7 +255,7 @@ QtObject {
                         ["up AD03", "up LCTL"])
         })
 
-        // ---- pages and languages (spec-v1 §5, issues 05 and 10) ----
+        // ---- pages and languages ----
 
         T.test("a page switch leaves every modifier and emits nothing", function () {
             var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
@@ -309,7 +306,7 @@ QtObject {
         })
 
         // ---- the symbols page, whose caps stand for a shift level and have to
-        // type it with a real Shift press (spec-v1 §4) ----
+        // type it with a real Shift press ----
 
         T.test("a shift-level cap presses Shift around the position on its own", function () {
             var out = Reducer.reduce(idle, { type: "press", position: "AE01", shift: true })
@@ -367,11 +364,10 @@ QtObject {
             T.deepEqual(out.lines, ["up LFSH"])
         })
 
-        // ---- the curated page's AltGr levels (spec-v1.1 §3). Levels 3 and 4
-        // are real levels of the complete active keymap, reached the same way
-        // level 2 is: a real modifier press around the key, never a character
-        // the panel picked. AltGr cannot lock (§16), so it is either idle or
-        // latched here. ----
+        // ---- the curated page's AltGr levels. Levels 3 and 4 are real levels
+        // of the complete active keymap, reached the same way level 2 is: a
+        // real modifier press around the key, never a character the panel
+        // picked. AltGr cannot lock, so it is either idle or latched here. ----
 
         T.test("a level-3 cap wraps AltGr around the position on its own", function () {
             var out = Reducer.reduce(idle, {
@@ -402,8 +398,8 @@ QtObject {
 
         T.test("a level-3 cap under a latched Shift stays level 3 and spends the latch", function () {
             // The chord is the level's, so the armed Shift adds nothing —
-            // but a curated cap is an ordinary non-modifier key to §2, so
-            // the latch does not outlive it.
+            // but a curated cap is an ordinary non-modifier key, so the
+            // latch does not outlive it.
             var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
             var out = Reducer.reduce(state, {
                 type: "press", position: "AE05", shift: false, altgr: true, exact: true })
@@ -429,10 +425,10 @@ QtObject {
         })
 
         T.test("a level-1 cap lifts a locked Shift around the press and restores it", function () {
-            // The French ² case (R3's input half): the lock is real, the cap
-            // is exact, so the lock is lifted for the press and restored
-            // after it — the symbol types level 1 whatever the lock says,
-            // and the lock survives to say so.
+            // The French ² case: the lock is real, the cap is exact, so the
+            // lock is lifted for the press and restored after it — the
+            // symbol types level 1 whatever the lock says, and the lock
+            // survives to say so.
             var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
             var out = Reducer.reduce(state, {
                 type: "press", position: "TLDE", shift: false, altgr: false, exact: true })
@@ -443,10 +439,10 @@ QtObject {
         })
 
         T.test("Caps never shifts an exact cap's chord", function () {
-            // Caps is a letters-only semantic toggle (§2/§16). An exact cap
-            // answers to its level alone, so Caps on changes nothing about
-            // the chord — which is exactly why its display must not change
-            // either (the R3 display rule in KeyboardLayout.js).
+            // Caps is a letters-only semantic toggle. An exact cap answers to
+            // its level alone, so Caps on changes nothing about the chord —
+            // which is exactly why its display must not change either (see
+            // the display rule in KeyboardLayout.js).
             var state = Reducer.reduce(idle, { type: "capsClick" }).state
             var out = Reducer.reduce(state, {
                 type: "press", position: "TLDE", shift: false, altgr: false, exact: true })
@@ -467,8 +463,8 @@ QtObject {
 
         T.test("a level-4 cap wraps Shift from its level and spends the latch", function () {
             // Shift goes down because the LEVEL is 4, not because a latch
-            // armed it — and the latch is spent like §2 spends any
-            // non-modifier key's.
+            // armed it — and the latch is spent like any non-modifier
+            // key's.
             var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
             var out = Reducer.reduce(state, {
                 type: "press", position: "AE03", shift: true, altgr: true, exact: true })
@@ -489,8 +485,8 @@ QtObject {
         T.test("a latched AltGr is spent by the level-explicit press it arms", function () {
             // Level 3 needs AltGr at the device, so the wrap goes out even
             // over the latch — the wrap is the level's decision, not the
-            // latch's — and the latch is consumed as §2 consumes any
-            // non-modifier press's latches.
+            // latch's — and the latch is consumed as any non-modifier
+            // press's latches are.
             var state = Reducer.reduce(idle, { type: "click", modifier: "altgr" }).state
             var out = Reducer.reduce(state, {
                 type: "press", position: "AE05", shift: false, altgr: true, exact: true })
@@ -519,8 +515,8 @@ QtObject {
         })
 
         T.test("a latched AltGr still wraps an ordinary press without a level", function () {
-            // Pre-existing v1 behaviour: a manual AltGr latch wraps whatever
-            // non-modifier press follows, whatever page it came from.
+            // A manual AltGr latch wraps whatever non-modifier press follows,
+            // whatever page it came from.
             var state = Reducer.reduce(idle, { type: "click", modifier: "altgr" }).state
             var out = Reducer.reduce(state, { type: "press", position: "AD03" })
             T.deepEqual(out.lines, ["down RALT", "down AD03"])
@@ -533,7 +529,7 @@ QtObject {
             // else (levels 1 and 3 carry no Shift, level 3 no more Shift
             // than its own flag asks), the latches come back idle after
             // each, and the next ordinary key lands unshifted — the stale
-            // armed state must not reach past a symbol (§2).
+            // armed state must not reach past a symbol.
             var levels = [
                 { shift: false, altgr: false, lines: ["down AE04"] },
                 { shift: true,  altgr: false, lines: ["down LFSH", "down AE04"] },
@@ -558,8 +554,8 @@ QtObject {
             }
         })
 
-        // ---- pair caps (ticket 12): AltGr is intrinsic, Shift is
-        // latch-applied, the press is not exact, and the cap is not a letter.
+        // ---- pair caps: AltGr is intrinsic, Shift is latch-applied, the
+        // press is not exact, and the cap is not a letter.
 
         T.test("a pair cap press wraps AltGr and applies a latched Shift", function () {
             var out = Reducer.reduce(idle, {
@@ -673,8 +669,8 @@ QtObject {
             T.deepEqual(out.lines, ["up LFSH"])
         })
 
-        // ---- mid-chord configure drains (round 4). A configure that changed
-        // the keymap drains the helper's held keys; the panel settles to the
+        // ---- mid-chord configure drains. A configure that changed the
+        // keymap drains the helper's held keys; the panel settles to the
         // device world with the configureDrain event (state only, never
         // lines) and can tell the release of a chord the drain ran past from
         // one it did not touch, by the configure-send stamp the press
@@ -808,9 +804,8 @@ QtObject {
             var out = Reducer.reduce(down, { type: "release", dropRestore: true })
             T.deepEqual(out.lines, ["up AD01"])
             T.equal(out.state.shift, "locked")
-            // Without the flag the restorative down still rides: everywhere
-            // outside a mid-chord drain, the lock is re-held exactly as
-            // before this round.
+            // Without the flag the restorative down still rides: outside a
+            // mid-chord drain, the lock is re-held as usual.
             var down2 = Reducer.reduce(locked, {
                 type: "press", position: "AD01", letter: true }).state
             var plain = Reducer.reduce(down2, { type: "release" })
@@ -852,7 +847,7 @@ QtObject {
             T.equal(JSON.stringify(out.state), JSON.stringify(Reducer.initialState()))
         })
 
-        // ---- key repeat (spec-v1 §6, issue 06) ----
+        // ---- key repeat ----
 
         T.test("a release with nothing held emits nothing", function () {
             // `canceled` and `released` both route here, and a cap that never
@@ -903,7 +898,7 @@ QtObject {
             T.equal(Reducer.isActive(Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state, "shift"), true)
         })
 
-        // ---- current-content paste (spec-v1.1 §1, ticket 14) ----
+        // ---- current-content paste ----
         //
         // A header click, not a held cap: the chord is complete in one
         // event, exact (latches never join it), and locked Shift is lifted
@@ -1044,8 +1039,8 @@ QtObject {
         })
 
         T.test("pasteChordForClass names Ctrl+V for Wine and Proton classes", function () {
-            // The owner's Proton report: Shift+Insert and Ctrl+Shift+V are
-            // unbound there; only Ctrl+V pastes. Game windows carry the
+            // Proton/Wine terminals typically bind only Ctrl+V — Shift+Insert
+            // and Ctrl+Shift+V are unbound there. Game windows carry the
             // Windows executable's name, the loader carries "wine".
             var chord = { ctrl: true, shift: false, position: "AB04" }
             var classes = [
@@ -1066,9 +1061,7 @@ QtObject {
 
         T.test("usesWinePasteChord switches the delivery path", function () {
             // The classifier that routes a paste to the paced wine path
-            // (Keyboard.qml's pasteCurrent) — pin it at the seam. Restored
-            // from the pre-squash history: the chord-shape test above kept
-            // the positives, but only this one pins the negatives.
+            // (Keyboard.qml's pasteCurrent), pinned at the seam.
             var wines = ["steam_proton", "football.exe", "wine64-preloader",
                 "steam_app_311210", "explorer.exe"]
             // "notepad.exex" CONTAINS ".exe" and still must not classify:
@@ -1111,11 +1104,11 @@ QtObject {
         })
 
         T.test("a level-three glyph chord holds LVL3, and lifts what it held", function () {
-            // Ticket 18: the AltGr wrap of an exact level-3 press moves off
-            // RALT for a glyph cap, because RALT is ISO_Level3_Shift only on
-            // some layouts. The release has to lift the key that actually
-            // went down — recomputing it from POSITIONS would send `up RALT`
-            // for a key held on LVL3 and strand the modifier.
+            // The AltGr wrap of an exact level-3 press moves off RALT for a
+            // glyph cap, because RALT is ISO_Level3_Shift only on some
+            // layouts. The release has to lift the key that actually went
+            // down — recomputing it from POSITIONS would send `up RALT` for
+            // a key held on LVL3 and strand the modifier.
             var state = Reducer.initialState()
             var pressed = Reducer.reduce(state, {
                 type: "press", position: "AB11", level: 3,
@@ -1138,12 +1131,12 @@ QtObject {
         })
 
         T.test("a level five-to-eight glyph chord holds LVL5 on top", function () {
-            // Ticket 20 / decisions §33: the catalogue moved above the
-            // layout's own levels, so a glyph cap resolved there presses one
-            // more real modifier and nothing else changes. Level 5 is <LVL5>
-            // alone; 6 adds Shift, 7 adds <LVL3>, 8 adds both — and every
-            // release is the exact reverse of its own press, which is the
-            // property that keeps a modifier from being stranded.
+            // The catalogue sits above the layout's own levels, so a glyph
+            // cap resolved there presses one more real modifier and nothing
+            // else changes. Level 5 is <LVL5> alone; 6 adds Shift, 7 adds
+            // <LVL3>, 8 adds both — and every release is the exact reverse
+            // of its own press, which is the property that keeps a modifier
+            // from being stranded.
             var state = Reducer.initialState()
             var five = Reducer.reduce(state, {
                 type: "press", position: "AE01", level: 5,
@@ -1181,9 +1174,10 @@ QtObject {
         })
 
         T.test("a latched Shift is spent by a level-five press, never applied", function () {
-            // <LVL5> changes nothing about §2: the chord belongs to the level,
-            // so a latch armed beforehand is consumed and does not join it —
-            // otherwise a latched Shift would silently turn level 5 into 6.
+            // <LVL5> changes nothing about ordinary latch handling: the chord
+            // belongs to the level, so a latch armed beforehand is consumed
+            // and does not join it — otherwise a latched Shift would
+            // silently turn level 5 into 6.
             var latched = Reducer.reduce(Reducer.initialState(),
                 { type: "click", modifier: "shift" })
             var pressed = Reducer.reduce(latched.state, {
@@ -1195,11 +1189,11 @@ QtObject {
         })
 
         T.test("a locked Shift is lifted around a level-five press that does not want it", function () {
-            // §16: only Shift locks, and an exact press types the level it
-            // draws. A locked Shift over a level-5 cap would silently make it
+            // Only Shift locks, and an exact press types the level it draws.
+            // A locked Shift over a level-5 cap would silently make it
             // level 6, so the lock is lifted around the key and put back —
-            // the same treatment level 1 already gets, now with <LVL5> in the
-            // chord and the lift outside it.
+            // the same treatment level 1 already gets, now with <LVL5> in
+            // the chord and the lift outside it.
             var locked = Reducer.reduce(Reducer.initialState(),
                 { type: "doubleClick", modifier: "shift" })
             T.equal(locked.state.shift, "locked")

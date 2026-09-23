@@ -13,12 +13,11 @@
 //
 // `chordStart` marks where the chord's region begins (the queue's length
 // at dispatch entry), and every err popped inside the region poisons the
-// verdict (round eight: a chord whose Insert presses ERRed on a keymap
-// without that key still reported success because its LAST line's ok was
-// all anyone looked at — usage recorded, the picker closed, nothing
-// delivered). Pre-chord traffic is not the chord's business and does not
-// count; an interleaved command after dispatch lands in the region and
-// its err poisons — conservative, never falsely successful.
+// verdict — otherwise a chord whose Insert presses ERRed on a keymap
+// without that key would still report success, since only its LAST line's
+// ok was ever looked at. Pre-chord traffic is not the chord's business and
+// does not count; an interleaved command after dispatch lands in the
+// region and its err poisons — conservative, never falsely successful.
 //
 // The chord's final line is marked when the chord arms — and arming
 // first strips every earlier marker, because a marker left by a timed-out
@@ -41,8 +40,8 @@ function initial() {
 // token): an err is content-ambiguous — `err bad group` answers a
 // configure, a caps pre-fetch or a `group` alike — and the dispatcher
 // must know WHICH command the reply settled to do the right thing to
-// the right ledger (round 17: an arm that guessed wrong either orphaned
-// a configure entry or dropped one an err never answered).
+// the right ledger, or an arm that guesses wrong either orphans a
+// configure entry or drops one an err never answered.
 function sent(state, line) {
     var text = String(line || "")
     if (text === "") return state
@@ -127,8 +126,7 @@ function replyReceived(state, ok) {
 }
 
 // The verdict arrived by another path (the guard timer, a dying
-// connection; a cancellation too — §91 history, the tests only): the
-// wait ends, the region ends with it,
+// connection, or a cancellation): the wait ends, the region ends with it,
 // and the queue keeps draining on its own.
 function chordSettled(state) {
     return {

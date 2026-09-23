@@ -4,10 +4,10 @@ import qs.Commons
 import "Config.js" as ConfigFile
 import "UiStrings.js" as UiStrings
 
-// WinUI-style custom colour editor (spec-v1.1 §5, live-host ticket 07):
-// large hue×saturation square, thin value slider, hex + RGB/HSV fields.
-// Preview only until confirm. No hex pad — the main OSK types into the
-// focused field. Confirm/Cancel are mouse-only.
+// WinUI-style custom colour editor: large hue×saturation square, thin
+// value slider, hex + RGB/HSV fields. Preview only until confirm. No hex
+// pad — the main OSK types into the focused field. Confirm/Cancel are
+// mouse-only.
 Rectangle {
     id: editor
 

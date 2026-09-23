@@ -5,7 +5,7 @@ import "Config.js" as ConfigFile
 import "Dwell.js" as Dwell
 import "UiStrings.js" as UiStrings
 
-// The settings popover (spec-v1.1 §5). Lives on its own overlay window,
+// The settings popover. Lives on its own overlay window,
 // not on the key grid: leftover-centre placement is the panel's, exclusive
 // zone stays the keyboard band. Colour rows group swatches with hex and a
 // compact confirm; Custom opens the WinUI editor. The panel is the one
@@ -28,8 +28,8 @@ Rectangle {
     property real hostWidth: 0
     property real hostHeight: 0
 
-    // Reset-all's confirmation state (spec-v1.1 §5), inline in the footer,
-    // reset when the popover closes.
+    // Reset-all's confirmation state, inline in the footer, reset when
+    // the popover closes.
     property bool resetAllArmed: false
 
     signal customColourRequested(string fieldName, string labelText)
@@ -45,8 +45,8 @@ Rectangle {
         }
     }
 
-    // A fresh open never shows a stale hex draft (the focus exception and
-    // the confirmation state die with the surface, as before).
+    // A fresh open never shows a stale hex draft — the focus exception
+    // and the confirmation state die with the surface.
     function resetRowDrafts() {
         keyBackgroundRow.resetDraft()
         panelBackgroundRow.resetDraft()
@@ -70,8 +70,8 @@ Rectangle {
         }
     }
 
-    // Current-content paste into the active hex draft (ticket 14): insert
-    // locally into the focused row field; never ask the helper to type.
+    // Current-content paste into the active hex draft: insert locally
+    // into the focused row field; never ask the helper to type.
     function insertHexText(text) {
         var rows = [keyBackgroundRow, panelBackgroundRow, textColorRow,
             accentColorRow, borderColorRow]
@@ -88,7 +88,7 @@ Rectangle {
 
     // Escape closes the popover — but read the constraint before trusting
     // it: the layer surface takes no keyboard focus for its whole life
-    // EXCEPT while a hex field is active — the one §5 exception — so this
+    // EXCEPT while a hex field is active — the one exception — so this
     // handler can normally never fire: the compositor delivers the surface
     // no keys, and outside click is the dismissal that works. While a hex
     // field holds the surface's OnDemand focus, keys DO arrive — and Escape
@@ -97,11 +97,11 @@ Rectangle {
     // has moved does this popover-level handler see anything.
     Keys.onEscapePressed: popoverRoot.visible = false
 
-    // The v3 column geometry: rows are left-packed — every label stands in
-    // a column sized to the WIDEST label, measured against the live theme
-    // font (hidden real Texts, not a FontMetrics snapshot: a FontMetrics
-    // pass was seen measuring the default font before the theme's mono face
-    // applied and never re-running), and every control begins at the same x.
+    // Column geometry: rows are left-packed — every label stands in a
+    // column sized to the WIDEST label, measured against the live theme
+    // font (hidden real Texts, not a FontMetrics snapshot — that can
+    // measure the default font before the theme's mono face applies and
+    // never re-run), and every control begins at the same x.
     Column {
         id: labelProbe
         visible: false
@@ -114,8 +114,8 @@ Rectangle {
             }
         }
     }
-    // The row labels in the UI's language (ticket 52): this array feeds
-    // the width probe below, so the column sizes itself to the WIDEST
+    // The row labels in the UI's language: this array feeds the width
+    // probe below, so the column sizes itself to the WIDEST
     // TRANSLATION while the language stands — a Cyrillic label must not
     // clip against a column measured in English.
     readonly property var settingsRowLabels:
@@ -162,8 +162,8 @@ Rectangle {
 
     // The widest control block any row lays down, measured from the same
     // compact pieces the colour rows draw — the committed-colour indicator
-    // square (ticket 23), swatches, hex, confirm chip and Custom. The emoji
-    // chooser sits inside it.
+    // square, swatches, hex, confirm chip and Custom. The emoji chooser
+    // sits inside it.
     Row {
         id: controlProbe
         visible: false
@@ -234,7 +234,7 @@ Rectangle {
         hoverEnabled: false
     }
 
-    // ---- shared row parts (ticket 09's, kept verbatim but scoped) ----
+    // ---- shared row parts ----
 
     component SettingsSwitch: Rectangle {
         id: switchTrack
@@ -519,9 +519,9 @@ Rectangle {
                     anchors {
                         verticalCenter: parent.verticalCenter
                     }
-                    // Ticket 52: 160 (not the 150 default) — the
-                    // localized state words ("Закреплена" measures 72px
-                    // at fontBody) need the 75px segments this gives.
+                    // 160 (not the 150 default) — the localized state
+                    // words ("Закреплена" measures 72px at fontBody)
+                    // need the 75px segments this gives.
                     width: tokens.space(160)
                     segments: [
                         { value: ConfigFile.MODE_DOCKED,
@@ -601,7 +601,7 @@ Rectangle {
 
             SettingsHairline {}
 
-            // ---- LANGUAGE (ticket 52) ----
+            // ---- LANGUAGE ----
             //
             // The override every word on this card hangs off: "auto"
             // follows the active layout (ua -> Ukrainian, ru -> Russian,
@@ -643,8 +643,8 @@ Rectangle {
                         verticalCenter: parent.verticalCenter
                     }
                     // Four labels incl. the 72px "Українська" (measured
-                    // at fontBody in the mono face, ticket 52): 300 space
-                    // units slice 72.5px segments, and control+reset chip
+                    // at fontBody in the mono face): 300 space units
+                    // slice 72.5px segments, and control+reset chip
                     // stay inside the measured control zone even when the
                     // UI language narrows the "Custom" probe that sizes
                     // it — the superMark row's own arithmetic.
@@ -654,10 +654,10 @@ Rectangle {
                         en: "English", ru: "Русский", uk: "Українська",
                         it: "Italiano"
                     })
-                    // The offered languages mirror the seat's layouts
-                    // (ticket 61): Auto and English always, plus each
-                    // translation whose layout is installed — a us,ua
-                    // seat never sees a Русский segment it cannot type.
+                    // The offered languages mirror the seat's layouts:
+                    // Auto and English always, plus each translation
+                    // whose layout is installed — a us,ua seat never
+                    // sees a Русский segment it cannot type.
                     segments: UiStrings.languageChoices(panel.seatLayoutCodes)
                         .map(function (code) {
                             return { value: code,
@@ -683,7 +683,7 @@ Rectangle {
 
             SettingsHairline {}
 
-            // ---- INPUT (ticket 58) ----
+            // ---- INPUT ----
             //
             // Which pointer world the panel answers as: auto (the
             // default) activates the touch affordances when the panel
@@ -724,15 +724,12 @@ Rectangle {
                     }
                     // Three segments of ~47px; the widest plain label
                     // ("Сенсор") measures 43px at fontBody. While auto has
-                    // FLIPPED to touch, the Auto segment carries the
+                    // flipped to touch, the Auto segment carries the
                     // "Auto+touch" notice (72px) and the row widens to give
-                    // it a slice — both budgets pinned offscreen in
-                    // The wide row rides the SAME observation fact the
-                    // label keys on — notice and width cannot disagree.
-                    // 180 (the QML round's bump from 150): the widest
-                    // shipped label is Italian "Tattile" (measured
-                    // 50.3px mono at fontBody); the ticket-52 budget
-                    // test agrees.
+                    // it a slice — the wide row rides the SAME observation
+                    // fact the label keys on, so notice and width cannot
+                    // disagree. 180 (not 150): the widest shipped label is
+                    // Italian "Tattile" (measured 50.3px mono at fontBody).
                     width: panel.touchObserved
                         && panel.inputProfile === "auto"
                         && !panel.dwellEnabled
@@ -744,22 +741,17 @@ Rectangle {
                     })
                     segments: ConfigFile.INPUT_PROFILES.map(function (value) {
                         var label = inputProfileControl.profileLabels[value]
-                        // The flip made visible (the touch council's
-                        // cheapest high-value ask, ticket 62): when the
-                        // OBSERVATION flipped auto to touch, the AUTO
-                        // segment says so — typing semantics changed and
-                        // the user deserves the one-word notice where the
-                        // escape lives. The fact is the OBSERVATION (a
-                        // synthesized press arrived), not the effective
-                        // profile: a hand-pinned Touch has no news to
-                        // announce, and the previous condition here lit
-                        // the notice in that case too — overflowing its
-                        // un-widened row (the owner's screenshot).
+                        // The flip made visible: when the OBSERVATION
+                        // flipped auto to touch, the AUTO segment says so
+                        // — typing semantics changed and the user deserves
+                        // the one-word notice where the escape lives. The
+                        // fact is the OBSERVATION (a synthesized press
+                        // arrived), not the effective profile: a
+                        // hand-pinned Touch has no news to announce.
                         // The dwell guard hides the notice too: with
                         // dwell enabled the observation never flips
-                        // anything, and a lit notice over unchanged
-                        // mouse semantics is the lying-notice class
-                        // this delta exists to close.
+                        // anything, and a lit notice over unchanged mouse
+                        // semantics would be a lying notice.
                         if (value === "auto"
                                 && panel.touchObserved
                                 && panel.inputProfile === "auto"
@@ -821,11 +813,11 @@ Rectangle {
                     current: panel.emojiCloseAfterPick
                     onPicked: function (value) {
                         // The segmented control's signal carries strings;
-                        // this row is the one boolean among the segments
-                        // (round 17's finding), and writing "true"/"false"
-                        // to config.json resurrects exactly the legacy
-                        // string form the loader's heal exists to cure —
-                        // every other boolean saves as a real boolean.
+                        // this row is the one boolean among the segments,
+                        // and writing "true"/"false" to config.json
+                        // resurrects exactly the legacy string form the
+                        // loader's heal exists to cure — every other
+                        // boolean saves as a real boolean.
                         panel.setOverride("emojiCloseAfterPick",
                             value === "true")
                     }
@@ -876,11 +868,11 @@ Rectangle {
                 }
             }
 
-            // The free-drag ticket's row: whether the emoji page grows
-            // its drag strip. The picking row's own shape — two boolean
-            // segments naming the behaviour, a reset chip — and the same
-            // string-carrying signal rule (the value arrives as "true"/
-            // "false" and must be written a real boolean).
+            // Whether the emoji page grows its drag strip. The picking
+            // row's own shape — two boolean segments naming the
+            // behaviour, a reset chip — and the same string-carrying
+            // signal rule (the value arrives as "true"/"false" and must
+            // be written a real boolean).
             Item {
                 width: parent.width
                 height: tokens.space(28)
@@ -920,7 +912,7 @@ Rectangle {
 
             SettingsHairline {}
 
-            // SUPER MARK (ticket 22): what the Super cap draws — the word by
+            // SUPER MARK: what the Super cap draws — the word by
             // default, a mark by choice. Five segments on the same
             // SettingsSegmented the Mode and Size rows use; the instance is
             // wider because five labels cannot fit the two-row width
@@ -962,7 +954,7 @@ Rectangle {
                     }
                     width: tokens.space(320)
                     // Omarchy, Windows and macOS are names and stay; the
-                    // word and the penguin translate (ticket 52).
+                    // word and the penguin translate.
                     readonly property var superMarkLabels:
                         ({ word: UiStrings.tr("settings.superMark.word", panel.uiLang),
                            omarchy: "Omarchy", windows: "Windows",
@@ -1108,7 +1100,7 @@ Rectangle {
 
             SettingsHairline {}
 
-            // ---- DWELL (ticket 50) ----
+            // ---- DWELL ----
             //
             // The accessibility pair: rest-to-type, off until it is
             // turned on, and how long a rest must hold before the cap
@@ -1217,7 +1209,7 @@ Rectangle {
 
             SettingsHairline {}
 
-            // ---- APPEARANCE (spec-v1.1 §5, 2026-09-06 amendment) ----
+            // ---- APPEARANCE ----
             //
             // Two radii, five colours. Every control applies through
             // setOverride — immediate, atomic, sparse — except the hex
@@ -1408,8 +1400,8 @@ Rectangle {
                 wrapMode: Text.Wrap
             }
 
-            // The malformed-file notice (spec-v1.1 §5). While it stands,
-            // the rows above dim and their controls refuse writes: the
+            // The malformed-file notice. While it stands, the rows above
+            // dim and their controls refuse writes: the
             // values shown are the last valid runtime state, the bad file
             // is preserved exactly as the external editor wrote it, and
             // fixing the file lets the watched reload clear this line.
@@ -1434,8 +1426,8 @@ Rectangle {
 
             SettingsHairline { visible: resetAllRow.visible }
 
-            // Reset-all (spec-v1.1 §5), the card's footer row: a bordered
-            // ghost button — the quietest voice on the card, because it is
+            // Reset-all, the card's footer row: a bordered ghost button
+            // — the quietest voice on the card, because it is
             // the one destructive action — with its confirmation inline:
             // first click arms the row, and only the urgent Reset commits.
             // Hidden entirely while the sparse file carries no overrides.

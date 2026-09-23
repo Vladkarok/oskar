@@ -5,33 +5,26 @@ import "SettingsPlacement.js" as SettingsPlacement
 Item {
     id: root
 
-    // The settings layer's content, split out of Panel.qml (the
-    // structural split's step five): the leftover geometry engine
-    // (overlayBox/bandBox/leftoverBox and the three centre placements),
-    // the input-mask Region the window binds, the everywhere-outside
-    // dismiss area, and the popover/editor hosting — SettingsPopover
-    // and SettingsColorEditor instantiated here, at the layer's
-    // coordinates, exactly where the monolith had them. What stayed in
-    // the panel is everything the layer is a WINDOW for: the surface
-    // flags, the WLR focus contract (keyboardFocus — hex editing and
-    // the armed search prime on panel state), and the two focus sinks
-    // (endHexEdit's parking spots, plain Items the panel still names);
-    // the emoji page and its placement machinery (applyEmojiPosition/
-    // rememberEmojiPosition) stay panel-side too — the page is not a
-    // settings surface, so it remains a direct child of the window and
-    // reads the geometry engine's boxes back through this component's
-    // readonly surface.
+    // The settings layer's content: the leftover geometry engine
+    // (overlayBox/bandBox/leftoverBox and the three centre placements), the
+    // input-mask Region the window binds, the everywhere-outside dismiss
+    // area, and the popover/editor hosting (SettingsPopover and
+    // SettingsColorEditor). What stays in the panel is everything the
+    // layer is a WINDOW for: the surface flags, the WLR focus contract
+    // (keyboardFocus — hex editing and the armed search prime on panel
+    // state), and the two focus sinks (endHexEdit's parking spots). The
+    // emoji page and its placement machinery also stay panel-side — the
+    // page is not a settings surface, so it remains a direct child of the
+    // window and reads the geometry engine's boxes back through this
+    // component's readonly surface.
     //
-    // The seam's shape, chosen and why: the panel-root facts the moved
-    // code touches (customEditorField, emojiOpen, mode, the editor's
-    // label/old-colour, and the endHexEdit/closeCustomEditor/
-    // openCustomEditor calls) all ride the `panel` reference the
-    // popover already took — one access path, and the only honest one
-    // for emojiOpen, which the dismiss area WRITES (a mirrored IN
-    // property would fork that write off a copy). The ids the moved
-    // code read that are not panel-root properties — tokens, card, and
-    // the emoji page itself — ride their own IN properties, named as
-    // the monolith named them so the moved bindings keep their shape.
+    // The panel-root facts this layer touches (customEditorField,
+    // emojiOpen, mode, the editor's label/old-colour, and the
+    // endHexEdit/closeCustomEditor/openCustomEditor calls) all ride the
+    // single `panel` reference — the only correct path for emojiOpen,
+    // which the dismiss area WRITES (a mirrored IN property would fork
+    // that write off a copy). Ids that are not panel-root properties —
+    // tokens, card, the emoji page itself — ride their own IN properties.
 
     // ---- IN from the panel ----
     //
@@ -50,17 +43,17 @@ Item {
     property var emojiPage: null
 
     // Any leftover-centre surface: the settings card, the custom
-    // colour editor, or the emoji page (ticket 24). The mask and the
-    // dismiss area arm on this, and never on the keyboard band.
+    // colour editor, or the emoji page. The mask and the dismiss area
+    // arm on this, and never on the keyboard band.
     readonly property bool overlayOpen: settingsPopover.visible
         || root.panel.customEditorField !== ""
         || root.panel.emojiOpen
-    // Ticket 29: the page alone is non-modal — the card and the editor
-    // keep the modal leftover (an outside click dismisses them), but
-    // with only the page standing the input region is the page's own
-    // rectangle, so a press on the client behind it reaches that
-    // client: focus moves, the rawEvent disarm routes the keys there,
-    // and the page stays up for the next pick.
+    // The page alone is non-modal — the card and the editor keep the
+    // modal leftover (an outside click dismisses them), but with only
+    // the page standing the input region is the page's own rectangle,
+    // so a press on the client behind it reaches that client: focus
+    // moves, the rawEvent disarm routes the keys there, and the page
+    // stays up for the next pick.
     readonly property bool emojiPageSolo: root.panel.emojiOpen
         && !settingsPopover.visible && root.panel.customEditorField === ""
     readonly property var overlayBox: ({
@@ -192,11 +185,8 @@ Item {
     //
     // The header chrome's read (the gear and the language chip key on
     // the popover standing), and the panel's open/close calls — one
-    // function per intent instead of a writable alias, the smaller
-    // surface for the four read sites and four write sites the
-    // monolith had. resetAllArmed only ever clears, so it clears
-    // through its own name; the two insert targets keep the branch the
-    // panel's insertLocalClipboardText always made.
+    // function per intent instead of a writable alias. resetAllArmed
+    // only ever clears, so it clears through its own name.
     readonly property bool popoverVisible: settingsPopover.visible
     function openPopover() { settingsPopover.visible = true }
     function closePopover() { settingsPopover.visible = false }

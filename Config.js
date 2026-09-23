@@ -1,7 +1,7 @@
 .pragma library
 
-// The settings store: one authority for the three configuration roles in
-// spec-v1.1 §5 — complete shipped defaults, sparse user overrides, and
+// The settings store: one authority for the three configuration roles —
+// complete shipped defaults, sparse user overrides, and
 // geometry/state — and the one home of their validation, reload and
 // serialization policy. The panel's popover consumes effective values and
 // issues changes through the panel's set/clear/commit operations; it holds
@@ -12,26 +12,24 @@
 var MODE_DOCKED = "docked"
 var MODE_FLOATING = "floating"
 
-// The Super cap's mark (ticket 22, 2026-09-09): what the modifier cap draws.
+// The Super cap's mark: what the modifier cap draws.
 // The word is the default; the others are one mark each — the Omarchy glyph
-// (U+E900 in the private font, decisions §27's mechanism), two inline
-// vectors and the owner's original Tux SVG. `macos` draws the macOS command mark
-// (⌘), which is what that key carries on an Apple keyboard — not an apple.
+// (U+E900 in the private font), two inline vectors and the owner's original
+// Tux SVG. `macos` draws the macOS command mark (⌘), which is what that key
+// carries on an Apple keyboard — not an apple.
 // One list here, so validation, the popover's segments and the tests cannot
 // disagree about the value space.
 var SUPER_MARKS = ["word", "omarchy", "windows", "macos", "penguin"]
 var EMOJI_SKIN_TONES = ["", "🏻", "🏼", "🏽", "🏾", "🏿"]
-// Ticket 52: the UI's language. "auto" follows the active layout (the
-// shipped searchPlaceholder mapping); en/ru/uk/it pin it, offered when the seat carries the layout. One list here so
-// validation, the popover's segments and the tests cannot disagree —
-// the SUPER_MARKS rule.
-// "it" joined with the Italian vocabulary (2026-09-20); the value space
+// The UI's language. "auto" follows the active layout (the shipped
+// searchPlaceholder mapping); en/ru/uk/it pin it, offered when the seat
+// carries the layout. One list here so validation, the popover's segments
+// and the tests cannot disagree — the SUPER_MARKS rule. The value space
 // and UiStrings.LANGUAGES move together — a shipped language the
-// validator rejects is a frozen settings card (the liveability round's
-// P1: one click on Italiano locked every control until the user
-// hand-edited config.json).
+// validator rejects freezes the settings card, since every control stays
+// locked until the user hand-edits config.json.
 var UI_LANGUAGES = ["auto", "en", "ru", "uk", "it"]
-// Ticket 58: the input profile. "auto" (the default) activates the touch
+// The input profile. "auto" (the default) activates the touch
 // affordances when the panel observes touch events; mouse/touch pin the
 // world. One list for validation, the popover's segments and the tests —
 // the SUPER_MARKS rule.
@@ -43,17 +41,17 @@ var CONFIG_FIELDS = [
     { file: "follow_theme", value: "followTheme" },
     { file: "emoji_close_after_pick", value: "emojiCloseAfterPick" },
     { file: "emoji_page_size", value: "emojiPageSize" },
-    // The emoji page's free drag (the emoji-drag ticket): off is exactly
+    // The emoji page's free drag: off is exactly
     // the computed leftover-centre placement that shipped.
     { file: "emoji_drag", value: "emojiDrag" },
     { file: "super_mark", value: "superMark" },
-    // Ticket 50: the dwell pair — off by default, a bounded delay when on.
+    // The dwell pair — off by default, a bounded delay when on.
     { file: "dwell_enabled", value: "dwellEnabled" },
     { file: "dwell_delay_ms", value: "dwellDelayMs" },
-    // Ticket 52: the UI language override — auto (follow the active
+    // The UI language override — auto (follow the active
     // layout) by default.
     { file: "ui_language", value: "uiLanguage" },
-    // Ticket 58: the input profile — auto (touch affordances when touch
+    // The input profile — auto (touch affordances when touch
     // events are observed) by default.
     { file: "input_profile", value: "inputProfile" },
     { file: "key_radius", value: "capCorner" },
@@ -81,23 +79,23 @@ function maintainerDefaults() {
         // affordance. Sparse-store semantics mean this key never appears
         // in the file unless the user turned the drag on.
         emojiDrag: false,
-        // The Super cap says what the key is (ticket 22): the Omarchy glyph
-        // stops being the unconditional drawing and becomes one chosen mark.
+        // The Super cap says what the key is: the Omarchy glyph is one
+        // chosen mark among several, not the unconditional drawing.
         // Sparse-store semantics mean this key never appears in the file
         // unless the user picked something.
         superMark: "word",
-        // Ticket 50: dwell-to-type is an accessibility opt-in — the caps
+        // Dwell-to-type is an accessibility opt-in — the caps
         // never type from a rest until the user turns this on. The delay
         // mirrors Dwell.js's designed window (the module clamps whatever
         // reaches the timer; the file holds the same bounds so an
         // external edit cannot smuggle a rest outside it).
         dwellEnabled: false,
         dwellDelayMs: 800,
-        // Ticket 52: the UI follows the active layout's language until
+        // The UI follows the active layout's language until
         // the user pins one — the shipped searchPlaceholder behaviour,
         // generalised to every word the panel draws.
         uiLanguage: "auto",
-        // Ticket 58: the panel answers as a mouse until a finger (or the
+        // The panel answers as a mouse until a finger (or the
         // user) says otherwise — auto observes and flips, the explicit
         // pins win (InputProfile.resolve owns the semantics).
         inputProfile: "auto",
@@ -130,7 +128,7 @@ function copyObject(object) {
 
 function parseObject(text, role) {
     // Existing but unreadable — including a file truncated to zero bytes —
-    // is malformed with the §5 preservation semantics, never an empty
+    // is malformed, and must be preserved rather than treated as an empty
     // override map: reading `{}` here would let a truncated file silently
     // clear every override. A MISSING file takes defaults, and that case is
     // the FileViews' to identify (they alone can tell absent from empty);
@@ -148,8 +146,8 @@ function parseObject(text, role) {
 
 // Radii are whole pixels: the popover's steppers step by one, and a fractional
 // radius from an external edit would round invisibly at the QML boundary.
-// Negative or non-finite values are malformed with the §5 preservation
-// semantics, not clamped guesses.
+// Negative or non-finite values are malformed and preserved, not clamped
+// guesses.
 function isRadius(value) {
     return typeof value === "number" && isFinite(value) && value >= 0
         && value === Math.floor(value)
@@ -157,7 +155,7 @@ function isRadius(value) {
 
 // Colours are hex only — #RGB, #RGBA, #RRGGBB, #AARRGGBB. The popover's
 // picker and swatches write this form, and the typed-hex entry — the panel's
-// one sanctioned focus exception (spec-v1.1 §5) — is held to the same rule:
+// one sanctioned focus exception — is held to the same rule:
 // a named colour or rgb() expression is a malformed value the panel reports
 // inline and preserves, not a silently accepted guess.
 function isColor(value) {
@@ -181,9 +179,9 @@ function configFieldByValue(valueName) {
 
 // The predicate is the field's, not the key spelling's: a snake_case file
 // name and the camelCase runtime name of the same field are the same field
-// and are held to the same rule (spec-v1.1 §5, review finding R5). An
-// unrecognised key is not a setting and has no predicate — it is an unknown
-// field, carried verbatim, never applied.
+// and are held to the same rule. An unrecognised key is not a setting and
+// has no predicate — it is an unknown field, carried verbatim, never
+// applied.
 function validFieldValue(field, value) {
     if (field.file === "mode") return value === MODE_DOCKED || value === MODE_FLOATING
     if (field.file === "size_preset")
@@ -195,7 +193,7 @@ function validFieldValue(field, value) {
     if (field.file === "emoji_page_size")
         return value === "medium" || value === "large" || value === "x-large"
     // Exactly the five marks the popover offers: anything else is a
-    // malformed edit with the §5 preservation semantics, never a guess. The
+    // malformed edit, preserved rather than guessed. The
     // QML side independently treats an unknown string as the word, so a
     // value that could not reach the file can never blank the cap either.
     if (field.file === "super_mark")
@@ -209,13 +207,13 @@ function validFieldValue(field, value) {
         return typeof value === "number" && isFinite(value)
             && value >= 400 && value <= 2000 && value === Math.floor(value)
     // Exactly the four words the popover offers; anything else is a
-    // malformed edit with the §5 preservation semantics — the runtime's
+    // malformed edit, preserved rather than guessed — the runtime's
     // languageFor degrades junk to the layout answer, so a value that
     // could not reach the file can never blank the UI either.
     if (field.file === "ui_language")
         return UI_LANGUAGES.indexOf(value) !== -1
     // Exactly the three words the popover offers; anything else is a
-    // malformed edit with the §5 preservation semantics — InputProfile's
+    // malformed edit, preserved rather than guessed — InputProfile's
     // resolve degrades junk to auto's semantics at the seam, so a value
     // that could not reach the file can never strand the panel either.
     if (field.file === "input_profile")
@@ -257,9 +255,9 @@ function parseOverrides(text) {
         // A key may name a field canonically (snake_case), by its runtime
         // spelling (camelCase — an alias of the same field), or not at all
         // (an unknown field). Canonical and alias are validated identically:
-        // an invalid value under either spelling is a malformed edit with
-        // the §5 preservation semantics, so `{"key_radius":8,"capCorner":-20}`
-        // cannot smuggle -20 past validation in either JSON order.
+        // an invalid value under either spelling is a malformed edit, so
+        // `{"key_radius":8,"capCorner":-20}` cannot smuggle -20 past
+        // validation in either JSON order.
         var field = configField(key)
         var isAlias = false
         if (!field) {
@@ -279,16 +277,12 @@ function parseOverrides(text) {
         }
         var value = parsed.value[key]
         // Boolean fields written as JSON strings ("true"/"false") heal
-        // instead of poisoning the file (ticket: the owner's live config
-        // carried "true" from the omarchy-osk era; the validator then
-        // failed EVERY load forever, and reset chips could not reach it —
-        // a §5 failure the preservation semantics kept alive). The heal
-        // is offered to every non-string field and accepted only when the
-        // healed boolean passes validation — a string-typed field
-        // (emoji_app) rejects the boolean and keeps its string.
-        // sound heals too (the review's finding: it is boolean-typed,
-        // and excluding it left {"sound":"true"} permanently poisonous
-        // — the exact pathology this heal exists to cure); the
+        // instead of poisoning the file: without this, a boolean field that
+        // picks up a string "true" would fail validation on every future
+        // load, and the reset chips could never reach it to fix it. The heal
+        // is offered to every non-string field, sound included, and accepted
+        // only when the healed boolean passes validation — a string-typed
+        // field (emoji_app) rejects the boolean and keeps its string; the
         // validFieldValue predicate below is the real gate and already
         // rejects every genuinely string-typed field's boolean.
         if (typeof value === "string" && field.file !== "mode"
@@ -323,7 +317,7 @@ function parsePoint(value) {
     return { x: value.x, y: value.y }
 }
 
-// The deterministic floating anchor (spec-v1.1 §4, decisions §21). The saved
+// The deterministic floating anchor. The saved
 // placement is the card centre in output-local coordinates, and restoring
 // derives the top-left from it, clamped only enough to keep the complete card
 // on its output. An unchanged centre, card and output therefore restore to
@@ -352,9 +346,9 @@ function parseState(text) {
             return { value: null, error: "Invalid value for center" }
         state.center = center
     }
-    // The emoji page's remembered centre (the emoji-drag ticket): the
+    // The emoji page's remembered centre: the
     // same point rule as the floating card's centre — a number pair or
-    // null, anything else malformed with the §5 preservation semantics.
+    // null, anything else malformed and preserved.
     if (owns(parsed.value, "emoji_center")) {
         var emojiCenter = parsePoint(parsed.value.emoji_center)
         if (emojiCenter === undefined)
@@ -387,8 +381,8 @@ function parseState(text) {
         state.emojiSkinTone = parsed.value.emoji_skin_tone
     }
     // The remembered layout group (LayoutDevices' restart fallback): a
-    // whole index XKB can carry (0-3), anything else is a malformed edit
-    // with the §5 preservation semantics.
+    // whole index XKB can carry (0-3), anything else is a malformed edit,
+    // preserved rather than guessed.
     if (owns(parsed.value, "layout_group")) {
         var remembered = parsed.value.layout_group
         if (typeof remembered !== "number" || !isFinite(remembered)
@@ -400,7 +394,7 @@ function parseState(text) {
     // The remembered identity of the seat's last typing keyboard: any
     // string (it is matched against the helper's safe inventory later, so
     // a stale name simply never matches), anything but a string is
-    // malformed with the §5 preservation semantics.
+    // malformed and preserved.
     if (owns(parsed.value, "layout_device")) {
         if (typeof parsed.value.layout_device !== "string")
             return { value: null, error: "Invalid value for layout_device" }
@@ -446,9 +440,9 @@ function merge(defaults, overrides, theme) {
 // them validated at parse or written by the panel's own controls) map back
 // to their canonical snake_case names, and every other key is an unknown
 // field that serializes verbatim under its own name. Name-mapping is
-// therefore impossible for anything validation has not seen — the R5 hole
-// where an unvalidated camelCase alias serialized as a canonical
-// `key_radius` cannot reopen (spec-v1.1 §5).
+// therefore impossible for anything validation has not seen — an
+// unvalidated camelCase alias can never serialize as a canonical
+// `key_radius`.
 function serializeOverrides(overrides) {
     var out = {}
     for (var key in overrides) {
@@ -483,7 +477,7 @@ function toHex(color) {
     return out
 }
 
-// ---- the colour rows' recommended swatches (2026-09-06 amendment) ----
+// ---- the colour rows' recommended swatches ----
 
 // Maintained fallbacks for the four swatch sources, used when a theme token
 // is unanswered — the same rule Theme.colorAnswered applies (transparent or
@@ -543,7 +537,7 @@ function commitHexDraft(text, configHealthy) {
     return { action: "commit", value: result.value }
 }
 
-// Spec-v1.1 §5: ending the typed-hex exception. The surface returns to
+// Ending the typed-hex exception. The surface returns to
 // WlrKeyboardFocus.None, and item focus must be dropped onto a
 // non-TextInput: a still-focused hex field is what lets hide hand Qt
 // focus to a row field (recapture) or leaves a caret after the pad is
@@ -659,7 +653,7 @@ function mixRgb(base, target, amount) {
     }
 }
 
-// Size-preset multipliers (spec-v1.1 §4). Key radius is stored as a 0–24
+// Size-preset multipliers. Key radius is stored as a 0–24
 // proportion of a medium key; the drawn radius is stored × this scale so
 // 24 stays a circle at L and XL. Panel radius does not use this.
 var SIZE_PRESET_SCALES = { "medium": 1.0, "large": 1.2, "x-large": 1.45 }
