@@ -53,4 +53,6 @@ before it; this version starts above them so no old tag name is reused.
   only.
 - The Italian interface draft is held back until it has been proofread;
   the interface ships in English, Russian and Ukrainian.
+- Summoning the panel on a second monitor no longer flashes it on the
+  first one: the window maps only once the pointer's output is known.
 

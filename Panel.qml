@@ -20,6 +20,13 @@ Item {
     property var hostShell: null
     property var panelManifest: null
     property bool opened: false  // Omarchy shell-IPC: isPluginOpen reads it
+    // The surface maps only once the summon has chosen its output. The
+    // pointer's output arrives from an asynchronous probe, and a window
+    // mapped on `opened` alone draws one to three frames on whatever
+    // output it had last before it moves — the second-monitor flash.
+    // Reset on every close, so the next summon starts unmapped too; the
+    // fallback timer below keeps a failed probe from hiding the panel.
+    property bool placed: false
     property bool depsOk: true
 
     // ---- configuration ----
@@ -1014,6 +1021,26 @@ Item {
         }
     }
 
+    // The map itself, once the output is chosen (or given up on): the
+    // relayout nudge follows the map, because the exclusive zone it
+    // reflows the tiled windows against registers only with a mapped
+    // surface — nudging before the map reflows against nothing.
+    function showPlaced() {
+        placementFallback.stop()
+        if (!root.opened || root.placed) return
+        root.placed = true
+        root.nudgeHyprlandRelayout()
+    }
+    // A probe that never answers (hyprctl missing, a parse failure) must
+    // not leave the panel summoned and unmapped: after this window the
+    // panel shows on whatever output it already had, as it always did.
+    Timer {
+        id: placementFallback
+        interval: 300
+        repeat: false
+        onTriggered: root.showPlaced()
+    }
+
     function nudgeHyprlandRelayout() {
         if (root.mode !== "docked") return
         if (root.relayoutBusy) {
@@ -1414,13 +1441,17 @@ Item {
             // is already held, and no-ops entirely while following.
             if (!root.followTheme) tokens.freeze()
             root.refreshClipboardPreview()
-            root.nudgeHyprlandRelayout()
+            root.placed = false
+            placementFallback.restart()
             root.moveToPointerScreen(function (pointer, pointerScreen) {
                 if (pointerScreen) panel.screen = pointerScreen
                 root.applyFloatingPosition()
+                root.showPlaced()
             })
             return
         }
+        root.placed = false
+        placementFallback.stop()
         // A popover left open should not straddle the close: the next open
         // starts clean, and the reset-all confirmation is the popover's own
         // state, so it dies with it. The hex entry and the custom editor's
@@ -1932,7 +1963,9 @@ Item {
 
     PanelWindow {
         id: panel
-        visible: root.opened  // the shell contract's one surface flag
+        // The shell contract's one surface flag, gated on the summon's
+        // output choice (`placed`) so the first frame is on the right one.
+        visible: root.opened && root.placed
         // Docked releases the top edge so the window is exactly the strip at
         // the bottom and its height (and with it the reserved space) follows
         // the keyboard; floating keeps the full-screen transparent overlay
@@ -2926,7 +2959,7 @@ Item {
     // the band still receives clicks without a bounding-box over keys.
     PanelWindow {
         id: settingsLayer
-        visible: root.opened  // overlay window rides the same flag
+        visible: root.opened && root.placed  // overlay window rides the same gate
         screen: panel.screen
         color: "#00000000"
         anchors { top: true; bottom: true; left: true; right: true }

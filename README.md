@@ -292,9 +292,11 @@ Notes from the survey:
    hold, and a disconnect releases only that connection's claims (smoke
    covered, including two clients sharing one hold).
 
-5. **Multi-monitor summon flash.** Summoning the panel on a second monitor
-   can show it on the first one for one to three frames before it moves.
-   The fix touches the window mapping order and is scheduled on its own.
+5. ~~**Multi-monitor summon flash.**~~ **Closed.** The panel's windows map
+   only once the summon has resolved the pointer's output, so the first
+   frame is on the right monitor; a probe that never answers shows the
+   panel where it was after a short fallback. The lab's summon-output leg
+   pins it with a headless second output.
 
 ## Troubleshooting
 
