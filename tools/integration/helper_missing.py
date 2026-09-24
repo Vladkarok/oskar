@@ -8,7 +8,7 @@ the unit exists again, the hint returns to the ordinary stopped state.
 
 In the lab (the unit file is hidden and restored; the service restarts on
 exit):
-  1. hide /usr/lib/systemd/user/oskar.service, daemon-reload;
+  1. hide the unit file systemd loads (packaged or source), daemon-reload;
   2. host the real panel with no helper: the hint is "missing", action
      "install", the command is an install command;
   3. restore the unit, daemon-reload: the hint turns to stopped/"retry".
@@ -28,8 +28,11 @@ from hold_column import Failure, wait_for  # noqa: E402
 from layout_leg import LEG_DIR, Panel  # noqa: E402
 from restart_settle import LabSession  # noqa: E402
 
-UNIT = "/usr/lib/systemd/user/oskar.service"
 HIDDEN = "/var/tmp/oskar.service.hidden-by-leg"
+# Where the unit came from, recorded when it is hidden: the packaged unit
+# (/usr/lib/systemd/user) or a source install's (~/.config/systemd/user).
+UNIT_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"),
+                         "osk-helper-missing-unit")
 LAB_HOSTNAME = "testprod"
 
 
@@ -43,9 +46,19 @@ def hint(panel):
     return json.loads(line[len("hint "):])
 
 
+def move(source, target):
+    # A user-owned unit moves without sudo; the packaged one needs it.
+    if os.access(os.path.dirname(source), os.W_OK) \
+            and os.access(os.path.dirname(target), os.W_OK):
+        return sh("mv", source, target)
+    return sh("sudo", "-n", "mv", source, target)
+
+
 def restore_unit():
-    if os.path.exists(HIDDEN):
-        sh("sudo", "-n", "mv", HIDDEN, UNIT)
+    if os.path.exists(HIDDEN) and os.path.exists(UNIT_FILE):
+        with open(UNIT_FILE, encoding="utf-8") as handle:
+            move(HIDDEN, handle.read().strip())
+        os.unlink(UNIT_FILE)
     sh("systemctl", "--user", "daemon-reload")
 
 
@@ -60,8 +73,15 @@ def main():
     panel = None
     with LabSession():
         try:
-            if sh("sudo", "-n", "mv", UNIT, HIDDEN).returncode != 0:
-                raise Failure(f"cannot hide {UNIT} (passwordless sudo?)")
+            unit = sh("systemctl", "--user", "show", "oskar.service", "-p",
+                      "FragmentPath", "--value").stdout.strip()
+            if not unit:
+                raise Failure("no oskar.service unit is installed to hide")
+            with open(UNIT_FILE, "w", encoding="utf-8") as handle:
+                handle.write(unit + "\n")
+            if move(unit, HIDDEN).returncode != 0:
+                os.unlink(UNIT_FILE)
+                raise Failure(f"cannot hide {unit}")
             sh("systemctl", "--user", "daemon-reload")
             state = sh("systemctl", "--user", "show", "oskar.service",
                        "-p", "LoadState", "--value").stdout.strip()
