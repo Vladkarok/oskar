@@ -30,9 +30,9 @@ QtObject {
                 // The UI language follows the active layout until the
                 // user pins it.
                 uiLanguage: "auto",
-                // The panel answers as a mouse until a finger (or the
-                // user) says otherwise.
-                inputProfile: "auto",
+                // The panel answers as a mouse until the user says
+                // otherwise (auto and touch opt in).
+                inputProfile: "mouse",
                 capCorner: 8,
                 panelRadius: 12,
                 keyBackground: "#303030",
@@ -198,13 +198,17 @@ QtObject {
                 "Invalid value for dwell_delay_ms")
         })
 
-        T.test("the UI language is auto by default, one of four words", function () {
+        T.test("the UI language is auto by default, one of four words; the Italian draft is refused", function () {
             // "auto" follows the active layout (the shipped
             // searchPlaceholder mapping), en/ru/uk pin the UI regardless
             // of the layout. One list (UI_LANGUAGES) is the value space —
             // validation, the popover's segments and this pin cannot
             // disagree, the SUPER_MARKS rule.
-            T.deepEqual(Config.UI_LANGUAGES, ["auto", "en", "ru", "uk", "it"])
+            T.deepEqual(Config.UI_LANGUAGES, ["auto", "en", "ru", "uk"])
+            // The Italian draft is withdrawn until proofread: a pinned "it" is
+            // invalid text, kept in the file and ignored, like any junk.
+            T.equal(Config.reloadOverrides({}, '{"ui_language":"it"}').error,
+                "Invalid value for ui_language")
             var parsed = Config.reloadOverrides({}, '{"ui_language":"ru"}')
             T.equal(parsed.error, "")
             T.deepEqual(parsed.value, { uiLanguage: "ru" })
@@ -245,10 +249,11 @@ QtObject {
             T.equal(Config.reloadOverrides({}, '{"input_profile":1}').error,
                 "Invalid value for input_profile")
             // Sparse: an absent key never reaches the file, and the
-            // maintained default is auto — the mouse world until a touch
-            // is observed, exactly what shipped before the setting.
+            // maintained default is mouse — the design centre; auto (flip
+            // on the first observed touch) and touch are opt-in until the
+            // touch profile has met real hardware.
             T.equal(Config.owns(parsed.value, "mode"), false)
-            T.equal(Config.maintainerDefaults().inputProfile, "auto")
+            T.equal(Config.maintainerDefaults().inputProfile, "mouse")
         })
 
         T.test("emoji skin tone is validated UI state, not an override", function () {

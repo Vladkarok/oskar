@@ -22,16 +22,16 @@ var MODE_FLOATING = "floating"
 var SUPER_MARKS = ["word", "omarchy", "windows", "macos", "penguin"]
 var EMOJI_SKIN_TONES = ["", "🏻", "🏼", "🏽", "🏾", "🏿"]
 // The UI's language. "auto" follows the active layout (the shipped
-// searchPlaceholder mapping); en/ru/uk/it pin it, offered when the seat
+// searchPlaceholder mapping); en/ru/uk pin it, offered when the seat
 // carries the layout. One list here so validation, the popover's segments
 // and the tests cannot disagree — the SUPER_MARKS rule. The value space
 // and UiStrings.LANGUAGES move together — a shipped language the
 // validator rejects freezes the settings card, since every control stays
 // locked until the user hand-edits config.json.
-var UI_LANGUAGES = ["auto", "en", "ru", "uk", "it"]
-// The input profile. "auto" (the default) activates the touch
-// affordances when the panel observes touch events; mouse/touch pin the
-// world. One list for validation, the popover's segments and the tests —
+var UI_LANGUAGES = ["auto", "en", "ru", "uk"]
+// The input profile. "mouse" is the default: the design centre, and the
+// touch profile is proven on emulated hardware only. "auto" activates the
+// touch affordances when the panel observes touch events; "touch" pins them. One list for validation, the popover's segments and the tests —
 // the SUPER_MARKS rule.
 var INPUT_PROFILES = ["auto", "mouse", "touch"]
 var CONFIG_FIELDS = [
@@ -51,8 +51,7 @@ var CONFIG_FIELDS = [
     // The UI language override — auto (follow the active
     // layout) by default.
     { file: "ui_language", value: "uiLanguage" },
-    // The input profile — auto (touch affordances when touch
-    // events are observed) by default.
+    // The input profile — mouse by default; auto and touch opt in.
     { file: "input_profile", value: "inputProfile" },
     { file: "key_radius", value: "capCorner" },
     { file: "panel_radius", value: "panelRadius" },
@@ -98,7 +97,7 @@ function maintainerDefaults() {
         // The panel answers as a mouse until a finger (or the
         // user) says otherwise — auto observes and flips, the explicit
         // pins win (InputProfile.resolve owns the semantics).
-        inputProfile: "auto",
+        inputProfile: "mouse",
         capCorner: 8,
         panelRadius: 12,
         keyBackground: "#303030",

@@ -124,13 +124,11 @@ an independent colour schema — that remains v2.
 
 **Touch is beta.** OSKar's design centre is the mouse; the touch
 profile is new and usable but not yet polished — expect small targets
-in the emoji and settings chrome, and set Input profile to Mouse in
-Settings if
-a stray touch switches behaviour you did not want. Mouse behaviour is
-unchanged in every particular.
+in the emoji and settings chrome. It is opt-in: the default profile is
+Mouse, and nothing switches until you choose Auto or Touch in Settings.
 
-One setting, three values (**Auto** by default, or pinned to
-Mouse/Touch):
+One setting, three values (**Mouse** by default; **Auto** or **Touch**
+opt in):
 
 - **Mouse** (the design centre): hover tooltips everywhere,
   dwell-to-type (rest on a cap and it types — the accessibility
@@ -253,9 +251,8 @@ Notes from the survey:
 - **Language coupling**: any number of configured XKB layouts; typing
   and the caps follow the compositor's layout state in both directions.
   The UI ships in English, Russian and Ukrainian, following the active
-  layout (a settings override pins one), plus an Italian draft still
-  being proofread; the emoji search understands English, Russian and
-  Ukrainian keywords.
+  layout (a settings override pins one); the emoji search understands
+  English, Russian and Ukrainian keywords.
 - **Not tested**: real-hardware sleep/wake (the lab VM cannot suspend);
   real touchscreen hardware (the touch profile is emulator- and
   Qt-synthesis-proven; see Input profile below).

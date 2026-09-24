@@ -2,7 +2,7 @@
 
 // The UI string table: every word the panel draws as chrome —
 // tooltips, accessible names, settings labels and hints, status lines —
-// lives here behind an id, carried in the four languages we ship. The
+// lives here behind an id, carried in the three languages we ship. The
 // panel's QML holds no English of its own; what it draws is
 // UiStrings.tr(id, lang). Keymap-derived text (cap glyphs, layout titles,
 // the catalogue's emoji names) is data, not chrome, and never passes
@@ -10,10 +10,10 @@
 //
 // The language is the ACTIVE LAYOUT with an override on top — the
 // searchPlaceholder mechanism (EmojiPage.js) generalised:
-// "auto" (the default) answers uk for a ua layout, ru for ru, it for
-// an it layout, English for everything else; the settings row pins a language only when the
-// seat carries its layout (Auto and English always,
-// ru/uk/it appear only when installed). A language we do not ship reads as English rather than a
+// "auto" (the default) answers uk for a ua layout, ru for ru, English
+// for everything else; the settings row pins a language only when the
+// seat carries its layout (Auto and English always, ru/uk only when
+// installed). A language we do not ship reads as English rather than a
 // guess, exactly like the placeholder always did for a custom code.
 //
 // The table is data and fails loudly: an id that is absent or empty
@@ -22,244 +22,209 @@
 // QML) instead of rendering a blank at first hover in production.
 // Substitution is Qt's qsTr idiom — "%1", "%2" filled in order.
 
-var LANGUAGES = ["en", "ru", "uk", "it"]
+// The Italian draft is withdrawn until it is proofread: its strings live in
+// docs/archive/UiStrings.it.draft.js (private, one object keyed by id) and return
+// here as a fourth `it:` entry per id once the owner has read them.
+var LANGUAGES = ["en", "ru", "uk"]
 
 var STRINGS = {
     // ---- the header's status lines ----
     "hint.clipboardGone": {
         en: "Clipboard content is no longer available",
         ru: "Содержимое буфера обмена больше недоступно",
-        uk: "Вміст буфера обміну більше недоступний",
-        it: "Il contenuto degli appunti non è più disponibile"
+        uk: "Вміст буфера обміну більше недоступний"
     },
     "hint.pickRefused": {
         en: "Too many picks in a row — try again in a moment",
         ru: "Слишком много быстрых выборов — попробуйте ещё раз через мгновение",
-        uk: "Забагато швидких виборів — спробуйте ще за мить",
-        it: "Troppe scelte di fila — riprova tra un istante"
+        uk: "Забагато швидких виборів — спробуйте ще за мить"
     },
     "hint.pickFailed": {
         en: "The pick did not go through — try again in a moment",
         ru: "Выбор не прошёл — попробуйте ещё раз через мгновение",
-        uk: "Вибір не пройшов — спробуйте ще за мить",
-        it: "La scelta non è andata a buon fine — riprova tra un istante"
+        uk: "Вибір не пройшов — спробуйте ще за мить"
     },
     "hint.pasteBusy": {
         en: "Paste did not start — try again in a moment",
         ru: "Вставка не началась — попробуйте ещё раз через мгновение",
-        uk: "Вставка не почалася — спробуйте ще за мить",
-        it: "Incolla non è partito — riprova tra un istante"
+        uk: "Вставка не почалася — спробуйте ще за мить"
     },
     "hint.langMenuBlocked": {
         en: "Close the open page first — then switch language",
         ru: "Сначала закройте открытую страницу — потом смените язык",
-        uk: "Спочатку закрийте відкриту сторінку — потім змініть мову",
-        it: "Chiudi prima la pagina aperta — poi cambia lingua"
+        uk: "Спочатку закрийте відкриту сторінку — потім змініть мову"
     },
     "hint.needsUpdate": {
         en: "oskar.service needs updating",
         ru: "oskar.service требует обновления",
-        uk: "oskar.service потребує оновлення",
-        it: "oskar.service va aggiornato"
+        uk: "oskar.service потребує оновлення"
     },
     "hint.notInstalled": {
         en: "oskar.service is not installed",
         ru: "oskar.service не установлен",
-        uk: "oskar.service не встановлено",
-        it: "oskar.service non è installato"
+        uk: "oskar.service не встановлено"
     },
     "hint.notRunning": {
         en: "oskar.service is not running",
         ru: "oskar.service не работает",
-        uk: "oskar.service не запущено",
-        it: "oskar.service non è in esecuzione"
+        uk: "oskar.service не запущено"
     },
     "hint.keymapUnavailable": {
         en: "Keymap unavailable — drawn caps may not match what typing produces",
         ru: "Раскладка недоступна — нарисованные клавиши могут не совпадать с тем, что вводится",
-        uk: "Розкладка недоступна — намальовані клавіші можуть не збігатися з тим, що вводиться",
-        it: "Layout non disponibile — i tasti disegnati potrebbero non corrispondere a ciò che viene digitato"
+        uk: "Розкладка недоступна — намальовані клавіші можуть не збігатися з тим, що вводиться"
     },
     "hint.shareFailed": {
         en: "Layout sync with the compositor failed — apps may flip layouts until the next switch",
         ru: "Не удалось синхронизировать раскладку с композитором — в приложениях раскладка может сбиваться до следующего переключения",
-        uk: "Не вдалося синхронізувати розкладку з композитором — у застосунках розкладка може збиватися до наступного перемикання",
-        it: "Sincronizzazione del layout con il compositor non riuscita — le app potrebbero cambiare layout fino al prossimo cambio"
+        uk: "Не вдалося синхронізувати розкладку з композитором — у застосунках розкладка може збиватися до наступного перемикання"
     },
     "hint.saveFailed": {
         en: "Settings were not saved — check free space and permissions",
         ru: "Настройки не сохранены — проверьте свободное место и права",
-        uk: "Налаштування не збережено — перевірте вільне місце та права",
-        it: "Impostazioni non salvate — verifica spazio e permessi"
+        uk: "Налаштування не збережено — перевірте вільне місце та права"
     },
     "banner.deps.fetching": {
         en: "Fetching missing components\u2026",
         ru: "Получаю недостающие компоненты\u2026",
-        uk: "Отримую відсутні компоненти\u2026",
-        it: "Recupero i componenti mancanti…"
+        uk: "Отримую відсутні компоненти\u2026"
     },
     "banner.deps.missing": {
         en: "Missing input components",
         ru: "Не хватает компонентов ввода",
-        uk: "Бракує компонентів вводу",
-        it: "Componenti di input mancanti"
+        uk: "Бракує компонентів вводу"
     },
     "banner.deps.busy": {
         en: "Busy\u2026",
         ru: "Занято\u2026",
-        uk: "Зайнято\u2026",
-        it: "Occupato…"
+        uk: "Зайнято\u2026"
     },
     "banner.deps.setup": {
         en: "Set up",
         ru: "Настроить",
-        uk: "Налаштувати",
-        it: "Configura"
+        uk: "Налаштувати"
     },
     "color.slider.hue": {
         en: "Hue",
         ru: "Тон",
-        uk: "Тон",
-        it: "Tonal"
+        uk: "Тон"
     },
     "color.slider.sat": {
         en: "Sat",
         ru: "Нас",
-        uk: "Нас",
-        it: "Satur"
+        uk: "Нас"
     },
     "color.slider.val": {
         en: "Val",
         ru: "Ярк",
-        uk: "Яскр",
-        it: "Lum"
+        uk: "Яскр"
     },
     "color.slider.red": {
         en: "Red",
         ru: "Красн",
-        uk: "Черв",
-        it: "Ross"
+        uk: "Черв"
     },
     "color.slider.green": {
         en: "Green",
         ru: "Зел",
-        uk: "Зелен",
-        it: "Verd"
+        uk: "Зелен"
     },
     "color.slider.blue": {
         en: "Blue",
         ru: "Син",
-        uk: "Син",
-        it: "Blu"
+        uk: "Син"
     },
     "hint.starting": {
         en: "Starting oskar.service…",
         ru: "Запуск oskar.service…",
-        uk: "Запуск oskar.service…",
-        it: "Avvio di oskar.service…"
+        uk: "Запуск oskar.service…"
     },
 
     // ---- the header's action chips ----
     "action.copy": {
         en: "Copy",
         ru: "Копировать",
-        uk: "Копіювати",
-        it: "Copia"
+        uk: "Копіювати"
     },
     "action.retry": {
         en: "Retry",
         ru: "Повторить",
-        uk: "Повторити",
-        it: "Riprova"
+        uk: "Повторити"
     },
 
     // ---- bar chrome ----
     "tooltip.settings": {
         en: "Settings",
         ru: "Настройки",
-        uk: "Налаштування",
-        it: "Impostazioni"
+        uk: "Налаштування"
     },
     "tooltip.closeKeyboard": {
         en: "Close keyboard",
         ru: "Закрыть клавиатуру",
-        uk: "Закрити клавіатуру",
-        it: "Chiudi la tastiera"
+        uk: "Закрити клавіатуру"
     },
     "tooltip.paste": {
         en: "Paste clipboard",
         ru: "Вставить из буфера",
-        uk: "Вставити з буфера",
-        it: "Incolla dagli appunti"
+        uk: "Вставити з буфера"
     },
     "access.paste": {
         en: "Paste",
         ru: "Вставить",
-        uk: "Вставити",
-        it: "Incolla"
+        uk: "Вставити"
     },
     // %1 is the layout's own title (keymap data, never translated here).
     "access.currentLayout": {
         en: "%1 (current)",
         ru: "%1 (текущая)",
-        uk: "%1 (поточна)",
-        it: "%1 (corrente)"
+        uk: "%1 (поточна)"
     },
     "access.switchTo": {
         en: "Switch to %1",
         ru: "Переключить на %1",
-        uk: "Перемкнути на %1",
-        it: "Passa a %1"
+        uk: "Перемкнути на %1"
     },
 
     // ---- the settings card ----
     "settings.title": {
         en: "Settings",
         ru: "Настройки",
-        uk: "Налаштування",
-        it: "Impostazioni"
+        uk: "Налаштування"
     },
     "settings.section.mode": {
         en: "MODE",
         ru: "РЕЖИМ",
-        uk: "РЕЖИМ",
-        it: "MODALITÀ"
+        uk: "РЕЖИМ"
     },
     "settings.row.mode": {
         en: "Mode",
         ru: "Режим",
-        uk: "Режим",
-        it: "Modalità"
+        uk: "Режим"
     },
     "mode.chip.tooltip": {
         en: "Toggle docked / floating",
         ru: "Закреплённая / плавающая",
-        uk: "Закріплена / плаваюча",
-        it: "Ancorata / flottante"
+        uk: "Закріплена / плаваюча"
     },
     "settings.mode.docked": {
         en: "Docked",
         ru: "Закреплена",
-        uk: "Закріплена",
-        it: "Ancorata"
+        uk: "Закріплена"
     },
     "settings.mode.floating": {
         en: "Floating",
         ru: "Плавающая",
-        uk: "Плаваюча",
-        it: "Flottante"
+        uk: "Плаваюча"
     },
     "settings.section.size": {
         en: "SIZE",
         ru: "РАЗМЕР",
-        uk: "РОЗМІР",
-        it: "DIMENSIONE"
+        uk: "РОЗМІР"
     },
     "settings.row.size": {
         en: "Size",
         ru: "Размер",
-        uk: "Розмір",
-        it: "Dimensione"
+        uk: "Розмір"
     },
     // The override this whole module hangs off.
     // The segment labels beside it are language endonyms (English,
@@ -268,20 +233,17 @@ var STRINGS = {
     "settings.section.language": {
         en: "LANGUAGE",
         ru: "ЯЗЫК",
-        uk: "МОВА",
-        it: "LINGUA"
+        uk: "МОВА"
     },
     "settings.row.language": {
         en: "Interface language",
         ru: "Язык интерфейса",
-        uk: "Мова інтерфейсу",
-        it: "Lingua dell'interfaccia"
+        uk: "Мова інтерфейсу"
     },
     "settings.lang.auto": {
         en: "Auto",
         ru: "Авто",
-        uk: "Авто",
-        it: "Auto"
+        uk: "Авто"
     },
 
     // ---- the input profile ----
@@ -293,50 +255,42 @@ var STRINGS = {
     "settings.section.input": {
         en: "INPUT",
         ru: "ВВОД",
-        uk: "ВВЕДЕННЯ",
-        it: "INPUT"
+        uk: "ВВЕДЕННЯ"
     },
     "settings.row.inputProfile": {
         en: "Pointer profile",
         ru: "Профиль ввода",
-        uk: "Профіль введення",
-        it: "Profilo di input"
+        uk: "Профіль введення"
     },
     "settings.profile.autoTouch": {
         en: "Auto+touch",
         ru: "Авто+тач",
-        uk: "Авто+тач",
-        it: "Auto+tatt"
+        uk: "Авто+тач"
     },
     "settings.profile.auto": {
         en: "Auto",
         ru: "Авто",
-        uk: "Авто",
-        it: "Auto"
+        uk: "Авто"
     },
     "settings.profile.mouse": {
         en: "Mouse",
         ru: "Мышь",
-        uk: "Мишка",
-        it: "Mouse"
+        uk: "Мишка"
     },
     "settings.profile.touch": {
         en: "Touch",
         ru: "Сенсор",
-        uk: "Сенсор",
-        it: "Tattile"
+        uk: "Сенсор"
     },
     "settings.section.emoji": {
         en: "EMOJI PAGE",
         ru: "СТРАНИЦА ЭМОДЗИ",
-        uk: "СТОРІНКА ЕМОДЗІ",
-        it: "PAGINA EMOJI"
+        uk: "СТОРІНКА ЕМОДЗІ"
     },
     "settings.row.emojiPicking": {
         en: "Emoji picking",
         ru: "Выбор эмодзи",
-        uk: "Вибір емодзі",
-        it: "Scelta emoji"
+        uk: "Вибір емодзі"
     },
     // The pair names the behaviour after a pick, short enough for the
     // 70px segments the two-way control slices ("Оставить" is 58px at
@@ -344,20 +298,17 @@ var STRINGS = {
     "settings.emoji.keepOpen": {
         en: "Keep open",
         ru: "Оставить",
-        uk: "Залишити",
-        it: "Lascia"
+        uk: "Залишити"
     },
     "settings.emoji.close": {
         en: "Close",
         ru: "Закрыть",
-        uk: "Закрити",
-        it: "Chiudi"
+        uk: "Закрити"
     },
     "settings.row.emojiPageSize": {
         en: "Emoji page size",
         ru: "Размер страницы эмодзи",
-        uk: "Розмір сторінки емодзі",
-        it: "Dimensione pagina emoji"
+        uk: "Розмір сторінки емодзі"
     },
     // The free-drag ticket's row: whether the page can be dragged. The
     // segment pair names the behaviour, short enough for the two-way
@@ -365,172 +316,144 @@ var STRINGS = {
     "settings.row.emojiDrag": {
         en: "Emoji page dragging",
         ru: "Перетаскивание страницы",
-        uk: "Перетягування сторінки",
-        it: "Trascinamento pagina"
+        uk: "Перетягування сторінки"
     },
     "settings.emojiDrag.inPlace": {
         en: "In place",
         ru: "На месте",
-        uk: "На місці",
-        it: "Fissa"
+        uk: "На місці"
     },
     "settings.emojiDrag.movable": {
         en: "Draggable",
         ru: "Подвижна",
-        uk: "Рухома",
-        it: "Mobile"
+        uk: "Рухома"
     },
     "settings.section.superMark": {
         en: "SUPER MARK",
         ru: "МЕТКА SUPER",
-        uk: "МІТКА SUPER",
-        it: "MARCA SUPER"
+        uk: "МІТКА SUPER"
     },
     "settings.row.superMark": {
         en: "Super mark",
         ru: "Метка Super",
-        uk: "Мітка Super",
-        it: "Marca Super"
+        uk: "Мітка Super"
     },
     // Omarchy, Windows and macOS are names; the word and the penguin
     // are ours to say.
     "settings.superMark.word": {
         en: "Word",
         ru: "Слово",
-        uk: "Слово",
-        it: "Parola"
+        uk: "Слово"
     },
     "settings.superMark.penguin": {
         en: "Penguin",
         ru: "Пингвин",
-        uk: "Пінгвін",
-        it: "Pinguino"
+        uk: "Пінгвін"
     },
     "settings.section.sound": {
         en: "SOUND",
         ru: "ЗВУК",
-        uk: "ЗВУК",
-        it: "SUONO"
+        uk: "ЗВУК"
     },
     "settings.row.sound": {
         en: "Key click sound",
         ru: "Звук нажатия",
-        uk: "Звук натискання",
-        it: "Suono del tasto"
+        uk: "Звук натискання"
     },
     "settings.sound.unavailable": {
         en: "unavailable",
         ru: "недоступен",
-        uk: "недоступний",
-        it: "non disponibile"
+        uk: "недоступний"
     },
     "settings.section.theme": {
         en: "THEME",
         ru: "ТЕМА",
-        uk: "ТЕМА",
-        it: "TEMA"
+        uk: "ТЕМА"
     },
     "settings.row.followTheme": {
         en: "Follow Omarchy theme",
         ru: "Следовать теме Omarchy",
-        uk: "Слідувати темі Omarchy",
-        it: "Segui il tema Omarchy"
+        uk: "Слідувати темі Omarchy"
     },
     "settings.section.dwell": {
         en: "DWELL",
         ru: "ЗАДЕРЖКА",
-        uk: "ЗАТРИМКА",
-        it: "SOSTA"
+        uk: "ЗАТРИМКА"
     },
     "settings.row.dwellTyping": {
         en: "Dwell typing",
         ru: "Ввод по задержке",
-        uk: "Ввід із затримкою",
-        it: "Digitazione per sosta"
+        uk: "Ввід із затримкою"
     },
     "settings.row.dwellDelay": {
         en: "Dwell delay",
         ru: "Задержка ввода",
-        uk: "Затримка вводу",
-        it: "Ritardo della sosta"
+        uk: "Затримка вводу"
     },
     "settings.hint.dwellDelay": {
         en: "Rest a key this long to type it; resting past the type opens its hold-column menu",
         ru: "Сколько указатель должен покоиться на клавише, чтобы нажать её; дальнейший покой открывает меню удержания",
-        uk: "Скільки вказівник має спокоюватися на клавіші, щоб натиснутися; триваліший спокій відкриває меню утримання",
-        it: "Quanto a lungo il puntatore deve restare su un tasto per premerlo; restare oltre apre il menu di pressione"
+        uk: "Скільки вказівник має спокоюватися на клавіші, щоб натиснутися; триваліший спокій відкриває меню утримання"
     },
     "settings.section.appearance": {
         en: "APPEARANCE",
         ru: "ВНЕШНИЙ ВИД",
-        uk: "ВИГЛЯД",
-        it: "ASPETTO"
+        uk: "ВИГЛЯД"
     },
     "settings.hint.followingOn": {
         en: "Following the Omarchy theme — an override pins its own field",
         ru: "Следует теме Omarchy — переопределение закрепляет только своё поле",
-        uk: "Слідує темі Omarchy — перевизначення закріплює лише своє поле",
-        it: "Segue il tema Omarchy — una personalizzazione fissa solo il proprio campo"
+        uk: "Слідує темі Omarchy — перевизначення закріплює лише своє поле"
     },
     "settings.hint.followingOff": {
         en: "Theme following is off — appearance holds the look it had",
         ru: "Следование теме отключено — вид остаётся прежним",
-        uk: "Слідування темі вимкнено — вигляд лишається незмінним",
-        it: "Seguire il tema è disattivato — l'aspetto resta com'era"
+        uk: "Слідування темі вимкнено — вигляд лишається незмінним"
     },
     "settings.row.keyRadius": {
         en: "Key radius",
         ru: "Радиус клавиш",
-        uk: "Радіус клавіш",
-        it: "Raggio dei tasti"
+        uk: "Радіус клавіш"
     },
     "settings.hint.keyRadius": {
         en: "0–24 relative to M; 24 stays a circle at L and XL",
         ru: "0–24 относительно M; при L и XL 24 остаётся кругом",
-        uk: "0–24 відносно M; на L і XL 24 лишається колом",
-        it: "0–24 relativo a M; a L ed XL 24 resta un cerchio"
+        uk: "0–24 відносно M; на L і XL 24 лишається колом"
     },
     "settings.row.panelRadius": {
         en: "Panel radius",
         ru: "Радиус панели",
-        uk: "Радіус панелі",
-        it: "Raggio del pannello"
+        uk: "Радіус панелі"
     },
     "settings.row.keyBackground": {
         en: "Key background",
         ru: "Фон клавиш",
-        uk: "Фон клавіш",
-        it: "Sfondo dei tasti"
+        uk: "Фон клавіш"
     },
     "settings.row.panelBackground": {
         en: "Panel background",
         ru: "Фон панели",
-        uk: "Фон панелі",
-        it: "Sfondo del pannello"
+        uk: "Фон панелі"
     },
     "settings.row.textColor": {
         en: "Text colour",
         ru: "Цвет текста",
-        uk: "Колір тексту",
-        it: "Colore del testo"
+        uk: "Колір тексту"
     },
     "settings.row.accentColor": {
         en: "Accent colour",
         ru: "Акцентный цвет",
-        uk: "Акцентний колір",
-        it: "Colore d'accento"
+        uk: "Акцентний колір"
     },
     "settings.row.borderColor": {
         en: "Border colour",
         ru: "Цвет границы",
-        uk: "Колір рамки",
-        it: "Colore del bordo"
+        uk: "Колір рамки"
     },
     "settings.hint.hex": {
         en: "Hex fields accept #RGB / #RRGGBB (an alpha form too); the check commits the draft. Type with the keyboard.",
         ru: "Поля принимают #RGB / #RRGGBB (и с альфа-каналом); галочка применяет черновик. Вводите с клавиатуры.",
-        uk: "Поля приймають #RGB / #RRGGBB (також із альфа-каналом); галочка застосовує чернетку. Уводьте з клавіатури.",
-        it: "I campi esadecimali accettano #RGB / #RRGGBB (anche con alfa); la spunta applica la bozza. Digita dalla tastiera."
+        uk: "Поля приймають #RGB / #RRGGBB (також із альфа-каналом); галочка застосовує чернетку. Уводьте з клавіатури."
     },
     // %1 is the store's own diagnostic (Config.js's parse error, English
     // by contract — it names the file and the bad key, near-technical
@@ -538,74 +461,62 @@ var STRINGS = {
     "settings.hint.configError": {
         en: "config.json: %1 — showing the last valid settings; fix the file to change them",
         ru: "config.json: %1 — показаны последние верные настройки; исправьте файл, чтобы изменить их",
-        uk: "config.json: %1 — показано останні чинні налаштування; виправте файл, щоб їх змінити",
-        it: "config.json: %1 — mostro le ultime impostazioni valide; correggi il file per cambiarle"
+        uk: "config.json: %1 — показано останні чинні налаштування; виправте файл, щоб їх змінити"
     },
     "settings.hint.stateError": {
         en: "state.json: %1 — showing the last valid state; fix the file to change it",
         ru: "state.json: %1 — показано последнее верное состояние; исправьте файл, чтобы изменить его",
-        uk: "state.json: %1 — показано останній чинний стан; виправте файл, щоб його змінити",
-        it: "state.json: %1 — mostro l'ultimo stato valido; correggi il file per cambiarlo"
+        uk: "state.json: %1 — показано останній чинний стан; виправте файл, щоб його змінити"
     },
     "settings.resetAll": {
         en: "Reset all",
         ru: "Сбросить всё",
-        uk: "Скинути все",
-        it: "Ripristina tutto"
+        uk: "Скинути все"
     },
     "settings.resetAllConfirm": {
         en: "Reset every override?",
         ru: "Сбросить все переопределения?",
-        uk: "Скинути всі перевизначення?",
-        it: "Ripristinare ogni personalizzazione?"
+        uk: "Скинути всі перевизначення?"
     },
     "settings.reset": {
         en: "Reset",
         ru: "Сбросить",
-        uk: "Скинути",
-        it: "Ripristina"
+        uk: "Скинути"
     },
     "settings.keep": {
         en: "Keep",
         ru: "Оставить",
-        uk: "Залишити",
-        it: "Mantieni"
+        uk: "Залишити"
     },
     "settings.decrease": {
         en: "Decrease",
         ru: "Уменьшить",
-        uk: "Зменшити",
-        it: "Riduci"
+        uk: "Зменшити"
     },
     "settings.increase": {
         en: "Increase",
         ru: "Увеличить",
-        uk: "Збільшити",
-        it: "Aumenta"
+        uk: "Збільшити"
     },
     "access.decreaseValue": {
         en: "Decrease value",
         ru: "Уменьшить значение",
-        uk: "Зменшити значення",
-        it: "Riduci il valore"
+        uk: "Зменшити значення"
     },
     "access.increaseValue": {
         en: "Increase value",
         ru: "Увеличить значение",
-        uk: "Збільшити значення",
-        it: "Aumenta il valore"
+        uk: "Збільшити значення"
     },
     "access.resetSetting": {
         en: "Reset this setting",
         ru: "Сбросить этот параметр",
-        uk: "Скинути цей параметр",
-        it: "Ripristina questa impostazione"
+        uk: "Скинути цей параметр"
     },
     "common.custom": {
         en: "Custom",
         ru: "Другой",
-        uk: "Інший",
-        it: "Personalizzato"
+        uk: "Інший"
     },
 
     // ---- the colour rows and the custom editor ----
@@ -613,62 +524,52 @@ var STRINGS = {
     "color.currently": {
         en: "%1 is currently %2",
         ru: "%1 сейчас: %2",
-        uk: "%1 зараз: %2",
-        it: "%1 al momento è %2"
+        uk: "%1 зараз: %2"
     },
     "color.setTo": {
         en: "Set %1 to %2",
         ru: "Установить %1: %2",
-        uk: "Встановити %1: %2",
-        it: "Imposta %1: %2"
+        uk: "Встановити %1: %2"
     },
     "color.openEditor": {
         en: "Open the custom colour editor for %1",
         ru: "Открыть редактор цвета для %1",
-        uk: "Відкрити редактор кольору для %1",
-        it: "Apri l'editor dei colori per %1"
+        uk: "Відкрити редактор кольору для %1"
     },
     "color.confirmHex": {
         en: "Confirm %1 hex",
         ru: "Применить hex для %1",
-        uk: "Застосувати hex для %1",
-        it: "Applica l'hex per %1"
+        uk: "Застосувати hex для %1"
     },
     "color.invalidHex": {
         en: "invalid hex — use #RGB or #RRGGBB",
         ru: "неверный hex — используйте #RGB или #RRGGBB",
-        uk: "хибний hex — використовуйте #RGB або #RRGGBB",
-        it: "hex non valido — usa #RGB o #RRGGBB"
+        uk: "хибний hex — використовуйте #RGB або #RRGGBB"
     },
     "color.editor.title": {
         en: "Edit colors",
         ru: "Редактирование цвета",
-        uk: "Редагування кольору",
-        it: "Modifica colori"
+        uk: "Редагування кольору"
     },
     "color.editor.cancelDraft": {
         en: "Cancel the custom colour draft",
         ru: "Отменить черновик цвета",
-        uk: "Скасувати чернетку кольору",
-        it: "Annulla la bozza del colore"
+        uk: "Скасувати чернетку кольору"
     },
     "color.editor.confirm": {
         en: "Confirm the custom %1 colour",
         ru: "Применить свой цвет для %1",
-        uk: "Застосувати власний колір для %1",
-        it: "Applica il colore personalizzato per %1"
+        uk: "Застосувати власний колір для %1"
     },
     "color.editor.cancelEdit": {
         en: "Cancel colour edit",
         ru: "Отменить изменение цвета",
-        uk: "Скасувати редагування кольору",
-        it: "Annulla la modifica del colore"
+        uk: "Скасувати редагування кольору"
     },
     "color.editor.invalid": {
         en: "invalid",
         ru: "неверно",
-        uk: "хибно",
-        it: "non valido"
+        uk: "хибно"
     },
 
     // ---- the emoji page ----
@@ -676,91 +577,77 @@ var STRINGS = {
     "emoji.searchPlaceholder": {
         en: "Search",
         ru: "Поиск",
-        uk: "Пошук",
-        it: "Cerca"
+        uk: "Пошук"
     },
     "emoji.clearSearch": {
         en: "Clear search",
         ru: "Очистить поиск",
-        uk: "Очистити пошук",
-        it: "Cancella la ricerca"
+        uk: "Очистити пошук"
     },
     // The free-drag strip's hover help (the strip is the keyboard card's
     // drag grammar wearing a new host).
     "emoji.dragStrip": {
         en: "Drag to move the page",
         ru: "Перетащите, чтобы переместить страницу",
-        uk: "Перетягніть, щоб перемістити сторінку",
-        it: "Trascina per spostare la pagina"
+        uk: "Перетягніть, щоб перемістити сторінку"
     },
     "emoji.chooseTone": {
         en: "Choose skin tone",
         ru: "Выбрать тон кожи",
-        uk: "Вибрати тон шкіри",
-        it: "Scegli il tono della pelle"
+        uk: "Вибрати тон шкіри"
     },
     "emoji.mostFrequent": {
         en: "Most Frequent",
         ru: "Частые",
-        uk: "Часті",
-        it: "Frequenti"
+        uk: "Часті"
     },
     "emoji.recent": {
         en: "Recent",
         ru: "Недавние",
-        uk: "Нещодавні",
-        it: "Recenti"
+        uk: "Нещодавні"
     },
     "emoji.noMatches": {
         en: "No matches",
         ru: "Ничего не найдено",
-        uk: "Нічого не знайдено",
-        it: "Nessun risultato"
+        uk: "Нічого не знайдено"
     },
     // %1 is the emoji's own catalogue name (data, always English).
     "access.insert": {
         en: "Insert %1",
         ru: "Вставить %1",
-        uk: "Вставити %1",
-        it: "Inserisci %1"
+        uk: "Вставити %1"
     },
     // The tone picker's names; EmojiPage.js's table keeps the English
     // label as data and toneNameId maps each value here.
     "emoji.tone.default": {
         en: "Default skin tone",
         ru: "Стандартный тон кожи",
-        uk: "Стандартний тон шкіри",
-        it: "Tono della pelle predefinito"
+        uk: "Стандартний тон шкіри"
     },
     "emoji.tone.light": {
         en: "Light skin tone",
         ru: "Светлый тон кожи",
-        uk: "Світлий тон шкіри",
-        it: "Tono della pelle chiaro"
+        uk: "Світлий тон шкіри"
     },
     "emoji.tone.mediumLight": {
         en: "Medium-light skin tone",
         ru: "Средне-светлый тон кожи",
-        uk: "Середньо-світлий тон шкіри",
-        it: "Tono della pelle medio-chiaro"
+        uk: "Середньо-світлий тон шкіри"
     },
     "emoji.tone.medium": {
         en: "Medium skin tone",
         ru: "Средний тон кожи",
-        uk: "Середній тон шкіри",
-        it: "Tono della pelle medio"
+        uk: "Середній тон шкіри"
     },
     "emoji.tone.mediumDark": {
         en: "Medium-dark skin tone",
         ru: "Средне-тёмный тон кожи",
-        uk: "Середньо-темний тон шкіри",
-        it: "Tono della pelle medio-scuro"
+        uk: "Середньо-темний тон шкіри"
     },
     "emoji.tone.dark": {
         en: "Dark skin tone",
         ru: "Тёмный тон кожи",
-        uk: "Темний тон шкіри",
-        it: "Tono della pelle scuro"
+        uk: "Темний тон шкіри"
     }
 }
 
@@ -790,7 +677,6 @@ function languageFor(layoutCode, override, layoutCodes) {
     var code = String(layoutCode || "").toLowerCase()
     if (code === "ua") return "uk"
     if (code === "ru") return "ru"
-    if (code === "it") return "it"
     return "en"
 }
 
@@ -809,7 +695,6 @@ function languageChoices(layoutCodes) {
     var out = ["auto", "en"]
     if (lower.indexOf("ru") !== -1) out.push("ru")
     if (lower.indexOf("ua") !== -1) out.push("uk")
-    if (lower.indexOf("it") !== -1) out.push("it")
     return out
 }
 
