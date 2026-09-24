@@ -99,6 +99,14 @@ registration_link_text() {
   readlink "$REGISTRATION"
 }
 
+# `omarchy plugin add` clones the repo straight into the registration path,
+# so the registration is a real directory that IS this install's payload:
+# already registered, and removed by `omarchy plugin remove`, not by us.
+registration_is_payload_clone() {
+  [[ -d "$REGISTRATION" && ! -L "$REGISTRATION" ]] || return 1
+  [[ "$(cd "$REGISTRATION" && pwd -P)" == "$(cd "$PAYLOAD" 2>/dev/null && pwd -P)" ]]
+}
+
 graphical_session_active() {
   systemctl --user --quiet is-active graphical-session.target 2>/dev/null
 }
@@ -281,6 +289,10 @@ migrate_old_world_if_found() {
 ensure_registration() {
   local target
   target="$(registration_target)"
+  if registration_is_payload_clone; then
+    say "plugin registration is this install's own clone (omarchy plugin add)"
+    return
+  fi
   [[ -e "$REGISTRATION" && ! -L "$REGISTRATION" ]] && \
     die "$REGISTRATION is a real directory (a git clone or a checkout); \
 this script manages symlinks only — remove or rename it yourself if you \
@@ -427,7 +439,10 @@ cmd_status() {
   detect_mode
   local payload_state="present" reg target kind="absent"
   [[ -d "$PAYLOAD" ]] || payload_state="MISSING"
-  if [[ -e "$REGISTRATION" && ! -L "$REGISTRATION" ]]; then
+  if registration_is_payload_clone; then
+    kind="plugin clone (this install)"
+    target="$(cd "$REGISTRATION" && pwd)"
+  elif [[ -e "$REGISTRATION" && ! -L "$REGISTRATION" ]]; then
     kind="directory (not ours to manage)"
     target="$(cd "$REGISTRATION" && pwd)"
   elif [[ -L "$REGISTRATION" ]]; then
@@ -498,7 +513,9 @@ cmd_teardown() {
   systemctl --user disable --now "$UNIT" >/dev/null 2>&1 \
     && say "unit disabled and stopped" \
     || say "unit already inactive"
-  if [[ -e "$REGISTRATION" && ! -L "$REGISTRATION" ]]; then
+  if registration_is_payload_clone; then
+    say "the plugin clone stays; remove it with: omarchy plugin remove $PLUGIN_ID"
+  elif [[ -e "$REGISTRATION" && ! -L "$REGISTRATION" ]]; then
     warn "$REGISTRATION is a real directory; left untouched"
   elif [[ -L "$REGISTRATION" ]]; then
     local target text
@@ -633,7 +650,11 @@ doctor_mode() {
     doc_fail "$what" "the $MODE payload $PAYLOAD is MISSING (removed under \
 a live install?); try: reinstall the $MODE payload, then oskar setup"
   fi
-  if [[ -e "$DOCTOR_REG" && ! -L "$DOCTOR_REG" ]]; then
+  if [[ -d "$DOCTOR_REG" && ! -L "$DOCTOR_REG" \
+        && "$(cd "$DOCTOR_REG" && pwd -P)" == "$(cd "$PAYLOAD" 2>/dev/null && pwd -P)" ]]; then
+    doc_ok "$what" "$MODE (self: $SELF); the registration is this install's \
+own clone (omarchy plugin add)"
+  elif [[ -e "$DOCTOR_REG" && ! -L "$DOCTOR_REG" ]]; then
     doc_fail "$what" "$DOCTOR_REG is a real directory (a git clone or a \
 checkout), so the shell loads THAT, not the $MODE payload $PAYLOAD; try: \
 remove or rename the directory, then oskar setup"
@@ -704,12 +725,12 @@ from /usr/bin/oskar, or remove the package)"
   # old PATH shadow, the old package's unit file. An old unit under
   # ~/.config would override the packaged one exactly like the legacy
   # source case above; an old registration keeps a second-era plugin in
-  # the shell's list. Data dirs alone (a kept ~/.config/omarchy-osk) are
-  # the user's and do not fail this check.
+  # the shell's list. Data dirs alone (a kept ~/.config/omarchy-osk) count
+  # too: setup moves them to the new names.
   local oldworld="old-world leftovers"
   if old_world_found; then
     doc_fail "$oldworld" "an omarchy-osk-era install still stands (old \
-unit, registration, PATH shadow or package); try: oskar setup (it \
+unit, registration, PATH shadow, package or data dirs); try: oskar setup (it \
 migrates the old world), then remove the old package if pacman lists it"
   else
     doc_ok "$oldworld" "no omarchy-osk-era unit, registration or shadow"

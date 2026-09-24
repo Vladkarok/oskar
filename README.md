@@ -253,8 +253,9 @@ Notes from the survey:
 - **Language coupling**: any number of configured XKB layouts; typing
   and the caps follow the compositor's layout state in both directions.
   The UI ships in English, Russian and Ukrainian, following the active
-  layout (a settings override pins one); the emoji search understands
-  English, Russian and Ukrainian keywords.
+  layout (a settings override pins one), plus an Italian draft still
+  being proofread; the emoji search understands English, Russian and
+  Ukrainian keywords.
 - **Not tested**: real-hardware sleep/wake (the lab VM cannot suspend);
   real touchscreen hardware (the touch profile is emulator- and
   Qt-synthesis-proven; see Input profile below).
@@ -293,6 +294,10 @@ Notes from the survey:
    never claimed the code is refused, a tap cannot lift another connection's
    hold, and a disconnect releases only that connection's claims (smoke
    covered, including two clients sharing one hold).
+
+5. **Multi-monitor summon flash.** Summoning the panel on a second monitor
+   can show it on the first one for one to three frames before it moves.
+   The fix touches the window mapping order and is scheduled on its own.
 
 ## Troubleshooting
 
@@ -342,8 +347,28 @@ cd daemon && cargo test
 
 ## Install
 
-From a source checkout — the primary path today. Get the repository
-and run one flow of three steps:
+OSKar needs Omarchy (its shell hosts the panel) and a Rust toolchain to
+build the helper once: `omarchy pkg add rust`.
+
+### With Omarchy's plugin manager
+
+```sh
+omarchy plugin add https://github.com/Vladkarok/oskar --enable
+bash ~/.config/omarchy/plugins/io.github.vladkarok.oskar/install.sh
+omarchy restart shell
+```
+
+The first command puts the keyboard's icon in the bar. Until the helper is
+installed the panel says `oskar.service is not installed`, and its **Copy**
+button hands over the second command. `install.sh` builds the helper,
+installs it with its user unit and the `oskar` command, and starts it.
+
+To update: `omarchy plugin update io.github.vladkarok.oskar`, then rerun
+`install.sh` (a panel newer than its helper says it needs updating and
+copies the same command). To remove: `oskar teardown`, then
+`omarchy plugin remove io.github.vladkarok.oskar`.
+
+### From a source checkout
 
 ```sh
 git clone https://github.com/Vladkarok/oskar.git oskar && cd oskar
@@ -355,23 +380,23 @@ omarchy restart shell  # the running shell only picks up a newly registered
                        # plugin at restart (or log out and back in)
 ```
 
-`install.sh` needs `cargo` to build the helper — on Omarchy,
-`omarchy pkg add rust` provides it (the script says so and stops if it is
-missing). After updating the checkout, rerun both commands: the QML side
-and the helper share a protocol version, and a plugin updated without its
-helper reports that it needs reinstalling rather than typing nothing
-(`oskar upgrade` is the same rerun under one name). The keyboard's
-icon appears in the bar; clicking it (or the toggle below) shows the
-panel:
+After updating the checkout, rerun `./install.sh` (or `oskar upgrade`, the
+same rerun under one name): the panel and the helper share a protocol
+version, and a panel updated without its helper says so rather than
+typing nothing.
+
+### From a release, with pacman
+
+Each release carries a `PKGBUILD`: download it with the release tarball,
+run `makepkg -si`, then `oskar setup` and `omarchy restart shell`. The
+package installs files only; `oskar setup` activates them. An AUR package
+will follow when AUR account registration reopens.
+
+The panel can be toggled from a keybinding too:
 
 ```sh
 omarchy-shell shell toggle io.github.vladkarok.oskar
 ```
-
-An AUR package (`oskar`) will become the primary path on publish —
-it does not exist yet. Until then there is no packaged channel: the
-source checkout above is the only install, and it has to come from the
-project's repository directly.
 
 `oskar setup` is idempotent and also owns `status` and `teardown`
 (full removal: registration, plugin enable, unit, state). For reference,
