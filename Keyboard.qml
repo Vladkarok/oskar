@@ -15,6 +15,7 @@ import "LayoutDevices.js" as LayoutDevices
 import "SettleGuard.js" as SettleGuard
 import "SocketWatch.js" as SocketWatch
 import "ChordAcks.js" as ChordAcks
+import "HelperReplies.js" as HelperReplies
 import "ShareQueue.js" as ShareQueue
 import "LanguageControl.js" as LanguageControl
 
@@ -388,7 +389,7 @@ Item {
     // commanded, and the uncommanded flip currently held out. Everything
     // the reading path consults before following a group change; pure, in
     // SettleGuard.js with its tests. Reset by a genuinely new helper
-    // connection (the fresh-hello arm below) — never by the repair
+    // connection (HelperReplies' fresh-hello arm) — never by the repair
     // timer's re-hello of a live socket, whose world is intact.
     property var settleGuard: SettleGuard.initial()
     // Every drawn cap's facts. There is no second source: every cap is a
@@ -409,13 +410,6 @@ Item {
     // The derivation lives in KeyboardLayout.js beside the declarations it
     // reads.
     readonly property string capsPositions: Layout.declaredPositions().join(" ")
-
-    /// The caps request for one group: the group, then the declared
-    /// positions. The helper answers per level from the keymap it installed,
-    /// tagged with that install's generation.
-    function capsRequestLine(group) {
-        return "caps " + group + (capsPositions !== "" ? " " + capsPositions : "")
-    }
 
     // How many groups the configured keymap carries — one per layout in the
     // RMLVO list, which is how libxkbcommon builds it and how the helper
@@ -548,40 +542,6 @@ Item {
     function sendConfigure(configure) {
         session = Session.reduce(session, { type: "configureSent", payload: configure })
         sendCommandUnchecked(configure)
-    }
-
-    /// Applies a `configured` reply to the oldest outstanding configure
-    /// transaction. A changed-keymap entry settles the device world as
-    /// authoritative (configureDrain — the reducer's device-held modifiers
-    /// reset without emitting); a same-keymap entry leaves holds and
-    /// reducer state exactly as they are. The reply's generation becomes
-    /// the acknowledged one, which is also what instantly invalidates any
-    /// keycap facts computed from the superseded install.
-    function settleConfigureReply(gen) {
-        // The FIFO head is the transaction this reply settles; the session
-        // pops the same entry, so capture its facts first — the previous
-        // acknowledged generation too, before the reduce consumes it.
-        var entry = session.queue.length > 0 ? session.queue[0] : null
-        var previousGen = session.ackedGen
-        session = Session.reduce(session, { type: "configureAck", gen: gen })
-        // The ack is the truthful moment the helper's world — group
-        // included — matches the panel's; persist it for the restart
-        // fallback (LayoutDevices).
-        root.groupConfirmed(session.group)
-        if (!entry) return
-        // A GENERATION JUMP on a same-identity ack means the helper's
-        // installed map changed since the panel's last ack (another client
-        // configured it), so this configure took the FULL path: it drained
-        // every held claim and zeroed the mask, and a ledger that still
-        // believes them draws a locked Shift over a device holding nothing.
-        // The jump IS the drain, whatever the entry promised.
-        // (previousGen 0 is the first ack of a session — its entry is
-        // `changed` by construction, so the jump check adds nothing.)
-        var drained = entry.changed
-            || (previousGen !== 0 && gen !== previousGen)
-        if (!drained) return
-        modifierState = Modifiers.reduce(modifierState,
-            { type: "configureDrain", stamp: entry.seq }).state
     }
 
     // The file the helper publishes its installed keymap to, and the
@@ -1467,7 +1427,7 @@ Item {
     // The helper connection's transport: the socket object in its
     // loader, the one rebuild, the hello/reconnect timers and the path
     // check, in HelperLink.qml (the structural split's step one). What
-    // a reply MEANS is decided below, in the lineReceived handler; both
+    // a reply MEANS is HelperReplies.js, run by the lineReceived handler; both
     // directions of writing still cross sendCommandUnchecked, whose
     // ledger push stayed here.
     HelperLink {
@@ -1511,8 +1471,8 @@ Item {
             // cancellation — the helper released everything it held
             // on the way down, no ack is coming, and the ledger of
             // oks owed by this connection dies with it.
-            if (root.chordAcks.chordDone) pasteChords.chordAckTimedOut()
-            root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
+            root.runReplyActions(
+                HelperReplies.connectionLost(root.replyState()).actions)
             // A restarted helper counts its installs from one again,
             // so the generation this panel last shared can come round
             // a second time and the once-per-generation guard would
@@ -1556,361 +1516,123 @@ Item {
             // helper that is being torn down: settle it as a cancellation, the
             // way every other failure path already does — and the ledger of
             // oks owed by the dead connection dies with it.
-            if (root.chordAcks.chordDone) pasteChords.chordAckTimedOut()
-            root.chordAcks = ChordAcks.connectionLost(root.chordAcks)
+            root.runReplyActions(
+                HelperReplies.connectionLost(root.replyState()).actions)
         }
 
         // One line from the helper. The watchdog's any-line clear has
-        // already run on the transport side before this fired; the
-        // ChordAcks FIFO pop and the reply dispatch are everything the
-        // monolith's onRead did after it.
+        // already run on the transport side before this fired. What the
+        // line MEANS is HelperReplies' pure dispatch; this runs its two
+        // halves — the correlation pop, then the route — with a fresh read
+        // of the reply state between them, because the pop's chord verdict
+        // runs the paste's completion callback and the route must decide
+        // against the world that callback left.
         function onLineReceived(line) {
-            var reply = String(line).trim()
-            // And any line is an ANSWER: it pops the oldest
-            // command's slot in the correlation queue — ok, err,
-            // fact or generation, the helper answers in order. The
-            // chord's verdict rides on the pop of its own final
-            // line, success only when the reply is a bare `ok` —
-            // otherwise an err would leave the slot occupied forever
-            // and fail every later chord.
-            var ack = ChordAcks.replyReceived(root.chordAcks,
-                reply === "ok")
-            root.chordAcks = ack.state
-            if (ack.done) pasteChords.chordAckCompleted(ack.done, ack.success)
-            // What this reply ANSWERED, for the err arms below:
-            // the FIFO pop is the only honest witness of which
-            // command a content-ambiguous err settles — `err bad
-            // group` serves three different verbs.
-            var answeredVerb = String(ack.verb || "")
-            if (reply === "hello " + Session.PROTOCOL_VERSION) {
-                root.serviceIncompatible = false
-                root.inputReady = false
-                // On a genuinely NEW connection the helper released
-                // everything the old one held when that socket
-                // closed, so a locked modifier did not survive the
-                // reconnect however the indicator looked. Reset to
-                // match, and do it without emitting the releases —
-                // sending `up` for a code nobody holds is a lie in
-                // the other direction.
-                // Caps is a semantic panel control, not a held key on
-                // this connection, so a helper restart does not turn
-                // it off. Only the real device-held modifiers reset.
-                //
-                // The gate matters: the repair timer re-hellos an
-                // open-but-unready socket (a configure refused, a
-                // helper still starting) WITHOUT the connection ever
-                // dropping. That helper still holds whatever the
-                // panel asked it to hold, so neither the state reset
-                // nor the `mods 0` may fire here — resetting the
-                // reducer over a live hold would leave the device
-                // Shift down under an idle panel.
-                if (helperLink.socketReconnected) {
-                    helperLink.socketReconnected = false
-                    root.capsFactsFailed = false
-                    // A genuinely new connection also
-                    // resets the settle guard's world — the helper
-                    // is back at group 0 and whatever this panel
-                    // followed or commanded belongs to the old
-                    // socket. The next reading establishes and arms
-                    // the post-reconnect window. The repair timer's
-                    // re-hello (the else arm below) changes nothing
-                    // here: a live socket's world is intact.
-                    root.settleGuard = SettleGuard.connected(
-                        root.settleGuard)
-                    root.modifierState = Modifiers.reduce(
-                        root.modifierState, { type: "releaseAll" }).state
-                    // Session bookkeeping starts over with the
-                    // connection: the next configure's identity must
-                    // be compared against what THIS helper instance
-                    // has acknowledged, and no reply can still arrive
-                    // for a transaction a predecessor was holding.
-                    root.session = Session.reduce(root.session,
-                        { type: "helloAcked", fresh: true })
-                    sendCommandUnchecked("mods 0")
-                } else {
-                    // The repair timer's re-hello of a live socket:
-                    // the handshake holds, nothing resets.
-                    root.session = Session.reduce(root.session,
-                        { type: "helloAcked", fresh: false })
-                }
-                // Both through the choke point: every command on
-                // this connection occupies its correlation slot,
-                // so these replies pop what they answer.
-                sendCommandUnchecked("keyboards")
-                // A restarted helper is back at group 0 and has no idea
-                // which layout is current. Re-reading the compositor
-                // sends the right group; using groupCursor here
-                // would send whatever it held before the first sync,
-                // which is 0 on a fresh panel and would force the
-                // first layout.
-            } else if (reply === "keyboards" || reply.indexOf("keyboards\t") === 0) {
-                var names = reply.split("\t").slice(1).filter(function(name) {
-                    return name.length > 0
-                })
-                root.startupKeyboards = names
-                if (!root.startupInventorySeen) {
-                    root.startupInventorySeen = true
-                    root.startupKeyboardName = names.length > 0 ? names[0] : ""
-                    if (!root.anchorKeyboardName)
-                        root.anchorKeyboardName = root.startupKeyboardName
-                }
+            var popped = HelperReplies.pop(root.replyState(), line)
+            root.runReplyActions(popped.actions)
+            var routed = HelperReplies.route(root.replyState(), popped.reply,
+                popped.verb, root.replyContext())
+            root.runReplyActions(routed.actions)
+        }
+    }
+
+    // The reply state HelperReplies reads, as it stands right now.
+    function replyState() {
+        return {
+            chordAcks: root.chordAcks,
+            session: root.session,
+            modifierState: root.modifierState,
+            settleGuard: root.settleGuard,
+            inputReady: root.inputReady,
+            serviceIncompatible: root.serviceIncompatible,
+            capsFactsFailed: root.capsFactsFailed,
+            socketReconnected: helperLink.socketReconnected,
+            startupKeyboards: root.startupKeyboards,
+            startupInventorySeen: root.startupInventorySeen,
+            startupKeyboardName: root.startupKeyboardName,
+            anchorKeyboardName: root.anchorKeyboardName
+        }
+    }
+
+    function replyContext() {
+        return { groupCount: root.groupCount, capsPositions: root.capsPositions }
+    }
+
+    /// Runs a HelperReplies program verbatim, in order. Every transition
+    /// applies to the property's CURRENT value, so a write's synchronous
+    /// consequences — the capsFacts rebuild releasing a key held under the
+    /// pointer, a failed write running the drop handler — land between
+    /// actions and are read by the ones after. HelperReplies.apply is the
+    /// same semantics over plain data; the two must agree arm for arm.
+    function runReplyActions(actions) {
+        for (var i = 0; i < actions.length; i++) {
+            var a = actions[i]
+            switch (a.op) {
+            case "set":
+                setReplyField(a.key, a.value)
+                break
+            case "session":
+                root.session = Session.reduce(root.session, a.event)
+                break
+            case "modifiers":
+                root.modifierState = Modifiers.reduce(root.modifierState,
+                    a.event).state
+                break
+            case "settleGuardConnected":
+                root.settleGuard = SettleGuard.connected(root.settleGuard)
+                break
+            case "gateFromSession":
+                root.inputReady = Session.typingReady(root.session)
+                break
+            case "send":
+                root.sendCommandUnchecked(a.line)
+                break
+            case "chordVerdict":
+                pasteChords.chordAckCompleted(a.done, a.success)
+                break
+            case "chordTimedOut":
+                pasteChords.chordAckTimedOut()
+                break
+            case "groupConfirmed":
+                root.groupConfirmed(a.group)
+                break
+            case "pullLayouts":
                 root.pullLayoutsFromCompositor()
-            } else if (reply.indexOf("configured") === 0) {
-                // Mirror the helper's own configure behaviour, for
-                // THE ENTRY THIS REPLY SETTLES — the oldest
-                // outstanding transaction, not the newest sent
-                // (FIFO; see the queue above). A configure that
-                // changed the keymap drained every key it held for
-                // us on its way in (install_config lifts each held
-                // code and zeroes the modifiers); one that kept the
-                // keymap — a group move, a byte-identical refresh —
-                // deliberately kept them. The panel follows both,
-                // the way the hello path already resets over a
-                // connection the helper released: on a keymap
-                // change, drop the device-held modifier state
-                // WITHOUT emitting — an `up` for a code the device
-                // no longer holds would be a lie in the other
-                // direction — while Caps and Fn stay, being
-                // semantic panel controls and never held at the
-                // device. On a same-keymap configure the lock
-                // stays held at the device and drawn locked, and
-                // typing agrees (the gate in applyModifierEvent
-                // writes whatever the reducer emits, restorative
-                // downs included — except across a drain, where
-                // the reducer itself withholds the restore).
-                // The reply names the keymap generation it installed
-                // (protocol 4). A reply without one is
-                // not a helper this panel can reason about: the shapes
-                // moved together with the version, so this is an
-                // installation mismatch, not a recoverable error.
-                var gen = parseInt(reply.split("\t")[1])
-                if (!isFinite(gen) || gen <= 0) {
-                    root.serviceIncompatible = true
-                    root.inputReady = false
-                } else {
-                    root.settleConfigureReply(gen)
-                    // Readiness waits for the WHOLE queue: an older
-                    // reply does not make typing safe while a pipelined
-                    // configure is still compiling the keymap a press
-                    // would land in — a chord allowed through now would
-                    // straddle that drain and lose its release. It also
-                    // waits for keycap facts that answer the generation
-                    // this reply just installed: request
-                    // them the moment the queue is settled and anything
-                    // current has been invalidated.
-                    if (Session.settled(root.session)) {
-                        // Every group of this install, not just the
-                        // one being drawn. The helper resolved them
-                        // all when it installed the keymap, so asking
-                        // for the rest now costs one extra reply each
-                        // and makes the next language switch a lookup
-                        // instead of a round trip through an
-                        // invalidated, gated, dimmed keyboard.
-                        var missing = Session.missingCapGroups(
-                            root.session, root.groupCount)
-                        if (missing.length > 0)
-                            console.log("[oskar] caps requested for group(s)",
-                                missing.join(","), "of", root.groupCount)
-                        for (var mg = 0; mg < missing.length; mg++)
-                            sendCommandUnchecked(capsRequestLine(missing[mg]))
-                    }
-                    root.inputReady = Session.typingReady(root.session)
-                }
-            } else if (reply.indexOf("caps\t") === 0) {
-                // The helper's keycap facts for the world it has
-                // installed. The session refuses any
-                // reply whose generation or group no longer matches
-                // the acknowledged one — a superseded answer computed
-                // from a keymap the helper no longer has can never
-                // enable caps, and while nothing current exists the
-                // typing gate stays shut.
-                var parsed = Session.parseCapsReply(reply)
-                if (!parsed) {
-                    // A reply the parser refuses is protocol drift,
-                    // not an empty keymap: refuse the world rather
-                    // than draw a guessed level.
-                    console.error("[oskar] unreadable keycap facts reply")
-                    root.capsFactsFailed = true
-                    root.inputReady = false
-                } else {
-                    var applied = Session.applyCapsReply(root.session, parsed)
-                    root.session = applied.state
-                    if (applied.accepted) {
-                        root.capsFactsFailed = false
-                        root.shareKeymapWithCompositor()
-                        if (Session.typingReady(root.session)) {
-                            root.inputReady = true
-                        }
-                    }
-                }
-            } else if (reply === "pong") {
-                // The quiescent probe's answer: the pipe is alive
-                // end to end. The any-line clear at the top of
-                // this handler already lifted the watchdog's
-                // mark; pong carries no state, settles nothing,
-                // and must not reach the fail-closed fallback
-                // below — unrecognized replies drop the typing
-                // gate, and a liveness answer is not drift.
-            } else if (reply.indexOf("err") === 0) {
-                if (reply.indexOf("err protocol") === 0) {
-                    // The helper answered hello with the version it
-                    // speaks, and it is not ours: the installed
-                    // binary predates (or postdates) this panel.
-                    // That is the incompatible state — the panel
-                    // never installs anything on its own; the offer
-                    // is the copied install command.
-                    root.serviceIncompatible = true
-                    root.inputReady = false
-                } else if (reply === "err not ready") {
-                    // A helper fresh out of systemd start answers err
-                    // until its default keymap is installed; it cannot
-                    // become ready without a configure, and nothing
-                    // else sends one — so ask the compositor now
-                    // instead of waiting out the repair timer.
-                    root.pullLayoutsFromCompositor()
-                } else if (reply === "err key held" || reply === "err not holding") {
-                    // Ownership refusals mean the helper's hold state
-                    // is ahead of ours; the device is fine and typing
-                    // stays enabled. The panel's chords never produce
-                    // them, so one appearing is a client bug worth a
-                    // journal line without bricking the keyboard.
-                    console.warn("[oskar] ownership refusal:", reply)
-                } else if (reply === "err bad group") {
-                    // One err, three verbs it can answer: a caps
-                    // pre-fetch for a group the keymap does not
-                    // carry, a `group` command, or a configure
-                    // whose own incoming map cannot carry its
-                    // group. The FIFO pop above says WHICH this
-                    // one settled, and the ledgers part ways on it.
-                    if (answeredVerb === "configure"
-                            && root.session.queue.length > 0) {
-                        // The refusal answered a QUEUED configure:
-                        // its entry must settle or it orphans the
-                        // queue — settled() false forever, and
-                        // the repair timer's never-stopping 2 s
-                        // hello → keyboards → compositor pipeline
-                        // → configure cycle runs permanently until
-                        // a socket rebuild. The settle window makes
-                        // it reachable (a group legal for the old
-                        // map, a layout list that shrank inside
-                        // it). Failed clean,
-                        // no modifier lift: this refusal happens
-                        // before any install or drain, so a lock
-                        // the panel shows is a lock the device
-                        // still holds.
-                        root.session = Session.reduce(root.session,
-                            { type: "configureFailed" })
-                    } else if (answeredVerb === "caps"
-                            || answeredVerb === "group") {
-                        // A caps pre-fetch (or a group switch)
-                        // the helper refused. For the group being
-                        // DRAWN that is keymap-wide disagreement
-                        // about the world, and the hint says so
-                        // instead of letting the built-in table
-                        // pass for it. For one of the other
-                        // groups the panel pre-fetches it is not:
-                        // the drawn group still has current
-                        // facts, typing is still answering the
-                        // installed keymap, and the only
-                        // consequence is that switching INTO
-                        // that group will go the slow way.
-                        // Refusing the whole world over it would
-                        // gate a keyboard that is working.
-                        root.capsFactsFailed =
-                            !Session.capsCurrent(root.session)
-                        if (root.capsFactsFailed) {
-                            root.inputReady = false
-                        } else {
-                            console.error("[oskar] helper has no"
-                                + " facts for a pre-fetched group;"
-                                + " that group will resolve on"
-                                + " switch")
-                        }
-                    } else {
-                        // An unattributable pop (a slot from
-                        // before verbs carried, or a bypassed
-                        // write): the caps-shaped reading is the
-                        // conservative one — it can gate, it can
-                        // never corrupt the configure ledger.
-                        root.capsFactsFailed =
-                            !Session.capsCurrent(root.session)
-                        if (root.capsFactsFailed)
-                            root.inputReady = false
-                    }
-                } else if (reply === "err cannot configure keymap") {
-                    // A FAILED configure is authoritative about the
-                    // device world in a way the error text cannot
-                    // qualify: a compile or rate-limit refusal
-                    // happens BEFORE install_config drains anything
-                    // (the helper still holds whatever the panel
-                    // had down), while an upload failure happens
-                    // AFTER the drain (the helper holds nothing) —
-                    // and both answer with this same err. The panel
-                    // therefore settles to the drained world
-                    // UNCONDITIONALLY, exactly as a changed-keymap
-                    // success does, and then makes the device
-                    // agree: an explicit `up` for every modifier
-                    // the panel had locked — a real lift when the
-                    // helper never drained, a forwarded no-op when
-                    // it already did — plus `mods 0`, so the
-                    // compositor's mask cannot keep the stale
-                    // modifier alive (the helper re-asserts its
-                    // mask from its held set on the next key event,
-                    // so `mods 0` alone would not survive). Panel
-                    // and device agree either way, and a later
-                    // close emits nothing because nothing is held.
-                    // A pending chord survives untouched: its own
-                    // key hold is real in the never-drained case,
-                    // and in the drained case its mouse-up is a
-                    // forwarded no-op. This also covers the
-                    // release-before-refusal ordering: a release
-                    // that ran while this configure was outstanding
-                    // left the lock standing here on purpose (the
-                    // reply owns the settle), so the capture above
-                    // still sees the modifiers it must lift.
-                    root.session = Session.reduce(root.session,
-                        { type: "configureFailed" })
-                    var lockedPositions = []
-                    for (var m = 0; m < Modifiers.ORDER.length; m++) {
-                        if (modifierState[Modifiers.ORDER[m]] === "locked")
-                            lockedPositions.push(
-                                Modifiers.positionFor(Modifiers.ORDER[m]))
-                    }
-                    modifierState = Modifiers.reduce(modifierState,
-                        // stamp -1: a failed configure drained
-                        // nothing a pending chord depends on for
-                        // certain, so every pending record survives
-                        // (minus its restore plan, which would
-                        // re-press a lock the panel just dropped).
-                        { type: "configureDrain", stamp: -1 }).state
-                    for (var u = 0; u < lockedPositions.length; u++)
-                        sendCommandUnchecked("up " + lockedPositions[u])
-                    sendCommandUnchecked("mods 0")
-                    root.inputReady = false
-                } else if (reply === "err unknown command") {
-                    // Version 6 deleted the typed delivery
-                    // verbs; this refusal now says the two sides
-                    // disagree about the command set one way or
-                    // the other — a v5 helper predates the
-                    // deletion, a peer panel sent a verb it should
-                    // not have. Status-only either way, never a
-                    // typing gate: the handshake's version check
-                    // is the compatibility contract.
-                    console.warn("[oskar] helper refused a command:", reply)
-                } else {
-                    // An unrecognized reply can only be protocol
-                    // drift; fail closed and leave a trace.
-                    root.inputReady = false
-                    console.warn("[oskar] unrecognized reply:", reply)
-                }
-            } else if (reply.indexOf("hello ") === 0) {
-                // A hello naming another version than the one this
-                // panel asked for is the same incompatibility in a
-                // different shape. Defensive: the current helper
-                // errs instead of greeting across versions.
-                root.serviceIncompatible = true
-                root.inputReady = false
+                break
+            case "shareKeymap":
+                root.shareKeymapWithCompositor()
+                break
+            case "log":
+                console.log.apply(console, a.args)
+                break
+            case "warn":
+                console.warn.apply(console, a.args)
+                break
+            case "error":
+                console.error.apply(console, a.args)
+                break
+            default:
+                console.error("[oskar] unknown reply action:", a.op)
             }
+        }
+    }
+
+    // One reply-state field by HelperReplies' name (its STATE_KEYS).
+    function setReplyField(key, value) {
+        switch (key) {
+        case "chordAcks": root.chordAcks = value; break
+        case "session": root.session = value; break
+        case "modifierState": root.modifierState = value; break
+        case "settleGuard": root.settleGuard = value; break
+        case "inputReady": root.inputReady = value; break
+        case "serviceIncompatible": root.serviceIncompatible = value; break
+        case "capsFactsFailed": root.capsFactsFailed = value; break
+        case "socketReconnected": helperLink.socketReconnected = value; break
+        case "startupKeyboards": root.startupKeyboards = value; break
+        case "startupInventorySeen": root.startupInventorySeen = value; break
+        case "startupKeyboardName": root.startupKeyboardName = value; break
+        case "anchorKeyboardName": root.anchorKeyboardName = value; break
+        default: console.error("[oskar] unknown reply state field:", key)
         }
     }
 

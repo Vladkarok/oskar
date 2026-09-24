@@ -25,7 +25,7 @@ PLUGIN_RUNTIME := Panel.qml BarWidget.qml Keyboard.qml HelperLink.qml PasteChord
 	InputProfile.js \
 	UiStrings.js \
 	ClipboardPaste.js HoverTooltip.qml KeyClickSound.qml \
-	ChordAcks.js ShareQueue.js PasteFlow.js \
+	ChordAcks.js HelperReplies.js ShareQueue.js PasteFlow.js \
 	SettingsPopover.qml SettingsColorRow.qml SettingsColorEditor.qml \
 	SettingsConfirmChip.qml SettingsResetChip.qml DragLine.qml \
 	SettingsLayer.qml SettingsPlacement.js manifest.json
