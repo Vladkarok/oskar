@@ -364,8 +364,9 @@ button hands over the second command. `install.sh` builds the helper,
 installs it with its user unit and the `oskar` command, and starts it.
 
 To update: `omarchy plugin update io.github.vladkarok.oskar`, then rerun
-`install.sh` (a panel newer than its helper says it needs updating and
-copies the same command). To remove everything but your settings:
+`install.sh`, or `oskar upgrade`, the same rerun (a panel newer than its
+helper says it needs updating, and its Copy button hands over the command
+that reinstalls it). To remove everything but your settings:
 
 ```sh
 bash ~/.config/omarchy/plugins/io.github.vladkarok.oskar/uninstall.sh

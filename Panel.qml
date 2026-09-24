@@ -1863,8 +1863,12 @@ Item {
             "[ \"$(systemctl --user show oskar.service -p LoadState --value)\" = not-found ]"]
         onExited: (exitCode, exitStatus) => {
             keyboard.serviceMissing = exitCode === 0 && exitStatus === 0
+            root.unitKnownInstalled = !keyboard.serviceMissing
         }
     }
+    // Once the unit is known to exist, a stopped helper needs no more
+    // probes until the next connection; only a missing unit keeps asking.
+    property bool unitKnownInstalled: false
     // Asks at once and then every few seconds while the helper is not
     // there — a panel that boots stopped never sees the kind change, and
     // an install that lands mid-session must flip the hint back.
@@ -1874,12 +1878,19 @@ Item {
         triggeredOnStart: true
         running: keyboard.lifecycleKind === "stopped"
             || keyboard.lifecycleKind === "missing"
-        onTriggered: if (!unitProbe.running) unitProbe.running = true
+        onTriggered: {
+            if (unitProbe.running) return
+            if (keyboard.lifecycleKind === "stopped" && root.unitKnownInstalled) return
+            unitProbe.running = true
+        }
     }
     Connections {
         target: keyboard
         function onServiceConnectedChanged() {
-            if (keyboard.serviceConnected) keyboard.serviceMissing = false
+            if (keyboard.serviceConnected) {
+                keyboard.serviceMissing = false
+                root.unitKnownInstalled = false
+            }
         }
     }
 

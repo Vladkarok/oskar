@@ -104,7 +104,10 @@ registration_link_text() {
 # already registered, and removed by `omarchy plugin remove`, not by us.
 registration_is_payload_clone() {
   [[ -d "$REGISTRATION" && ! -L "$REGISTRATION" ]] || return 1
-  [[ "$(cd "$REGISTRATION" && pwd -P)" == "$(cd "$PAYLOAD" 2>/dev/null && pwd -P)" ]]
+  local reg payload
+  reg="$(cd "$REGISTRATION" 2>/dev/null && pwd -P)"
+  payload="$(cd "$PAYLOAD" 2>/dev/null && pwd -P)"
+  [[ -n "$reg" && "$reg" == "$payload" ]]
 }
 
 graphical_session_active() {
@@ -383,6 +386,8 @@ cmd_upgrade() {
   migrate_old_world_if_found
   local target
   target="$(registration_target)"
+  # An `omarchy plugin add` clone is this install's registration itself.
+  registration_is_payload_clone && target="$PAYLOAD"
   if [[ "$target" != "$PAYLOAD" ]]; then
     if [[ -z "$target" && "$MODE" == "packaged" ]]; then
       # The rename case this command owns: the old registration was just
