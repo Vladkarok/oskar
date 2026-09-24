@@ -103,19 +103,15 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
     # The QMP half: the canary's mask and real-click legs run
     # HOST-side against the lab over the virsh monitor — the one row that
     # proves compositor-routed clicks reach the daemon. Same tenancy as
-    # the guest legs above; the sudo password for the strace oracle comes
-    # from the environment (never a literal — see panel_canary.py).
-    if [[ -n "${OSK_LAB_SUDO_PASSWORD:-}" ]]; then
-      echo "== live: canary-qmp (host half)"
-      if (cd "$root" && OSK_PANEL_CANARY_LIVE=1 OSK_CANARY_QMP=1 \
-            python3 tools/integration/panel_canary.py) \
-          >"$WALL_TMP/canary-qmp.log" 2>&1; then
-        row "canary-qmp" PASS "$(grep -cE '^ok ' "$WALL_TMP/canary-qmp.log") assertions"
-      else
-        row "canary-qmp" FAIL "see $WALL_TMP/canary-qmp.log"
-      fi
+    # the guest legs above; the strace oracle uses the lab's passwordless
+    # sudo.
+    echo "== live: canary-qmp (host half)"
+    if (cd "$root" && OSK_PANEL_CANARY_LIVE=1 OSK_CANARY_QMP=1 \
+          python3 tools/integration/panel_canary.py) \
+        >"$WALL_TMP/canary-qmp.log" 2>&1; then
+      row "canary-qmp" PASS "$(grep -cE '^ok ' "$WALL_TMP/canary-qmp.log") assertions"
     else
-      row "canary-qmp" SKIP "set OSK_LAB_SUDO_PASSWORD for the strace oracle"
+      row "canary-qmp" FAIL "see $WALL_TMP/canary-qmp.log"
     fi
   fi
 else

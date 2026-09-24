@@ -801,11 +801,15 @@ def restore_service():
 
 QMP_DOMAIN = "oskar"
 GUEST = "omarchy-vm"
-# The Q cap as a fraction of the panel's layer rect, measured live on a
-# 1280x800 output: the cap at (320,621) of the band 0,499 1280x301 delivered
-# 'q' four-for-four through the real panel. Scaled onto the live layer rect
-# at runtime and re-verified by the daemon-side press assertion.
-CAP_Q_FRACTION = (320 / 1280, (621 - 499) / 301)
+# The Q cap's screen point per lab output size, docked at the default size
+# preset. The key grid is fixed-width and centred, so a point does not scale
+# with the band; each entry is read off a live screenshot and re-verified at
+# runtime by the daemon-side press assertion. A new output size needs a new
+# entry (grim the band, find the cap).
+CAP_Q_BY_OUTPUT = {
+    (1280, 800): (320, 621),
+    (1920, 1080): (643, 902),
+}
 PANEL_NAMESPACE = "io.github.vladkarok.oskar"
 
 
@@ -836,11 +840,11 @@ def _panel_rect():
 
 
 def _cap_q():
-    rect = _panel_rect()
-    if rect is None:
-        raise Failure("the panel's layer is not mapped; no Q cap to click")
-    x, y, w, h = rect
-    return x + int(w * CAP_Q_FRACTION[0]), y + int(h * CAP_Q_FRACTION[1])
+    size = _screen_size()
+    if size not in CAP_Q_BY_OUTPUT:
+        raise Failure(f"no Q cap calibration for a {size[0]}x{size[1]} lab "
+                      "output — add one to CAP_Q_BY_OUTPUT")
+    return CAP_Q_BY_OUTPUT[size]
 
 
 def _host_guard():
@@ -856,13 +860,11 @@ def _host_guard():
                        "ConnectTimeout=5", GUEST, "true"],
                       capture_output=True).returncode != 0:
         raise Failure("cannot ssh the guest (omarchy-vm)")
-    # Credential BEFORE any leg touches the lab: checking only at the
-    # real-click leg would let the mask leg stop the service first,
-    # leaving the strace oracle's refusal too late to prevent teardown.
-    if not os.environ.get("OSK_LAB_SUDO_PASSWORD", ""):
-        raise Failure("the QMP legs need OSK_LAB_SUDO_PASSWORD (the lab "
-                      "guest's throwaway password, docs/vm-handoff.md) — "
-                      "refusing before any teardown")
+    # Passwordless sudo BEFORE any leg touches the lab: finding out only at
+    # the real-click leg would let the mask leg stop the service first.
+    if _guest("sudo -n true").returncode != 0:
+        raise Failure("the QMP legs need passwordless sudo in the lab guest "
+                      "(for the strace oracle) — refusing before any teardown")
     return True
 
 
@@ -969,26 +971,22 @@ def _oracle_presses(title):
 
 
 def _strace_on(pid):
-    # The lab guest's throwaway password, from the environment — never
-    # a literal in a publishable tree; docs/vm-handoff.md owns the value.
-    pw = os.environ.get("OSK_LAB_SUDO_PASSWORD", "")
-    if not pw:
-        raise Failure("the strace oracle needs OSK_LAB_SUDO_PASSWORD "
-                      "(the lab guest's throwaway password, "
-                      "docs/vm-handoff.md) — refusing to hardcode it")
-    _guest(f"echo '{pw}' | sudo -S sh -c 'pkill strace 2>/dev/null; "
-           f"rm -f /run/user/1000/osk-qmp-strace; "
-           f"nohup strace -f -e trace=recvfrom -p {pid} "
-           f"-o /run/user/1000/osk-qmp-strace >/dev/null 2>&1 &' "
-           "&& sleep 1; true", timeout=20)
+    # The lab guest grants its user passwordless sudo; `-n` never prompts,
+    # so a lab without that grant fails here at once instead of hanging.
+    result = _guest("sudo -n pkill strace; "
+                    "sudo -n rm -f /run/user/1000/osk-qmp-strace; "
+                    f"sudo -n -b strace -f -e trace=recvfrom -p {pid} "
+                    "-o /run/user/1000/osk-qmp-strace "
+                    # Detached from ssh's channel, or ssh waits on strace.
+                    "</dev/null >/dev/null 2>&1 && sleep 1",
+                    timeout=20)
+    if result.returncode != 0:
+        raise Failure("the strace oracle needs passwordless sudo in the lab "
+                      f"guest: {result.stderr.strip()[-200:]}")
 
 
 def _strace_presses():
-    pw = os.environ.get("OSK_LAB_SUDO_PASSWORD", "")
-    if not pw:
-        raise Failure("the strace oracle needs OSK_LAB_SUDO_PASSWORD "
-                      "(see _strace_on)")
-    result = _guest(f"echo '{pw}' | sudo -S grep -h 'recvfrom.*\"down ' "
+    result = _guest("grep -h 'recvfrom.*\"down ' "
                     "/run/user/1000/osk-qmp-strace 2>/dev/null | wc -l")
     try:
         return int(result.stdout.strip() or 0)
@@ -1130,7 +1128,7 @@ def real_click_leg(red=False):
                       f"downs=+{downs} presses=+{presses}")
     if downs == 0:
         raise Failure("the cap click never reached the daemon as a "
-                      "protocol down (dead panel? recalibrate CAP_Q_FRACTION)")
+                      "protocol down (dead panel? recalibrate CAP_Q_BY_OUTPUT)")
     if presses == 0:
         raise Failure(f"daemon saw +{downs} down(s) but the focused "
                       "window received nothing")
