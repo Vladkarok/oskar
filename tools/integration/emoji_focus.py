@@ -17,7 +17,8 @@ guest:
     reach the leg daemon or fight over the compositor's kb_file), opens
     the keyboard and the emoji page, focuses a foot terminal, and asserts
     the query and the client at each phase;
-  - the HOST half sends the physical keystrokes through QMP
+  - the HOST half (emoji_focus_host.py) sends the physical keystrokes
+    through QMP
     (`virsh qemu-monitor-command --hmp oskar 'sendkey …'`) when this
     script signals a phase file, and touches a go-file to advance.
 

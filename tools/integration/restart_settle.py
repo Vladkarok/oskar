@@ -393,6 +393,7 @@ Item {
             remembered: kb.rememberedLayoutGroup,
             switchSet: kb.switchKeyboards,
             anchor: kb.anchorKeyboardName,
+            sharedGen: kb.sharedKeymapGen,
             sock: kb.daemonSocket ? kb.daemonSocket.connected : false,
             lifecycle: kb.lifecycleKind,
             xkbFile: kb.xkbFile,
