@@ -358,7 +358,8 @@ Rectangle {
                 id: searchField
                 anchors {
                     left: parent.left
-                    right: parent.right
+                    right: toneButton.left
+                    rightMargin: emojiRoot.contentSpacing
                     top: parent.top
                     bottom: parent.bottom
                 }
