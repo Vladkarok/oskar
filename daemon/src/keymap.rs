@@ -1213,7 +1213,7 @@ mod tests {
     fn a_kb_file_that_already_carries_the_block_is_taken_as_it_is() {
         let stock = fixture_keymap("us,ua", "grp:caps_toggle");
         let extended = extend_with_reserved(&stock).expect("block composes");
-        let published = std::env::temp_dir().join("osk-published-test.xkb");
+        let published = std::env::temp_dir().join(format!("osk-published-test-{}.xkb", std::process::id()));
         std::fs::write(&published, &extended).expect("write the published keymap");
 
         let again = compile_keymap(&XkbConfig {
@@ -1252,7 +1252,7 @@ mod tests {
     /// helper goes on typing the old one while the panel draws caps for it.
     #[test]
     fn a_kb_file_edited_in_place_is_not_the_same_keymap() {
-        let path = std::env::temp_dir().join("osk-ticket-06.xkb");
+        let path = std::env::temp_dir().join(format!("osk-kbfile-refresh-{}.xkb", std::process::id()));
         let write = |layouts: &str| {
             std::fs::write(&path, fixture_keymap(layouts, "")).expect("write the custom keymap");
         };
