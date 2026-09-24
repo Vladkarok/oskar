@@ -59,64 +59,12 @@ Open sub-questions: theme-following per desktop, distribution
 accessibility/touch, and the marketing reality of "KDE devs
 recommending it" (they ship their own).
 
-## The council (Codex + Claude, consulted 2026-09-14)
-
-Round 1 — independent answers; round 2 — each shown the other's
-verdict for rebuttal; synthesis below. Full transcripts:
-`.scratch/next-iteration/evidence/vision-council/`.
-
-### The orchestrator's position (GLM-5.3, third voice, written before
-reading Codex; Claude's round 1 is in hand)
-
-I carry what neither consultant has: eight months of this repo's scar
-tissue. Two fact-corrections that reshape the debate, then my verdict.
-
-**Correction 1 — GNOME is out at the PROTOCOL level, not the political
-one.** Mutter does not implement zwp_virtual_keyboard_v1 (GNOME/mutter
-issue #4124, open for years; wtype is broken on GNOME Wayland through
-Shell 48; ydotool's uinput+root workaround is the only path). Our
-daemon cannot exist on mutter. Any "GTK4 frontend for GNOME" plan —
-including Claude's month-2 milestone — is technically impossible
-without a root daemon, which is a different product with a different
-trust model. The real cross-shell frontier where the protocol EXISTS:
-the wlroots family (sway, wayfire, river…) and KWin.
-
-**Correction 2 — the differentiator is compositor-coupled in the
-frontend, not the daemon.** The magic Claude wants to reuse (exact
-seat-keymap mirroring, group discipline) is read today through
-hyprctl in the PANEL: devices inventory, activelayout events,
-switchxkblayout moves. A second frontend does not just "speak the
-socket protocol" — it needs the same seat reading, which on sway is
-swaymsg IPC and on KWin is neither. The honest B-work is abstracting
-a seat-reader/seat-writer seam into the daemon (per-compositor
-backends), and THAT is the portability project nobody has priced.
-Also: Quickshell itself is Hyprland-first; its sway support is
-partial — verify in a VM before betting the cheapest-frontend path
-on it.
-
-**My verdicts.** Q1: retarget — agree with Claude; north star "the
-correctness on-screen keyboard for the wlroots Wayland world", with
-the KDE-dev fantasy retired. Q2: B, but sequenced B0→B1: first make
-the CURRENT frontend compositor-honest (move seat reading behind the
-daemon seam; strip Omarchy coupling where cheap), then a sway proof
-of life in a nested-sway VM (Quickshell if it holds, else
-gtk4-layer-shell). KDE later — the protocol exists but KWin ships its
-own keyboard and an applet is the trap Claude named. GNOME:
-documented as protocol-unsupported (link the mutter issue in the
-README); a uinput mode is an explicit non-goal (root). Q3: Claude's
-five, plus UI-string localization (our audit's own item 3 — the
-multilingual niche is our audience and the UI is English-only). Q4:
-his three months, with month 2 replaced by the seat-reader seam +
-sway proof; falsification metric agreed, with one addition — the
-signal that matters most is an unsolicited issue in a non-Latin
-layout.
-
 ## The recommendation (the synthesis — three strategists, unanimous)
 
 Council: GPT-5.6 (Codex), Claude Opus 5, GLM-5.3 (the orchestrator).
-Two rounds; full transcripts in
-`.scratch/next-iteration/evidence/vision-council/`. Round 2 was
-unanimous on every disputed axis.
+Two rounds; round 2 was unanimous on every disputed axis. The
+round-by-round prose is in the maintainers' private archive and the
+transcripts in their local evidence folder — deliberately not shipped.
 
 **The honest verdict on the owner's dream.** "KDE/GNOME developers
 throw away their keyboards and recommend yours" is fantasy — they own

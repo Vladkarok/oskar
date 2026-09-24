@@ -54,7 +54,7 @@ described below. [CHANGELOG.md](CHANGELOG.md) lists what works;
 | `tools/nested-session.sh` | runs a command against a throwaway nested Hyprland |
 | `tools/smoke-daemon.sh` | end-to-end check of the helper |
 | `tools/integration/` | the assertions that check runs, and their plumbing |
-| `docs/orientation.md` | what this is, current state, how the work runs |
+| `docs/orientation.md` | what this is and how the pieces fit — read first |
 | `docs/decisions.md` | why the design looks like this, and the dead ends |
 | `docs/vm-handoff.md` | the dogfooding VM: operating manual and queue |
 

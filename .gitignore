@@ -8,19 +8,13 @@ __pycache__/
 .claude/
 *.bak.*
 
-# The private half of the docs (2026-09-20): session journals, agent
-# directives, audits, reviews, plans — kept on disk for local work and
-# mirrored in the private oskar-internal repo, never committed here.
+# The private half of the docs (2026-09-20, trimmed 2026-09-24): the session
+# handoff, the agent directives and the archive of journals, audits, reviews
+# and plans — kept on disk for local work and mirrored in the private
+# oskar-internal repo, never committed here. docs/orientation.md is public.
 docs/session-handoff.md
-docs/orientation.md
 docs/agents/
-docs/audit-2026-09-13.md
-docs/review-2026-09-11.md
-docs/review-astra-2026-09-11.md
-docs/next-iteration-plan.md
-docs/release-readiness-plan.md
-docs/history-cleanup-plan.md
-docs/ticket-guide.md
+docs/archive/
 
 # Agent infrastructure went private with the docs (2026-09-20).
 AGENTS.md
