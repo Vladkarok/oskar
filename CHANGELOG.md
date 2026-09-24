@@ -32,7 +32,7 @@ before it; this version starts above them so no old tag name is reused.
 - An emoji page with categories, recents, skin tones and search in
   English, Russian and Ukrainian. Every pick is delivered through the
   clipboard and a paste chord. The emoji page can optionally be dragged.
-- Settings: mode, size preset, interface language, input profile (mouse,
+- Settings: mode, size preset, interface language, input profile (mouse by default,
   touch in beta, or auto; the mouse profile offers dwell-to-type), key-click
   sound, and appearance (corner radius and colours, applied live).
 - Colours and geometry follow the Omarchy theme.

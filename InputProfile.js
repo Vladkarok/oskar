@@ -6,8 +6,8 @@
 // them (tests/input-profile.qml, following the Dwell.js/HoldColumn.js
 // discipline) and the QML only wires:
 //
-//   resolve — the effective profile. The setting is "auto" (default) /
-//     "mouse" / "touch"; auto activates the touch affordances when the
+//   resolve — the effective profile. The setting is "mouse" (default) /
+//     "auto" / "touch"; auto activates the touch affordances when the
 //     panel OBSERVED touch events, so a 2-in-1 flipping modes never visits
 //     Settings. An explicit mouse/touch wins over the observation;
 //     anything else (a value that slipped past the file's validation)
