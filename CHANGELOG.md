@@ -3,10 +3,11 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
-## 0.3.0 — the first release
+## Unreleased
 
-The first published release. The early 0.1.x–0.2.1 tags were withdrawn
-before it; this version starts above them so no old tag name is reused.
+No numbered version has been published; the early 0.1.x–0.2.1 tags were
+withdrawn. The version string in the tree (0.3.0) reserves a number above
+them so no old tag name is reused, and the first release will start there.
 
 ### Install channels
 
@@ -16,8 +17,8 @@ before it; this version starts above them so no old tag name is reused.
   over that command.
 - A source checkout (`./install.sh`, `oskar setup`).
 - The release tarball with its `PKGBUILD` (`makepkg -si`, `oskar setup`).
-- Without a Rust toolchain: the release's prebuilt helper,
-  `install.sh --prebuilt oskar-daemon-0.3.0-x86_64.tar.gz`.
+- Without a Rust toolchain (once a release exists): its prebuilt helper,
+  `install.sh --prebuilt oskar-daemon-<version>-x86_64.tar.gz`.
 
 ### What works
 
@@ -41,7 +42,7 @@ before it; this version starts above them so no old tag name is reused.
 - `oskar setup | upgrade | status | teardown` manage the helper service and
   plugin registration.
 
-### Fixed before release
+### Fixed
 
 - The emoji search's clear button sat under the skin-tone button.
 - Settings: the Super mark row's reset button was cut off at the popover's

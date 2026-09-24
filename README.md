@@ -23,10 +23,10 @@ from the Omarchy theme.
 ## Status
 
 Alpha, daily-driven by its author on his own machine — that is how most
-of it was found and fixed. **0.3.0 is the first release**; it installs
-through Omarchy's plugin manager, from a source checkout, or from the
-release tarball with its `PKGBUILD` (all three below). Earlier tag names
-were withdrawn before it and are not reused. [CHANGELOG.md](CHANGELOG.md)
+of it was found and fixed. **There are no releases yet**: the early tags
+were withdrawn, and a numbered version will come when the author calls
+the product ready. Until then, install through Omarchy's plugin manager
+or from a source checkout as described below. [CHANGELOG.md](CHANGELOG.md)
 lists what works; `docs/decisions.md` explains why it works that way.
 
 ## Layout
@@ -390,18 +390,19 @@ same rerun under one name): the panel and the helper share a protocol
 version, and a panel updated without its helper says so rather than
 typing nothing.
 
-### From a release, with pacman
+### From a release, with pacman (once releases exist)
 
-Each release carries a `PKGBUILD`: download it with the release tarball,
+A release will carry a `PKGBUILD`: download it with the release tarball,
 run `makepkg -si`, then `oskar setup` and `omarchy restart shell`. The
 package installs files only; `oskar setup` activates them. An AUR package
-will follow when AUR account registration reopens.
+follows when AUR account registration reopens.
 
-### Without a Rust toolchain
+### Without a Rust toolchain (once releases exist)
 
-Each release also carries `oskar-daemon-<version>-x86_64.tar.gz` (the
-helper, its unit and the `oskar` command) with a `.sha256` beside it.
-Any `install.sh` above takes it in place of the build:
+A release will also carry `oskar-daemon-<version>-x86_64.tar.gz` (the
+helper, its unit and the `oskar` command) with a `.sha256` beside it,
+built by `tools/make-release-assets.sh`. Any `install.sh` above takes it
+in place of the build:
 
 ```sh
 bash install.sh --prebuilt ~/Downloads/oskar-daemon-0.3.0-x86_64.tar.gz
