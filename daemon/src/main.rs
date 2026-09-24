@@ -40,7 +40,7 @@
 //!   seat              the compositor's keyboards as `seat<TAB><json>`
 //!   switch<TAB>device<TAB>group
 //!                     move one keyboard to an absolute group
-//!   share<TAB>path    point the compositor's kb_file at a keymap file, or
+//!   share<TAB>path    point the compositor's kb_file at an absolute path, or
 //!                     clear it with `share<TAB>-`; verified by read-back
 //!   events on|off     push `event<TAB>...` lines to this connection
 //! Replies are `ok`, `hello <n>`,

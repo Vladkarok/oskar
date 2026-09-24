@@ -314,11 +314,15 @@ pub(crate) enum SeatError {
     Unreadable,
     /// The compositor refused the request, in its own words.
     Refused(String),
-    /// `share` named a file that is absent or empty — for the published
-    /// keymap, the publish has not landed yet, which is worth a retry.
-    Missing,
+    /// `share` named a relative path. The compositor would resolve it
+    /// against its own working directory, not the panel's.
+    NotAbsolute,
     /// The compositor accepted the change but reads back something else.
     NotApplied,
+    /// `share` as a whole — clear, set and every read-back — ran past its
+    /// deadline, which sits below the hold cap so a connection holding a
+    /// key is never stalled past the cap by a wedged compositor.
+    TimedOut,
     /// The request would not fit the compositor's request buffer.
     TooLong,
 }
@@ -330,8 +334,9 @@ impl SeatError {
             SeatError::Unreachable => "err seat unreachable".to_string(),
             SeatError::Unreadable => "err seat unreadable".to_string(),
             SeatError::Refused(why) => format!("err seat refused {}", one_line(why)),
-            SeatError::Missing => "err keymap missing".to_string(),
+            SeatError::NotAbsolute => "err share path must be absolute".to_string(),
             SeatError::NotApplied => "err share not applied".to_string(),
+            SeatError::TimedOut => "err share timed out".to_string(),
             SeatError::TooLong => "err path too long".to_string(),
         }
     }
@@ -525,18 +530,18 @@ pub(crate) fn switch_reply(backend: Option<&dyn SeatBackend>, device: &str, grou
 }
 
 /// `share`: points the compositor at a keymap file, or clears the setting.
-/// A file that is absent or empty is refused before the compositor is
-/// touched: pointing it there would compile nothing, and for the published
-/// keymap it only means the publish has not landed yet.
+///
+/// The helper never checks the file itself: it runs in a mount namespace
+/// of its own (`PrivateTmp=yes`), so its view of a path is not the
+/// compositor's. The path only has to be absolute — a relative one would
+/// resolve against the compositor's working directory — and the
+/// compositor's read-back is the verification.
 pub(crate) fn share_reply(backend: Option<&dyn SeatBackend>, path: Option<&str>) -> String {
     let Some(backend) = backend else {
         return SeatError::NoBackend.reply();
     };
-    if let Some(path) = path {
-        let present = std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() > 0);
-        if !present {
-            return SeatError::Missing.reply();
-        }
+    if path.is_some_and(|path| !path.starts_with('/')) {
+        return SeatError::NotAbsolute.reply();
     }
     match backend.share(path) {
         Ok(()) => "ok".to_string(),
@@ -619,18 +624,20 @@ impl InputNodeWatch {
     }
 }
 
-/// Whether a batch of raw inotify records names an `event*` node.
+/// Whether a batch of raw inotify records names an `event*` node. A queue
+/// overflow counts too: the events it dropped may have been exactly those.
 fn event_node_named(mut bytes: &[u8]) -> bool {
     // struct inotify_event: wd (i32), mask, cookie, len (u32), then `len`
     // bytes of NUL-padded name.
     const HEADER: usize = 16;
     let mut named = false;
     while bytes.len() >= HEADER {
+        let mask = u32::from_ne_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let len = u32::from_ne_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
         let Some(name) = bytes.get(HEADER..HEADER + len) else {
             break;
         };
-        named |= name.starts_with(b"event");
+        named |= mask & libc::IN_Q_OVERFLOW != 0 || name.starts_with(b"event");
         bytes = &bytes[HEADER + len..];
     }
     named
@@ -873,29 +880,21 @@ mod tests {
         let no_kb_file = fake(Ok(vec![]), Err(SeatError::Unreachable));
         assert_eq!(seat_reply(Some(&no_kb_file)), "err seat unreachable");
 
-        // share: an absent or empty file is refused before the compositor
-        // is asked; a present one and the clear go through.
-        let dir = std::env::temp_dir().join(format!("osk-share-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let empty = dir.join("empty.xkb");
-        std::fs::write(&empty, "").unwrap();
-        let full = dir.join("keymap.xkb");
-        std::fs::write(&full, "xkb_keymap {};").unwrap();
-        let missing = dir.join("missing.xkb");
-        for refused in [&empty, &missing, &dir] {
+        // share: a relative path is refused before the compositor is asked;
+        // an absolute one goes through whether or not the helper's own
+        // namespace can see it (the compositor's read-back decides).
+        for relative in ["keymap.xkb", "./keymap.xkb", "~/keymap.xkb", " /x"] {
             assert_eq!(
-                share_reply(Some(&good), Some(refused.to_str().unwrap())),
-                "err keymap missing"
+                share_reply(Some(&good), Some(relative)),
+                "err share path must be absolute"
             );
         }
-        assert_eq!(share_reply(Some(&good), Some(full.to_str().unwrap())), "ok");
+        assert_eq!(share_reply(Some(&good), Some("/tmp/only-the-compositor-sees-this.xkb")), "ok");
         assert_eq!(share_reply(Some(&good), None), "ok");
         assert_eq!(
             *good.shared.lock().unwrap(),
-            [Some(full.to_str().unwrap().to_string()), None]
+            [Some("/tmp/only-the-compositor-sees-this.xkb".to_string()), None]
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -905,8 +904,9 @@ mod tests {
             SeatError::Unreachable,
             SeatError::Unreadable,
             SeatError::Refused("error: bad\nsecond line\r".into()),
-            SeatError::Missing,
+            SeatError::NotAbsolute,
             SeatError::NotApplied,
+            SeatError::TimedOut,
             SeatError::TooLong,
         ] {
             let reply = error.reply();
@@ -962,6 +962,24 @@ mod tests {
             },
         ];
         assert_eq!(layout_codes(&keyboards), ["us", "ua", "de"]);
+    }
+
+    #[test]
+    fn a_queue_overflow_reads_as_a_change() {
+        let record = |mask: u32, name: &[u8]| {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&(-1i32).to_ne_bytes());
+            bytes.extend_from_slice(&mask.to_ne_bytes());
+            bytes.extend_from_slice(&0u32.to_ne_bytes());
+            bytes.extend_from_slice(&(name.len() as u32).to_ne_bytes());
+            bytes.extend_from_slice(name);
+            bytes
+        };
+        assert!(event_node_named(&record(libc::IN_Q_OVERFLOW, b"")));
+        assert!(!event_node_named(&record(libc::IN_CREATE, b"js0\0\0\0\0\0")));
+        let mut both = record(libc::IN_CREATE, b"js0\0\0\0\0\0");
+        both.extend(record(libc::IN_DELETE, b"event3\0\0"));
+        assert!(event_node_named(&both));
     }
 
     #[test]

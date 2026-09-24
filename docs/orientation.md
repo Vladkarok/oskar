@@ -52,7 +52,7 @@ group <n> | tap <AD01|code> | down … | up … | mods <mask> | ping
 # protocol 7 only; a v6 connection answers these `err unknown command`
 seat                                      -> seat\t<json> | err no seat backend | err seat …
 switch\t<device>\t<group>                  -> ok | err …
-share\t<kb_file> | share\t-                -> ok | err keymap missing | err …
+share\t</absolute/kb_file> | share\t-      -> ok | err share path must be absolute | err share timed out | err …
 events on | events off                    -> ok
 ```
 
@@ -61,7 +61,9 @@ or `err …`. `seat`'s JSON carries `keyboards` (each with the compositor's
 own `name`, `main`, `active_layout_index`, `layout`, `variant`, `rules`,
 `model`, `options`), `safe` (the `keyboards` verb's list), `kb_file` and
 `titles` (layout code to human name). `share` clears and then sets the
-compositor's `input:kb_file` and verifies it by reading it back.
+compositor's `input:kb_file` and verifies it by reading it back, all inside
+one 6 s deadline (below the 15 s hold cap). The helper never checks the file
+itself — its `/tmp` is private — so the read-back is the verification.
 
 A v7 connection that sent `events on` also receives unsolicited lines:
 `event\tlayout\t<device>\t<group>` when a keyboard's group moves (whoever

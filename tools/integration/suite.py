@@ -1506,14 +1506,27 @@ def seat_verbs_need_protocol_seven(helper, keyboard):
         raise Failure(f"hello 6 was refused: {client.hello_reply!r}")
     for line in ("seat", "events on", "switch\twl_keyboard\t1", "share\t-"):
         client.expect(line, "err unknown command")
-    # A layout move the compositor announces must not reach this
-    # connection: the ping's reply is the very next line it reads.
+    # A v7 subscriber on the same helper, so the layout moves below really
+    # are broadcast: the v6 peer staying silent then means it was left out,
+    # not that nothing was sent.
+    listener = EventClient(helper.socket_path)
+    listener.expect("hello 7", "hello 7")
+    listener.expect("events on", "ok")
     device = _physical_keyboard()
-    subprocess.run(["hyprctl", "switchxkblayout", device, "1"], capture_output=True)
-    time.sleep(0.5)
-    subprocess.run(["hyprctl", "switchxkblayout", device, "0"], capture_output=True)
-    time.sleep(0.5)
+    for group in (1, 0):
+        moved = subprocess.run(
+            ["hyprctl", "switchxkblayout", device, str(group)], capture_output=True, text=True
+        )
+        if moved.stdout.strip() != "ok":
+            raise Failure(f"hyprctl switchxkblayout refused: {moved.stdout!r}")
+        listener.wait_event(f"event\tlayout\t{device}\t{group}")
+    # Every event the listener was sent has arrived; the v6 peer's next
+    # line is its ping's reply, with nothing in front of it.
     client.expect("ping", "pong")
+    listener.expect("ping", "pong")
+    print(f".... v7 listener heard {listener.events!r}; the v6 peer heard none",
+          flush=True)
+    listener.close()
     client.close()
 
 
@@ -1584,9 +1597,9 @@ def seat_switch_and_layout_events(helper, keyboard):
 def seat_share_and_clear(helper, keyboard):
     client = EventClient(helper.socket_path)
     client.expect("hello 7", "hello 7")
-    # Refused before the compositor is touched, like the panel's own
-    # "not published yet" exit.
-    client.expect("share\t/nonexistent/oskar/keymap.xkb", "err keymap missing")
+    # A relative path is refused before the compositor is touched: the
+    # compositor would resolve it against its own working directory.
+    client.expect("share\toskar/keymap.xkb", "err share path must be absolute")
     runtime = os.environ.get("XDG_RUNTIME_DIR", "")
     published = os.path.join(runtime, "oskar", "keymap.xkb")
     client.expect(f"share\t{published}", "ok")

@@ -34,6 +34,11 @@ const MAX_EVENT_LINE: usize = 64 * 1024;
 /// apart: the setting is applied on the compositor's own loop.
 const READBACK_TRIES: u32 = 10;
 const READBACK_GAP: Duration = Duration::from_millis(50);
+/// The whole `share` — clear, set and every read-back — finishes inside
+/// this. It must stay below the helper's hold cap (15 s): the connection
+/// asking is the panel's typing connection, and a key it holds is only
+/// lifted by the cap between its lines.
+const SHARE_BOUND: Duration = Duration::from_secs(6);
 
 pub(crate) struct Hyprland {
     socket1: PathBuf,
@@ -63,11 +68,21 @@ impl Hyprland {
 
     /// One socket1 exchange, bounded in time and size.
     fn request(&self, body: &str) -> Result<String, SeatError> {
+        self.request_by(body, Instant::now() + IO_BOUND)
+    }
+
+    /// One socket1 exchange that finishes by `deadline` (and never takes
+    /// longer than `IO_BOUND`).
+    fn request_by(&self, body: &str, deadline: Instant) -> Result<String, SeatError> {
         if body.len() > MAX_REQUEST {
             return Err(SeatError::TooLong);
         }
-        let deadline = Instant::now() + IO_BOUND;
-        let mut stream = connect_bounded(&self.socket1, IO_BOUND).map_err(|error| {
+        let deadline = deadline.min(Instant::now() + IO_BOUND);
+        let bound = deadline.saturating_duration_since(Instant::now());
+        if bound.is_zero() {
+            return Err(SeatError::Unreachable);
+        }
+        let mut stream = connect_bounded(&self.socket1, bound).map_err(|error| {
             match error.kind() {
                 // The socket is gone or nobody listens on it: the compositor
                 // this helper was started under is not there any more.
@@ -109,12 +124,63 @@ impl Hyprland {
     /// A request whose whole answer is `ok`; anything else is the
     /// compositor refusing, in its own words.
     fn command(&self, body: &str) -> Result<(), SeatError> {
-        let reply = self.request(body)?;
+        self.command_by(body, Instant::now() + IO_BOUND)
+    }
+
+    fn command_by(&self, body: &str, deadline: Instant) -> Result<(), SeatError> {
+        let reply = self.request_by(body, deadline)?;
         if reply.trim() == "ok" {
             Ok(())
         } else {
             Err(SeatError::Refused(reply))
         }
+    }
+
+    /// `share` against one absolute deadline over every step. A step that
+    /// fails because the deadline ran out answers `TimedOut`, whatever the
+    /// step was.
+    fn share_by(&self, path: Option<&str>, deadline: Instant) -> Result<(), SeatError> {
+        let timed = |result: Result<(), SeatError>| match result {
+            Err(SeatError::Unreachable) if Instant::now() >= deadline => Err(SeatError::TimedOut),
+            other => other,
+        };
+        // Cleared and then set, never just set: assigning the value the
+        // setting already holds is a no-op, and a keymap republished under
+        // the same name has to be re-read, or the compositor keeps compiling
+        // the one before it. `eval`, not `keyword`: the Lua config parser
+        // refuses `keyword` outright.
+        let set = path.map(kb_file_eval);
+        if set.as_ref().is_some_and(|body| body.len() > MAX_REQUEST) {
+            return Err(SeatError::TooLong);
+        }
+        timed(self.command_by(&kb_file_eval(""), deadline))?;
+        if let Some(set) = set {
+            timed(self.command_by(&set, deadline))?;
+        }
+        // Read back rather than trust: `eval` answers `ok` for a call the
+        // parser accepted, which is not the value being in place.
+        let wanted = path.unwrap_or("");
+        let mut last = Err(SeatError::NotApplied);
+        for attempt in 0..READBACK_TRIES {
+            if attempt > 0 {
+                if deadline.saturating_duration_since(Instant::now()) <= READBACK_GAP {
+                    return Err(SeatError::TimedOut);
+                }
+                thread::sleep(READBACK_GAP);
+            }
+            let read = self
+                .request_by("j/getoption input:kb_file", deadline)
+                .and_then(|text| parse_kb_file(&text));
+            last = match read {
+                Ok(actual) if actual == wanted => return Ok(()),
+                Ok(_) => Err(SeatError::NotApplied),
+                Err(error) => timed(Err(error)),
+            };
+            if last == Err(SeatError::TimedOut) {
+                break;
+            }
+        }
+        last
     }
 
     /// Reads the event stream until it ends; `Err` only for a stream that
@@ -202,34 +268,7 @@ impl SeatBackend for Hyprland {
     }
 
     fn share(&self, path: Option<&str>) -> Result<(), SeatError> {
-        // Cleared and then set, never just set: assigning the value the
-        // setting already holds is a no-op, and a keymap republished under
-        // the same name has to be re-read, or the compositor keeps compiling
-        // the one before it. `eval`, not `keyword`: the Lua config parser
-        // refuses `keyword` outright.
-        let set = path.map(kb_file_eval);
-        if set.as_ref().is_some_and(|body| body.len() > MAX_REQUEST) {
-            return Err(SeatError::TooLong);
-        }
-        self.command(&kb_file_eval(""))?;
-        if let Some(set) = set {
-            self.command(&set)?;
-        }
-        // Read back rather than trust: `eval` answers `ok` for a call the
-        // parser accepted, which is not the value being in place.
-        let wanted = path.unwrap_or("");
-        let mut last = Err(SeatError::NotApplied);
-        for attempt in 0..READBACK_TRIES {
-            if attempt > 0 {
-                thread::sleep(READBACK_GAP);
-            }
-            last = match self.kb_file() {
-                Ok(actual) if actual == wanted => return Ok(()),
-                Ok(_) => Err(SeatError::NotApplied),
-                Err(error) => Err(error),
-            };
-        }
-        last
+        self.share_by(path, Instant::now() + SHARE_BOUND)
     }
 
     fn watch(self: Arc<Self>, sink: Arc<dyn EventSink>) {
@@ -814,6 +853,29 @@ mod tests {
             }
         });
         assert_eq!(stale.share(Some("/x")), Err(SeatError::NotApplied));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn share_answers_timed_out_inside_one_deadline() {
+        // The evals answer at once; every read-back is left hanging past
+        // the per-request bound. Without one deadline over the whole share
+        // this would take ten read-backs of two seconds each.
+        let (wedged, _, dir) = fake_compositor("wedged", |request| {
+            if request.starts_with("/eval") {
+                "ok".to_string()
+            } else {
+                thread::sleep(IO_BOUND + Duration::from_millis(500));
+                String::new()
+            }
+        });
+        let started = Instant::now();
+        let bound = Duration::from_millis(1500);
+        assert_eq!(wedged.share_by(Some("/x"), started + bound), Err(SeatError::TimedOut));
+        assert!(started.elapsed() < bound + Duration::from_millis(300), "{:?}", started.elapsed());
+        assert_eq!(SeatError::TimedOut.reply(), "err share timed out");
+        // The shipped bound sits below the hold cap.
+        assert!(SHARE_BOUND < Duration::from_secs(15));
         let _ = std::fs::remove_dir_all(dir);
     }
 

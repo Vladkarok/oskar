@@ -356,8 +356,13 @@ mod tests {
         assert_eq!(negotiate(None, Ok(6), true), ("hello 6".into(), Some(6)));
         assert_eq!(negotiate(None, Ok(7), true), ("hello 7".into(), Some(7)));
         // Not ready: refused, but the version is negotiated (the gate refuses
-        // keys, not the handshake).
+        // keys, not the handshake) — protocol 6's behaviour, kept: on
+        // `err not ready` the panel sends its configure on the same
+        // connection, and that configure is the only thing that can make
+        // the helper ready. Answering it `err hello first` would deadlock.
         assert_eq!(negotiate(None, Ok(7), false), ("err not ready".into(), Some(7)));
+        assert_eq!(negotiate(None, Ok(6), false), ("err not ready".into(), Some(6)));
+        assert_eq!(negotiate(Some(6), Ok(6), true), ("hello 6".into(), Some(6)));
         // A repeat of the negotiated version answers again; another
         // supported version does not switch the connection over.
         assert_eq!(negotiate(Some(6), Ok(6), true), ("hello 6".into(), Some(6)));
