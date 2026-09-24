@@ -192,7 +192,12 @@ Rectangle {
 
         Rectangle { width: tokens.space(24); height: 1 }
     }
-    readonly property real controlZoneWidth: controlProbe.implicitWidth
+    // The widest segmented row (the Super mark's five segments) plus its
+    // reset chip must fit the zone too, or the chip is cut off at the
+    // popover's edge.
+    readonly property real widestSegmented: tokens.space(320)
+    readonly property real controlZoneWidth: Math.max(controlProbe.implicitWidth,
+        widestSegmented + tokens.space(6) + tokens.space(24))
 
     // Fixed compact width — fixed by CONTENT: the control column x plus the
     // widest control block any row lays down, plus the popover's own
@@ -952,7 +957,7 @@ Rectangle {
                     anchors {
                         verticalCenter: parent.verticalCenter
                     }
-                    width: tokens.space(320)
+                    width: popoverRoot.widestSegmented
                     // Omarchy, Windows and macOS are names and stay; the
                     // word and the penguin translate.
                     readonly property var superMarkLabels:

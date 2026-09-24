@@ -1,8 +1,9 @@
 import QtQuick
+import QtQuick.Shapes
 import qs.Commons
 import "UiStrings.js" as UiStrings
 
-// Per-override reset chip: ↺ in a bordered square, shown only while the
+// Per-override reset chip: a counter-clockwise arrow in a bordered square, shown only while the
 // sparse config file actually carries this override. Pure chrome over the
 // panel API — the click calls clearOverride and nothing else; no
 // persistence policy lives here.
@@ -27,12 +28,49 @@ Rectangle {
     border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
     border.width: tokens.normalBorderWidth
 
-    Text {
-        anchors.centerIn: parent
-        text: "\u21ba"
-        color: tokens.foreground
-        font.family: tokens.fontFamily
-        font.pixelSize: tokens.fontBodySmall
+    // Drawn, not a glyph: the theme's monospace faces carry no U+21BA, and a
+    // fallback face renders it as an unrelated hook.
+    Shape {
+        id: resetIcon
+        readonly property real r: resetChip.width * 0.24
+        readonly property real cx: resetChip.width / 2
+        readonly property real cy: resetChip.height / 2
+        // The arc's end (+30°, lower right), the direction of travel there
+        // (counter-clockwise: up, slightly right) and the outward normal.
+        readonly property real ea: Math.PI / 6
+        readonly property real ex: cx + r * Math.cos(ea)
+        readonly property real ey: cy + r * Math.sin(ea)
+        readonly property real dx: Math.sin(ea)
+        readonly property real dy: -Math.cos(ea)
+        readonly property real nx: Math.cos(ea)
+        readonly property real ny: Math.sin(ea)
+        readonly property real head: resetChip.width * 0.18
+        anchors.fill: parent
+        preferredRendererType: Shape.CurveRenderer
+
+        // Three quarters of a circle, open on the right, and a chevron at
+        // its end pointing counter-clockwise — one stroked path.
+        ShapePath {
+            strokeColor: resetChipArea.pressed ? tokens.background : tokens.foreground
+            strokeWidth: Math.max(1.5, resetChip.width / 14)
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+            joinStyle: ShapePath.RoundJoin
+            PathAngleArc {
+                centerX: resetIcon.cx; centerY: resetIcon.cy
+                radiusX: resetIcon.r; radiusY: resetIcon.r
+                startAngle: -60; sweepAngle: -270
+            }
+            PathMove {
+                x: resetIcon.ex - resetIcon.dx * resetIcon.head + resetIcon.nx * resetIcon.head * 0.8
+                y: resetIcon.ey - resetIcon.dy * resetIcon.head + resetIcon.ny * resetIcon.head * 0.8
+            }
+            PathLine { x: resetIcon.ex; y: resetIcon.ey }
+            PathLine {
+                x: resetIcon.ex - resetIcon.dx * resetIcon.head - resetIcon.nx * resetIcon.head * 0.8
+                y: resetIcon.ey - resetIcon.dy * resetIcon.head - resetIcon.ny * resetIcon.head * 0.8
+            }
+        }
     }
 
     MouseArea {

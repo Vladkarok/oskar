@@ -15,13 +15,19 @@ each of its windows, in several states:
 not audited; neither is a full-width backdrop such as the settings
 layer's click-outside dismiss area.)
 
-Two shapes are defects:
+Three shapes are defects:
   - PARTIAL overlap: two click targets intersect and neither contains the
     other (a pointer on the seam hits whichever is on top by accident);
   - FOREIGN containment: a target lies wholly inside another it is not
     nested in by design — it is not a descendant of that target's parent
     (the field-under-button shape). Designed layering, like a chip drawn
-    inside its own field, nests inside the field's subtree and passes.
+    inside its own field, nests inside the field's subtree and passes;
+  - CLIPPED: a target sticks out sideways past an ancestor that clips its
+    children (the reset chip cut off at the settings popover's edge).
+
+Reset chips show only for overridden settings, so the leg seeds overrides
+for the widest rows into the lab user's config before the panel boots and
+restores the file afterwards.
 
 Run inside the VM's lab session (docs/vm-handoff.md):
   cd ~/oskar && OSK_LAYOUT_LIVE=1 python3 tools/integration/layout_leg.py
@@ -131,11 +137,22 @@ Item {
             var backdrop = at.x <= 0 && obj.width >= top.width - 1
             if (!backdrop)
                 out.push({ obj: obj, root: top, x: at.x, y: at.y,
-                           w: obj.width, h: obj.height })
+                           w: obj.width, h: obj.height, clip: clipBox(obj) })
         }
         var list = kids(obj)
         for (var i = 0; i < list.length; i++)
             collect(list[i], depth + 1, seen, out)
+    }
+
+    // The nearest ancestor that clips its children, as a scene rect.
+    function clipBox(o) {
+        for (var p = o.parent; p; p = p.parent) {
+            if (p.clip === true && p.mapToItem !== undefined) {
+                var at = p.mapToItem(null, 0, 0)
+                return { x: at.x, y: at.y, w: p.width, h: p.height }
+            }
+        }
+        return null
     }
 
     function inside(a, b) {
@@ -147,6 +164,19 @@ Item {
         var areas = []
         collect(panel, 0, [], areas)
         var defects = []
+        // A target cut off sideways by a clipping ancestor (a scroll view
+        // clips vertically by design, so only horizontal overflow counts,
+        // and only for a target the clip shows at least in part).
+        for (var k = 0; k < areas.length; k++) {
+            var t = areas[k], c = t.clip
+            if (!c) continue
+            var shown = t.y + t.h > c.y && t.y < c.y + c.h
+                && t.x + t.w > c.x && t.x < c.x + c.w
+            if (shown && (t.x < c.x - 1 || t.x + t.w > c.x + c.w + 1))
+                defects.push("clipped: " + label(t.obj) + " ["
+                    + [t.x, t.y, t.w, t.h].map(Math.round) + "] outside ["
+                    + [c.x, c.y, c.w, c.h].map(Math.round) + "]")
+        }
         for (var i = 0; i < areas.length; i++) {
             for (var j = i + 1; j < areas.length; j++) {
                 var a = areas[i], b = areas[j]
@@ -280,6 +310,12 @@ def guard():
         raise Failure(f"not the lab ({os.uname().nodename!r}); refusing")
 
 
+CONFIG = os.path.expanduser("~/.config/oskar/config.json")
+# The rows whose control + reset chip are widest: every chip shows.
+SEEDED = {"super_mark": "penguin", "ui_language": "en", "emoji_drag": True,
+          "emoji_page_size": "x-large", "sound": True, "input_profile": "mouse"}
+
+
 def main():
     guard()
     repo = os.path.dirname(os.path.dirname(os.path.dirname(
@@ -288,8 +324,18 @@ def main():
     os.makedirs(LEG_DIR, exist_ok=True)
     daemon = panel = None
     failures = []
+    try:
+        with open(CONFIG, encoding="utf-8") as handle:
+            config_backup = handle.read()
+    except OSError:
+        config_backup = None
     with LabSession(), PrivateRuntime() as rt:
         try:
+            seeded = json.loads(config_backup) if config_backup else {}
+            seeded.update(SEEDED)
+            os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+            with open(CONFIG, "w", encoding="utf-8") as handle:
+                json.dump(seeded, handle, indent=2)
             daemon = LegDaemon(repo, "layout", rt.env)
             daemon.wait_socket()
             panel = Panel(repo, rt.env)
@@ -304,6 +350,9 @@ def main():
                 if state == "settings":
                     panel.command("settings", "settings")
                 report = panel.audit(state)
+                # The rendered state, kept for the eye (grim in the leg dir).
+                subprocess.run(["grim", os.path.join(LEG_DIR, f"{state}.png")],
+                               capture_output=True, timeout=15)
                 if report["defects"]:
                     failures.append(report)
                     print(f"FAIL  {state}: {len(report['defects'])} "
@@ -319,6 +368,12 @@ def main():
                 panel.close()
             if daemon:
                 daemon.close()
+            if config_backup is None:
+                if os.path.exists(CONFIG):
+                    os.unlink(CONFIG)
+            else:
+                with open(CONFIG, "w", encoding="utf-8") as handle:
+                    handle.write(config_backup)
     if failures:
         raise Failure(f"{len(failures)} state(s) with colliding click targets")
     print("ok    LAYOUT LEG GREEN")
