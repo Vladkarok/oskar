@@ -472,8 +472,8 @@ cmd_status() {
   say "socket:          $SOCKET ($([[ -S "$SOCKET" ]] && echo present || echo absent))"
   say "protocol:        $proto"
   if old_world_found; then
-    warn "an omarchy-osk-era install still stands (old unit, registration \
-or package); oskar setup migrates it"
+    warn "an omarchy-osk-era install still stands (old unit, registration, package \
+or data dirs); oskar setup migrates it"
   fi
   if [[ "$MODE" == "packaged" ]] && report_legacy_source; then
     warn "a legacy source install overrides the packaged unit; \
