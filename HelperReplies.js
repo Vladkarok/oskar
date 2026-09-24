@@ -72,6 +72,9 @@
 //   configureUnseated        configure from what the panel already holds:
 //                            the helper has no seat to read, and typing
 //                            needs one configure to open the gate
+//   seatUnavailable          the helper answered `err no seat backend`:
+//                            empty the switch set, so the language button
+//                            draws disabled as well as acting inert
 //   shareKeymap              point the compositor at the published keymap
 //   shareFinished { ok, reply }   the `share` run's verdict; `reply` is the
 //                            refusal when it failed
@@ -85,6 +88,16 @@ var STATE_KEYS = [
     "startupKeyboards", "startupInventorySeen", "startupKeyboardName",
     "anchorKeyboardName", "lastLayoutEventDevice", "seatAsk"
 ]
+
+/// The refusals a seat verb (`seat`, `switch`, `share`, `events`) can earn:
+/// the seat's own words, plus the two any line can earn before or outside
+/// the negotiated command set. Anything else under a seat verb's slot is a
+/// reply that belongs to another arm.
+function isSeatRefusal(reply) {
+    return reply === "err no seat backend" || reply.indexOf("err seat ") === 0
+        || reply.indexOf("err share ") === 0 || reply === "err path too long"
+        || reply === "err hello first" || reply === "err unknown command"
+}
 
 /// Whether a line is a pushed event rather than a reply. Events take no
 /// reply slot, so this is asked BEFORE the correlation pop; the prefix is
@@ -199,19 +212,24 @@ function pop(state, line) {
 /// the callback left, as the handler's arms always did.
 function route(state, reply, verb, ctx) {
     var p = program(state)
+    // Content first: a reply whose text names what it answers is routed by
+    // that text, whatever slot it popped. The verb decides only for the
+    // shapes several verbs share (`ok`, the seat verbs' refusals), so a
+    // misaligned slot can never swallow a hello, configured or caps reply.
     if (isEvent(reply)) {
         eventLine(p, reply)
-    } else if (verb === "seat" || reply.indexOf("seat\t") === 0) {
+    } else if (reply.indexOf("seat\t") === 0
+            || (verb === "seat" && isSeatRefusal(reply))) {
         seatReply(p, reply)
-    } else if (verb === "share" && (reply === "ok" || reply.indexOf("err") === 0)) {
+    } else if (verb === "share" && (reply === "ok" || isSeatRefusal(reply))) {
         shareReply(p, reply)
-    } else if ((verb === "switch" || verb === "events")
-            && reply.indexOf("err") === 0) {
+    } else if ((verb === "switch" || verb === "events") && isSeatRefusal(reply)) {
         // A seat verb's refusal is about the compositor's seat, never
         // about typing: the gate stays where it is, and a switch that did
         // not land is corrected by the next reading.
         emit(p, { op: "warn", args: ["[oskar] the helper refused `" + verb
             + "`:", reply] })
+        if (reply === "err no seat backend") emit(p, { op: "seatUnavailable" })
     } else if (reply === "hello " + Session.PROTOCOL_VERSION) {
         helloAcked(p)
     } else if (reply.indexOf("configured") === 0) {
@@ -326,7 +344,11 @@ function parseSeat(reply) {
     }
     if (!doc || !Array.isArray(doc.keyboards) || typeof doc.kb_file !== "string")
         return null
-    var devices = doc.keyboards.map(function (k) {
+    // A malformed entry is dropped, never thrown on: a throw here would
+    // kill the line handler for every later reply.
+    var devices = doc.keyboards.filter(function (k) {
+        return k !== null && typeof k === "object" && typeof k.name === "string"
+    }).map(function (k) {
         return {
             name: k.name, main: k.main,
             active_layout_index: k.active_layout_index,
@@ -368,6 +390,7 @@ function seatReply(p, reply) {
         // made.
         emit(p, { op: "warn", args: ["[oskar] the helper has no seat backend;"
             + " the language button stays inert (`oskar doctor` names the fix)"] })
+        emit(p, { op: "seatUnavailable" })
         if (p.state.session.acked === "" && p.state.session.queue.length === 0)
             emit(p, { op: "configureUnseated" })
     } else if (reply.indexOf("err") === 0) {
@@ -390,6 +413,7 @@ function seatReply(p, reply) {
 /// (ShareQueue's caller); `err no seat backend` ends the run at once,
 /// since no retry can grow a backend.
 function shareReply(p, reply) {
+    if (reply === "err no seat backend") emit(p, { op: "seatUnavailable" })
     emit(p, { op: "shareFinished", ok: reply === "ok",
         reply: reply === "ok" ? "" : reply })
 }
@@ -583,12 +607,13 @@ function errReply(p, reply, verb) {
     } else if (reply === "err cannot configure keymap") {
         cannotConfigure(p)
     } else if (reply === "err no seat backend" || reply.indexOf("err seat ") === 0
-            || reply.indexOf("err share ") === 0) {
+            || reply.indexOf("err share ") === 0 || reply === "err path too long") {
         // A seat verb's refusal the FIFO could not attribute (the verb
         // arms above take the attributed ones). These words answer only
         // the seat verbs, so it is the seat's business whatever answered
         // it, and never typing drift.
         emit(p, { op: "warn", args: ["[oskar] seat refusal:", reply] })
+        if (reply === "err no seat backend") emit(p, { op: "seatUnavailable" })
     } else if (reply === "err unknown command") {
         // The two sides disagree about the command set one way or the
         // other — an older helper, or a peer panel sending a verb it should

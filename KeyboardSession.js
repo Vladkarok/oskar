@@ -371,3 +371,15 @@ function isPublishedKeymap(kbFile, runtimeDir) {
     var path = String(kbFile || "")
     return path !== "" && path === publishedKeymapPath(runtimeDir)
 }
+
+/// The kb_file a configure made WITHOUT a seat reading carries: the user's
+/// own keymap source when the panel knows one (recovered from the helper's
+/// sidecar, or observed earlier), else whatever the panel holds. An empty
+/// kb_file is the helper's instruction to CLEAR its record of the user's
+/// source (decisions §46), so a configure that merely lacks a reading must
+/// never send empty while a source is known — the custom keymap would be
+/// dropped for the session.
+function unseatedKeymapFile(held, userSource) {
+    var source = String(userSource || "").trim()
+    return source !== "" ? source : String(held || "")
+}

@@ -593,7 +593,18 @@ Item {
     /// run.
     function startShareRun() {
         var path = Session.publishedKeymapPath(Quickshell.env("XDG_RUNTIME_DIR"))
-        if (path === "" || !root.sendCommandUnchecked("share\t" + path))
+        if (path === "") {
+            // Nothing to point at: the helper publishes under the runtime
+            // directory, and without one there is no published keymap.
+            console.error("[oskar] could not give the compositor the published"
+                + " keymap: XDG_RUNTIME_DIR is unset, so the seat carries two"
+                + " keymaps and a client's layout group will reset on every"
+                + " focus change (decisions §35).")
+            root.shareQueue = ShareQueue.runAbandoned(root.shareQueue)
+            keymapShareGivenUp()
+            return
+        }
+        if (!root.sendCommandUnchecked("share\t" + path))
             root.shareQueue = ShareQueue.runAbandoned(root.shareQueue)
     }
 
@@ -949,6 +960,16 @@ Item {
             groupCursor = configGroup
             configureHeld(configGroup)
         }
+    }
+
+    /// The one configure a helper without a seat backend gets: the defaults
+    /// the panel holds, carrying the user's own keymap source when one is
+    /// known — the recovery seed runs first, exactly as at a reading's
+    /// decision point.
+    function configureUnseated() {
+        recoverUserKeymapSource()
+        root.xkbFile = Session.unseatedKeymapFile(root.xkbFile, root.userKeymapFile)
+        configureHeld(root.groupCursor)
     }
 
     /// Configures the helper from the RMLVO and kb_file the panel holds, at
@@ -1470,7 +1491,12 @@ Item {
                 root.ingestSeatFacts(a.devices, a.kbFile, a.titles)
                 break
             case "configureUnseated":
-                root.configureHeld(root.groupCursor)
+                root.configureUnseated()
+                break
+            case "seatUnavailable":
+                // Drawn disabled as well as acting inert: the button keys
+                // both off the switch set. The next good reading refills it.
+                root.switchKeyboards = []
                 break
             case "shareKeymap":
                 root.shareKeymapWithCompositor()

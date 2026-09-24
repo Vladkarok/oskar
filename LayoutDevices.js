@@ -91,8 +91,8 @@ function layoutCount(device) {
 ///   -> { reading, typing, switchSet, group }
 ///
 /// `anchor` is the keyboard the caller last saw the seat produce a key on.
-/// It is NOT a device name taken from a layout event: every `switchxkblayout`
-/// this panel issues emits one, so an anchor fed from events points at
+/// It is NOT a device name taken from a layout event: every `switch` this
+/// panel issues emits one, so an anchor fed from events points at
 /// whichever device the panel itself moved last — the panel reading its own
 /// echo, and then rearranging the seat around it.
 ///

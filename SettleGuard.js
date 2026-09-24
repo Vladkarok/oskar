@@ -12,8 +12,8 @@
 // re-applying keymaps around the fresh vkb registration (the mover is
 // outside the panel), and the panel would follow that flip too, splitting
 // the seat and leaving the label agreeing with the churn instead of the
-// click until the user converges it by hand. The click's own
-// `switchxkblayout` loop is not touched anywhere in this module: the guard
+// click until the user converges it by hand. The click's own `switch`
+// commands are not touched anywhere in this module: the guard
 // only stops the panel from echoing churn back into the helper's group and
 // `remembered`.
 //
@@ -106,7 +106,7 @@ function connected(state) {
 }
 
 /// The panel's own click moved the physical seat to `group` — the
-/// `switchxkblayout` loop in switchToGroup, the one path this guard never
+/// `switch` commands in switchToGroup, the one path this guard never
 /// touches. Recorded so the echo reading is followed immediately inside
 /// the window (a guard that held its own click would break language
 /// switching for the window's whole length) and so a held candidate dies

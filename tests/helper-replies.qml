@@ -531,6 +531,11 @@ QtObject {
             T.equal(Replies.parseSeat("seat\t{not json"), null)
             T.equal(Replies.parseSeat("seat\t{\"keyboards\":[]}"), null)
             T.equal(Replies.parseSeat("seatx\t{}"), null)
+            // A malformed entry is dropped, never thrown on (a throw would
+            // kill the line handler).
+            var holes = Replies.parseSeat("seat\t" + JSON.stringify({ keyboards: [null,
+                7, { main: true }, kbd("kbd", true, 0)], safe: [], kb_file: "", titles: {} }))
+            T.deepEqual(holes.devices.map(function (d) { return d.name }), ["kbd"])
             var bad = feed(panelSends(with_(readyAt(3), { seatAsk: "asked" }), "seat"),
                 ["seat\t{not json"])
             T.equal(opsNamed(bad.actions, "seatFacts").length, 0)
@@ -630,6 +635,50 @@ QtObject {
             T.equal(opsNamed(other.actions, "shareFinished").length, 0)
         })
 
+        T.test("a misaligned seat-verb slot never swallows a content-named reply", function () {
+            // A stale `seat` slot at the head of the queue: whatever pops
+            // it, a reply that names what it answers is routed by its text.
+            var s = sendConfigure(readyAt(3), configureLine("us,de", 1))
+            s = with_(s, { chordAcks: ChordAcks.sent(ChordAcks.initial(), "seat") })
+            var r = feed(s, ["configured\t4"], { groupCount: 2, capsPositions: "AD01 AD02" })
+            T.equal(r.state.session.queue.length, 0, "the configure settles")
+            T.equal(r.state.session.ackedGen, 4)
+            T.deepEqual(sends(r.actions), ["caps 0 AD01 AD02", "caps 1 AD01 AD02"])
+            T.equal(opsNamed(r.actions, "seatFacts").length, 0)
+            // A hello on a stale seat slot still completes the handshake.
+            var h = with_(initialState(), { socketReconnected: true,
+                chordAcks: ChordAcks.sent(ChordAcks.initial(), "seat") })
+            r = feed(h, ["hello " + Session.PROTOCOL_VERSION])
+            T.equal(r.state.session.helloOk, true)
+            // An err protocol on a stale share slot is still incompatibility.
+            var sh = with_(initialState(), {
+                chordAcks: ChordAcks.sent(ChordAcks.initial(), "share\t/x") })
+            r = feed(sh, ["err protocol 7 required, helper needs reinstall"])
+            T.equal(r.state.serviceIncompatible, true)
+            T.equal(opsNamed(r.actions, "shareFinished").length, 0)
+            // A caps reply on a stale switch slot is still keycap facts.
+            var cs = sendConfigure(readyAt(3), configureLine("us", 0))
+            cs = feed(cs, ["configured\t4"]).state
+            cs = with_(cs, { chordAcks: ChordAcks.sent(ChordAcks.initial(), "switch\tkbd\t0") })
+            r = feed(cs, [capsLine(4, 0)])
+            T.equal(r.state.inputReady, true)
+        })
+
+        T.test("no seat backend empties the switch set, from any seat verb", function () {
+            var seat = feed(panelSends(with_(readyAt(3), { seatAsk: "asked" }), "seat"),
+                ["err no seat backend"])
+            T.equal(opsNamed(seat.actions, "seatUnavailable").length, 1)
+            var sw = feed(panelSends(readyAt(3), "switch\tkbd\t1"), ["err no seat backend"])
+            T.equal(opsNamed(sw.actions, "seatUnavailable").length, 1)
+            var sh = feed(panelSends(readyAt(3), "share\t/run/user/1000/oskar/keymap.xkb"),
+                ["err no seat backend"])
+            T.equal(opsNamed(sh.actions, "seatUnavailable").length, 1)
+            // Any other refusal leaves the button as it is.
+            var other = feed(panelSends(readyAt(3), "switch\tkbd\t1"),
+                ["err seat refused no such device"])
+            T.equal(opsNamed(other.actions, "seatUnavailable").length, 0)
+        })
+
         T.test("the steps never mutate the state they are given", function () {
             var s = withLocked(readyAt(3), ["shift"])
             s = sendConfigure(s, configureLine("de", 0))
@@ -644,7 +693,8 @@ QtObject {
         T.test("every action the suite saw is one the executor knows", function () {
             var known = ["set", "session", "modifiers", "settleGuardConnected",
                 "gateFromSession", "gateOpenIfReady", "send", "chordVerdict", "chordTimedOut",
-                "groupConfirmed", "seatFacts", "configureUnseated", "shareKeymap",
+                "groupConfirmed", "seatFacts", "configureUnseated", "seatUnavailable",
+                "shareKeymap",
                 "shareFinished", "log", "warn", "error"]
             for (var i = 0; i < allActions.length; i++) {
                 var a = allActions[i]

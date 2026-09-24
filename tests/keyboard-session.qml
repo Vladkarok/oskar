@@ -571,6 +571,16 @@ QtObject {
             T.deepEqual(Object.keys(parsed.byPosition.AD01[0]), ["text"])
         })
 
+        T.test("an unseated configure keeps the user's keymap source", function () {
+            // Empty would tell the helper to CLEAR its record of the user's
+            // source (decisions §46): a known source always rides.
+            T.equal(Session.unseatedKeymapFile("", "/home/u/my.xkb"), "/home/u/my.xkb")
+            T.equal(Session.unseatedKeymapFile("/old.xkb", " /home/u/my.xkb "),
+                "/home/u/my.xkb")
+            T.equal(Session.unseatedKeymapFile("/held.xkb", ""), "/held.xkb")
+            T.equal(Session.unseatedKeymapFile("", ""), "", "nothing known: RMLVO")
+        })
+
         Qt.exit(T.report("keyboard session"))
     }
 }
