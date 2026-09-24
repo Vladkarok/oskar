@@ -234,6 +234,19 @@ Item {
             case "audit":
                 audit(parts[1])
                 break
+            case "hint": {
+                var kb = find(panel, function (o) {
+                    return o.lifecycleKind !== undefined
+                        && o.capsPositions !== undefined
+                }, 0)
+                log("hint " + JSON.stringify({
+                    text: panel.hintState.text,
+                    action: panel.hintState.action || "",
+                    kind: kb ? kb.lifecycleKind : "",
+                    command: panel.installCommand
+                }))
+                break
+            }
             case "close":
                 panel.close()
                 log("closed")

@@ -162,6 +162,33 @@ QtObject {
             T.equal(Session.applyCapsReply(s, null).accepted, false)
         })
 
+        T.test("a helper with no installed unit is missing, not stopped", function () {
+            // Retry cannot start a unit that does not exist; the hint must
+            // say what to install instead.
+            T.equal(Session.lifecycleKind({
+                inputReady: false, serviceConnected: false,
+                serviceIncompatible: false, capsFactsFailed: false,
+                serviceMissing: true
+            }), "missing")
+            T.equal(Session.lifecycleKind({
+                inputReady: false, serviceConnected: false,
+                serviceIncompatible: false, capsFactsFailed: false,
+                serviceMissing: false
+            }), "stopped")
+            // A connected helper answers for itself, whatever a stale probe
+            // said; an incompatible one still needs updating first.
+            T.equal(Session.lifecycleKind({
+                inputReady: false, serviceConnected: true,
+                serviceIncompatible: false, capsFactsFailed: false,
+                serviceMissing: true
+            }), "starting")
+            T.equal(Session.lifecycleKind({
+                inputReady: false, serviceConnected: false,
+                serviceIncompatible: true, capsFactsFailed: false,
+                serviceMissing: true
+            }), "incompatible")
+        })
+
         T.test("a caps mismatch is unavailable, never the starting notice", function () {
             // Connected + failed facts is keymap-unavailable, not
             // "Starting oskar.service…".

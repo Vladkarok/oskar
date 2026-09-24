@@ -1439,12 +1439,16 @@ Item {
     // stopped.
     readonly property bool serviceConnected: daemonSocket ? daemonSocket.connected : false
     property bool serviceIncompatible: false
+    // Set by the panel's unit probe while the helper reads as stopped: the
+    // user unit is not installed at all (systemd LoadState not-found).
+    property bool serviceMissing: false
     // The header's helper/keymap kind. A
     // connected caps mismatch is unavailable, never the starting notice.
     readonly property string lifecycleKind: Session.lifecycleKind({
         inputReady: inputReady,
         serviceConnected: serviceConnected,
         serviceIncompatible: serviceIncompatible,
+        serviceMissing: serviceMissing,
         capsFactsFailed: capsFactsFailed
     })
     // The live socket object, aliased from the transport component: the

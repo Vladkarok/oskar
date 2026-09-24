@@ -217,6 +217,10 @@ function applyCapsReply(state, parsed) {
 /// must be a visible mismatch, not the service-boot notice.
 function lifecycleKind(flags) {
     if (flags.serviceIncompatible) return "incompatible"
+    // No unit installed at all: Retry cannot start what does not exist, so
+    // this is its own state with its own hint (the install command).
+    if (!flags.inputReady && !flags.serviceConnected && flags.serviceMissing)
+        return "missing"
     if (!flags.inputReady && !flags.serviceConnected) return "stopped"
     // `keycapsFailed` reported a compile nothing drew from, so a failure
     // there raised "keymap unavailable" over caps that were entirely the

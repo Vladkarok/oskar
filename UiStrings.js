@@ -62,6 +62,12 @@ var STRINGS = {
         uk: "oskar.service потребує оновлення",
         it: "oskar.service va aggiornato"
     },
+    "hint.notInstalled": {
+        en: "oskar.service is not installed",
+        ru: "oskar.service не установлен",
+        uk: "oskar.service не встановлено",
+        it: "oskar.service non è installato"
+    },
     "hint.notRunning": {
         en: "oskar.service is not running",
         ru: "oskar.service не работает",

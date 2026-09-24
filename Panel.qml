@@ -860,6 +860,12 @@ Item {
                 accent: true,
                 action: "update"
             }
+        if (keyboard.lifecycleKind === "missing")
+            return {
+                text: UiStrings.tr("hint.notInstalled", root.uiLang),
+                accent: true,
+                action: "install"
+            }
         if (keyboard.lifecycleKind === "stopped")
             return {
                 text: UiStrings.tr("hint.notRunning", root.uiLang),
@@ -1849,6 +1855,35 @@ Item {
     }
 
     Process {
+        id: unitProbe
+        // Whether the helper's user unit exists at all. Asked each time the
+        // helper reads as stopped — an install can land mid-session — and
+        // cleared by any connection, which answers for itself.
+        command: ["bash", "-c",
+            "[ \"$(systemctl --user show oskar.service -p LoadState --value)\" = not-found ]"]
+        onExited: (exitCode, exitStatus) => {
+            keyboard.serviceMissing = exitCode === 0 && exitStatus === 0
+        }
+    }
+    // Asks at once and then every few seconds while the helper is not
+    // there — a panel that boots stopped never sees the kind change, and
+    // an install that lands mid-session must flip the hint back.
+    Timer {
+        interval: 5000
+        repeat: true
+        triggeredOnStart: true
+        running: keyboard.lifecycleKind === "stopped"
+            || keyboard.lifecycleKind === "missing"
+        onTriggered: if (!unitProbe.running) unitProbe.running = true
+    }
+    Connections {
+        target: keyboard
+        function onServiceConnectedChanged() {
+            if (keyboard.serviceConnected) keyboard.serviceMissing = false
+        }
+    }
+
+    Process {
         id: lifecycleProbe
         // One startup check for the installed lifecycle command (ticket
         // 32): present as /usr/bin/oskar from the package and as
@@ -2111,6 +2146,7 @@ Item {
                         height: tokens.space(28)
                         radius: tokens.cornerRadius
                         visible: hintState.action === "update"
+                            || hintState.action === "install"
                         color: copyArea.pressed ? Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
                             : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
                         border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
@@ -2146,7 +2182,9 @@ Item {
                         width: retryLabel.implicitWidth + keyboard.cellGap * 3
                         height: tokens.space(28)
                         radius: tokens.cornerRadius
+                        // Nothing to start while no unit is installed.
                         visible: hintState.action !== undefined
+                            && hintState.action !== "install"
                         color: retryArea.pressed ? tokens.accent : tokens.foreground
 
                         Text {
