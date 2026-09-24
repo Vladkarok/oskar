@@ -51,6 +51,7 @@
 //                            already agrees with
 //   settleGuardConnected     settleGuard = SettleGuard.connected(settleGuard)
 //   gateFromSession          inputReady = Session.typingReady(session)
+//   gateOpenIfReady          inputReady = true only if typingReady(session)
 //   send { line }            the one write choke point; a written line
 //                            occupies its ChordAcks slot
 //   chordVerdict { done, success }   the armed chord's own final line was
@@ -100,6 +101,9 @@ function apply(state, action) {
         break
     case "gateFromSession":
         next.inputReady = Session.typingReady(state.session)
+        break
+    case "gateOpenIfReady":
+        if (Session.typingReady(state.session)) next.inputReady = true
         break
     case "send":
         next.chordAcks = ChordAcks.sent(state.chordAcks, action.line)
@@ -376,8 +380,12 @@ function capsReply(p, reply) {
     if (!applied.accepted) return
     set(p, "capsFactsFailed", false)
     emit(p, { op: "shareKeymap" })
-    if (Session.typingReady(p.state.session))
-        set(p, "inputReady", true)
+    // Judged against the LIVE session when the action runs, not the
+    // planned copy: the session write above rebuilds the rows, which can
+    // release a held key, whose `up` can fail and drop the connection in
+    // the same call — and a dropped connection has shut the gate. Only
+    // ever opens; facts for another group never close a gate that stands.
+    emit(p, { op: "gateOpenIfReady" })
 }
 
 function errReply(p, reply, verb) {

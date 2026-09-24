@@ -172,6 +172,14 @@ QtObject {
             T.equal(opsNamed(r.actions, "shareKeymap").length, 1)
             r = feed(r.state, [capsLine(4, 1)])
             T.equal(r.state.inputReady, true, "the drawn group's facts open it")
+            // The opening is judged when the action runs, against the live
+            // session — a plain set would open a gate the session write
+            // itself may have shut (a released key's up dropping the
+            // connection). And it only opens: facts never close a gate.
+            T.equal(opsNamed(r.actions, "gateOpenIfReady").length, 1)
+            T.equal(opsNamed(r.actions, "set").filter(function (x) {
+                return x.key === "inputReady" && x.value === true
+            }).length, 0, "no unconditional open rides a caps reply")
         })
 
         T.test("a second inventory keeps the startup keyboard and the anchor", function () {
@@ -414,7 +422,7 @@ QtObject {
 
         T.test("every action the suite saw is one the executor knows", function () {
             var known = ["set", "session", "modifiers", "settleGuardConnected",
-                "gateFromSession", "send", "chordVerdict", "chordTimedOut",
+                "gateFromSession", "gateOpenIfReady", "send", "chordVerdict", "chordTimedOut",
                 "groupConfirmed", "pullLayouts", "shareKeymap", "log", "warn",
                 "error"]
             for (var i = 0; i < allActions.length; i++) {

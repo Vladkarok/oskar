@@ -1584,6 +1584,9 @@ Item {
             case "gateFromSession":
                 root.inputReady = Session.typingReady(root.session)
                 break
+            case "gateOpenIfReady":
+                if (Session.typingReady(root.session)) root.inputReady = true
+                break
             case "send":
                 root.sendCommandUnchecked(a.line)
                 break
