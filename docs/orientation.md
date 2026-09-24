@@ -31,7 +31,7 @@ switching for every client behind fcitx5 (decisions.md has the detail).
 | `Panel.qml`, `BarWidget.qml` | the floating or docked window and the bar toggle; saves in `PrivateSaves.qml`, the emoji transaction in `EmojiDelivery.qml`, settings in `SettingsLayer.qml` |
 | `Keyboard.qml` | key grid, layout tracking, keycap pipeline; the reply dispatch in `HelperReplies.js` (pure), the socket client in `HelperLink.qml`, paste chords in `PasteChords.qml`, the hold menu in `HoldMenu.qml` |
 | `*.js` (twenty pure modules) | every decision the panel makes — rows and keysyms, modifiers, emoji search, config validation, device choice, settle windows; each has an offscreen suite under `tests/` |
-| `daemon/src/` | the Rust helper owning one `zwp_virtual_keyboard_v1`: `protocol.rs` (wire format), `server.rs` (socket, handshake), `apply.rs` (commands), `keymap.rs`, `seat.rs`, `state.rs`, `main.rs` |
+| `daemon/src/` | the Rust helper owning one `zwp_virtual_keyboard_v1`: `protocol.rs` (wire format), `server.rs` (socket, handshake), `events.rs` (the shared writer, pushed events), `apply.rs` (commands), `keymap.rs`, `seat.rs` (the `SeatBackend` trait), `hyprland.rs` (its Hyprland IPC implementation), `json.rs`, `state.rs`, `main.rs` |
 | `systemd/oskar.service` | user unit, tied to `graphical-session.target` |
 | `bin/oskar` | the lifecycle command: setup / upgrade / status / doctor / teardown |
 | `tools/` | the nested-session harness, the daemon smoke suite, the package and recovery choreographies, the release checks |
@@ -39,18 +39,38 @@ switching for every client behind fcitx5 (decisions.md has the detail).
 ## The protocol
 
 The panel talks to the helper over `$XDG_RUNTIME_DIR/oskar/control.sock`,
-one line per command, one reply line per command, version 6:
+one line per command, one reply line per command, version 7 (a connection
+may still negotiate 6 and gets exactly the v6 verbs, so a new helper can
+run under an older panel):
 
 ```
-hello 6                                   -> hello 6 | err not ready | err protocol …
+hello 6 | hello 7                         -> hello <n> | err not ready | err protocol …
 keyboards                                 -> keyboards\t<safe physical name>…
 configure\t<rules>\t<model>\t<layouts>\t<variants>\t<options>\t<kb_file>\t<group>
 caps <group> [positions…]                 -> caps\t<generation>\t<group>\t<records>
 group <n> | tap <AD01|code> | down … | up … | mods <mask> | ping
+# protocol 7 only; a v6 connection answers these `err unknown command`
+seat                                      -> seat\t<json> | err no seat backend | err seat …
+switch\t<device>\t<group>                  -> ok | err …
+share\t<kb_file> | share\t-                -> ok | err keymap missing | err …
+events on | events off                    -> ok
 ```
 
-Replies are `ok`, `configured\t<generation>`, `caps …`, `pong`, or
-`err …`. The generation is what the panel correlates keycap facts
+Replies are `ok`, `configured\t<generation>`, `caps …`, `seat …`, `pong`,
+or `err …`. `seat`'s JSON carries `keyboards` (each with the compositor's
+own `name`, `main`, `active_layout_index`, `layout`, `variant`, `rules`,
+`model`, `options`), `safe` (the `keyboards` verb's list), `kb_file` and
+`titles` (layout code to human name). `share` clears and then sets the
+compositor's `input:kb_file` and verifies it by reading it back.
+
+A v7 connection that sent `events on` also receives unsolicited lines:
+`event\tlayout\t<device>\t<group>` when a keyboard's group moves (whoever
+moved it) and `event\tdevices` on hotplug or a config reload (re-ask
+`seat`). An event line is written whole between replies, never inside
+one, and takes no reply slot: a client correlating replies by order sets
+lines beginning `event\t` aside. Without a compositor seat backend
+(`$HYPRLAND_INSTANCE_SIGNATURE` unset, or its sockets gone) the seat verbs
+answer `err no seat backend`, no events flow, and typing is unaffected. The generation is what the panel correlates keycap facts
 against: a same-keymap reconfigure keeps it, a changed keymap bumps it.
 Every emoji pick rides the clipboard transaction (publish, verify, paste
 chord); there are no typed-text verbs. The parser is `parse()` in

@@ -1,0 +1,129 @@
+{
+"mice": [
+    {
+        "address": "0x55d099b22730",
+        "name": "qemu-qemu-usb-tablet",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    },    {
+        "address": "0x55d099b90310",
+        "name": "virtualps/2-vmware-vmmouse",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    },    {
+        "address": "0x55d099b90770",
+        "name": "virtualps/2-vmware-vmmouse-1",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    },    {
+        "address": "0x55d099c32880",
+        "name": "ydotoold-virtual-device-1",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    }
+],
+"keyboards": [
+    {
+        "address": "0x55d096aed2a0",
+        "name": "qemu-qemu-usb-keyboard",
+        "rules": "",
+        "model": "",
+        "layout": "us,ua,it,ru",
+        "variant": "",
+        "options": "shift:both_capslock_cancel,grp:caps_toggle",
+        "active_layout_index": 0,
+        "active_keymap": "English (US)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x55d099aabbe0",
+        "name": "qemu-qemu-usb-keyboard-1",
+        "rules": "",
+        "model": "",
+        "layout": "us,ua,it,ru",
+        "variant": "",
+        "options": "shift:both_capslock_cancel,grp:caps_toggle",
+        "active_layout_index": 0,
+        "active_keymap": "English (US)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x55d099b22b90",
+        "name": "power-button",
+        "rules": "",
+        "model": "",
+        "layout": "us,ua,it,ru",
+        "variant": "",
+        "options": "shift:both_capslock_cancel,grp:caps_toggle",
+        "active_layout_index": 0,
+        "active_keymap": "English (US)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x55d099b41390",
+        "name": "at-translated-set-2-keyboard",
+        "rules": "",
+        "model": "",
+        "layout": "us,ua,it,ru",
+        "variant": "",
+        "options": "shift:both_capslock_cancel,grp:caps_toggle",
+        "active_layout_index": 0,
+        "active_keymap": "English (US)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x55d098763000",
+        "name": "ydotoold-virtual-device",
+        "rules": "",
+        "model": "",
+        "layout": "us,ua,it,ru",
+        "variant": "",
+        "options": "shift:both_capslock_cancel,grp:caps_toggle",
+        "active_layout_index": 0,
+        "active_keymap": "English (US)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x55d099abf360",
+        "name": "hl-virtual-keyboard-oskar-daemon",
+        "rules": "",
+        "model": "",
+        "layout": "us,ua,it,ru",
+        "variant": "",
+        "options": "shift:both_capslock_cancel,grp:caps_toggle",
+        "active_layout_index": 0,
+        "active_keymap": "English (US)",
+        "capsLock": false,
+        "numLock": false,
+        "main": false
+    },    {
+        "address": "0x55d099abffe0",
+        "name": "hl-virtual-keyboard-fcitx5",
+        "rules": "",
+        "model": "",
+        "layout": "us,ua,it,ru",
+        "variant": "",
+        "options": "shift:both_capslock_cancel,grp:caps_toggle",
+        "active_layout_index": 0,
+        "active_keymap": "English (US)",
+        "capsLock": false,
+        "numLock": true,
+        "main": true
+    }
+],
+"tablets": [
+
+],
+"touch": [
+
+],
+"switches": [
+
+]
+}
+

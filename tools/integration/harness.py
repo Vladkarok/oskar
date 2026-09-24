@@ -170,6 +170,73 @@ class Client:
             pass
 
 
+class EventClient(Client):
+    """A protocol-7 connection that has asked for pushed events.
+
+    Event lines (`event\t...`) answer no command, so `send` sets them aside
+    the way the panel's reply correlation must, and returns the next line
+    that IS a reply. `wait_event` then asks what was set aside or arrives.
+    """
+
+    def __init__(self, path):
+        super().__init__(path, negotiate=False)
+        self.events = []
+
+    def _next_line(self):
+        line = self._stream.readline()
+        if not line:
+            raise Failure("the helper closed a protocol-7 connection")
+        return line.rstrip("\n")
+
+    def send(self, command):
+        if not command.endswith("\n"):
+            command += "\n"
+        self._stream.write(command)
+        self._stream.flush()
+        while True:
+            line = self._next_line()
+            if line.startswith("event\t"):
+                self.events.append(line)
+                continue
+            return line
+
+    def wait_event(self, wanted, timeout=5.0):
+        """Wait for an event line equal to `wanted`; return what was seen."""
+        deadline = time.monotonic() + timeout
+        while wanted not in self.events:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise Failure(f"no {wanted!r} within {timeout}s; saw {self.events!r}")
+            self._socket.settimeout(left)
+            try:
+                line = self._next_line()
+            except (TimeoutError, socket.timeout):
+                continue
+            finally:
+                self._socket.settimeout(10)
+            if not line.startswith("event\t"):
+                raise Failure(f"an unsolicited non-event line: {line!r}")
+            self.events.append(line)
+        return list(self.events)
+
+
+def compositor_keyboards():
+    """The nested compositor's keyboards by name, as `hyprctl` reports them."""
+    out = subprocess.run(
+        ["hyprctl", "devices", "-j"], capture_output=True, text=True
+    ).stdout
+    return {keyboard["name"]: keyboard for keyboard in json.loads(out)["keyboards"]}
+
+
+def compositor_kb_file():
+    """The compositor's input:kb_file, `[[EMPTY]]` (unset) read as empty."""
+    out = subprocess.run(
+        ["hyprctl", "getoption", "input:kb_file", "-j"], capture_output=True, text=True
+    ).stdout
+    value = json.loads(out).get("str")
+    return "" if value == "[[EMPTY]]" else value
+
+
 def parse_caps_reply(reply):
     """Decode a `caps` reply into {gen, group, by_position}, or raise.
 

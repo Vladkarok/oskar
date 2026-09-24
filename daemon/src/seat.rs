@@ -1,5 +1,6 @@
 //! The session around the helper: its runtime directory, the files it
-//! publishes there, and the physical keyboards the seat carries.
+//! publishes there, the physical keyboards the seat carries, and the
+//! compositor-neutral half of the seat verbs (`SeatBackend`).
 
 use std::path::{Path, PathBuf};
 
@@ -281,6 +282,360 @@ pub(crate) fn startup_keyboard_reply() -> String {
     }
 }
 
+/// One keyboard as the compositor reports it: exactly the facts the panel's
+/// device tiers (LayoutDevices.js) and its configure path read, written
+/// under the compositor's own key names so those decisions consume the
+/// helper's answer unchanged.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct Keyboard {
+    pub(crate) name: String,
+    /// The seat's current keyboard: the device the next physical key
+    /// comes from (the compositor's `main`).
+    pub(crate) main: bool,
+    pub(crate) active_layout_index: u32,
+    pub(crate) layout: String,
+    pub(crate) variant: String,
+    pub(crate) rules: String,
+    pub(crate) model: String,
+    pub(crate) options: String,
+}
+
+/// Why a seat request has no answer. Each maps to exactly one reply line.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum SeatError {
+    /// No compositor this helper knows how to ask. Typing needs none.
+    NoBackend,
+    /// The compositor's socket could not be reached, or did not answer
+    /// inside the bound.
+    Unreachable,
+    /// The compositor answered with something that is not the document
+    /// asked for. Never read as an empty answer: an unreadable kb_file
+    /// taken for "unset" would make the panel forget a user's keymap.
+    Unreadable,
+    /// The compositor refused the request, in its own words.
+    Refused(String),
+    /// `share` named a file that is absent or empty — for the published
+    /// keymap, the publish has not landed yet, which is worth a retry.
+    Missing,
+    /// The compositor accepted the change but reads back something else.
+    NotApplied,
+    /// The request would not fit the compositor's request buffer.
+    TooLong,
+}
+
+impl SeatError {
+    pub(crate) fn reply(&self) -> String {
+        match self {
+            SeatError::NoBackend => "err no seat backend".to_string(),
+            SeatError::Unreachable => "err seat unreachable".to_string(),
+            SeatError::Unreadable => "err seat unreadable".to_string(),
+            SeatError::Refused(why) => format!("err seat refused {}", one_line(why)),
+            SeatError::Missing => "err keymap missing".to_string(),
+            SeatError::NotApplied => "err share not applied".to_string(),
+            SeatError::TooLong => "err path too long".to_string(),
+        }
+    }
+}
+
+/// Compositor prose squeezed into one bounded protocol field: control
+/// characters (a newline would end the reply early) become spaces.
+fn one_line(text: &str) -> String {
+    text.trim()
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(160)
+        .collect()
+}
+
+/// What the seat tells subscribed connections without being asked.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum SeatEvent {
+    /// A keyboard's active group moved, whoever moved it.
+    Layout { device: String, group: u32 },
+    /// The device set or its configuration may have changed (hotplug, a
+    /// config reload): the listener re-asks `seat`.
+    Devices,
+}
+
+impl SeatEvent {
+    /// The event's protocol line, without its newline. A device name that
+    /// could break the framing (a tab or a control byte) degrades to the
+    /// `devices` event, which asks the listener to re-read instead.
+    pub(crate) fn line(&self) -> String {
+        match self {
+            SeatEvent::Layout { device, group }
+                if !device.is_empty() && !device.chars().any(char::is_control) =>
+            {
+                format!("event\tlayout\t{device}\t{group}")
+            }
+            _ => "event\tdevices".to_string(),
+        }
+    }
+}
+
+/// Where a backend's events go. `listening` lets a backend skip resolving
+/// an event nobody would read.
+pub(crate) trait EventSink: Send + Sync {
+    fn listening(&self) -> bool;
+    fn send(&self, event: SeatEvent);
+}
+
+/// Everything the helper asks of the compositor about the seat. One
+/// implementation per compositor; the protocol verbs are written against
+/// this and nothing else, so a second host is a second implementation.
+///
+/// Every method is bounded in time and never runs under the typing lock:
+/// a wedged compositor stalls the asking connection, never a keystroke.
+pub(crate) trait SeatBackend: Send + Sync {
+    fn keyboards(&self) -> Result<Vec<Keyboard>, SeatError>;
+    /// The compositor's `kb_file` setting, empty when unset.
+    fn kb_file(&self) -> Result<String, SeatError>;
+    fn switch_group(&self, device: &str, group: u32) -> Result<(), SeatError>;
+    /// Points the compositor's `kb_file` at `path`, or clears it for
+    /// `None`, and verifies the setting by reading it back.
+    fn share(&self, path: Option<&str>) -> Result<(), SeatError>;
+    /// Starts delivering events to `sink` on threads of the backend's own.
+    /// Their failure ends the events, never the helper.
+    fn watch(self: std::sync::Arc<Self>, sink: std::sync::Arc<dyn EventSink>);
+}
+
+/// xkb's human names for layout codes, the table the panel labels with.
+const BASE_LST: &str = "/usr/share/X11/xkb/rules/base.lst";
+const BASE_LST_CAP: u64 = 2 * 1024 * 1024;
+
+/// The `! layout` section's name for each wanted code, in `wanted` order.
+/// Codes the table does not carry are simply absent.
+fn layout_titles(base_lst: &str, wanted: &[String]) -> Vec<(String, String)> {
+    let mut found = std::collections::HashMap::new();
+    let mut in_layouts = false;
+    for line in base_lst.lines() {
+        if let Some(section) = line.strip_prefix('!') {
+            in_layouts = section.trim() == "layout";
+            continue;
+        }
+        if !in_layouts {
+            continue;
+        }
+        let line = line.trim();
+        let Some((code, name)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        if wanted.iter().any(|want| want == code) {
+            found.entry(code.to_string()).or_insert_with(|| name.trim().to_string());
+        }
+    }
+    wanted
+        .iter()
+        .filter_map(|code| found.get(code).map(|name| (code.clone(), name.clone())))
+        .collect()
+}
+
+/// Every distinct layout code any keyboard carries, in first-seen order.
+fn layout_codes(keyboards: &[Keyboard]) -> Vec<String> {
+    let mut codes: Vec<String> = Vec::new();
+    for code in keyboards.iter().flat_map(|k| k.layout.split(',')) {
+        let code = code.trim();
+        if !code.is_empty() && !codes.iter().any(|seen| seen == code) {
+            codes.push(code.to_string());
+        }
+    }
+    codes
+}
+
+/// The `seat` reply's JSON: the device inventory under the compositor's own
+/// key names, the helper's positively identified physical keyboards (the
+/// `keyboards` verb's list), the compositor's `kb_file`, and the human
+/// names of every layout code the keyboards carry. One line by
+/// construction: every string goes through `json::quote`.
+fn seat_json(
+    keyboards: &[Keyboard],
+    safe: &[String],
+    kb_file: &str,
+    titles: &[(String, String)],
+) -> String {
+    use crate::json::quote;
+    let devices: Vec<String> = keyboards
+        .iter()
+        .map(|k| {
+            format!(
+                "{{\"name\":{},\"main\":{},\"active_layout_index\":{},\"layout\":{},\
+                 \"variant\":{},\"rules\":{},\"model\":{},\"options\":{}}}",
+                quote(&k.name),
+                k.main,
+                k.active_layout_index,
+                quote(&k.layout),
+                quote(&k.variant),
+                quote(&k.rules),
+                quote(&k.model),
+                quote(&k.options)
+            )
+        })
+        .collect();
+    let safe: Vec<String> = safe.iter().map(|name| quote(name)).collect();
+    let titles: Vec<String> = titles
+        .iter()
+        .map(|(code, name)| format!("{}:{}", quote(code), quote(name)))
+        .collect();
+    format!(
+        "{{\"keyboards\":[{}],\"safe\":[{}],\"kb_file\":{},\"titles\":{{{}}}}}",
+        devices.join(","),
+        safe.join(","),
+        quote(kb_file),
+        titles.join(",")
+    )
+}
+
+/// `seat`: one line, `seat<TAB><json>`, or the error that kept it from
+/// being answered. Both compositor reads must succeed — a failed kb_file
+/// read is an error, never an empty value.
+pub(crate) fn seat_reply(backend: Option<&dyn SeatBackend>) -> String {
+    let Some(backend) = backend else {
+        return SeatError::NoBackend.reply();
+    };
+    let keyboards = match backend.keyboards() {
+        Ok(keyboards) => keyboards,
+        Err(error) => return error.reply(),
+    };
+    let kb_file = match backend.kb_file() {
+        Ok(kb_file) => kb_file,
+        Err(error) => return error.reply(),
+    };
+    let safe = physical_keyboard_names(Path::new("/sys/class/input"), Path::new("/run/udev/data"));
+    let base_lst = std::fs::File::open(BASE_LST)
+        .and_then(|file| {
+            use std::io::Read;
+            let mut text = String::new();
+            file.take(BASE_LST_CAP).read_to_string(&mut text)?;
+            Ok(text)
+        })
+        .unwrap_or_default();
+    let titles = layout_titles(&base_lst, &layout_codes(&keyboards));
+    format!("seat\t{}", seat_json(&keyboards, &safe, &kb_file, &titles))
+}
+
+/// `switch`: moves one device to an absolute group.
+pub(crate) fn switch_reply(backend: Option<&dyn SeatBackend>, device: &str, group: u32) -> String {
+    let Some(backend) = backend else {
+        return SeatError::NoBackend.reply();
+    };
+    match backend.switch_group(device, group) {
+        Ok(()) => "ok".to_string(),
+        Err(error) => error.reply(),
+    }
+}
+
+/// `share`: points the compositor at a keymap file, or clears the setting.
+/// A file that is absent or empty is refused before the compositor is
+/// touched: pointing it there would compile nothing, and for the published
+/// keymap it only means the publish has not landed yet.
+pub(crate) fn share_reply(backend: Option<&dyn SeatBackend>, path: Option<&str>) -> String {
+    let Some(backend) = backend else {
+        return SeatError::NoBackend.reply();
+    };
+    if let Some(path) = path {
+        let present = std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() > 0);
+        if !present {
+            return SeatError::Missing.reply();
+        }
+    }
+    match backend.share(path) {
+        Ok(()) => "ok".to_string(),
+        Err(error) => error.reply(),
+    }
+}
+
+/// Wakes on event nodes appearing in or vanishing from an input device
+/// directory (`/dev/input`): the kernel's own record of hotplug, which
+/// needs neither udev's netlink socket nor a subprocess.
+pub(crate) struct InputNodeWatch {
+    fd: std::os::fd::OwnedFd,
+}
+
+impl InputNodeWatch {
+    pub(crate) fn open(dir: &Path) -> Option<Self> {
+        use std::os::fd::FromRawFd;
+        use std::os::unix::ffi::OsStrExt;
+        let dir = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+        // SAFETY: inotify_init1 takes flags only; a non-negative return is a
+        // fresh descriptor this frame owns from here on.
+        let raw = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+        if raw < 0 {
+            return None;
+        }
+        // SAFETY: `raw` was just returned by inotify_init1 and nothing else owns it.
+        let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
+        let mask = libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_TO | libc::IN_MOVED_FROM;
+        // SAFETY: the descriptor is live and `dir` is a NUL-terminated path.
+        let watch = unsafe {
+            libc::inotify_add_watch(std::os::fd::AsRawFd::as_raw_fd(&fd), dir.as_ptr(), mask)
+        };
+        (watch >= 0).then_some(InputNodeWatch { fd })
+    }
+
+    /// Waits up to `timeout` (forever for `None`) and reports whether an
+    /// `event*` node came or went. `Ok(false)` covers both a timeout and a
+    /// wake for other names (`js0`, `by-id`), so callers loop.
+    pub(crate) fn wait(&self, timeout: Option<std::time::Duration>) -> std::io::Result<bool> {
+        use std::os::fd::AsRawFd;
+        let raw = self.fd.as_raw_fd();
+        let mut poll = libc::pollfd {
+            fd: raw,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ms = timeout.map_or(-1, |t| t.as_millis().min(i32::MAX as u128) as libc::c_int);
+        // SAFETY: one pollfd, owned by this frame, for a live descriptor.
+        let ready = unsafe { libc::poll(&mut poll, 1, ms) };
+        if ready < 0 {
+            let error = std::io::Error::last_os_error();
+            return if error.kind() == std::io::ErrorKind::Interrupted {
+                Ok(false)
+            } else {
+                Err(error)
+            };
+        }
+        if ready == 0 {
+            return Ok(false);
+        }
+        let mut changed = false;
+        // Aligned for the kernel's inotify_event records.
+        let mut buf = [0u64; 512];
+        loop {
+            // SAFETY: the buffer is owned, writable and its byte length is
+            // passed; the descriptor is non-blocking so this cannot park.
+            let read = unsafe {
+                libc::read(raw, buf.as_mut_ptr().cast(), std::mem::size_of_val(&buf))
+            };
+            if read <= 0 {
+                break;
+            }
+            // SAFETY: the kernel wrote `read` bytes into `buf`.
+            let bytes = unsafe {
+                std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), read as usize)
+            };
+            changed |= event_node_named(bytes);
+        }
+        Ok(changed)
+    }
+}
+
+/// Whether a batch of raw inotify records names an `event*` node.
+fn event_node_named(mut bytes: &[u8]) -> bool {
+    // struct inotify_event: wd (i32), mask, cookie, len (u32), then `len`
+    // bytes of NUL-padded name.
+    const HEADER: usize = 16;
+    let mut named = false;
+    while bytes.len() >= HEADER {
+        let len = u32::from_ne_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        let Some(name) = bytes.get(HEADER..HEADER + len) else {
+            break;
+        };
+        named |= name.starts_with(b"event");
+        bytes = &bytes[HEADER + len..];
+    }
+    named
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +754,232 @@ mod tests {
         persist_user_source(&dir, None).unwrap();
         assert!(!dir.join(SOURCE_SIDECAR).exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    struct FakeSeat {
+        keyboards: Result<Vec<Keyboard>, SeatError>,
+        kb_file: Result<String, SeatError>,
+        shared: std::sync::Mutex<Vec<Option<String>>>,
+    }
+
+    impl SeatBackend for FakeSeat {
+        fn keyboards(&self) -> Result<Vec<Keyboard>, SeatError> {
+            self.keyboards.clone()
+        }
+        fn kb_file(&self) -> Result<String, SeatError> {
+            self.kb_file.clone()
+        }
+        fn switch_group(&self, device: &str, _group: u32) -> Result<(), SeatError> {
+            if device == "kbd" {
+                Ok(())
+            } else {
+                Err(SeatError::Refused("device not found".into()))
+            }
+        }
+        fn share(&self, path: Option<&str>) -> Result<(), SeatError> {
+            self.shared.lock().unwrap().push(path.map(str::to_string));
+            Ok(())
+        }
+        fn watch(self: std::sync::Arc<Self>, _sink: std::sync::Arc<dyn EventSink>) {}
+    }
+
+    fn fake(keyboards: Result<Vec<Keyboard>, SeatError>, kb_file: Result<String, SeatError>) -> FakeSeat {
+        FakeSeat {
+            keyboards,
+            kb_file,
+            shared: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    #[test]
+    fn the_seat_reply_is_one_line_of_json_the_panel_reads_unchanged() {
+        let keyboards = vec![
+            Keyboard {
+                name: "at-translated-set-2-keyboard".into(),
+                main: true,
+                active_layout_index: 1,
+                layout: "us,ua".into(),
+                variant: ",".into(),
+                rules: "evdev".into(),
+                model: "pc105".into(),
+                options: "grp:alt_shift_toggle".into(),
+            },
+            Keyboard {
+                name: "odd\"name\nwith\tbreaks".into(),
+                ..Keyboard::default()
+            },
+        ];
+        let json = seat_json(
+            &keyboards,
+            &["at-translated-set-2-keyboard".to_string()],
+            "/run/user/1000/oskar/keymap.xkb",
+            &[("us".into(), "English (US)".into()), ("ua".into(), "Ukrainian".into())],
+        );
+        assert!(!json.contains('\n') && !json.contains('\r'));
+        let parsed = crate::json::parse(&json).expect("the reply is JSON");
+        let first = &parsed.get("keyboards").unwrap().as_array().unwrap()[0];
+        // The compositor's own key names, which LayoutDevices.js reads.
+        assert_eq!(first.get("name").unwrap().as_str(), Some("at-translated-set-2-keyboard"));
+        assert_eq!(first.get("main").unwrap().as_bool(), Some(true));
+        assert_eq!(first.get("active_layout_index").unwrap().as_u32(), Some(1));
+        for (key, value) in [
+            ("layout", "us,ua"),
+            ("variant", ","),
+            ("rules", "evdev"),
+            ("model", "pc105"),
+            ("options", "grp:alt_shift_toggle"),
+        ] {
+            assert_eq!(first.get(key).unwrap().as_str(), Some(value), "{key}");
+        }
+        let second = &parsed.get("keyboards").unwrap().as_array().unwrap()[1];
+        assert_eq!(second.get("name").unwrap().as_str(), Some("odd\"name\nwith\tbreaks"));
+        assert_eq!(parsed.get("safe").unwrap().as_array().unwrap().len(), 1);
+        assert_eq!(
+            parsed.get("kb_file").unwrap().as_str(),
+            Some("/run/user/1000/oskar/keymap.xkb")
+        );
+        assert_eq!(
+            parsed.get("titles").unwrap().get("ua").unwrap().as_str(),
+            Some("Ukrainian")
+        );
+    }
+
+    #[test]
+    fn the_seat_verbs_answer_one_line_each_way() {
+        assert_eq!(seat_reply(None), "err no seat backend");
+        assert_eq!(switch_reply(None, "kbd", 1), "err no seat backend");
+        assert_eq!(share_reply(None, None), "err no seat backend");
+
+        let good = fake(
+            Ok(vec![Keyboard {
+                name: "kbd".into(),
+                layout: "us".into(),
+                ..Keyboard::default()
+            }]),
+            Ok(String::new()),
+        );
+        let reply = seat_reply(Some(&good));
+        assert!(reply.starts_with("seat\t{\"keyboards\":[{\"name\":\"kbd\""), "{reply}");
+        assert!(!reply.contains('\n'));
+        assert_eq!(switch_reply(Some(&good), "kbd", 1), "ok");
+        assert_eq!(
+            switch_reply(Some(&good), "other", 1),
+            "err seat refused device not found"
+        );
+
+        // A failed read of either half is an error, never a partial answer.
+        let blind = fake(Err(SeatError::Unreadable), Ok(String::new()));
+        assert_eq!(seat_reply(Some(&blind)), "err seat unreadable");
+        let no_kb_file = fake(Ok(vec![]), Err(SeatError::Unreachable));
+        assert_eq!(seat_reply(Some(&no_kb_file)), "err seat unreachable");
+
+        // share: an absent or empty file is refused before the compositor
+        // is asked; a present one and the clear go through.
+        let dir = std::env::temp_dir().join(format!("osk-share-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let empty = dir.join("empty.xkb");
+        std::fs::write(&empty, "").unwrap();
+        let full = dir.join("keymap.xkb");
+        std::fs::write(&full, "xkb_keymap {};").unwrap();
+        let missing = dir.join("missing.xkb");
+        for refused in [&empty, &missing, &dir] {
+            assert_eq!(
+                share_reply(Some(&good), Some(refused.to_str().unwrap())),
+                "err keymap missing"
+            );
+        }
+        assert_eq!(share_reply(Some(&good), Some(full.to_str().unwrap())), "ok");
+        assert_eq!(share_reply(Some(&good), None), "ok");
+        assert_eq!(
+            *good.shared.lock().unwrap(),
+            [Some(full.to_str().unwrap().to_string()), None]
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn every_seat_error_is_one_err_line() {
+        for error in [
+            SeatError::NoBackend,
+            SeatError::Unreachable,
+            SeatError::Unreadable,
+            SeatError::Refused("error: bad\nsecond line\r".into()),
+            SeatError::Missing,
+            SeatError::NotApplied,
+            SeatError::TooLong,
+        ] {
+            let reply = error.reply();
+            assert!(reply.starts_with("err "), "{reply}");
+            assert!(!reply.chars().any(char::is_control), "{reply:?}");
+        }
+    }
+
+    #[test]
+    fn event_lines_carry_the_device_and_group_or_degrade_to_a_reread() {
+        assert_eq!(
+            SeatEvent::Layout {
+                device: "kbd-1".into(),
+                group: 2
+            }
+            .line(),
+            "event\tlayout\tkbd-1\t2"
+        );
+        assert_eq!(SeatEvent::Devices.line(), "event\tdevices");
+        for device in ["", "a\tb", "a\nb"] {
+            assert_eq!(
+                SeatEvent::Layout {
+                    device: device.into(),
+                    group: 0
+                }
+                .line(),
+                "event\tdevices"
+            );
+        }
+    }
+
+    #[test]
+    fn layout_titles_come_from_the_layout_section_only() {
+        let base_lst = "! model\n  us    Not a layout\n\n! layout\n  us              English (US)\n  \
+                        ua              Ukrainian\n  de              German\n\n! variant\n  \
+                        intl            us: English (US, intl.)\n";
+        let wanted = ["ua".to_string(), "us".to_string(), "xx".to_string()];
+        assert_eq!(
+            layout_titles(base_lst, &wanted),
+            [
+                ("ua".to_string(), "Ukrainian".to_string()),
+                ("us".to_string(), "English (US)".to_string()),
+            ]
+        );
+        let keyboards = [
+            Keyboard {
+                layout: "us,ua".into(),
+                ..Keyboard::default()
+            },
+            Keyboard {
+                layout: "ua, de,".into(),
+                ..Keyboard::default()
+            },
+        ];
+        assert_eq!(layout_codes(&keyboards), ["us", "ua", "de"]);
+    }
+
+    #[test]
+    fn the_input_node_watch_wakes_for_event_nodes_only() {
+        let dir = std::env::temp_dir().join(format!("osk-input-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let watch = InputNodeWatch::open(&dir).expect("inotify on a temp dir");
+        let short = Some(std::time::Duration::from_millis(100));
+        assert!(!watch.wait(short).unwrap(), "nothing happened yet");
+        std::fs::write(dir.join("js0"), "").unwrap();
+        assert!(!watch.wait(short).unwrap(), "not an event node");
+        std::fs::write(dir.join("event42"), "").unwrap();
+        assert!(watch.wait(short).unwrap(), "an event node appeared");
+        std::fs::remove_file(dir.join("event42")).unwrap();
+        assert!(watch.wait(short).unwrap(), "an event node vanished");
+        assert!(InputNodeWatch::open(&dir.join("absent")).is_none());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

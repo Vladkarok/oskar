@@ -11,11 +11,16 @@ use std::time::{Duration, Instant};
 use wayland_client::Connection;
 
 use crate::apply::{apply, expire_stuck_keys, hold_deadline, release_all};
-use crate::protocol::{parse, parse_hello, PROTOCOL_VERSION};
-use crate::seat::startup_keyboard_reply;
+use crate::events::{Outbox, SUBSCRIBERS};
+use crate::protocol::{negotiate, parse, parse_hello, parse_seat, SeatCommand, SEAT_VERSION};
+use crate::seat::{seat_reply, share_reply, startup_keyboard_reply, switch_reply, SeatBackend};
 use crate::state::SharedRef;
 
-pub(crate) fn serve(listener: UnixListener, shared: SharedRef, connection: Connection) {
+/// The compositor seat backend, if this session has one. Shared by every
+/// connection; its calls never take the typing lock.
+pub(crate) type Seat = Option<Arc<dyn SeatBackend>>;
+
+pub(crate) fn serve(listener: UnixListener, shared: SharedRef, connection: Connection, seat: Seat) {
     const MAX_CLIENTS: usize = 4;
     let clients = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
@@ -29,12 +34,13 @@ pub(crate) fn serve(listener: UnixListener, shared: SharedRef, connection: Conne
         }
         let shared = Arc::clone(&shared);
         let connection = connection.clone();
+        let seat = seat.clone();
         let spawned = {
             let clients = Arc::clone(&clients);
             thread::Builder::new()
                 .name("osk-client".into())
                 .spawn(move || {
-                    handle_client(stream, shared, connection);
+                    handle_client(stream, shared, connection, seat);
                     clients.fetch_sub(1, Ordering::AcqRel);
                 })
                 .is_err()
@@ -62,33 +68,6 @@ fn handshake_expired(handshaked: bool, connected_for: Duration) -> bool {
     !handshaked && connected_for >= HANDSHAKE_WINDOW
 }
 
-/// One bounded reply. `bound` is the caller's remaining time: while the handshake window is open, a write may not
-/// outlive it — a parked write would let a late hello complete long past
-/// the window. `false` means the bound is spent or the client is not
-/// draining its pipe; the connection is dropped either way.
-fn write_reply(out: &mut UnixStream, text: &str, bound: Duration) -> bool {
-    if bound.is_zero() {
-        return false;
-    }
-    if out.set_write_timeout(Some(bound)).is_err() {
-        return false;
-    }
-    match writeln!(out, "{text}") {
-        Ok(()) => true,
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            ) =>
-        {
-            false
-        }
-        // EPIPE and friends: the read side notices the disconnect on its
-        // own; an idle writer gains nothing by tearing the loop down here.
-        Err(_) => true,
-    }
-}
-
 /// The bound on the NEXT reply write: never more than `WRITE_BOUND`, and
 /// while the handshake window is open, never past its end.
 fn reply_bound(handshaked: bool, connected_for: Duration) -> Duration {
@@ -101,17 +80,16 @@ fn reply_bound(handshaked: bool, connected_for: Duration) -> Duration {
     }
 }
 
-fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) {
-    let Ok(mut out) = stream.try_clone() else {
-        return;
-    };
+fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection, seat: Seat) {
     // A client that stops reading while its pipe is full would park a
     // reply forever: every write on this connection is bounded, and one
     // that times out drops the connection — its read side would only ever
-    // notice at an EOF that client never sends.
-    if out.set_write_timeout(Some(WRITE_BOUND)).is_err() {
+    // notice at an EOF that client never sends. Replies and pushed events
+    // share this one writer, so a line is never torn by the other.
+    let Ok(out) = stream.try_clone() else {
         return;
-    }
+    };
+    let out = Outbox::new(out);
     // Keys this connection pressed and has not released. If the shell restarts
     // mid-chord the compositor would otherwise keep Ctrl logically down for the
     // rest of the session, which looks like a broken machine rather than a
@@ -129,7 +107,9 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
     // read_line accumulates without bound inside one call while a sender
     // streams newline-free bytes.
     let mut pending: Vec<u8> = Vec::new();
-    let mut handshaked = false;
+    // The version this connection negotiated; `None` until a hello names a
+    // supported one. Every later decision about what a line may do reads it.
+    let mut version: Option<u32> = None;
     let connected_at = Instant::now();
     // A negotiated client also owes traffic: otherwise a client that
     // hello'd and went silent would park one of the four slots for the
@@ -139,6 +119,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
     let mut last_activity = Instant::now();
     const NEGOTIATED_IDLE: Duration = Duration::from_secs(60);
     loop {
+        let handshaked = version.is_some();
         // The only thing this connection ever waits on is its own next line.
         // Arming that wait with the cap's deadline is what enforces the cap
         // without a timer thread: no hold means no deadline and the read
@@ -258,6 +239,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         let mut poisoned = false;
         let mut write_dead = false;
         while let Some(nl) = pending.iter().position(|byte| *byte == b'\n') {
+            let handshaked = version.is_some();
             // A complete line is capped here, before it is parsed. Breaking
             // without draining leaves the oversized bytes in `pending` for
             // the tail check below, which answers and closes.
@@ -291,7 +273,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 // Even this answers one line: the reply-per-command
                 // invariant has no silent case, and the panel's correlation
                 // queue pops on it.
-                if !write_reply(&mut out, "err empty",
+                if !out.write_line("err empty",
                     reply_bound(handshaked, connected_at.elapsed()))
                 {
                     write_dead = true;
@@ -306,27 +288,17 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             // version gate, not a default, so an old or broken client fails
             // closed instead of negotiating the current version by omission.
             if let Some(hello) = parse_hello(line) {
-                let reply = match hello {
-                    Ok(wanted) if wanted == PROTOCOL_VERSION => {
-                        if shared.lock().unwrap().is_ready() {
-                            format!("hello {PROTOCOL_VERSION}")
-                        } else {
-                            "err not ready".to_string()
-                        }
-                    }
-                    _ => {
-                        format!("err protocol {PROTOCOL_VERSION} required, helper needs reinstall")
-                    }
-                };
-                if !write_reply(&mut out, &reply,
+                let ready = shared.lock().unwrap().is_ready();
+                // Set once, never cleared: a later hello naming another
+                // version is a protocol confusion, not a re-negotiation.
+                let (reply, negotiated) = negotiate(version, hello, ready);
+                if !out.write_line(&reply,
                     reply_bound(handshaked, connected_at.elapsed()))
                 {
                     write_dead = true;
                     break;
                 }
-                // Set, never cleared: a post-handshake wrong-version hello is a protocol
-                // confusion, not a de-negotiation.
-                handshaked |= matches!(hello, Ok(wanted) if wanted == PROTOCOL_VERSION);
+                version = negotiated;
                 continue;
             }
             // Protocol negotiation is a gate, not a suggestion: until this
@@ -336,7 +308,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
             // or keymaps — executes. A client that never negotiates gets
             // its slot's five seconds and one refusal per line.
             if !handshaked {
-                if !write_reply(&mut out, "err hello first",
+                if !out.write_line("err hello first",
                     reply_bound(handshaked, connected_at.elapsed()))
                 {
                     write_dead = true;
@@ -345,7 +317,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 continue;
             }
             if line == "ping" {
-                if !write_reply(&mut out, "pong",
+                if !out.write_line("pong",
                     reply_bound(handshaked, connected_at.elapsed()))
                 {
                     write_dead = true;
@@ -354,7 +326,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 continue;
             }
             if line == "keyboards" {
-                if !write_reply(&mut out, &startup_keyboard_reply(),
+                if !out.write_line(&startup_keyboard_reply(),
                     reply_bound(handshaked, connected_at.elapsed()))
                 {
                     write_dead = true;
@@ -362,11 +334,36 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
                 }
                 continue;
             }
-            let reply = match parse(line) {
-                Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
-                None => "err unknown command".to_string(),
+            // The seat verbs exist only for a connection that negotiated
+            // them; below that version they fall through to the v6 parser,
+            // which answers `err unknown command` like any unknown verb.
+            // They run without the typing lock: a slow compositor stalls
+            // this connection, never another's keys.
+            let seat_command = if version.is_some_and(|v| v >= SEAT_VERSION) {
+                parse_seat(line)
+            } else {
+                None
             };
-            if !write_reply(&mut out, &reply,
+            let reply = match seat_command {
+                Some(SeatCommand::Seat) => seat_reply(seat.as_deref()),
+                Some(SeatCommand::Switch { device, group }) => {
+                    switch_reply(seat.as_deref(), &device, group)
+                }
+                Some(SeatCommand::Share(path)) => share_reply(seat.as_deref(), path.as_deref()),
+                Some(SeatCommand::Events(on)) => {
+                    if on {
+                        SUBSCRIBERS.subscribe(conn_id, &out);
+                    } else {
+                        SUBSCRIBERS.unsubscribe(conn_id);
+                    }
+                    "ok".to_string()
+                }
+                None => match parse(line) {
+                    Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
+                    None => "err unknown command".to_string(),
+                },
+            };
+            if !out.write_line(&reply,
                 reply_bound(handshaked, connected_at.elapsed()))
             {
                 write_dead = true;
@@ -381,11 +378,12 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection) 
         // remains — the tail without its newline, the one line still
         // growing.
         if pending.len() > MAX_LINE {
-            let _ = writeln!(out, "err line too long");
+            let _ = out.write_line("err line too long", WRITE_BOUND);
             break;
         }
     }
 
+    SUBSCRIBERS.unsubscribe(conn_id);
     release_all(&shared, &connection, held, conn_id);
 }
 

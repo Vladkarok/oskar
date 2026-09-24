@@ -1,12 +1,112 @@
 //! The socket's wire grammar: commands in, keycap-facts replies out.
+//!
+//! Framing. One command per line; exactly one reply line per command line,
+//! in order, whatever the command. Since protocol 7 a connection that sent
+//! `events on` also receives unsolicited lines, each beginning `event\t`:
+//!
+//!   event\tlayout\t<device>\t<group>   a keyboard's active group moved
+//!   event\tdevices                     the device set or its configuration
+//!                                      may have changed; re-ask `seat`
+//!
+//! An event line is written whole between two reply lines, never inside
+//! one, and consumes no reply slot: a client correlating replies by order
+//! sets event lines aside by their prefix. No reply ever begins `event\t`.
+//!
+//! Versions. A connection negotiates once, with `hello 6` or `hello 7`.
+//! A v6 connection gets exactly the v6 world: no events, and the seat
+//! verbs (`seat`, `switch`, `share`, `events`) answer `err unknown
+//! command`. That lets a v7 helper be installed under a v6 panel.
 
 use crate::keymap::{XkbConfig, MAX_SANE_KEYCODE};
 
-/// Bumped whenever the command set or a reply shape changes, so a plugin
-/// updated without reinstalling the helper fails the hello gate instead of
-/// failing silently. The command set is configure/caps/keyboards/group/
-/// mods/down/up/tap/ping/hello; any other verb earns `err unknown command`.
-pub(crate) const PROTOCOL_VERSION: u32 = 6;
+/// The newest protocol this helper speaks. Bumped whenever the command set
+/// or a reply shape changes, so a plugin updated without reinstalling the
+/// helper fails the hello gate instead of failing silently. The v6 command
+/// set is configure/caps/keyboards/group/mods/down/up/tap/ping/hello; v7
+/// adds seat/switch/share/events. Any other verb earns `err unknown command`.
+pub(crate) const PROTOCOL_VERSION: u32 = 7;
+
+/// Every version a connection may negotiate. The previous one stays
+/// accepted so the helper can be deployed before the panel moves.
+pub(crate) const SUPPORTED_VERSIONS: [u32; 2] = [6, 7];
+
+/// The first version whose connections may use the seat verbs.
+pub(crate) const SEAT_VERSION: u32 = 7;
+
+/// Answers one well-formed or malformed `hello`: the reply line and the
+/// connection's negotiated version afterwards.
+///
+/// A supported version negotiates even when the helper is not ready yet —
+/// the gate then refuses keys, not the handshake. Negotiation happens once:
+/// a later hello for the same version is answered again (the panel's repair
+/// timer re-hellos a live socket), one for another version is refused
+/// without changing what was negotiated.
+pub(crate) fn negotiate(
+    current: Option<u32>,
+    hello: Result<u32, ()>,
+    ready: bool,
+) -> (String, Option<u32>) {
+    match hello {
+        Ok(wanted) if SUPPORTED_VERSIONS.contains(&wanted) => match current {
+            Some(negotiated) if negotiated != wanted => {
+                (format!("err protocol {negotiated} already negotiated"), current)
+            }
+            _ if ready => (format!("hello {wanted}"), Some(wanted)),
+            _ => ("err not ready".to_string(), Some(wanted)),
+        },
+        _ => (
+            format!("err protocol {PROTOCOL_VERSION} required, helper needs reinstall"),
+            current,
+        ),
+    }
+}
+
+/// The v7 seat verbs.
+#[derive(Debug, PartialEq)]
+pub(crate) enum SeatCommand {
+    /// The device inventory, as one `seat\t<json>` line.
+    Seat,
+    /// Moves one device to an absolute group.
+    Switch { device: String, group: u32 },
+    /// Points the compositor's kb_file at a file (`Some`) or clears it.
+    Share(Option<String>),
+    /// Turns this connection's event lines on or off.
+    Events(bool),
+}
+
+/// Parses a seat verb. `None` is anything else, including a malformed seat
+/// line, which answers `err unknown command` like every malformed line.
+pub(crate) fn parse_seat(line: &str) -> Option<SeatCommand> {
+    match line {
+        "seat" => return Some(SeatCommand::Seat),
+        "events on" => return Some(SeatCommand::Events(true)),
+        "events off" => return Some(SeatCommand::Events(false)),
+        _ => {}
+    }
+    if let Some(rest) = line.strip_prefix("switch\t") {
+        let (device, group) = rest.split_once('\t')?;
+        // The device is one compositor-side word: whitespace would address
+        // another device, a control byte would break a later event line.
+        if device.is_empty() || device.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return None;
+        }
+        return Some(SeatCommand::Switch {
+            device: device.to_string(),
+            group: group.parse().ok()?,
+        });
+    }
+    if let Some(path) = line.strip_prefix("share\t") {
+        return match path {
+            "-" => Some(SeatCommand::Share(None)),
+            // A NUL cannot be a path; everything else is the path verbatim,
+            // tabs included — it is the line's last field.
+            "" => None,
+            path if path.contains('\0') => None,
+            path => Some(SeatCommand::Share(Some(path.to_string()))),
+        };
+    }
+    None
+}
 
 /// A key is named the way xkb names it (`AD01`) or given as a raw evdev code.
 #[derive(Debug)]
@@ -249,6 +349,63 @@ mod tests {
         assert_eq!(parse_hello("hellox 5"), None);
         assert_eq!(parse_hello("tap AD01"), None);
         assert_eq!(parse_hello(""), None);
+    }
+
+    #[test]
+    fn both_versions_negotiate_once_and_others_are_refused() {
+        assert_eq!(negotiate(None, Ok(6), true), ("hello 6".into(), Some(6)));
+        assert_eq!(negotiate(None, Ok(7), true), ("hello 7".into(), Some(7)));
+        // Not ready: refused, but the version is negotiated (the gate refuses
+        // keys, not the handshake).
+        assert_eq!(negotiate(None, Ok(7), false), ("err not ready".into(), Some(7)));
+        // A repeat of the negotiated version answers again; another
+        // supported version does not switch the connection over.
+        assert_eq!(negotiate(Some(6), Ok(6), true), ("hello 6".into(), Some(6)));
+        assert_eq!(
+            negotiate(Some(6), Ok(7), true),
+            ("err protocol 6 already negotiated".into(), Some(6))
+        );
+        for bad in [Ok(5), Ok(8), Err(())] {
+            assert_eq!(
+                negotiate(None, bad, true),
+                ("err protocol 7 required, helper needs reinstall".into(), None)
+            );
+            assert_eq!(negotiate(Some(7), bad, true).1, Some(7));
+        }
+    }
+
+    #[test]
+    fn seat_verbs_parse_exactly() {
+        assert_eq!(parse_seat("seat"), Some(SeatCommand::Seat));
+        assert_eq!(parse_seat("events on"), Some(SeatCommand::Events(true)));
+        assert_eq!(parse_seat("events off"), Some(SeatCommand::Events(false)));
+        assert_eq!(
+            parse_seat("switch\tat-translated-set-2-keyboard\t1"),
+            Some(SeatCommand::Switch {
+                device: "at-translated-set-2-keyboard".into(),
+                group: 1
+            })
+        );
+        assert_eq!(
+            parse_seat("share\t/run/user/1000/oskar/keymap.xkb"),
+            Some(SeatCommand::Share(Some("/run/user/1000/oskar/keymap.xkb".into())))
+        );
+        assert_eq!(parse_seat("share\t-"), Some(SeatCommand::Share(None)));
+        assert_eq!(
+            parse_seat("share\t/tmp/a\tb"),
+            Some(SeatCommand::Share(Some("/tmp/a\tb".into())))
+        );
+        for bad in [
+            "seat extra", "seats", "events", "events maybe", "switch\tkbd", "switch\t\t1",
+            "switch\tkbd\t-1", "switch\tkbd\tnext", "switch\ttwo words\t1", "switch kbd 1",
+            "share\t", "share", "share\ta\0b", "tap AD01",
+        ] {
+            assert_eq!(parse_seat(bad), None, "{bad:?}");
+        }
+        // Seat verbs are not v6 verbs: the v6 parser has no answer for them.
+        for line in ["seat", "events on", "switch\tkbd\t1", "share\t-"] {
+            assert!(parse(line).is_none(), "{line:?}");
+        }
     }
 
     #[test]

@@ -40,7 +40,10 @@ REGISTRATION="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 USER_UNIT="$HOME/.config/systemd/user/$UNIT"
 SOURCE_HELPER="$HOME/.local/libexec/oskar-daemon"
 SOCKET="${XDG_RUNTIME_DIR:-$HOME/.run}/oskar/control.sock"
-PROTOCOL_VERSION="6"
+# The newest protocol the helper this tree builds speaks. The helper also
+# accepts the one before (a panel is allowed to lag its helper), so this
+# only has to match the helper, never the panel.
+PROTOCOL_VERSION="7"
 
 # The pre-rename world: every name the product carried before it
 # settled on oskar. setup and upgrade migrate it away, teardown
@@ -885,6 +888,42 @@ omarchy restart shell"
   fi
 }
 
+doctor_seat() {
+  # The helper reads the compositor's seat for the panel (protocol 7):
+  # its keyboards, their groups, its kb_file. A helper that cannot is
+  # still typing, but the panel's layout tracking has nothing to read.
+  local what="seat backend" reply count
+  if [[ "$HELLO_REPLY" != "hello $PROTOCOL_VERSION" ]]; then
+    doc_unknown "$what" "the helper cannot be asked (see the control \
+socket check)"
+    return
+  fi
+  reply="$(doctor_query "seat")"
+  case "$reply" in
+    seat$'\t'*)
+      # One "name" key per keyboard object in the helper's own JSON.
+      # A seat with no keyboards is an answer, not a failed grep.
+      count="$(printf '%s' "${reply#seat$'\t'}" | { grep -o '"name":' || true; } | wc -l)"
+      doc_ok "$what" "the helper reads the compositor's seat: $count \
+keyboard(s)"
+      ;;
+    "err no seat backend")
+      doc_fail "$what" "the helper has no compositor to ask — \
+HYPRLAND_INSTANCE_SIGNATURE was not in its environment when it started, \
+or that Hyprland instance is gone; try: systemctl --user restart \
+$DOCTOR_UNIT_D (from inside the graphical session)"
+      ;;
+    err*)
+      doc_fail "$what" "the helper could not read the seat ($reply); try: \
+systemctl --user restart $DOCTOR_UNIT_D"
+      ;;
+    *)
+      doc_unknown "$what" "the helper did not answer 'seat' \
+(reply: '${reply:0:60}')"
+      ;;
+  esac
+}
+
 doctor_theme_deps() {
   # The panel imports qs.Commons / qs.Ui from the Omarchy shell's own
   # tree — a shell without them (or no quickshell at all) leaves the
@@ -980,6 +1019,7 @@ DOCTOR_CHECKS=(
   keymap-share
   keycap-fallback
   layouts-groups
+  seat
   theme-deps
   drift
 )

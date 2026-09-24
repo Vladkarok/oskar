@@ -11,8 +11,10 @@
 //!
 //! One compiled keymap carries every configured layout as a group, so switching
 //! language selects a group rather than compiling again. The panel tells the
-//! helper which layouts to compile and which group is active; it is the only
-//! thing that talks to the compositor about layouts.
+//! helper which layouts to compile and which group is active. What the helper
+//! knows about the compositor's seat — its keyboards, their groups, its
+//! kb_file — it reads over the compositor's IPC on the panel's behalf
+//! (protocol 7, `seat.rs` and `hyprland.rs`), never from the Wayland seat.
 //!
 //! Protocol, one command per line on a unix socket:
 //!   hello <version>   readiness gate, replies `hello <version>`
@@ -34,10 +36,18 @@
 //!                     character text), `x<keysym>` (a symbol that produces no
 //!                     character) or `n` (no symbol at this level). Without a
 //!                     position list every named key is answered.
+//! Protocol 7 only (a `hello 6` connection answers these `err unknown command`):
+//!   seat              the compositor's keyboards as `seat<TAB><json>`
+//!   switch<TAB>device<TAB>group
+//!                     move one keyboard to an absolute group
+//!   share<TAB>path    point the compositor's kb_file at a keymap file, or
+//!                     clear it with `share<TAB>-`; verified by read-back
+//!   events on|off     push `event<TAB>...` lines to this connection
 //! Replies are `ok`, `hello <n>`,
 //! `configured<TAB><generation>`, `pong`,
 //! `keyboards<TAB>name...`, `caps<TAB><generation><TAB><group><TAB><records>`,
-//! or `err <reason>`.
+//! `seat<TAB><json>`, or `err <reason>`. Pushed events are extra lines that
+//! answer no command; protocol.rs documents the framing.
 //!
 //! The generation is the count of keymap installs this process has performed.
 //! It is what the panel correlates its keycap facts against: a same-keymap
@@ -54,6 +64,9 @@
 //! wedged. Modifier codes are exempt; locked Shift is deliberately held.
 
 mod apply;
+mod events;
+mod hyprland;
+mod json;
 mod keymap;
 mod protocol;
 mod seat;
@@ -68,8 +81,10 @@ use std::time::Duration;
 use wayland_client::{Connection, EventQueue};
 
 use crate::apply::release_everything;
-use crate::seat::socket_path;
-use crate::server::serve;
+use crate::events::SUBSCRIBERS;
+use crate::hyprland::Hyprland;
+use crate::seat::{socket_path, EventSink, SeatBackend};
+use crate::server::{serve, Seat};
 use crate::state::{Shared, SharedRef, State};
 
 /// The signals a shutdown arrives as. SIGTERM is `systemctl stop` and the
@@ -215,9 +230,24 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(0);
     });
 
+    // The seat backend is optional by design: without one the seat verbs
+    // answer `err no seat backend`, no events flow, and typing is untouched.
+    let seat: Seat = match Hyprland::from_env() {
+        Some(hyprland) => {
+            let hyprland = Arc::new(hyprland);
+            let sink: Arc<dyn EventSink> = Arc::new(&SUBSCRIBERS);
+            Arc::clone(&hyprland).watch(sink);
+            Some(hyprland as Arc<dyn SeatBackend>)
+        }
+        None => {
+            eprintln!("no Hyprland instance in the environment; seat verbs are off");
+            None
+        }
+    };
+
     let socket_shared = Arc::clone(&shared);
     let socket_connection = connection.clone();
-    thread::spawn(move || serve(listener, socket_shared, socket_connection));
+    thread::spawn(move || serve(listener, socket_shared, socket_connection, seat));
     run(queue, state)
 }
 

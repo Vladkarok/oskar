@@ -22,10 +22,13 @@ import time
 from harness import (
     Clipboard,
     ElectronTarget,
+    EventClient,
     Failure,
     Helper,
     KeymapObserver,
     TypingTarget,
+    compositor_kb_file,
+    compositor_keyboards,
     focus_toward,
     published_keymap_is_live,
     run,
@@ -420,7 +423,7 @@ def protocol_mismatch_is_refused(helper, keyboard):
     # test: the gate exists so a mismatched panel never reaches one, and a
     # compile here would put the churn count below in a lie.
     client = helper.connect()
-    client.expect("hello 3", "err protocol 6 required, helper needs reinstall")
+    client.expect("hello 3", "err protocol 7 required, helper needs reinstall")
     # The refusal names the version, not the connection: the same socket
     # speaking the current version is greeted normally.
     client.expect("hello 6", "hello 6")
@@ -449,7 +452,7 @@ def pre_handshake_gate(helper, keyboard):
     raw.expect("keyboards", "err hello first")
     # A wrong version is REFUSED, not negotiated: the door stays shut.
     reply = raw.send("hello 4")
-    if reply != "err protocol 6 required, helper needs reinstall":
+    if reply != "err protocol 7 required, helper needs reinstall":
         raise Failure(f"hello 4: {reply!r}")
     raw.expect("ping", "err hello first")
     # The matching hello opens it, on the same connection.
@@ -1475,6 +1478,127 @@ def custom_keymap_content_refresh(helper, keyboard):
     # custom US map already carries it. Avoid a fifth distinct install inside
     # the production ten-second churn window merely to restore an unused
     # layout after this test.
+
+
+def _seat_facts(client):
+    """One `seat` reply, decoded."""
+    reply = client.send("seat")
+    if not reply.startswith("seat\t"):
+        raise Failure(f"expected seat<TAB><json>, got {reply[:200]!r}")
+    try:
+        return json.loads(reply[len("seat\t"):])
+    except json.JSONDecodeError as error:
+        raise Failure(f"the seat reply is not JSON ({error}): {reply[:200]!r}")
+
+
+def _physical_keyboard():
+    """A keyboard of the nested compositor's own, never the helper's."""
+    for name in compositor_keyboards():
+        if not name.startswith("hl-virtual-keyboard"):
+            return name
+    raise Failure("the nested compositor lists no keyboard of its own")
+
+
+@test("a protocol-6 peer keeps the v6 world: seat verbs unknown, no events")
+def seat_verbs_need_protocol_seven(helper, keyboard):
+    client = helper.connect()
+    if client.hello_reply != "hello 6":
+        raise Failure(f"hello 6 was refused: {client.hello_reply!r}")
+    for line in ("seat", "events on", "switch\twl_keyboard\t1", "share\t-"):
+        client.expect(line, "err unknown command")
+    # A layout move the compositor announces must not reach this
+    # connection: the ping's reply is the very next line it reads.
+    device = _physical_keyboard()
+    subprocess.run(["hyprctl", "switchxkblayout", device, "1"], capture_output=True)
+    time.sleep(0.5)
+    subprocess.run(["hyprctl", "switchxkblayout", device, "0"], capture_output=True)
+    time.sleep(0.5)
+    client.expect("ping", "pong")
+    client.close()
+
+
+@test("protocol 7: seat reports the compositor's keyboards and kb_file")
+def seat_reports_the_compositor(helper, keyboard):
+    client = EventClient(helper.socket_path)
+    client.expect("hello 7", "hello 7")
+    client.expect("events on", "ok")
+    facts = _seat_facts(client)
+    compositor = compositor_keyboards()
+    names = [entry["name"] for entry in facts["keyboards"]]
+    if sorted(names) != sorted(compositor):
+        raise Failure(f"seat names {names!r}, the compositor {sorted(compositor)!r}")
+    for entry in facts["keyboards"]:
+        truth = compositor[entry["name"]]
+        for key in ("main", "active_layout_index", "layout", "variant", "rules",
+                    "model", "options"):
+            if entry[key] != truth[key]:
+                raise Failure(
+                    f"{entry['name']}.{key}: seat {entry[key]!r}, "
+                    f"compositor {truth[key]!r}"
+                )
+    if facts["kb_file"] != compositor_kb_file():
+        raise Failure(f"seat kb_file {facts['kb_file']!r}, compositor {compositor_kb_file()!r}")
+    inventory = [name for name in client.send("keyboards").split("\t")[1:] if name]
+    if facts["safe"] != inventory:
+        raise Failure(f"seat safe {facts['safe']!r}, keyboards verb {inventory!r}")
+    if facts["titles"].get("ua") != "Ukrainian":
+        raise Failure(f"no human name for ua: {facts['titles']!r}")
+    print(f".... seat: {len(names)} keyboards {names!r}, kb_file "
+          f"{facts['kb_file']!r}", flush=True)
+    client.close()
+
+
+@test("protocol 7: switch moves a keyboard; an outside switch arrives as an event")
+def seat_switch_and_layout_events(helper, keyboard):
+    client = EventClient(helper.socket_path)
+    client.expect("hello 7", "hello 7")
+    client.expect("events on", "ok")
+    device = _physical_keyboard()
+    client.expect(f"switch\t{device}\t1", "ok")
+    for _ in range(40):
+        if compositor_keyboards()[device]["active_layout_index"] == 1:
+            break
+        time.sleep(0.05)
+    else:
+        raise Failure(f"{device} never reached group 1 after switch")
+    reply = client.send("switch\tno-such-keyboard\t1")
+    if not reply.startswith("err seat refused"):
+        raise Failure(f"a switch of an unknown device answered {reply!r}")
+    # The move made OUTSIDE the helper — Caps Lock, the bar, a keybind —
+    # is what the panel has to follow.
+    client.events.clear()
+    moved = subprocess.run(
+        ["hyprctl", "switchxkblayout", device, "0"], capture_output=True, text=True
+    )
+    if moved.stdout.strip() != "ok":
+        raise Failure(f"hyprctl switchxkblayout refused: {moved.stdout!r}")
+    seen = client.wait_event(f"event\tlayout\t{device}\t0")
+    # Replies still pair with commands while events flow.
+    client.expect("ping", "pong")
+    print(f".... events: {seen!r}", flush=True)
+    client.expect("events off", "ok")
+    client.close()
+
+
+@test("protocol 7: share points kb_file at a keymap and share - clears it")
+def seat_share_and_clear(helper, keyboard):
+    client = EventClient(helper.socket_path)
+    client.expect("hello 7", "hello 7")
+    # Refused before the compositor is touched, like the panel's own
+    # "not published yet" exit.
+    client.expect("share\t/nonexistent/oskar/keymap.xkb", "err keymap missing")
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+    published = os.path.join(runtime, "oskar", "keymap.xkb")
+    client.expect(f"share\t{published}", "ok")
+    if compositor_kb_file() != published:
+        raise Failure(f"after share the compositor has {compositor_kb_file()!r}")
+    client.expect("share\t-", "ok")
+    if compositor_kb_file() != "":
+        raise Failure(f"after share - the compositor has {compositor_kb_file()!r}")
+    facts = _seat_facts(client)
+    if facts["kb_file"] != "":
+        raise Failure(f"seat still reports kb_file {facts['kb_file']!r}")
+    client.close()
 
 
 @test("a helper stopped mid-hold releases the key before it exits")

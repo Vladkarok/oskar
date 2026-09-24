@@ -205,11 +205,14 @@ status=$?
 #   compositor input identity empty -> published (its preceding clear is an
 #   empty -> empty no-op). The shared-keymap gate changes published -> empty
 #   -> published. Those are 3 more: 14 possible identity changes in total.
+#   The protocol-7 share leg then moves input:kb_file published -> empty
+#   -> published through the helper's `share`, and back to empty through
+#   `share -`: 3 more, 17 in total.
 #
-#   16 identity changes (14 above, plus the shared-keymap leg's kb_file
+#   19 identity changes (17 above, plus the shared-keymap leg's kb_file
 #   rewrite-and-restore, which reaches Xwayland and logs its own pair even
-#   though it changes no seat identity) x 2 lines = 32, + 1 pair (2 lines)
-#   for compositor startup variance = 34.
+#   though it changes no seat identity) x 2 lines = 38, + 1 pair (2 lines)
+#   for compositor startup variance = 40.
 #
 #   The custom-keymap test's HELPER installs (a kb_file rewritten twice and
 #   the restore) deliberately add nothing to this count: those never reach
@@ -217,18 +220,18 @@ status=$?
 #   starts counting them is a run where something began re-pointing the
 #   compositor, and that is worth failing over.
 #
-# 34 allows one more pair for compositor startup variance; observed on
-# this guest 28-30 green. The budget keeps triple headroom for guest
-# variance, and a feedback loop grows at ~190 pairs per second (a prior
-# incident hit 56,547 in five minutes), so 34 still fails closed on the
-# churn this guard exists to catch.
+# 40 allows one more pair for compositor startup variance; observed on
+# this guest 38 green. The budget keeps triple headroom for guest
+# variance (120), and a feedback loop grows at ~190 pairs per second (a
+# prior incident hit 56,547 in five minutes), so 120 still fails closed on
+# the churn this guard exists to catch.
 #
 # If this number has to move again, re-derive it: count the identity
 # changes, not the maps.
 after_xkb=$(grep -c xkbcomp "$workdir/hypr.log" 2>/dev/null || true)
 rebuilds=$((after_xkb - before_xkb))
 echo "--- exited with $status; compositor keymap rebuilds during run: $rebuilds ---"
-if (( rebuilds > 102 )); then
+if (( rebuilds > 120 )); then
     echo "unsafe keymap churn detected" >&2
     exit 1
 fi
