@@ -801,12 +801,46 @@ def restore_service():
 
 QMP_DOMAIN = "oskar"
 GUEST = "omarchy-vm"
-# Calibrated live on this lab's 1280x800 output (the cap at (320,621)
-# delivered 'q' four-for-four through the real panel; (272,621) is the
-# TAB cap). The band is
-# 0,499 1280x301 on this layout; both values are re-verified at runtime
-# by the daemon-side press assertion, never trusted blind.
-CAP_Q = (320, 621)
+# The Q cap as a fraction of the panel's layer rect, measured live on a
+# 1280x800 output: the cap at (320,621) of the band 0,499 1280x301 delivered
+# 'q' four-for-four through the real panel. Scaled onto the live layer rect
+# at runtime and re-verified by the daemon-side press assertion.
+CAP_Q_FRACTION = (320 / 1280, (621 - 499) / 301)
+PANEL_NAMESPACE = "io.github.vladkarok.oskar"
+
+
+def _screen_size():
+    """The lab output's pixel size: QMP abs coordinates span 0..32767 over
+    it, so a click scaled with any other size lands somewhere else."""
+    result = _guest("hyprctl monitors -j 2>/dev/null")
+    try:
+        monitor = json.loads(result.stdout)[0]
+        return monitor["width"], monitor["height"]
+    except (json.JSONDecodeError, IndexError, KeyError):
+        raise Failure("cannot read the lab output size from hyprctl")
+
+
+def _panel_rect():
+    """The keyboard band's layer rect (x, y, w, h), or None when the panel's
+    main layer is not mapped."""
+    result = _guest("hyprctl layers -j 2>/dev/null")
+    try:
+        for monitor in json.loads(result.stdout).values():
+            for level in monitor["levels"].values():
+                for layer in level:
+                    if layer.get("namespace") == PANEL_NAMESPACE:
+                        return layer["x"], layer["y"], layer["w"], layer["h"]
+    except (json.JSONDecodeError, KeyError, AttributeError):
+        pass
+    return None
+
+
+def _cap_q():
+    rect = _panel_rect()
+    if rect is None:
+        raise Failure("the panel's layer is not mapped; no Q cap to click")
+    x, y, w, h = rect
+    return x + int(w * CAP_Q_FRACTION[0]), y + int(h * CAP_Q_FRACTION[1])
 
 
 def _host_guard():
@@ -859,7 +893,8 @@ def _qmp(json_arg):
 
 
 def _qmp_click(x, y):
-    ax, ay = x * 32767 // 1280, y * 32767 // 800
+    width, height = _screen_size()
+    ax, ay = x * 32767 // width, y * 32767 // height
     _qmp('{"execute":"input-send-event","arguments":{"events":['
          f'{{"type":"abs","data":{{"axis":"x","value":{ax}}}}},'
          f'{{"type":"abs","data":{{"axis":"y","value":{ay}}}}}]}}}}')
@@ -988,12 +1023,30 @@ def _window_rect(title):
     return None
 
 
-def _interior_point(title, band_top=499):
+def _settled_rect(title, timeout=10):
+    """The titled window's rect once the tiler stops moving it: a window
+    opened a moment ago can still be re-tiled by the next one, and a point
+    computed from the first rect then lands in a neighbour."""
+    deadline = time.time() + timeout
+    rect = _window_rect(title)
+    while time.time() < deadline:
+        time.sleep(0.5)
+        again = _window_rect(title)
+        if again == rect:
+            return rect
+        rect = again
+    return rect
+
+
+def _interior_point(title, band_top=None):
     """A point inside the titled window's rect, above the keyboard band
     and away from edges — recomputed from live geometry, never assumed."""
-    rect = _window_rect(title)
+    rect = _settled_rect(title)
     if rect is None:
         raise Failure(f"no window titled {title!r}")
+    if band_top is None:
+        panel = _panel_rect()
+        band_top = panel[1] if panel else _screen_size()[1]
     (x, y), (w, h) = rect
     px, py = x + w // 4, y + h // 4
     if py >= band_top:
@@ -1065,7 +1118,7 @@ def real_click_leg(red=False):
     presses_before = _oracle_presses("rtarget")
     downs_before = _strace_presses()
 
-    _qmp_click(*CAP_Q)
+    _qmp_click(*_cap_q())
     downs = _strace_presses() - downs_before
     presses = _oracle_presses("rtarget") - presses_before
     if red:
@@ -1077,7 +1130,7 @@ def real_click_leg(red=False):
                       f"downs=+{downs} presses=+{presses}")
     if downs == 0:
         raise Failure("the cap click never reached the daemon as a "
-                      "protocol down (dead panel? recalibrate CAP_Q)")
+                      "protocol down (dead panel? recalibrate CAP_Q_FRACTION)")
     if presses == 0:
         raise Failure(f"daemon saw +{downs} down(s) but the focused "
                       "window received nothing")
