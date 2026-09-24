@@ -18,14 +18,19 @@ set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WALL_TMP="$(mktemp -d /tmp/oskar-wall.XXXXXX)" || exit 1
-trap 'rm -rf "$WALL_TMP"' EXIT
+# A failing row's detail points into WALL_TMP, so the logs outlive the run
+# whenever anything failed; a clean run leaves nothing behind.
+trap 'if (( failed )); then echo "logs kept in $WALL_TMP"; else rm -rf "$WALL_TMP"; fi' EXIT
 LAB=omarchy-vm
 declare -a ROWS
 wall=0
+failed=0
 
 row() { # <name> <status> <detail>
   ROWS+=("$(printf '%-14s %-4s %s' "$1" "$2" "$3")")
   [[ "$2" == "PASS" ]] || wall=1
+  [[ "$2" == "FAIL" ]] && failed=1
+  return 0
 }
 
 echo "== host battery"
