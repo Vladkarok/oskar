@@ -35,7 +35,28 @@ systemctl --user enable oskar.service
 # would refuse on ConditionEnvironment and look like a failure.
 if systemctl --user --quiet is-active graphical-session.target; then
   systemctl --user restart oskar.service
-  echo "Helper installed and running."
+  # "Running" means the new helper answers, not that systemd started it: a
+  # check straight after this script would otherwise meet the old socket.
+  socket="${XDG_RUNTIME_DIR:-$HOME/.run}/oskar/control.sock"
+  version="$(sed -n 's/^PROTOCOL_VERSION="\(.*\)"$/\1/p' "$here/bin/oskar")"
+  answered=""
+  for _ in $(seq 1 20); do
+    if command -v socat >/dev/null && [[ -S "$socket" ]] \
+        && printf 'hello %s\n' "$version" \
+          | timeout 2 socat -t1 - UNIX-CONNECT:"$socket" 2>/dev/null \
+          | head -n1 | grep -q "^hello $version"; then
+      answered=1
+      break
+    fi
+    sleep 0.5
+  done
+  if [[ -n "$answered" ]]; then
+    echo "Helper installed and running."
+  elif ! command -v socat >/dev/null; then
+    echo "Helper installed and started (install socat to have it checked)."
+  else
+    echo "Helper installed, but it did not answer within 10 s; see: systemctl --user status oskar.service" >&2
+  fi
 else
   echo "Helper installed. It will start with your next graphical session."
 fi
