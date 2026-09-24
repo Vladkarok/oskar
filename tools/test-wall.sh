@@ -9,8 +9,9 @@
 #   live legs (lab) — the REAL panel from the tree in the disposable
 #                     lab: the canary (packaged-panel load + facts,
 #                     classes 2 and 3), the restart-settle repro (the
-#                     incident's bounce — class 4), and the chooser
-#                     through the real UI path. Over ssh, hostname-
+#                     incident's bounce — class 4), the layout audit
+#                     (no two click targets collide), and the canary's
+#                     QMP clicks through the compositor. Over ssh, hostname-
 #                     gated by the legs themselves; a BUSY lab (another
 #                     tenant holds it) skips the live layers LOUDLY —
 #                     the wall never hangs or fails silently.
@@ -62,19 +63,20 @@ elif ssh -o ConnectTimeout=5 "$LAB" true 2>/dev/null; then
   # means the lab is held even though no guest-side leg process matches
   # the other legs' pattern.
   if pgrep -f "integration/panel_canary" >/dev/null 2>&1 \
-      || ssh "$LAB" 'pgrep -f "integration/(panel_canary|restart_settle|chooser35|emoji_focus|hold_column|qmp_guest_frame)" >/dev/null 2>&1'; then
+      || ssh "$LAB" 'pgrep -f "integration/(panel_canary|restart_settle|chooser35|emoji_focus|hold_column|qmp_guest_frame|layout_leg|socket_rebuild)" >/dev/null 2>&1'; then
     row "live-legs" SKIP "another tenant holds the lab — rerun when free"
   else
     # The live legs need the lab session's own environment (the wall's
     # first live run found the latent bug: ssh without it dies at the
     # socket wait) — the vm-handoff.md pattern, sourced guest-side.
-    for leg in panel_canary restart_settle; do
+    for leg in panel_canary restart_settle layout_leg; do
       echo "== live: $leg"
       env_var="OSK_$(echo "$leg" | tr 'a-z' 'A-Z')_LIVE=1"
       # Each leg's own convention: the canary gate is OSK_PANEL_CANARY_LIVE.
       case "$leg" in
         panel_canary) env_var="OSK_PANEL_CANARY_LIVE=1" ;;
         restart_settle) env_var="OSK_RESTART_SETTLE_LIVE=1" ;;
+        layout_leg) env_var="OSK_LAYOUT_LIVE=1" ;;
       esac
       # The live signature is PROBED, not guessed: `ls -t | head -1`
       # can grab a corpse, since interrupted leg runs leave
