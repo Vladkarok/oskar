@@ -437,6 +437,28 @@ mod tests {
     use crate::keymap::compile_keymap_with;
     use crate::protocol::parse;
 
+    /// Shutdown closes the command gate before it releases anything, so the
+    /// release is the last writer: every command after it — a keystroke
+    /// included — is refused with `err shutting down` and never reaches the
+    /// device. Neither path touches the connection (no keyboard is bound
+    /// yet), so an unconnected socket pair stands in for the compositor.
+    #[test]
+    fn shutdown_refuses_every_later_command() {
+        let (ours, _theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(ours).unwrap();
+        let shared: SharedRef = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
+        assert_ne!(
+            apply(&shared, &connection, Command::Mods(0), None, 1),
+            "err shutting down",
+            "an open gate serves commands"
+        );
+        assert!(release_everything(&shared, &connection).is_empty());
+        assert!(shared.lock().unwrap().shutting_down, "the release closes the gate");
+        for command in [Command::Mods(0), Command::Group(0), parse("tap AD01").unwrap()] {
+            assert_eq!(apply(&shared, &connection, command, None, 1), "err shutting down");
+        }
+    }
+
     /// The installed keymap's group count is the authority for what a
     /// `group` command may carry. Nothing installed
     /// (an empty caps table) validates nothing.
