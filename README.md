@@ -23,11 +23,11 @@ from the Omarchy theme.
 ## Status
 
 Alpha, daily-driven by its author on his own machine — that is how most
-of it was found and fixed. There are **no releases yet**: the tag
-churn of the first days was premature and has been taken down, and a
-numbered version will come later. Until then, install from source as
-described below. [CHANGELOG.md](CHANGELOG.md) lists what works;
-`docs/decisions.md` explains why it works that way.
+of it was found and fixed. **0.3.0 is the first release**; it installs
+through Omarchy's plugin manager, from a source checkout, or from the
+release tarball with its `PKGBUILD` (all three below). Earlier tag names
+were withdrawn before it and are not reused. [CHANGELOG.md](CHANGELOG.md)
+lists what works; `docs/decisions.md` explains why it works that way.
 
 ## Layout
 
@@ -344,8 +344,9 @@ cd daemon && cargo test
 
 ## Install
 
-OSKar needs Omarchy (its shell hosts the panel) and a Rust toolchain to
-build the helper once: `omarchy pkg add rust`.
+OSKar needs Omarchy (its shell hosts the panel) and, for the helper,
+either a Rust toolchain to build it once (`omarchy pkg add rust`) or the
+prebuilt helper from the release page (see below).
 
 ### With Omarchy's plugin manager
 
@@ -393,6 +394,20 @@ Each release carries a `PKGBUILD`: download it with the release tarball,
 run `makepkg -si`, then `oskar setup` and `omarchy restart shell`. The
 package installs files only; `oskar setup` activates them. An AUR package
 will follow when AUR account registration reopens.
+
+### Without a Rust toolchain
+
+Each release also carries `oskar-daemon-<version>-x86_64.tar.gz` (the
+helper, its unit and the `oskar` command) with a `.sha256` beside it.
+Any `install.sh` above takes it in place of the build:
+
+```sh
+bash install.sh --prebuilt ~/Downloads/oskar-daemon-0.3.0-x86_64.tar.gz
+```
+
+A tarball placed beside `install.sh` is picked up without the flag. The
+version in the file name must match the plugin's; a mismatch is warned
+about, and the panel says so if the two speak different protocols.
 
 The panel can be toggled from a keybinding too:
 

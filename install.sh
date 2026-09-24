@@ -3,22 +3,63 @@
 # session. Run again after updating the plugin: the QML side and the helper
 # share a protocol version, and a plugin updated without the helper will report
 # that it needs reinstalling rather than typing nothing.
+#
+# Without a Rust toolchain: `install.sh --prebuilt <tarball>` installs the
+# helper from the release page's oskar-daemon-<version>-<arch>.tar.gz
+# (tools/make-release-assets.sh builds it). A tarball placed beside this
+# script is picked up without the flag.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 binary="$HOME/.local/libexec/oskar-daemon"
 unit="$HOME/.config/systemd/user/oskar.service"
 
-if ! command -v cargo >/dev/null; then
-  echo "cargo is required to build the helper. Install it with:" >&2
-  echo "  omarchy pkg add rust" >&2
-  exit 1
+prebuilt=""
+case "${1:-}" in
+  "") ;;
+  --prebuilt)
+    prebuilt="${2:-}"
+    [[ -n "$prebuilt" ]] || { echo "usage: install.sh [--prebuilt <tarball>]" >&2; exit 2; }
+    [[ -f "$prebuilt" ]] || { echo "no such file: $prebuilt" >&2; exit 2; }
+    ;;
+  *) echo "usage: install.sh [--prebuilt <tarball>]" >&2; exit 2 ;;
+esac
+if [[ -z "$prebuilt" ]]; then
+  for candidate in "$here"/oskar-daemon-*-"$(uname -m)".tar.gz; do
+    [[ -f "$candidate" ]] && prebuilt="$candidate"
+  done
 fi
 
-echo "Building the input helper..."
-cargo build --locked --release --manifest-path "$here/daemon/Cargo.toml"
-
-install -Dm755 "$here/daemon/target/release/oskar-daemon" "$binary"
+if [[ -n "$prebuilt" ]]; then
+  echo "Installing the prebuilt helper from $(basename "$prebuilt")..."
+  # The tarball was built for one plugin version; a different plugin may
+  # speak a different protocol. The panel reports a mismatch on its own,
+  # so this is a warning, not a refusal — the owner of the machine may
+  # know better (a dry run from a branch, say).
+  version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$here/manifest.json" | head -1)"
+  if [[ "$(basename "$prebuilt")" != "oskar-daemon-$version-"* ]]; then
+    echo "warning: $(basename "$prebuilt") was not built for plugin version $version; the panel will say if the protocol differs" >&2
+  fi
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
+  tar -xzf "$prebuilt" -C "$work"
+  extracted="$(find "$work" -type f -name oskar-daemon | head -n1)"
+  [[ -n "$extracted" ]] || { echo "$prebuilt holds no oskar-daemon" >&2; exit 1; }
+  install -Dm755 "$extracted" "$binary"
+else
+  if ! command -v cargo >/dev/null; then
+    echo "cargo is required to build the helper. Install it with:" >&2
+    echo "  omarchy pkg add rust" >&2
+    echo "or install the prebuilt helper from the release page:" >&2
+    echo "  bash install.sh --prebuilt ~/Downloads/oskar-daemon-<version>-$(uname -m).tar.gz" >&2
+    exit 1
+  fi
+  echo "Building the input helper..."
+  cargo build --locked --release --manifest-path "$here/daemon/Cargo.toml"
+  install -Dm755 "$here/daemon/target/release/oskar-daemon" "$binary"
+fi
+# The unit and the lifecycle command come from this checkout either way:
+# they are the panel's, and the panel is what lives here.
 install -Dm644 "$here/systemd/oskar.service" "$unit"
 
 # The lifecycle command: same script the package installs as

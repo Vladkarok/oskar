@@ -16,6 +16,8 @@ before it; this version starts above them so no old tag name is reused.
   over that command.
 - A source checkout (`./install.sh`, `oskar setup`).
 - The release tarball with its `PKGBUILD` (`makepkg -si`, `oskar setup`).
+- Without a Rust toolchain: the release's prebuilt helper,
+  `install.sh --prebuilt oskar-daemon-0.3.0-x86_64.tar.gz`.
 
 ### What works
 
@@ -46,4 +48,9 @@ before it; this version starts above them so no old tag name is reused.
   edge, the reset icon drew as a stray hook in the theme's font, and the
   language row's labels overran each other on a seat with four layouts.
 - `install.sh` reported the helper running before the new helper answered.
+- The input profile defaults to Mouse; Auto (switch on the first touch)
+  and Touch opt in, because the touch profile has met emulated hardware
+  only.
+- The Italian interface draft is held back until it has been proofread;
+  the interface ships in English, Russian and Ukrainian.
 

@@ -22,7 +22,9 @@
 #        curl -sL "$url/archive/refs/tags/v$pkgver.tar.gz" | sha256sum
 #      (oskar.install travels with the PKGBUILD or makepkg fails),
 #   3. run makepkg --printsrcinfo > .SRCINFO, commit that,
-#   4. revisit README's Status paragraph — it names the current release.
+#   4. revisit README's Status paragraph — it names the current release,
+#   5. tools/make-release-assets.sh, then upload dist/*.tar.gz and its
+#      .sha256 to the release (the no-toolchain install channel).
 # A -git VCS package may follow later as a separate optional PKGBUILD;
 # this one never resolves a moving branch.
 
