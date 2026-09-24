@@ -28,7 +28,11 @@ daemon's own sloppy writes.
   one proved it in a stub. Fixed: `Session.luaQuote` seals every
   interpolation into Lua literals (quotes, backslashes, control bytes
   escaped; double quotes covered for the bash layer), and the share
-  path rides positional arguments instead of spliced strings.
+  path rides positional arguments instead of spliced strings. Since
+  protocol 7 the panel builds no Lua and spawns no shell for the seat:
+  the helper talks to the compositor's socket directly and seals the one
+  literal itself (`lua_quote` in `daemon/src/hyprland.rs`, pinned by its
+  unit tests).
 - **Five writes could kill the keyboard permanently** — an unbounded
   line plus `MemoryMax` plus `StartLimitBurst` meant a same-user
   client could OOM-loop the unit into `failed`, and a user who types

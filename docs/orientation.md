@@ -39,9 +39,9 @@ switching for every client behind fcitx5 (decisions.md has the detail).
 ## The protocol
 
 The panel talks to the helper over `$XDG_RUNTIME_DIR/oskar/control.sock`,
-one line per command, one reply line per command, version 7 (a connection
-may still negotiate 6 and gets exactly the v6 verbs, so a new helper can
-run under an older panel):
+one line per command, one reply line per command, version 7 — the panel
+speaks 7 (a connection may still negotiate 6 and gets exactly the v6 verbs,
+so a new helper can run under an older panel):
 
 ```
 hello 6 | hello 7                         -> hello <n> | err not ready | err protocol …
@@ -60,9 +60,12 @@ Replies are `ok`, `configured\t<generation>`, `caps …`, `seat …`, `pong`,
 or `err …`. `seat`'s JSON carries `keyboards` (each with the compositor's
 own `name`, `main`, `active_layout_index`, `layout`, `variant`, `rules`,
 `model`, `options`), `safe` (the `keyboards` verb's list), `kb_file` and
-`titles` (layout code to human name). `share` clears and then sets the
-compositor's `input:kb_file` and verifies it by reading it back, all inside
-one 6 s deadline (below the 15 s hold cap). The helper never checks the file
+`titles` (layout code to human name). The panel reads the seat only through
+these verbs: it asks `seat` after its hello and on every event, moves
+layouts with `switch`, and shares the published keymap with `share`; it
+spawns nothing for devices, switches, hotplug or the share. `share` clears
+and then sets the compositor's `input:kb_file` and verifies it by reading it
+back, all inside one 6 s deadline (below the 15 s hold cap). The helper never checks the file
 itself — its `/tmp` is private — so the read-back is the verification.
 
 A v7 connection that sent `events on` also receives unsolicited lines:

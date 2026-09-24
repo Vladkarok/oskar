@@ -272,19 +272,24 @@ Notes from the survey:
 2. ~~**The compiled keymap is incomplete.**~~ **Closed.** The `configure` command
    carries rules, model, layouts, variants, options and a keymap file, and the
    panel sends it with the full set read from the compositor.
-3. **Device selection is imperfect.** The panel reads layouts from the most
-   convincing typed keyboard — Hyprland's active-keyboard flag (`main`, the
-   seat's current keyboard) if a filtered device holds it, else the device the
-   last switch named, else layout progress — but advances only a device
-   supported by the first two tiers; with no positive evidence the language
-   button does nothing rather than guess. The evidence tiers cannot be closed
-   completely: hotplug and mouse media keys can move the flag until the next
-   physical keypress, Hyprland emits `activelayout` for hotplug and config
-   reloads and not only for deliberate switches, and tied-at-zero devices are
-   assumed to share the seat's RMLVO. The root cause is upstream: layout state
-   lives per device (including power buttons and gaming mice), and nothing
-   announces a change of the seat's current keyboard. An upstream discussion
-   with Sway's keyboard-group semantics as prior art is planned.
+3. **Device selection is imperfect.** The helper serves the seat's facts
+   over its socket — every keyboard with its layouts and live group, which
+   devices it positively identifies as physical, and a pushed event whenever
+   a keyboard's group moves or the device set changes — and the panel reads
+   layouts from the most convincing typed keyboard among them: the
+   compositor's active-keyboard flag (`main`, the seat's current keyboard) if
+   a filtered device holds it, else the device the last layout event named,
+   else layout progress. It advances only a device supported by the first
+   two tiers; with no positive evidence the language button does nothing
+   rather than guess. The evidence tiers cannot be closed completely: hotplug
+   and mouse media keys can move the flag until the next physical keypress,
+   Hyprland announces a layout move for hotplug and config reloads and not
+   only for deliberate switches, and tied-at-zero devices are assumed to
+   share the seat's RMLVO. The root cause is upstream and unchanged by where
+   the facts are read: layout state lives per device (including power
+   buttons and gaming mice), and nothing announces a change of the seat's
+   current keyboard. An upstream discussion with Sway's keyboard-group
+   semantics as prior art is planned.
 4. ~~**Held keys are tracked per connection**~~ **Closed.** The device is
    shared, so held keys carry per-connection claims: the press belongs to the
    first claim, the release to the last, a release from a connection that

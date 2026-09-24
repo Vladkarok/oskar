@@ -18,7 +18,7 @@
 // `remembered`.
 //
 // The decision is pure: connect-age, the last group the panel COMMANDED
-// (the click's hyprctl loop), and the sequence of observed readings in,
+// (the click's own switches), and the sequence of observed readings in,
 // follow-or-hold out. The clock is injected — `now` is a parameter, so the
 // window and the quiesce are exact in tests and `Date.now()` at the one
 // call site in Keyboard.qml. This module is deliberately NOT part of
@@ -63,7 +63,7 @@ function initial() {
         // genuinely new helper connection): the first valid reading
         // establishes it unguarded.
         followed: -1,
-        // The group the click's own hyprctl loop last moved the seat to,
+        // The group the click's own switches last moved the seat to,
         // or -1. Only consulted while armed: outside the window every
         // reading is followed today's way and the record is unused.
         commanded: -1,

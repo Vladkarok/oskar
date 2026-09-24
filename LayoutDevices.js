@@ -7,9 +7,10 @@
 /// pseudo-device) can sit on a stale group forever; reading through it
 /// makes the panel show a language nobody is actually typing while the
 /// real keyboards disagree. This module exists so that failure mode is
-/// exercised by tests rather than caught by inspection of a jq pipeline.
+/// exercised by tests rather than caught by inspection.
 ///
-/// The shell only dumps `hyprctl devices -j`; every decision is here.
+/// The helper's `seat` reply only carries the compositor's device list;
+/// every decision is here.
 
 /// Names that are never a typed keyboard.
 ///

@@ -15,7 +15,7 @@
 //    moves every device in the switch set to that ABSOLUTE group.
 // A count >= 2 with an empty switch set is visible but disabled: hidden
 // means "nothing to switch", not "nobody safe to move" — the
-// pullLayoutsFromCompositor caveat about guessed devices keeps its grey
+// ingestSeatFacts caveat about guessed devices keeps its grey
 // signal. The two facts are deliberately separate inputs so the QML never
 // recombines them differently on the fill vs the click path.
 

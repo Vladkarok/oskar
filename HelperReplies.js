@@ -36,7 +36,13 @@
 //   socketReconnected    the socket reached `connected` and no hello has
 //                        been answered on it yet (HelperLink's flag)
 //   startupKeyboards, startupInventorySeen, startupKeyboardName,
-//   anchorKeyboardName   the device inventory the `keyboards` reply fills
+//   anchorKeyboardName   the device inventory the `seat` reply's `safe`
+//                        list fills
+//   lastLayoutEventDevice  the keyboard the newest `event\tlayout` named:
+//                        the device that just MOVED, whoever moved it
+//   seatAsk              the seat request coalescer: "idle", "asked" (one
+//                        `seat` outstanding) or "again" (asked, and
+//                        something changed since the ask went out)
 //
 // The context the steps read: { groupCount, capsPositions } — how many
 // groups the configured keymap carries, and the declared positions a caps
@@ -60,8 +66,15 @@
 //                            (PasteChords.chordAckTimedOut: the ledger's
 //                            chordSettled plus done(false))
 //   groupConfirmed { group } the ack's group, for the restart fallback
-//   pullLayouts              re-read the compositor's layouts
+//   seatFacts { devices, kbFile, titles }   the seat's reading, for the
+//                            keyboard's layout ingest (the LayoutDevices
+//                            tiers, the settle guard, the configure)
+//   configureUnseated        configure from what the panel already holds:
+//                            the helper has no seat to read, and typing
+//                            needs one configure to open the gate
 //   shareKeymap              point the compositor at the published keymap
+//   shareFinished { ok, reply }   the `share` run's verdict; `reply` is the
+//                            refusal when it failed
 //   log / warn / error { args }   one journal line
 
 /// The reply-state fields a `set` action may name.
@@ -70,8 +83,15 @@ var STATE_KEYS = [
     "inputReady", "serviceIncompatible", "capsFactsFailed",
     "socketReconnected",
     "startupKeyboards", "startupInventorySeen", "startupKeyboardName",
-    "anchorKeyboardName"
+    "anchorKeyboardName", "lastLayoutEventDevice", "seatAsk"
 ]
+
+/// Whether a line is a pushed event rather than a reply. Events take no
+/// reply slot, so this is asked BEFORE the correlation pop; the prefix is
+/// the only test — an event may arrive around `events off` too.
+function isEvent(line) {
+    return String(line).indexOf("event\t") === 0
+}
 
 function shallow(state) {
     var out = {}
@@ -144,17 +164,21 @@ function capsRequestLine(group, positions) {
     return "caps " + group + (list !== "" ? " " + list : "")
 }
 
-/// The first half of every line: the correlation pop. Any line is an
-/// ANSWER — ok, err, fact or generation, the helper answers in order — so
-/// it pops the oldest command's slot. The chord's verdict rides on the pop
-/// of its own final line, success only when the reply is a bare `ok`;
-/// otherwise an err would leave the slot occupied forever and fail every
-/// later chord. Returns the trimmed reply and the verb the pop settled:
+/// The first half of every line: the correlation pop. Any line but a
+/// pushed event is an ANSWER — ok, err, fact or generation, the helper
+/// answers in order — so it pops the oldest command's slot. The chord's
+/// verdict rides on the pop of its own final line, success only when the
+/// reply is a bare `ok`; otherwise an err would leave the slot occupied
+/// forever and fail every later chord. Returns the trimmed reply and the verb the pop settled:
 /// the FIFO is the only honest witness of which command a
 /// content-ambiguous err answers (`err bad group` serves three verbs).
 function pop(state, line) {
     var p = program(state)
     var reply = String(line).trim()
+    // A pushed event answers no command: it pops nothing and settles no
+    // chord. Popping it would shift every later reply onto the wrong slot.
+    if (isEvent(line))
+        return { state: p.state, actions: p.actions, reply: reply, verb: "" }
     var ack = ChordAcks.replyReceived(p.state.chordAcks, reply === "ok")
     set(p, "chordAcks", ack.state)
     if (ack.done)
@@ -175,17 +199,28 @@ function pop(state, line) {
 /// the callback left, as the handler's arms always did.
 function route(state, reply, verb, ctx) {
     var p = program(state)
-    if (reply === "hello " + Session.PROTOCOL_VERSION) {
+    if (isEvent(reply)) {
+        eventLine(p, reply)
+    } else if (verb === "seat" || reply.indexOf("seat\t") === 0) {
+        seatReply(p, reply)
+    } else if (verb === "share" && (reply === "ok" || reply.indexOf("err") === 0)) {
+        shareReply(p, reply)
+    } else if ((verb === "switch" || verb === "events")
+            && reply.indexOf("err") === 0) {
+        // A seat verb's refusal is about the compositor's seat, never
+        // about typing: the gate stays where it is, and a switch that did
+        // not land is corrected by the next reading.
+        emit(p, { op: "warn", args: ["[oskar] the helper refused `" + verb
+            + "`:", reply] })
+    } else if (reply === "hello " + Session.PROTOCOL_VERSION) {
         helloAcked(p)
-    } else if (reply === "keyboards" || reply.indexOf("keyboards\t") === 0) {
-        keyboardsReply(p, reply)
     } else if (reply.indexOf("configured") === 0) {
         configuredReply(p, reply, ctx)
     } else if (reply.indexOf("caps\t") === 0) {
         capsReply(p, reply)
     } else if (reply === "pong") {
         // The quiescent probe's answer: the pipe is alive end to end. The
-        // transport's any-line clear already lifted the watchdog's mark;
+        // transport's any-reply clear already lifted the watchdog's mark;
         // pong carries no state, settles nothing, and must not reach the
         // fail-closed arm below — unrecognized replies drop the typing
         // gate, and a liveness answer is not drift.
@@ -223,7 +258,140 @@ function connectionLost(state) {
     var p = program(state)
     if (p.state.chordAcks.chordDone) emit(p, { op: "chordTimedOut" })
     set(p, "chordAcks", ChordAcks.connectionLost(p.state.chordAcks))
+    // A `seat` outstanding on the dead socket is never answered; the next
+    // connection's hello asks afresh.
+    set(p, "seatAsk", "idle")
     return result(p)
+}
+
+/// Asks the helper for the seat, coalesced: one `seat` in flight at a
+/// time, and anything that wants a fresher reading meanwhile marks the
+/// ask to be repeated once when the answer arrives. A burst of events (a
+/// switch moves every keyboard in the set) is one or two readings, not
+/// one per event, and the last reading is always taken after the last
+/// change was announced.
+function askSeat(p) {
+    if (p.state.seatAsk === "asked" || p.state.seatAsk === "again") {
+        set(p, "seatAsk", "again")
+        return
+    }
+    set(p, "seatAsk", "asked")
+    send(p, "seat")
+}
+
+/// The panel's own wish for a fresh reading (the settle guard's re-read),
+/// as a program the keyboard runs like a reply's.
+function seatWanted(state) {
+    var p = program(state)
+    askSeat(p)
+    return result(p)
+}
+
+/// A pushed event. `event\tlayout\t<device>\t<group>`: a keyboard's group
+/// moved. The device is recorded BEFORE the reading it triggers, so the
+/// divergence arm of LayoutDevices.select sees who moved; the group is not
+/// taken from the event — the reading is the evidence, judged by the
+/// settle guard like every reading. It is deliberately not where the
+/// typing keyboard is learned: every switch this panel issues is announced
+/// too, naming the device it moved, and adopting that as the anchor made
+/// the panel read its own echo. `event\tdevices`: the device set or the
+/// input configuration changed (hotplug, a config reload) — the layout
+/// list itself may have moved without any group moving. Unknown kinds are
+/// a newer helper's and mean nothing here.
+function eventLine(p, line) {
+    var fields = line.split("\t")
+    if (fields[1] === "layout") {
+        var device = String(fields[2] || "").trim()
+        if (device !== "") set(p, "lastLayoutEventDevice", device)
+        askSeat(p)
+    } else if (fields[1] === "devices") {
+        askSeat(p)
+    }
+}
+
+/// The helper's `seat` document, as the fields the layout ingest reads:
+/// every keyboard projected to the eight keys LayoutDevices consumes (the
+/// helper sends them under the compositor's own names), the helper's
+/// positively identified physical keyboards, the compositor's kb_file
+/// (empty when unset) and the layout titles. Null for anything that is not
+/// that document.
+function parseSeat(reply) {
+    var tab = reply.indexOf("\t")
+    if (tab < 0 || reply.slice(0, tab) !== "seat") return null
+    var doc
+    try {
+        doc = JSON.parse(reply.slice(tab + 1))
+    } catch (error) {
+        return null
+    }
+    if (!doc || !Array.isArray(doc.keyboards) || typeof doc.kb_file !== "string")
+        return null
+    var devices = doc.keyboards.map(function (k) {
+        return {
+            name: k.name, main: k.main,
+            active_layout_index: k.active_layout_index,
+            layout: k.layout, rules: k.rules, model: k.model,
+            variant: k.variant, options: k.options
+        }
+    })
+    var safe = (Array.isArray(doc.safe) ? doc.safe : []).filter(function (name) {
+        return typeof name === "string" && name.length > 0
+    })
+    var titles = {}
+    if (doc.titles && typeof doc.titles === "object") {
+        for (var code in doc.titles) {
+            if (typeof doc.titles[code] === "string")
+                titles[code] = doc.titles[code]
+        }
+    }
+    return { devices: devices, safe: safe, kbFile: doc.kb_file, titles: titles }
+}
+
+/// The answer to a `seat` request, facts or refusal. Either way the ask
+/// is settled, and repeated once if something changed while it was out.
+function seatReply(p, reply) {
+    if (reply.indexOf("seat\t") === 0) {
+        var seat = parseSeat(reply)
+        if (seat) {
+            inventory(p, seat.safe)
+            emit(p, { op: "seatFacts", devices: seat.devices,
+                kbFile: seat.kbFile, titles: seat.titles })
+        } else {
+            emit(p, { op: "warn", args: ["[oskar] unreadable seat reply"] })
+        }
+    } else if (reply === "err no seat backend") {
+        // The helper cannot see the compositor's seat (no compositor it
+        // knows, or it started without the compositor's environment).
+        // Nothing reads or switches layouts; typing still needs one
+        // configure to open the gate, so the panel configures from what it
+        // holds — once per helper world, never over a configure already
+        // made.
+        emit(p, { op: "warn", args: ["[oskar] the helper has no seat backend;"
+            + " the language button stays inert (`oskar doctor` names the fix)"] })
+        if (p.state.session.acked === "" && p.state.session.queue.length === 0)
+            emit(p, { op: "configureUnseated" })
+    } else if (reply.indexOf("err") === 0) {
+        // A transient compositor failure: no reading this time. Never an
+        // empty reading — an empty kb_file read would forget the user's
+        // own keymap — and never the typing gate's business.
+        emit(p, { op: "warn", args: ["[oskar] the helper could not read the seat:",
+            reply] })
+    }
+    if (p.state.seatAsk === "again") {
+        set(p, "seatAsk", "asked")
+        send(p, "seat")
+    } else {
+        set(p, "seatAsk", "idle")
+    }
+}
+
+/// The verdict of one `share` run: `ok` is shared AND read back by the
+/// helper. The retry ladder and its loud end are the keyboard's
+/// (ShareQueue's caller); `err no seat backend` ends the run at once,
+/// since no retry can grow a backend.
+function shareReply(p, reply) {
+    emit(p, { op: "shareFinished", ok: reply === "ok",
+        reply: reply === "ok" ? "" : reply })
 }
 
 function helloAcked(p) {
@@ -259,6 +427,11 @@ function helloAcked(p) {
         // transaction a predecessor was holding.
         emit(p, { op: "session", event: { type: "helloAcked", fresh: true } })
         send(p, "mods 0")
+        // The seat's pushed events belong to the connection, and this arm
+        // runs once per connection. Subscribed BEFORE the reading below is
+        // asked for, so a change landing between the two is announced
+        // rather than lost.
+        send(p, "events on")
     } else {
         // The repair timer's re-hello of a live socket: the handshake
         // holds, nothing resets.
@@ -266,16 +439,13 @@ function helloAcked(p) {
     }
     // Through the choke point like every command: this reply pops what it
     // answers. A restarted helper is back at group 0 and has no idea which
-    // layout is current; the keyboards reply re-reads the compositor, which
-    // sends the right group (the panel's group cursor would send whatever
-    // it held before the first sync).
-    send(p, "keyboards")
+    // layout is current; the seat reading sends the right group (the
+    // panel's group cursor would send whatever it held before the first
+    // sync).
+    askSeat(p)
 }
 
-function keyboardsReply(p, reply) {
-    var names = reply.split("\t").slice(1).filter(function (name) {
-        return name.length > 0
-    })
+function inventory(p, names) {
     set(p, "startupKeyboards", names)
     if (!p.state.startupInventorySeen) {
         set(p, "startupInventorySeen", true)
@@ -283,7 +453,6 @@ function keyboardsReply(p, reply) {
         if (!p.state.anchorKeyboardName)
             set(p, "anchorKeyboardName", p.state.startupKeyboardName)
     }
-    emit(p, { op: "pullLayouts" })
 }
 
 function configuredReply(p, reply, ctx) {
@@ -399,9 +568,10 @@ function errReply(p, reply, verb) {
     } else if (reply === "err not ready") {
         // A helper fresh out of systemd start answers err until its default
         // keymap is installed; it cannot become ready without a configure,
-        // and nothing else sends one — so ask the compositor now instead of
-        // waiting out the repair timer.
-        emit(p, { op: "pullLayouts" })
+        // and nothing else sends one — so read the seat now instead of
+        // waiting out the repair timer. The helper negotiated the hello it
+        // refused, so the seat verb is answered on this connection.
+        askSeat(p)
     } else if (reply === "err key held" || reply === "err not holding") {
         // Ownership refusals mean the helper's hold state is ahead of ours;
         // the device is fine and typing stays enabled. The panel's chords
@@ -412,6 +582,13 @@ function errReply(p, reply, verb) {
         badGroup(p, verb)
     } else if (reply === "err cannot configure keymap") {
         cannotConfigure(p)
+    } else if (reply === "err no seat backend" || reply.indexOf("err seat ") === 0
+            || reply.indexOf("err share ") === 0) {
+        // A seat verb's refusal the FIFO could not attribute (the verb
+        // arms above take the attributed ones). These words answer only
+        // the seat verbs, so it is the seat's business whatever answered
+        // it, and never typing drift.
+        emit(p, { op: "warn", args: ["[oskar] seat refusal:", reply] })
     } else if (reply === "err unknown command") {
         // The two sides disagree about the command set one way or the
         // other — an older helper, or a peer panel sending a verb it should
@@ -434,7 +611,7 @@ function badGroup(p, verb) {
     if (verb === "configure" && p.state.session.queue.length > 0) {
         // The refusal answered a QUEUED configure: its entry must settle or
         // it orphans the queue — settled() false forever, and the repair
-        // timer's 2 s hello → keyboards → compositor → configure cycle runs
+        // timer's 2 s hello → seat → configure cycle runs
         // until a socket rebuild. Failed clean, no modifier lift: this
         // refusal happens before any install or drain, so a lock the panel
         // shows is a lock the device still holds.

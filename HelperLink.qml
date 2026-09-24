@@ -143,11 +143,15 @@ Item {
 
             parser: SplitParser {
                 onRead: function (line) {
-                    // Any line from the helper proves the pipe alive end to
+                    // Any REPLY from the helper proves the pipe alive end to
                     // end: the daemon serves each connection in order, so
                     // whatever this is, a hello written before it has been
                     // answered or overtaken by work that is about to answer.
-                    link.helloInFlight = false
+                    // A pushed event proves no such thing — the helper's
+                    // event thread writes it whatever the command loop is
+                    // doing — so it leaves the probe's debt standing.
+                    if (String(line).indexOf("event\t") !== 0)
+                        link.helloInFlight = false
                     // Framing only: what the line MEANS is the keyboard's
                     // dispatch, reached through the signal.
                     link.lineReceived(line)

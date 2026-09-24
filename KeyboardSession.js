@@ -31,7 +31,7 @@
 /// both sides change reply shapes in one release. A helper answering an
 /// older version than this predates the current wire format and is a
 /// reinstall, not a peer.
-var PROTOCOL_VERSION = 6
+var PROTOCOL_VERSION = 7
 
 function initial() {
     return {
@@ -370,44 +370,4 @@ function publishedKeymapPath(runtimeDir) {
 function isPublishedKeymap(kbFile, runtimeDir) {
     var path = String(kbFile || "")
     return path !== "" && path === publishedKeymapPath(runtimeDir)
-}
-
-/// Quote a path for interpolation into a single-quoted Lua string literal
-/// (hyprctl eval's config values). A filename carrying ' or a closing
-/// brace sequence would otherwise escape the literal and execute as
-/// config-side Lua. Lua single-quoted literals escape \\ and \'; every
-/// other unsafe byte (quotes, braces, control characters — filenames may
-/// legally carry newlines) becomes a \\ddd decimal escape, which no
-/// filename spelling can close. The empty string still quotes as ''.
-function luaQuote(value) {
-    var text = String(value === undefined || value === null ? "" : value)
-    var out = "'"
-    for (var i = 0; i < text.length; i++) {
-        var code = text.charCodeAt(i)
-        var ch = text.charAt(i)
-        if (ch === "\\" || ch === "'" || ch === '"') out += "\\" + ch
-        else if (code >= 32 && code <= 126) out += ch
-        else {
-            // Every non-ASCII/non-printable codepoint rides as its UTF-8
-            // bytes, each as a \\ddd decimal escape — valid in every Lua
-            // version (\\u{} needs 5.3+), correct for Cyrillic and
-            // accented paths, and inert in the bash double-quote layer.
-            var bytes = []
-            if (code < 0x80) bytes.push(code)
-            else if (code < 0x800) {
-                bytes.push(0xC0 | (code >> 6), 0x80 | (code & 0x3F))
-            } else {
-                // Includes surrogate halves (exotic filenames): encoded
-                // as-is, safe if garbled — the contract is sealing, not
-                // transliteration.
-                bytes.push(0xE0 | (code >> 12),
-                    0x80 | ((code >> 6) & 0x3F), 0x80 | (code & 0x3F))
-            }
-            // Padded to three digits: Lua reads exactly three, so an
-            // unpadded \3 followed by the path's next '4' would corrupt.
-            for (var b = 0; b < bytes.length; b++)
-                out += "\\" + ("00" + bytes[b]).slice(-3)
-        }
-    }
-    return out + "'"
 }

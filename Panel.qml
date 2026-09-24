@@ -303,9 +303,8 @@ Item {
     // A focus change while the page stands disarms the search — the
     // client the owner clicked becomes the keys' target until the search
     // field is clicked again. Hyprland announces focus changes as the
-    // `activewindow` raw event (the same stream Keyboard's layout tracker
-    // reads; there is no activeToplevel property-change signal to connect
-    // to).
+    // `activewindow` raw event (there is no activeToplevel property-change
+    // signal to connect to).
     Connections {
         target: Hyprland
         function onRawEvent(event) {
@@ -1872,14 +1871,12 @@ Item {
 
     Process {
         id: depProbe
-        // Typing goes through the helper daemon, which has no external
-        // commands to check for. The layout tracker still needs hyprctl
-        // (devices, getoption), jq (devices JSON), xkbcli (compiling the key
-        // caps' symbols), and udevadm (event-driven input hotplug); all come
-        // with the packages the install
-        // button below pulls in.
-        command: ["bash", "-c",
-            "command -v hyprctl >/dev/null && command -v jq >/dev/null && command -v xkbcli >/dev/null && command -v udevadm >/dev/null"]
+        // Typing and the seat (devices, layout switches, the keymap share)
+        // go through the helper daemon, which has no external commands to
+        // check for. The panel's window geometry still asks hyprctl (the
+        // cursor position, the docked gaps), which comes with the package
+        // the install button below pulls in.
+        command: ["bash", "-c", "command -v hyprctl >/dev/null"]
         onExited: (exitCode, exitStatus) => {
             root.depsOk = exitCode === 0 && exitStatus === 0
         }
@@ -1944,7 +1941,7 @@ Item {
         // preferred terminal on its own and the title is enough context.
         command: ["xdg-terminal-exec",
             "--title=Fetch OSKar components",
-            "omarchy", "pkg", "add", "hyprland", "jq"]
+            "omarchy", "pkg", "add", "hyprland"]
         onExited: (exitCode, exitStatus) => {
             root.depsOk = false
             root.probeDependencies()
@@ -2389,7 +2386,7 @@ Item {
                     height: tokens.space(30)
                     radius: tokens.cornerRadius
                     // Reads as disabled while the panel has no safe device to
-                    // switch (see pullLayoutsFromCompositor in Keyboard.qml).
+                    // switch (see ingestSeatFacts in Keyboard.qml).
                     // Keyed on the SAME thing that gates the click — the
                     // filtered switch set — because greying on a different
                     // fact made the cap lie: it drew disabled while a click

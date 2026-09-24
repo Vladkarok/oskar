@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
-import Quickshell.Hyprland
 import qs.Commons
 import "KeyboardLayout.js" as Layout
 import "ModifierReducer.js" as Modifiers
@@ -315,12 +314,15 @@ Item {
     // of the REAL device instead of a re-enumerated flag.
     property string rememberedLayoutDevice: ""
     signal layoutDeviceNamed(string name)
-    // The keyboard the most recent compositor `activelayout` event named —
+    // The keyboard the most recent `event\tlayout` from the helper named —
     // the device that just MOVED, whatever moved it (a deliberate toggle,
-    // the panel's own switch loop, or the compositor flipping a group on
-    // its own). Motion evidence only: it breaks a diverged seat open in
-    // LayoutDevices.select and is never fed to the anchor.
+    // the panel's own switch, or the compositor flipping a group on its
+    // own). Motion evidence only: it breaks a diverged seat open in
+    // LayoutDevices.select and is never fed to the anchor. Written by
+    // HelperReplies (its `lastLayoutEventDevice` state field).
     property string lastLayoutEventDevice: ""
+    // HelperReplies' seat request coalescer: one `seat` in flight at a time.
+    property string seatAsk: "idle"
     // Every device carrying the same layout list. A language-button click
     // moves this set to one absolute group, matching the shell's layout
     // widget and converging a seat whose per-device groups drifted apart.
@@ -521,20 +523,6 @@ Item {
         applyModifierEvent({ type: "pageSwitch" })
     }
 
-    /// Both readers below are fed the same thing: a run of tab-delimited
-    /// records on a helper's stdout, one per line, blank lines meaning nothing.
-    /// Turning that into fields is the whole of what they have in common, so it
-    /// is written once here rather than twice with two chances to drift. Short
-    /// records survive on purpose — a record whose only field is its tag is
-    /// meaningful to one of the callers, so the arity guard belongs to whoever
-    /// needs it, not here.
-    function tabRecords(text) {
-        return String(text || "").split("\n")
-            .map(function (line) { return line.trim() })
-            .filter(function (line) { return line.length > 0 })
-            .map(function (line) { return line.split("\t") })
-    }
-
     /// Queues and writes one configure transaction. The session assigns the
     /// transaction's seq BEFORE the write, so a chord stamped sends ===
     /// entry.seq was pressed at or after the send — the ordering the drain
@@ -576,6 +564,9 @@ Item {
     // published-branch snapshot and the clear would never stick (the
     // seed's own record fighting the clear).
     property bool userKeymapObserved: false
+    // Consecutive failed runs of the current share: the retry ladder's
+    // count, reset by a success, by giving up and by a new connection.
+    property int shareAttempts: 0
     function shareKeymapWithCompositor() {
         // The scheduler is pure (ShareQueue.js): a run is launched FOR a
         // generation, a newer generation mid-run only updates the wish,
@@ -585,119 +576,95 @@ Item {
         var next = ShareQueue.acked(root.shareQueue, session.ackedGen)
         root.shareQueue = next.state
         root.sharedKeymapGen = next.state.shared
-        if (next.start) shareProcess.running = true
-        // Cleared and set rather than set: assigning the same path again is a
-        // no-op, and a republished file under the same name has to be re-read
-        // or the compositor keeps compiling the keymap before this one.
-        //
-        // `hyprctl eval`, not `hyprctl keyword`: the Lua config parser refuses
-        // keyword outright ("keyword can't work with non-legacy parsers").
+        if (next.start) startShareRun()
     }
 
-    /// Points the compositor at the published keymap, and only records the
-    /// generation as shared when it actually landed.
-    ///
-    /// The generation is only marked shared once the run actually succeeds —
-    /// marking it before running would let any failure (file not yet
-    /// published, an `hyprctl eval` the compositor refuses) go unnoticed and
-    /// unretried, leaving the seat carrying two keymaps for the rest of the
-    /// session.
-    Process {
-        id: shareProcess
-        property int attempts: 0
-        command: ["bash", "-c",
-            // The path comes from the same normalizing builder the
-            // identity comparison uses (Session.publishedKeymapPath), so
-            // what is SET and what is compared as "ours" can never drift
-            // apart over an environment spelling.
-            // The published path rides as $1 (data, never spliced into
-            // either quoting layer) and enters its Lua literal through
-            // Session.luaQuote — the security audit's finding: an env
-            // spelling must not be able to break out of the bash or the
-            // Lua string. The read-back comparison stays against $1.
-            "path=$1; lua=$2; "
-            + "[[ -s \"$path\" ]] || exit 3; "
-            + "hyprctl eval \"hl.config({input = {kb_file = ''}})\" >/dev/null || exit 4; "
-            // $lua arrives pre-quoted by Session.luaQuote (single-quoted
-            // Lua literal; its contents are data in BOTH the bash and the
-            // Lua layer — a double quote would otherwise close the bash
-            // string, so luaQuote escapes that byte too).
-            + "hyprctl eval \"hl.config({input = {kb_file = $lua}})\" >/dev/null || exit 4; "
-            // Read back rather than trust: `eval` answers `ok` for a config
-            // call the parser accepted, which is not the same as the value
-            // being in place.
-            + "[[ \"$(hyprctl getoption input:kb_file -j | jq -r .str)\" == \"$path\" ]]",
-            "oskar-share",
-            Session.publishedKeymapPath(Quickshell.env("XDG_RUNTIME_DIR")),
-            Session.luaQuote(Session.publishedKeymapPath(
-                Quickshell.env("XDG_RUNTIME_DIR")))]
-        onExited: (code, status) => {
-            // A run the scheduler no longer owns (a connection reset
-            // stopped it) exits as a no-op rather than counting as a
-            // failed attempt and restarting retries the reset already
-            // cancelled.
-            if (!root.shareQueue.running) {
-                attempts = 0
-                return
-            }
-            var ok = code === 0 && status === 0
-            var done = ShareQueue.runFinished(root.shareQueue, ok)
-            root.shareQueue = done.state
-            root.sharedKeymapGen = done.state.shared
-            if (ok) {
-                attempts = 0
-                // A pending newer generation is scheduled NOW: the
-                // newest map must never sit unshared with nothing running.
-                if (done.start) shareProcess.running = true
-                return
-            }
-            // Exit 3 is "the helper has not written the file yet", which is
-            // an ordinary race at startup: the configure is acknowledged
-            // before the publish lands. Retrying is the answer, not a line in
-            // the journal. Everything else gets retried too and then said out
-            // loud, because a seat left with two keymaps is a defect the user
-            // will otherwise report as the layout switch being broken.
-            attempts += 1
-            if (attempts <= 5) {
-                shareRetry.restart()
-                return
-            }
-            attempts = 0
-            // The run is given up: release the scheduler's slot so the next
-            // acknowledged generation can launch (a fresh map may succeed
-            // where this one could not; the wish stays).
+    /// One run: the helper clears the compositor's kb_file, sets it to the
+    /// published keymap and reads it back, all inside its own deadline —
+    /// clear-then-set because assigning the same path again is a no-op,
+    /// and a republished file under the same name has to be re-read or the
+    /// compositor keeps compiling the keymap before this one. The path
+    /// comes from the same normalizing builder the identity comparison
+    /// uses (Session.publishedKeymapPath), so what is SET and what is
+    /// compared as "ours" cannot drift apart over an environment spelling,
+    /// and it is absolute, which the helper requires. The verdict is the
+    /// reply (`shareFinished`); a socket that cannot take the line has
+    /// already run, or is about to run, the connection reset that ends the
+    /// run.
+    function startShareRun() {
+        var path = Session.publishedKeymapPath(Quickshell.env("XDG_RUNTIME_DIR"))
+        if (path === "" || !root.sendCommandUnchecked("share\t" + path))
             root.shareQueue = ShareQueue.runAbandoned(root.shareQueue)
-            console.error("[oskar] could not give the compositor the published"
-                + " keymap (exit " + code + ", five attempts): the seat is"
-                + " carrying two keymaps and a client's layout group will"
-                + " reset on every focus change (decisions §35).")
-            // The journal line is for us; the user's symptom (layouts
-            // flipping on focus change) is one of the most visible
-            // misbehaviors the panel has, so the panel also owns saying
-            // so where the user can see it.
-            keymapShareGivenUp()
+    }
+
+    /// The run's verdict. The generation is only recorded as shared once the
+    /// helper read it back — marking it before would let any failure (a
+    /// refusal, a compositor that reads back something else) go unnoticed
+    /// and unretried, leaving the seat carrying two keymaps for the rest of
+    /// the session.
+    function shareFinished(ok, reply) {
+        // A verdict for a run the scheduler no longer owns (a connection
+        // reset ended it) is a no-op, not a failed attempt restarting
+        // retries the reset already cancelled.
+        if (!root.shareQueue.running) {
+            root.shareAttempts = 0
+            return
         }
+        var done = ShareQueue.runFinished(root.shareQueue, ok)
+        root.shareQueue = done.state
+        root.sharedKeymapGen = done.state.shared
+        if (ok) {
+            root.shareAttempts = 0
+            // A pending newer generation is scheduled NOW: the newest map
+            // must never sit unshared with nothing running.
+            if (done.start) startShareRun()
+            return
+        }
+        if (reply === "err no seat backend") {
+            // No retry can grow a backend, and this helper keeps the one it
+            // started with: the run stays owned — no later generation
+            // launches another — until the connection reset clears the
+            // scheduler for a helper that may have one. No hint either: it
+            // is about a compositor that refuses, not one the helper cannot
+            // reach.
+            root.shareAttempts = 0
+            console.warn("[oskar] the published keymap is not shared: the"
+                + " helper has no seat backend")
+            return
+        }
+        // Retried, then said out loud, because a seat left with two keymaps
+        // is a defect the user will otherwise report as the layout switch
+        // being broken.
+        root.shareAttempts += 1
+        if (root.shareAttempts <= 5) {
+            shareRetry.restart()
+            return
+        }
+        root.shareAttempts = 0
+        // The run is given up: release the scheduler's slot so the next
+        // acknowledged generation can launch (a fresh map may succeed
+        // where this one could not; the wish stays).
+        root.shareQueue = ShareQueue.runAbandoned(root.shareQueue)
+        console.error("[oskar] could not give the compositor the published"
+            + " keymap (" + reply + ", five attempts): the seat is"
+            + " carrying two keymaps and a client's layout group will"
+            + " reset on every focus change (decisions §35).")
+        // The journal line is for us; the user's symptom (layouts
+        // flipping on focus change) is one of the most visible
+        // misbehaviors the panel has, so the panel also owns saying
+        // so where the user can see it.
+        keymapShareGivenUp()
     }
 
     Timer {
         id: shareRetry
         interval: 400
         repeat: false
-        // A retry tick that finds the previous run STILL running must
-        // not consume the ladder: a wedged
-        // hyprctl would otherwise leave the newest acknowledged map
-        // unshared for the rest of the session with nothing supervising
-        // the run. The tick re-arms; the run's own exit resumes the
-        // ladder. Deliberately no deadline-kill here — the kill/restart
-        // retiring discipline is a careful machine of its own, and a
-        // hanging compositor IPC is a wedged compositor, which has
-        // bigger problems than our share.
+        // Fires only after the previous run's verdict arrived — a run's
+        // line is answered before its retry is armed — so no two runs are
+        // ever outstanding. A connection reset stops it.
         onTriggered: {
-            if (shareProcess.running) {
-                shareRetry.restart()
-                return
-            }
-            shareProcess.running = true
+            if (root.shareQueue.running) startShareRun()
         }
     }
 
@@ -775,41 +742,76 @@ Item {
     // published keymap. A session that ends with the OSK closed must not be
     // left compiling every physical keyboard from a file no running process
     // owns: a stale `kb_file` cannot outlive the thing that set it, so
-    // something has to put it back.
+    // something has to put it back. The helper does it: the line is
+    // written straight to the socket (no ledger — nothing will read the
+    // reply), and the helper runs a line it has read even when the
+    // connection closes behind it. Only an absolute path can be shared; the
+    // user's own kb_file reached this panel as a file the existence probe
+    // found, so a relative spelling cannot be restored faithfully and is
+    // left alone with a warning.
     Component.onDestruction: {
         if (sharedKeymapGen === 0) return
-        // The restore interpolates a USER-side path (the compositor's
-        // kb_file, or the sidecar any same-user client can set) into a
-        // single-quoted Lua literal — an unescaped quote in the path would
-        // close the string and execute config-side Lua. Session.luaQuote
-        // escapes every unsafe byte as data for the Lua layer, and bash
-        // never re-parses expansion results, so the positional argument is
-        // safe by construction at both layers.
-        Quickshell.execDetached(["bash", "-c",
-            "hyprctl eval \"hl.config({input = {kb_file = $1}})\" >/dev/null 2>&1",
-            "onscreen-keyboard-restore", Session.luaQuote(userKeymapFile)])
+        var source = String(userKeymapFile || "")
+        if (source !== "" && source.charAt(0) !== "/") {
+            console.warn("[oskar] cannot restore a relative kb_file:", source)
+            return
+        }
+        helperLink.write("share\t" + (source === "" ? "-" : source))
     }
 
-    function ingestLayoutSnapshot(text) {
-        var devices = []
-        var kbFile = ""
-        var discoveredTitles = ({})
-
-        tabRecords(text).forEach(function (parts) {
-            if (parts.length < 2) return
-            if (parts[0] === "DEVICES") {
-                try { devices = JSON.parse(parts[1]) } catch (error) { devices = [] }
-                return
-            }
-            if (parts[0] === "KBFILE") {
-                kbFile = parts[1] === "[[EMPTY]]" ? "" : String(parts[1] || "")
-                return
-            }
-            // A layout-code -> human-name row from base.lst.
-            if (parts[0] === "TITLE" && parts.length >= 3)
-                discoveredTitles[parts[1].trim()] = parts[2].trim()
-        })
-
+    /// The compositor is the single source of truth for which layout is
+    /// active. It has to be, now that keys are sent as positions: the
+    /// character produced is whatever the compositor's layout says, so if the
+    /// panel believed something else the caps would show one alphabet while
+    /// another came out. Switching outside the panel — Caps Lock, the bar
+    /// indicator, a keybind — is the same event as switching inside it: both
+    /// arrive as the helper's `event\tlayout`, hotplug and config reloads as
+    /// `event\tdevices`, and HelperReplies turns each into a seat reading
+    /// that lands here — events, never a timer.
+    ///
+    /// One seat reading from the helper (HelperReplies' `seatFacts`): every
+    /// keyboard as the compositor reports it, the compositor's kb_file
+    /// (empty when unset — a failed read never arrives here), and the human
+    /// name of every layout code any keyboard carries.
+    ///
+    /// Two selections, deliberately different. The reading (group, layout
+    /// list, RMLVO) comes from whichever typed keyboard the evidence
+    /// favours: the seat's active keyboard if a filtered device holds it,
+    /// then the device the last switch named, then layout progress. The
+    /// compositor keeps XKB group state per device and announces a layout
+    /// move not only for deliberate switches but also for hotplug, keymap
+    /// (re)application and input-config reloads, so an event's device is
+    /// weaker evidence than the flag — and the flag is what "which device
+    /// will the next physical key come from" actually means. It moves on
+    /// every real keypress, which keeps the reading from going stale after
+    /// the user switches devices.
+    ///
+    /// The switch target (the devices the language button advances) comes
+    /// from those same two tiers. At startup the named tier is seeded by the
+    /// helper's positive physical-device list; a real layout event replaces
+    /// it. Advancing a guessed device would let a false positive (e.g. a
+    /// mouse) become the permanent switch target, with the indicator reading
+    /// it forever after and the label no longer saying what typing produced.
+    /// Until there is positive evidence, the language button does nothing.
+    ///
+    /// The active-keyboard flag (`main`) is literally the seat's current
+    /// keyboard. It only counts inside the filtered list: with an IME
+    /// running, fcitx5's virtual keyboard holds it whenever the user has not
+    /// typed since the IME last connected, and it lands on this helper's own
+    /// device right after typing. Residual windows no reading can close:
+    /// hotplug or a mouse's media keys can take the flag until the next
+    /// physical keypress, and the flag alone does not prove the device was
+    /// typed on rather than merely plugged in. The upstream fix is an event
+    /// when the seat's current keyboard changes, or a seat-level layout
+    /// concept; Sway's keyboard groups are the prior art.
+    ///
+    /// One caveat the reading cannot answer: tied-at-zero devices are
+    /// assumed to share the seat's RMLVO, which holds unless the user
+    /// configures per-device keymaps (device:name { kb_layout }). Which
+    /// device answers and which ones the button moves is decided in
+    /// LayoutDevices.js, where it is tested (tests/layout-devices.qml
+    /// carries the zoo).
+    function ingestSeatFacts(devices, kbFile, discoveredTitles) {
         // Merge any newly discovered names into the map. Done before the
         // selection can bail out: the names are a property of the machine's
         // xkb rules, not of which keyboard answers today.
@@ -851,7 +853,7 @@ Item {
         // pre-churn group, and following that echo once split the seat
         // (ITE keyboards on the clicked group, at Translated back on 0)
         // while dragging `remembered` onto the churn. The click's own
-        // hyprctl loop (switchToGroup) is never gated: only this FOLLOW is.
+        // switches (switchToGroup) are never gated: only this FOLLOW is.
         // On hold, the panel keeps configuring the group it followed last
         // — so the vkb, the caps, the cursor and `remembered` (persisted
         // from configure acks) all stay on the clicked group, and one
@@ -945,102 +947,41 @@ Item {
             // 0's variant while typing used the active group. The index is
             // authoritative; the code is a label.
             groupCursor = configGroup
-            var configure = "configure\t" + xkbRules + "\t" + xkbModel
-                + "\t" + xkbLayouts + "\t" + xkbVariants + "\t" + xkbOptions
-                + "\t" + xkbFile + "\t" + configGroup
-            // Only a configure that will CHANGE the keymap closes the typing
-            // gate up front. The helper compiles and installs for that one,
-            // draining every key it holds on the way in, and a press that
-            // straddled it would land in a keymap neither side has agreed on.
-            // A group-only configure — every ordinary language switch — does
-            // none of that: the same-keymap short-circuit moves the group, the
-            // socket is ordered so the move lands ahead of anything written
-            // after it, and the facts for the destination group are already in
-            // hand. Dropping readiness for it dimmed the whole keyboard and
-            // raised the service-starting notice for the length of the round
-            // trip, which is the flicker the user sees on every switch.
-            if (Session.identityOf(configure) !== Session.installed(session)) {
-                inputReady = false
-            }
-            sendConfigure(configure)
+            configureHeld(configGroup)
         }
     }
 
-    function pullLayoutsFromCompositor() {
-        compositorQuery.running = false
-        // Two selections, deliberately different.
-        //
-        // The reading (group, layout list, RMLVO) comes from whichever typed
-        // keyboard the evidence favours: the seat's active keyboard if a
-        // filtered device holds it, then the device the last switch named,
-        // then layout progress. Hyprland keeps XKB group state per device and
-        // emits "activelayout" not only for deliberate switches but also for
-        // hotplug, keymap (re)application and input-config reloads, so an
-        // event name is weaker evidence than the flag — and the flag is what
-        // "which device will the next physical key come from" actually means.
-        // The flag moves on every real keypress, which is what keeps the
-        // reading from going stale after the user switches devices.
-        //
-        // The switch target ("DEVICE", the device the language button
-        // advances) comes from those same two tiers. At startup the named tier
-        // is seeded by the helper's positive physical-device snapshot; a real
-        // layout event replaces it. Advancing a guessed device would let a
-        // false positive (e.g. a mouse) become the permanent switch target,
-        // with the indicator reading it forever after and the label no
-        // longer saying what typing produced. Until there is positive
-        // evidence, the language button does nothing.
-        //
-        // The active-keyboard flag ("main" in devices JSON) is literally the
-        // seat's current keyboard — HyprCtl prints IKeyboard::m_active as
-        // "main". It only counts inside the filtered list: with an IME
-        // running, fcitx5's virtual keyboard holds it whenever the user has
-        // not typed since the IME last connected, and it lands on this
-        // helper's own device right after typing. Residual windows that no
-        // devices-JSON reading can close: hotplug or a mouse's media keys can
-        // take the flag until the next physical keypress, and the flag alone
-        // does not prove the device was typed on rather than merely plugged
-        // in. The upstream fix is an event when the seat's current keyboard
-        // changes, or a seat-level layout concept; Sway's keyboard groups are
-        // the prior art.
-        //
-        // One caveat the JSON cannot answer: tied-at-zero devices are assumed
-        // to share the seat's RMLVO, which holds unless the user configures
-        // per-device keymaps (device:name { kb_layout }).
-        // The shell only fetches. Which device answers for the layout, and
-        // which ones the language button moves, is decided in
-        // LayoutDevices.js — where it can be tested
-        // (tests/layout-devices.qml carries the zoo).
-        //
-        // Layout names are looked up for every code any keyboard carries,
-        // not just the chosen device's, so the selection can happen after
-        // this process has already exited.
-        compositorQuery.command = ["bash", "-c",
-            "devices=$(hyprctl devices -j 2>/dev/null); "
-            + "[[ -n \"$devices\" ]] || exit 1; "
-            + "compact=$(printf '%s' \"$devices\" | jq -c "
-            + "'[.keyboards[] | {name, main, active_layout_index, layout, rules, model, variant, options}]' 2>/dev/null); "
-            + "[[ -n \"$compact\" ]] || exit 1; "
-            + "printf 'DEVICES\\t%s\\n' \"$compact\"; "
-            // The KBFILE half aborts on a FAILED read like the devices half
-            // does: a transient getoption failure must never be read as an
-            // observed-empty kb_file, or the panel forgets a real custom
-            // keymap permanently (the recovery seed silenced, the share
-            // overwriting the user's map, the destruction restore writing
-            // ''). Empty JSON output with a live call is the honest "unset"
-            // and still passes through as [[EMPTY]].
-            + "kb_json=$(hyprctl getoption input:kb_file -j 2>/dev/null)"
-            + " || exit 1; "
-            + "[[ -n \"$kb_json\" ]] || exit 1; "
-            + "kb_file=$(printf '%s' \"$kb_json\" | jq -r '.str // \"\"')"
-            + " || exit 1; "
-            + "printf 'KBFILE\\t%s\\n' \"${kb_file:-[[EMPTY]]}\"; "
-            + "printf '%s' \"$compact\" | jq -r '[.[].layout // \"\"] | join(\",\")' "
-            + "| tr ',' '\\n' | sed '/^$/d' | sort -u | while read code; do "
-            + "  name=$(sed -n \"/^! layout/,/^! /p\" /usr/share/X11/xkb/rules/base.lst 2>/dev/null "
-            + "    | awk -v want=\"$code\" '$1==want { $1=\"\"; sub(/^ +/, \"\"); print; exit }'); "
-            + "  [[ -n \"$name\" ]] && printf 'TITLE\\t%s\\t%s\\n' \"$code\" \"$name\"; "
-            + "done", "onscreen-keyboard"]
-        compositorQuery.running = true
+    /// Configures the helper from the RMLVO and kb_file the panel holds, at
+    /// `group`: the reading's, or — with no seat to read — the defaults the
+    /// panel started with, which is what lets typing open without one.
+    function configureHeld(group) {
+        var configure = "configure\t" + xkbRules + "\t" + xkbModel
+            + "\t" + xkbLayouts + "\t" + xkbVariants + "\t" + xkbOptions
+            + "\t" + xkbFile + "\t" + group
+        // Only a configure that will CHANGE the keymap closes the typing
+        // gate up front. The helper compiles and installs for that one,
+        // draining every key it holds on the way in, and a press that
+        // straddled it would land in a keymap neither side has agreed on.
+        // A group-only configure — every ordinary language switch — does
+        // none of that: the same-keymap short-circuit moves the group, the
+        // socket is ordered so the move lands ahead of anything written
+        // after it, and the facts for the destination group are already in
+        // hand. Dropping readiness for it dimmed the whole keyboard and
+        // raised the service-starting notice for the length of the round
+        // trip, which is the flicker the user sees on every switch.
+        if (Session.identityOf(configure) !== Session.installed(session)) {
+            inputReady = false
+        }
+        sendConfigure(configure)
+    }
+
+    /// The panel's own wish for a fresh seat reading, through the same
+    /// coalescer the helper's events use. Only on a connection whose hello
+    /// was answered: anything earlier would be refused (`err hello first`),
+    /// and the next hello asks anyway.
+    function askSeat() {
+        if (!root.session.helloOk) return
+        root.runReplyActions(HelperReplies.seatWanted(root.replyState()).actions)
     }
 
     // The one switch primitive both language-control shapes use: move every
@@ -1064,18 +1005,15 @@ Item {
         // seat then reads.
         root.settleGuard = SettleGuard.commanded(root.settleGuard, next,
             Date.now())
-        // Hyprland stores the group per device. Move every device with this
-        // layout list to one absolute index; switching one guessed physical
-        // keyboard changed the panel while another keyboard kept typing the
-        // previous group. One shell process keeps the operations ordered.
-        var command = ["bash", "-c",
-            "next=$1; shift; for keyboard in \"$@\"; do "
-                + "hyprctl switchxkblayout \"$keyboard\" \"$next\" >/dev/null 2>&1 || true; "
-                + "done",
-            "onscreen-keyboard-switch", String(next)]
+        // The compositor stores the group per device. Move every device
+        // with this layout list to one absolute index; switching one guessed
+        // physical keyboard changed the panel while another keyboard kept
+        // typing the previous group. The socket keeps the moves ordered; a
+        // refused one is a warning, and the next reading shows the seat as
+        // it really stands.
         for (var i = 0; i < switchKeyboards.length; i++)
-            command.push(String(switchKeyboards[i]))
-        Quickshell.execDetached(command)
+            root.sendCommandUnchecked("switch\t" + String(switchKeyboards[i])
+                + "\t" + next)
     }
 
     function stepLayout() {
@@ -1090,26 +1028,8 @@ Item {
         recoverUserKeymapSource()
         if (root.rememberedLayoutDevice !== "")
             root.anchorKeyboardName = root.rememberedLayoutDevice
-        pullLayoutsFromCompositor()
-    }
-
-    Process {
-        id: compositorQuery
-        property string snapshotText: ""
-        stdout: SplitParser {
-            onRead: (data) => {
-                compositorQuery.snapshotText += data + "\n"
-            }
-        }
-        onRunningChanged: () => {
-            if (running) snapshotText = ""
-        }
-        onExited: (code, status) => {
-            // Quickshell's second argument is QProcess ExitStatus, where
-            // 0 is the NORMAL exit — not a boolean success.
-            if (code !== 0 || status !== 0) return
-            root.ingestLayoutSnapshot(compositorQuery.snapshotText)
-        }
+        // Nothing is read here: the first reading is the helper's answer to
+        // the first hello.
     }
 
     // One re-read per held reading. A held flip is one
@@ -1122,62 +1042,7 @@ Item {
         id: settleRecheck
         interval: SettleGuard.QUIESCE_MS + 100
         repeat: false
-        onTriggered: root.pullLayoutsFromCompositor()
-    }
-
-
-    // The compositor is the single source of truth for which layout is active.
-    //
-    // It has to be, now that keys are sent as positions: the character produced
-    // is whatever the compositor's layout says, so if the panel believed
-    // something else the caps would show one alphabet while another came out.
-    // Switching outside the panel — Caps Lock, the bar indicator, a keybind —
-    // is the same event as switching inside it, and both are picked up here
-    // rather than by a timer, which is how the built-in layout widget does it.
-    Connections {
-        target: Hyprland
-        function onRawEvent(event) {
-            if (!event || !event.name) return
-            var name = String(event.name)
-            // Deliberately NOT where the typing keyboard is learned. Every
-            // `switchxkblayout` this panel issues emits `activelayout` naming
-            // the device it moved, so adopting the event's device made the
-            // anchor point at whatever the panel itself touched last. The
-            // panel then read its own echo, rearranged the seat around it,
-            // and could drag the user's keyboard back out of the group they
-            // had just switched it into. The seat's own `main` flag is the
-            // evidence; see the refresh.
-            //
-            // A reload can add or remove layouts without moving anything, so it
-            // changes what the panel may cycle through even with no switch.
-            if (name.indexOf("activelayout") !== -1 || name === "configreloaded") {
-                if (name.indexOf("activelayout") !== -1) {
-                    // "device >> layout": the first field names the keyboard
-                    // the event is about. Recorded BEFORE the refresh it
-                    // triggers, so the divergence arm sees who moved.
-                    var fields = String(event.data || "").split(">>")
-                        .map(function (field) { return field.trim() })
-                        .filter(function (field) { return field !== "" })
-                    if (fields.length > 0) root.lastLayoutEventDevice = fields[0]
-                }
-                root.pullLayoutsFromCompositor()
-            }
-        }
-    }
-
-    // Hyprland's IPC has no input-device hotplug event. udev does, so one
-    // event stream requests fresh helper/compositor snapshots on add/remove.
-    // It wakes for events only; there is no seat poll or heartbeat.
-    Process {
-        id: inputDeviceMonitor
-        command: ["udevadm", "monitor", "--udev", "--subsystem-match=input", "--property"]
-        running: true  // awake for its whole lifetime, by design
-        stdout: SplitParser {
-            onRead: function(line) {
-                if (line === "ACTION=add" || line === "ACTION=remove")
-                    root.sendCommandUnchecked("keyboards")
-            }
-        }
+        onTriggered: root.askSeat()
     }
 
     /// Runs one event through the reducer and writes whatever it says to
@@ -1418,7 +1283,7 @@ Item {
     property QtObject daemonSocket: helperLink.socket
 
     // The share scheduler gave up on an acknowledged generation (five
-    // failed hyprctl runs): the seat is carrying two keymaps and clients
+    // failed share runs): the seat is carrying two keymaps and clients
     // will flip layout on focus changes until the next share succeeds.
     // The panel listens and says it on the hint line — the journal is
     // not a user-visible channel.
@@ -1481,8 +1346,8 @@ Item {
             // file either: two keymaps on the seat, silently.
             root.sharedKeymapGen = 0
             root.shareQueue = ShareQueue.initial()
+            root.shareAttempts = 0
             shareRetry.stop()
-            shareProcess.running = false
         }
 
         // HelperLink.rebuild() ran: the state resets the rebuild carried
@@ -1508,10 +1373,10 @@ Item {
             root.sharedKeymapGen = resets.sharedKeymapGen
             root.shareQueue = ShareQueue.initial()
             // The scheduler's world died with the connection: a stale run's
-            // exit must not read as the next run's verdict, and a pending
-            // retry must not fire an unscheduled run.
+            // verdict must not read as the next run's, and a pending retry
+            // must not fire an unscheduled run.
+            root.shareAttempts = 0
             shareRetry.stop()
-            shareProcess.running = false
             // A chord awaiting its final line's ack cannot be completed by a
             // helper that is being torn down: settle it as a cancellation, the
             // way every other failure path already does — and the ledger of
@@ -1520,7 +1385,7 @@ Item {
                 HelperReplies.connectionLost(root.replyState()).actions)
         }
 
-        // One line from the helper. The watchdog's any-line clear has
+        // One line from the helper. The watchdog's any-reply clear has
         // already run on the transport side before this fired. What the
         // line MEANS is HelperReplies' pure dispatch; this runs its two
         // halves — the correlation pop, then the route — with a fresh read
@@ -1550,7 +1415,9 @@ Item {
             startupKeyboards: root.startupKeyboards,
             startupInventorySeen: root.startupInventorySeen,
             startupKeyboardName: root.startupKeyboardName,
-            anchorKeyboardName: root.anchorKeyboardName
+            anchorKeyboardName: root.anchorKeyboardName,
+            lastLayoutEventDevice: root.lastLayoutEventDevice,
+            seatAsk: root.seatAsk
         }
     }
 
@@ -1599,11 +1466,17 @@ Item {
             case "groupConfirmed":
                 root.groupConfirmed(a.group)
                 break
-            case "pullLayouts":
-                root.pullLayoutsFromCompositor()
+            case "seatFacts":
+                root.ingestSeatFacts(a.devices, a.kbFile, a.titles)
+                break
+            case "configureUnseated":
+                root.configureHeld(root.groupCursor)
                 break
             case "shareKeymap":
                 root.shareKeymapWithCompositor()
+                break
+            case "shareFinished":
+                root.shareFinished(a.ok, a.reply)
                 break
             case "log":
                 console.log.apply(console, a.args)
@@ -1635,6 +1508,8 @@ Item {
         case "startupInventorySeen": root.startupInventorySeen = value; break
         case "startupKeyboardName": root.startupKeyboardName = value; break
         case "anchorKeyboardName": root.anchorKeyboardName = value; break
+        case "lastLayoutEventDevice": root.lastLayoutEventDevice = value; break
+        case "seatAsk": root.seatAsk = value; break
         default: console.error("[oskar] unknown reply state field:", key)
         }
     }
