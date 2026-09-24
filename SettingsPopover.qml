@@ -195,7 +195,8 @@ Rectangle {
     // The widest segmented row (the Super mark's five segments) plus its
     // reset chip must fit the zone too, or the chip is cut off at the
     // popover's edge.
-    readonly property real widestSegmented: tokens.space(320)
+    readonly property real widestSegmented: Math.max(tokens.space(320),
+        languageControl.neededWidth, superMarkControl.neededWidth)
     readonly property real controlZoneWidth: Math.max(controlProbe.implicitWidth,
         widestSegmented + tokens.space(6) + tokens.space(24))
 
@@ -392,7 +393,9 @@ Rectangle {
     // bordered container; the active segment is accent-OUTLINED with accent
     // text, never solid-filled: a settings surface reports what is in
     // force, not what is pressed. Fixed-width groups slice the container
-    // equally, so choosing never reflows the row.
+    // equally, so choosing never reflows the row. `neededWidth` is the
+    // width at which every slice fits its label (bold, as the active one
+    // draws it); a row whose labels vary with the seat grows to it.
     component SettingsSegmented: Item {
         id: segmented
         property var segments: [] // [{ value, label }]
@@ -400,6 +403,27 @@ Rectangle {
         signal picked(string value)
         width: tokens.space(150)
         height: tokens.space(26)
+
+        Row {
+            id: labelWidths
+            visible: false
+            Repeater {
+                model: segmented.segments
+                Text {
+                    text: modelData.label
+                    font.family: tokens.fontFamily
+                    font.pixelSize: tokens.fontBody
+                    font.bold: true
+                }
+            }
+        }
+        readonly property real neededWidth: {
+            var widest = 0
+            for (var i = 0; i < labelWidths.children.length; i++)
+                widest = Math.max(widest, labelWidths.children[i].implicitWidth || 0)
+            var n = segmented.segments.length
+            return n * (widest + tokens.space(12)) + 4 + 2 * Math.max(0, n - 1)
+        }
 
         Rectangle {
             anchors.fill: parent
@@ -652,8 +676,10 @@ Rectangle {
                     // slice 72.5px segments, and control+reset chip
                     // stay inside the measured control zone even when the
                     // UI language narrows the "Custom" probe that sizes
-                    // it — the superMark row's own arithmetic.
-                    width: tokens.space(300)
+                    // it — the superMark row's own arithmetic. More
+                    // languages than that fits widen the row to their
+                    // labels, and the popover's zone with it.
+                    width: Math.max(tokens.space(300), neededWidth)
                     readonly property var languageLabels: ({
                         auto: UiStrings.tr("settings.lang.auto", panel.uiLang),
                         en: "English", ru: "Русский", uk: "Українська",
