@@ -50,7 +50,7 @@ RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "")
 OURS = re.compile(
     r"(Panel|Keyboard|HelperLink|PasteChords|PrivateSaves|EmojiDelivery|HoldMenu|DragLine|BarWidget|Theme|HoverTooltip|KeyClickSound|CursorPolicy|SettingsLayer"
     r"|Settings\w*|EmojiPage|EmojiCatalog|LanguageControl|HoldColumn"
-    r"|LayoutDevices|ModifierReducer|KeyboardSession|ClipboardPaste|Config"
+    r"|LayoutDevices|ModifierReducer|KeyboardSession|ClipboardPaste|Config|HelperReplies"
     r"|TextGlyphs|UiStrings|ShareQueue|SocketWatch|SettleGuard|Dwell"
     r"|InputProfile|SettingsPlacement)\.(qml|js)")
 OURS_LINE = re.compile(r"oskar")
