@@ -415,6 +415,16 @@ def service_active():
     return out == "active"
 
 
+# The cap-text pixel floor per lab output size, about half of a measured
+# drawn keyboard: 1280x800 measured ~900-1300 (US and Cyrillic differ),
+# 1920x1080 measured 7387 (2026-09-24). A half-blank keyboard falls under
+# it; a flat slab measures a handful.
+TEXT_PIXEL_FLOOR_BY_OUTPUT = {
+    (1280, 800): 600,
+    (1920, 1080): 3500,
+}
+
+
 def band_statistics():
     """Ticket 47's visibility facts for the open, docked panel band.
 
@@ -471,7 +481,7 @@ def band_statistics():
             textish += 1
         if index % 12 == 0:  # sampled: the spread, not the census
             colors.add((r // 8, g // 8, b // 8))
-    return {"textish": textish, "colors": len(colors)}
+    return {"textish": textish, "colors": len(colors), "output": (width, height)}
 
 
 def own_socket_or_die():
@@ -575,16 +585,22 @@ def _run_leg(repo, window_start):
             # no log line naming it.
             # This is the pixels' own assertion: the open band must carry
             # cap text and a colour spread, whatever the logs say. The
-            # thresholds are calibrated live on this lab's 1280x800
-            # output: a drawn keyboard measures ~900-1300 cap-text pixels
-            # depending on group (US and Cyrillic differ), a flat slab
-            # measures a handful; the typing gate itself is the ready
+            # text-pixel floor is per output size (the cap text scales
+            # with the output, not with the capture); a flat slab measures
+            # a handful either way; the typing gate itself is the ready
             # wait's business, not the pixels'.
             band = band_statistics()
-            if band["textish"] < 600:
+            floor = TEXT_PIXEL_FLOOR_BY_OUTPUT.get(band["output"])
+            if floor is None:
+                raise Failure(f"no cap-text calibration for a "
+                              f"{band['output'][0]}x{band['output'][1]} lab "
+                              f"output (measured {band['textish']}) — add "
+                              f"one to TEXT_PIXEL_FLOOR_BY_OUTPUT")
+            if band["textish"] < floor:
                 raise Failure(f"the open panel band has only "
                               f"{band['textish']} cap-text pixels (a drawn "
-                              f"keyboard measures 900+ on this output): "
+                              f"keyboard measures well above {floor} on "
+                              f"this output): "
                               f"the caps are blank or invisible — the "
                               f"ticket-47 symptom")
             if band["colors"] < 6:
