@@ -355,6 +355,33 @@ QtObject {
             T.equal(picked.switchSet.length, 3)
         })
 
+        T.test("a pseudo-device named as the mover never becomes the reading", function () {
+            // A config reload makes the compositor emit a layout event for
+            // EVERY device, so the last "mover" can be a mouse's keyboard
+            // interface sitting on a stale group. Observed live: the Razer
+            // mouse named at startup while the real keyboards sat on us.
+            var mouse = "razer-razer-deathadder-v3"
+            // The real keyboard holds the seat: the mouse's group (1) is
+            // never read, whoever the event named.
+            var withMain = Devices.select(zoo(0, "ite-tech.-inc.-ite-device(8295)-keyboard"),
+                mouse, safeNames, 1, mouse)
+            T.equal(withMain.group, 0)
+            T.equal(withMain.reading.name, "ite-tech.-inc.-ite-device(8295)-keyboard")
+            // No current keyboard at all (a pseudo vkb could hold main, or
+            // nothing does): the mouse as anchor AND mover still cannot be
+            // read — the answer is exactly the no-mover answer.
+            var noMover = Devices.select(zoo(0, ""), "", safeNames, 1, "")
+            var mouseMover = Devices.select(zoo(0, ""), mouse, safeNames, 1, mouse)
+            T.equal(mouseMover.group, noMover.group)
+            T.equal(mouseMover.reading && mouseMover.reading.name,
+                noMover.reading && noMover.reading.name)
+            T.equal(mouseMover.group !== 1 || noMover.group === 1, true,
+                "the mouse's own stale index is not what answered")
+            // And the language button never advances the mouse.
+            T.equal(withMain.switchSet.indexOf(mouse), -1)
+            T.equal(mouseMover.switchSet.indexOf(mouse), -1)
+        })
+
         T.test("a flip on a sleeping twin still loses to consensus and memory", function () {
             // The other half of the gate: the mover is NOT the anchor — a
             // sleeper moved — and the panel must not be dragged off what
