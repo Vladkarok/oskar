@@ -5,7 +5,7 @@
 Open a GitHub issue marked `[security]`, or contact the maintainer
 directly. There is no bug bounty — there is gratitude and fast fixes.
 
-## Posture (audited 2026-09-18, v0.1.0)
+## Posture (audited 2026-09-18, on the pre-release tree)
 
 Two independent adversarial audits (different labs, both with tree
 access) converged: **needs-hardening, core sound**. The full findings
