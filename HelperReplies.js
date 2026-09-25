@@ -3,6 +3,7 @@
 .import "KeyboardSession.js" as Session
 .import "ModifierReducer.js" as Modifiers
 .import "SettleGuard.js" as SettleGuard
+.import "LayoutDevices.js" as Devices
 
 // What one line from the helper MEANS: the reply dispatch, as a pure
 // function of the panel's reply state. Nothing here writes a line, calls
@@ -320,6 +321,17 @@ function eventLine(p, line) {
     var fields = line.split("\t")
     if (fields[1] === "layout") {
         var device = String(fields[2] || "").trim()
+        // Only a physical keyboard's move is evidence. The helper's own
+        // virtual keyboard moves on every configure this panel sends, and
+        // the compositor announces it (and parks `main` on it for a
+        // moment): re-reading the seat on that echo raced the configure's
+        // ack — the diverged arm answered the remembered group from before
+        // the follow, and the panel undid its own follow while the physical
+        // keyboard stayed where the user had put it. An IME's virtual
+        // keyboard flips to 0 after every switch, and a pseudo-device sits
+        // on a group nobody types in. None of them asks anything; which
+        // TYPED device may answer is LayoutDevices' decision, not this one.
+        if (device !== "" && !Devices.isTyped(device)) return
         if (device !== "") set(p, "lastLayoutEventDevice", device)
         askSeat(p)
     } else if (fields[1] === "devices") {

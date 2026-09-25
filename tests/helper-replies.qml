@@ -500,6 +500,34 @@ QtObject {
             T.equal(wanted.state.seatAsk, "again")
         })
 
+        T.test("a layout event from a virtual or pseudo device is not evidence", function () {
+            // The helper's own virtual keyboard moves on every configure the
+            // panel sends, and the compositor announces it. Re-reading the
+            // seat on that echo raced the configure's ack and undid the
+            // panel's own follow (seen live: Alt+Shift moved the physical
+            // keyboard, the panel followed, then fell back to the old group).
+            var s = with_(readyAt(3), { startupKeyboards: ["kbd-a", "kbd-b"],
+                lastLayoutEventDevice: "kbd-b" })
+            var noise = ["hl-virtual-keyboard-oskar-daemon", "hl-virtual-keyboard-fcitx5",
+                "power-button", "video-bus-1"]
+            for (var i = 0; i < noise.length; i++) {
+                var r = feed(s, ["event\tlayout\t" + noise[i] + "\t1"])
+                T.deepEqual(sends(r.actions), [], noise[i] + " asked the seat")
+                T.equal(r.state.lastLayoutEventDevice, "kbd-b", noise[i] + " became the mover")
+            }
+            // A named physical keyboard's move still is.
+            var real = feed(s, ["event\tlayout\tkbd-a\t1"])
+            T.deepEqual(sends(real.actions), ["seat"])
+            T.equal(real.state.lastLayoutEventDevice, "kbd-a")
+            // A compositor suffix on a duplicate is the same keyboard.
+            T.deepEqual(sends(feed(s, ["event\tlayout\tkbd-a-2\t1"]).actions), ["seat"])
+            // A typed device the helper has not named (a mouse's keyboard
+            // interface) still asks: whether it may ANSWER is LayoutDevices'
+            // tiers' decision, where the unnamed device never becomes the
+            // anchor.
+            T.deepEqual(sends(feed(s, ["event\tlayout\trazer-razer-deathadder-v3\t1"]).actions), ["seat"])
+        })
+
         T.test("event devices asks the seat, and the facts reach the ingest", function () {
             var r = feed(readyAt(3), ["event\tdevices"])
             T.deepEqual(sends(r.actions), ["seat"])
