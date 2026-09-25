@@ -2,10 +2,12 @@
 
 # oskar — one user-facing lifecycle command for the on-screen keyboard.
 #
-#   oskar setup [--migrate-source]   activate; idempotent; also walks
+#   oskar setup [--migrate-source] [--prebuilt <tarball>]
+#                                    activate; idempotent; also walks
 #                                          an old omarchy-osk install
 #                                          through the rename
-#   oskar upgrade                    reload helper + shell after a
+#   oskar upgrade [--prebuilt <tarball>]
+#                                    reload helper + shell after a
 #                                          package/source update
 #   oskar status                     report; changes nothing
 #   oskar doctor                     diagnose; read-only, exits 1
@@ -339,6 +341,7 @@ enable_unit() {
   systemctl --user daemon-reload
   systemctl --user enable "$UNIT" >/dev/null 2>&1 || true
   if graphical_session_active; then
+    systemctl --user reset-failed "$UNIT" 2>/dev/null || true
     systemctl --user restart "$UNIT"
     say "helper restarted"
   else
@@ -346,13 +349,32 @@ enable_unit() {
   fi
 }
 
+# The prebuilt helper a source-mode install.sh may take in place of a
+# build (`--prebuilt <tarball>` on setup and upgrade): the release's
+# no-toolchain channel, threaded through unchanged.
+PREBUILT=""
+take_prebuilt() {
+  [[ -n "${1:-}" ]] || die "--prebuilt needs the helper tarball's path"
+  [[ -f "$1" ]] || die "no such file: $1"
+  PREBUILT="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+}
+run_install_sh() {
+  if [[ -n "$PREBUILT" ]]; then
+    bash "$PAYLOAD/install.sh" --prebuilt "$PREBUILT"
+  else
+    bash "$PAYLOAD/install.sh"
+  fi
+}
+
 cmd_setup() {
   local migrate=0
-  if [[ $# -gt 1 ]]; then
-    die "usage: oskar setup [--migrate-source]"
-  fi
-  [[ "${1:-}" == "--migrate-source" ]] && migrate=1
-  [[ $# -eq 0 || $migrate -eq 1 ]] || die "setup takes only --migrate-source"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --migrate-source) migrate=1; shift ;;
+      --prebuilt) take_prebuilt "${2:-}"; shift 2 ;;
+      *) die "usage: oskar setup [--migrate-source] [--prebuilt <tarball>]" ;;
+    esac
+  done
   detect_mode
   preflight
 
@@ -370,7 +392,7 @@ cmd_setup() {
       warn "a packaged install also exists; a bare 'oskar' may resolve \
 to /usr/bin first on your PATH — call this one by its full path"
     fi
-    bash "$PAYLOAD/install.sh"
+    run_install_sh
   fi
 
   # Before the new registration: an omarchy-osk-era world (if any) goes
@@ -383,6 +405,12 @@ to /usr/bin first on your PATH — call this one by its full path"
 }
 
 cmd_upgrade() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --prebuilt) take_prebuilt "${2:-}"; shift 2 ;;
+      *) die "usage: oskar upgrade [--prebuilt <tarball>]" ;;
+    esac
+  done
   detect_mode
   # The rename transition is part of upgrading: a machine coming from
   # the old name walks it here (and in setup), before any restart.
@@ -412,13 +440,14 @@ incompatible halves; run: oskar setup --migrate-source"
   fi
 
   if [[ "$MODE" == "source" ]]; then
-    bash "$PAYLOAD/install.sh"
+    run_install_sh
   else
     systemctl --user daemon-reload
     say "unit definitions reloaded"
   fi
 
   if systemctl --user --quiet is-active "$UNIT" 2>/dev/null; then
+    systemctl --user reset-failed "$UNIT" 2>/dev/null || true
     systemctl --user restart "$UNIT"
     say "helper restarted"
   else
@@ -1053,7 +1082,7 @@ see the FAIL/unknown lines above"
 
 case "${1:-}" in
 setup) shift; cmd_setup "$@" ;;
-upgrade) [[ $# -eq 1 ]] || die "upgrade takes no arguments"; cmd_upgrade ;;
+upgrade) shift; cmd_upgrade "$@" ;;
 status) [[ $# -eq 1 ]] || die "status takes no arguments"; cmd_status ;;
 doctor) [[ $# -eq 1 ]] || die "doctor takes no arguments"; cmd_doctor ;;
 teardown) [[ $# -eq 1 ]] || die "teardown takes no arguments"; cmd_teardown ;;
@@ -1061,14 +1090,16 @@ teardown) [[ $# -eq 1 ]] || die "teardown takes no arguments"; cmd_teardown ;;
   cat <<'EOF'
 Usage: oskar <command>
 
-  setup [--migrate-source]  Activate: register the plugin, enable it in
+  setup [--migrate-source] [--prebuilt <tarball>]
+                            Activate: register the plugin, enable it in
                              the shell, enable/start the helper service.
                              Idempotent. Detects and migrates an old
                              omarchy-osk-era install (unit, registration,
                              config and state move to the oskar names).
                              --migrate-source moves a legacy source-install
                              unit aside (kept, renamed).
-  upgrade                   After a package/source update: reload unit
+  upgrade [--prebuilt <tarball>]
+                            After a package/source update: reload unit
                              definitions, restart the helper, restart the
                              shell so the kept-loaded panel reloads. Also
                              walks an old omarchy-osk install through the

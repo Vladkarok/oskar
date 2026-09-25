@@ -412,9 +412,13 @@ Any `install.sh` above takes it in place of the build:
 bash install.sh --prebuilt ~/Downloads/oskar-daemon-0.1.0-x86_64.tar.gz
 ```
 
-A tarball placed beside `install.sh` is picked up without the flag. The
-version in the file name must match the plugin's; a mismatch is warned
-about, and the panel says so if the two speak different protocols.
+A tarball placed beside `install.sh` is picked up without the flag, and
+`oskar setup --prebuilt <tarball>` / `oskar upgrade --prebuilt <tarball>`
+thread it through the lifecycle command. Without cargo and without a
+tarball, a rerun keeps the helper already installed and says how to
+update it. The version in the file name must match the plugin's; a
+mismatch is warned about, and the panel says so if the two speak
+different protocols.
 
 The panel can be toggled from a keybinding too:
 

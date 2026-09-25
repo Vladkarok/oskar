@@ -48,15 +48,25 @@ if [[ -n "$prebuilt" ]]; then
   install -Dm755 "$extracted" "$binary"
 else
   if ! command -v cargo >/dev/null; then
-    echo "cargo is required to build the helper. Install it with:" >&2
-    echo "  omarchy pkg add rust" >&2
-    echo "(a release's prebuilt helper, once one exists, installs without cargo:" >&2
-    echo "  bash install.sh --prebuilt oskar-daemon-<version>-$(uname -m).tar.gz)" >&2
-    exit 1
+    if [[ -x "$binary" ]]; then
+      # A prebuilt helper is already in place and nothing here can build a
+      # newer one: keep it. The panel says so if its protocol no longer
+      # matches; the two ways to update are named.
+      echo "No cargo: keeping the installed helper at $binary." >&2
+      echo "To update it: omarchy pkg add rust and rerun, or install the release's prebuilt helper:" >&2
+      echo "  bash install.sh --prebuilt oskar-daemon-<version>-$(uname -m).tar.gz" >&2
+    else
+      echo "cargo is required to build the helper. Install it with:" >&2
+      echo "  omarchy pkg add rust" >&2
+      echo "or install the release's prebuilt helper without cargo:" >&2
+      echo "  bash install.sh --prebuilt oskar-daemon-<version>-$(uname -m).tar.gz" >&2
+      exit 1
+    fi
+  else
+    echo "Building the input helper..."
+    cargo build --locked --release --manifest-path "$here/daemon/Cargo.toml"
+    install -Dm755 "$here/daemon/target/release/oskar-daemon" "$binary"
   fi
-  echo "Building the input helper..."
-  cargo build --locked --release --manifest-path "$here/daemon/Cargo.toml"
-  install -Dm755 "$here/daemon/target/release/oskar-daemon" "$binary"
 fi
 # The unit and the lifecycle command come from this checkout either way:
 # they are the panel's, and the panel is what lives here.
@@ -75,6 +85,10 @@ systemctl --user enable oskar.service
 # Only start it now if there is a session to attach to. Outside one the unit
 # would refuse on ConditionEnvironment and look like a failure.
 if systemctl --user --quiet is-active graphical-session.target; then
+  # A deliberate restart must not be refused by the crash-loop limiter
+  # (five starts in 30 s): install, setup and upgrade back to back within
+  # a minute are ordinary during a first install.
+  systemctl --user reset-failed oskar.service 2>/dev/null || true
   systemctl --user restart oskar.service
   # "Running" means the new helper answers, not that systemd started it: a
   # check straight after this script would otherwise meet the old socket.
