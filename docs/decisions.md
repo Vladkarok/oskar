@@ -2381,3 +2381,55 @@ review rounds or journal numbers. Comments that narrated history went stale
 with every behaviour change, and stale prose was most of what late review
 rounds found. `tools/comment-only.py` proves a prose pass left code
 untouched; the sweep commits are listed in `.git-blame-ignore-revs`.
+
+## 109. The helper owns the seat behind a versioned protocol
+
+Everything compositor-facing about the seat — the device inventory,
+layout switches, hotplug, the keymap share and its read-back — is the
+helper's (protocol 7: `seat`, `switch`, `share`, `events on|off`, pushed
+`event\t` lines), spoken to Hyprland's two IPC sockets from Rust with
+bounded reads and no shell. The panel decides in its pure modules and
+draws; it spawns nothing for the seat. Before, the same facts came from
+`hyprctl` and `udevadm` through `bash -c` strings inside QML, which is
+where the 2026-09-18 Lua-injection finding lived and why a second host
+was impossible without rewriting the panel.
+
+A connection negotiates once, `hello 6` or `hello 7`, and a v6 peer gets
+the v6 world unchanged, so the helper can be installed ahead of the
+panel; the alternative — a hard version bump — would have bricked every
+installed panel between the two deploys. Events never take a reply slot
+and are written whole between replies on one locked writer per
+connection; the panel routes them by their prefix, never by whether it
+believes it subscribed. Rejected: keeping the seat reading in the panel
+behind a Quickshell abstraction (it stays compositor-specific either
+way, and untestable off a display), and a `uinput`/root path (a
+different trust model).
+
+## 110. The reply dispatch is a pure module executed by actions
+
+What a helper line MEANS lives in `HelperReplies.js`: `pop` (the
+ChordAcks slot) then `route`, returning plain state writes and actions
+that `Keyboard.qml` executes in order. The QML holds no protocol
+knowledge of its own. The handler was the one place single reviewers
+kept passing silence-class defects, because nothing on the host could
+load it; as a module it has a scripted-line suite and a reference
+`apply` that pins the meaning of every action. Actions run in the
+original order against live properties rather than as one assignment,
+because a session write can synchronously release a held key or drop
+the connection and later branches read what that left behind — a gate
+is therefore opened by an action judged against the live session, never
+by a planned value.
+
+## 111. The summon's surfaces wait for their output
+
+The panel's windows map only once the summon has resolved the pointer's
+output (`placed`), reset on every close, with a short fallback so a
+probe that never answers cannot hide the panel. Mapping on `opened`
+alone drew one to three frames on the previous output before the async
+`cursorpos` probe moved the window — the second-monitor flash. The
+docked relayout nudge follows the map, because the exclusive zone it
+reflows the tiled windows against exists only for a mapped surface. The
+lab's summon-output leg pins it against a headless second output, with
+a `hyprctl` stand-in for the pointer since the compositor's Lua
+dispatch table offers no cursor move.
+
