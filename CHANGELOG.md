@@ -55,4 +55,8 @@ for other desks.
   the interface ships in English, Russian and Ukrainian.
 - Summoning the panel on a second monitor no longer flashes it on the
   first one: the window maps only once the pointer's output is known.
+- `oskar setup` and `oskar upgrade` take `--prebuilt <tarball>`; without
+  cargo they keep the helper already installed instead of refusing, and a
+  quick install-setup-upgrade sequence no longer trips the service's
+  start-rate limit.
 
