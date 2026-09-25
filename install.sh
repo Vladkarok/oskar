@@ -50,8 +50,8 @@ else
   if ! command -v cargo >/dev/null; then
     echo "cargo is required to build the helper. Install it with:" >&2
     echo "  omarchy pkg add rust" >&2
-    echo "or install the prebuilt helper from the release page:" >&2
-    echo "  bash install.sh --prebuilt ~/Downloads/oskar-daemon-<version>-$(uname -m).tar.gz" >&2
+    echo "(a release's prebuilt helper, once one exists, installs without cargo:" >&2
+    echo "  bash install.sh --prebuilt oskar-daemon-<version>-$(uname -m).tar.gz)" >&2
     exit 1
   fi
   echo "Building the input helper..."

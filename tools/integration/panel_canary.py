@@ -1075,7 +1075,13 @@ def mask_leg():
     forces the overlay state (the layer's own mask) and proves the
     assertion detects a mask-eater: the same click must NOT focus."""
     print("leg   mask click-through (green)")
-    _guest("pkill -x kitty 2>/dev/null; sleep 1; true")
+    # The lab accumulates Omarchy's crash notifications (hyprland-welcome
+    # dies on every nested run) in the top-right corner, and a click on
+    # one launches an agent terminal that takes focus: dismiss them and
+    # any such terminal before the first real click.
+    _guest("omarchy-shell -q notifications dismissAll; "
+           "pkill -f 'app-id=org.omarchy.agent' 2>/dev/null; "
+           "pkill -x kitty 2>/dev/null; sleep 1; true")
     _guest("nohup kitty --title=mtarget sh -c 'sleep 600' >/dev/null "
            "2>&1 & sleep 2; true")
     _guest("nohup kitty --title=mother sh -c 'sleep 600' >/dev/null "
