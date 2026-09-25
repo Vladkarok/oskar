@@ -20,7 +20,7 @@ DESTDIR ?=
 PLUGIN_RUNTIME := Panel.qml BarWidget.qml Keyboard.qml HelperLink.qml PasteChords.qml PrivateSaves.qml EmojiDelivery.qml HoldMenu.qml KeyboardLayout.js \
 	KeyboardSession.js ModifierReducer.js Config.js Theme.qml \
 	CursorPolicy.js CursorPolicy.qml LayoutDevices.js SettleGuard.js \
-	EmojiPage.qml EmojiPage.js EmojiCatalog.js TextGlyphs.js \
+	EmojiPage.qml EmojiPage.js EmojiCatalog.js EmojiCatalogData1.js EmojiCatalogData2.js EmojiCatalogData3.js TextGlyphs.js \
 	LanguageControl.js HoldColumn.js SocketWatch.js Dwell.js \
 	InputProfile.js \
 	UiStrings.js \
