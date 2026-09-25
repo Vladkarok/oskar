@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.vladkarok.oskar",
   "name": "OSKar",
-  "version": "0.3.0",
+  "version": "0.1.0",
   "author": "vladkarok",
   "license": "MIT",
   "description": "OSKar — mouse-driven on-screen keyboard that follows the active keyboard layout, types through a persistent virtual keyboard, and matches the Omarchy theme. Toggle with the bar icon or: omarchy-shell shell toggle io.github.vladkarok.oskar",

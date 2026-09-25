@@ -1,18 +1,16 @@
-# AUR PKGBUILD for oskar — the stable, tag-pinned package that is
-# the public default (audit 2026-09-13 §32: one coherent product, not
-# "AUR helper plus a separately managed Git plugin").
+# AUR PKGBUILD for oskar — the stable, tag-pinned package that is the
+# public default: one coherent product, not "AUR helper plus a separately
+# managed Git plugin".
 #
 # CHECKSUMS LIVE OUTSIDE THE TREE. A GitHub tag tarball embeds the tag's
 # commit SHA in a pax global header, so the tarball's bytes depend on the
-# commit and a checksum recorded inside that same tag can never match it
-# (v0.1.1 and v0.1.2 both shipped the PREVIOUS tag's checksum —
-# updpkgsums ran while pkgver still named the old version). The
-# verifying authority for a release is its GitHub release notes, which
-# publish the tag tarball's real sha256; the AUR PKGBUILD carries the
-# same value when AUR registration reopens — built mechanically by
+# commit and a checksum recorded inside that same tag can never match it.
+# The verifying authority for a release is its GitHub release notes, which
+# publish the tag tarball's real sha256; the AUR PKGBUILD carries the same
+# value when AUR registration reopens — built mechanically by
 # tools/make-aur-recipe.sh, which emits the AUR copy with the real sum.
-# In-tree the sum stays SKIP
-# and a source-checkout makepkg builds unverified by design.
+# In-tree the sum stays SKIP and a source-checkout makepkg builds
+# unverified by design.
 #
 # PUBLISHING IS OWNER-GATED. To release a version:
 #   1. bump pkgver AND manifest.json's version together, create tag
@@ -29,7 +27,7 @@
 # this one never resolves a moving branch.
 
 pkgname=oskar
-pkgver=0.3.0
+pkgver=0.1.0
 pkgrel=1
 pkgdesc='OSKar — mouse-driven on-screen keyboard for Omarchy (Hyprland + Quickshell)'
 arch=(x86_64)

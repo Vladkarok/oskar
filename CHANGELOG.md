@@ -3,11 +3,10 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
-## Unreleased
+## 0.1.0 — the first release
 
-No numbered version has been published; the early 0.1.x–0.2.1 tags were
-withdrawn. The version string in the tree (0.3.0) reserves a number above
-them so no old tag name is reused, and the first release will start there.
+The first published version: what the author has daily-driven, packaged
+for other desks.
 
 ### Install channels
 
@@ -17,8 +16,8 @@ them so no old tag name is reused, and the first release will start there.
   over that command.
 - A source checkout (`./install.sh`, `oskar setup`).
 - The release tarball with its `PKGBUILD` (`makepkg -si`, `oskar setup`).
-- Without a Rust toolchain (once a release exists): its prebuilt helper,
-  `install.sh --prebuilt oskar-daemon-<version>-x86_64.tar.gz`.
+- Without a Rust toolchain: the release's prebuilt helper,
+  `install.sh --prebuilt oskar-daemon-0.1.0-x86_64.tar.gz`.
 
 ### What works
 
