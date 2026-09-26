@@ -15,15 +15,55 @@ binary="$HOME/.local/libexec/oskar-daemon"
 unit="$HOME/.config/systemd/user/oskar.service"
 
 prebuilt=""
-case "${1:-}" in
-  "") ;;
-  --prebuilt)
-    prebuilt="${2:-}"
-    [[ -n "$prebuilt" ]] || { echo "usage: install.sh [--prebuilt <tarball>]" >&2; exit 2; }
-    [[ -f "$prebuilt" ]] || { echo "no such file: $prebuilt" >&2; exit 2; }
-    ;;
-  *) echo "usage: install.sh [--prebuilt <tarball>]" >&2; exit 2 ;;
-esac
+force=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prebuilt)
+      prebuilt="${2:-}"
+      [[ -n "$prebuilt" ]] || { echo "usage: install.sh [--prebuilt <tarball>] [--force]" >&2; exit 2; }
+      [[ -f "$prebuilt" ]] || { echo "no such file: $prebuilt" >&2; exit 2; }
+      shift 2 ;;
+    --force) force=1; shift ;;
+    *) echo "usage: install.sh [--prebuilt <tarball>] [--force]" >&2; exit 2 ;;
+  esac
+done
+
+# Ownership before any write — the mirror of uninstall.sh's rule. The unit,
+# the helper binary and the ~/.local/bin command are SHARED paths: another
+# OSKar checkout may own them (then this install takes them over, as it
+# always did), but a unit or a command that is not OSKar's at all is
+# someone else's and is never overwritten silently. `--force` is the
+# explicit consent.
+cli="$HOME/.local/bin/oskar"
+is_ours_cli() {
+  # A symlink to some checkout's bin/oskar whose manifest carries our id.
+  [[ -L "$cli" ]] || return 1
+  local target
+  target="$(readlink -f "$cli" 2>/dev/null || true)"
+  [[ "$(basename "$target")" == "oskar" ]] || return 1
+  local checkout
+  checkout="$(dirname "$(dirname "$target")")"
+  [[ -f "$checkout/manifest.json" ]] && grep -q '"io.github.vladkarok.oskar"' "$checkout/manifest.json"
+}
+is_ours_unit() {
+  grep -q 'oskar-daemon' "$unit" 2>/dev/null
+}
+foreign=""
+if [[ -e "$cli" || -L "$cli" ]] && ! is_ours_cli; then
+  foreign+="  $cli is not an OSKar command (expected a symlink to a checkout's bin/oskar)"$'\n'
+fi
+if [[ -e "$unit" ]] && ! is_ours_unit; then
+  foreign+="  $unit is not OSKar's unit (no oskar-daemon in it)"$'\n'
+fi
+if [[ -n "$foreign" && -z "$force" ]]; then
+  echo "install.sh: refusing to overwrite files that are not OSKar's:" >&2
+  printf '%s' "$foreign" >&2
+  echo "Move them aside, or rerun with --force to replace them." >&2
+  exit 3
+elif [[ -n "$foreign" ]]; then
+  echo "install.sh: --force: replacing files that are not OSKar's:" >&2
+  printf '%s' "$foreign" >&2
+fi
 if [[ -z "$prebuilt" ]]; then
   for candidate in "$here"/oskar-daemon-*-"$(uname -m)".tar.gz; do
     [[ -f "$candidate" ]] && prebuilt="$candidate"

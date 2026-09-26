@@ -412,6 +412,11 @@ Any `install.sh` above takes it in place of the build:
 bash install.sh --prebuilt ~/Downloads/oskar-daemon-0.1.0-x86_64.tar.gz
 ```
 
+`install.sh` never overwrites a `~/.config/systemd/user/oskar.service` or
+`~/.local/bin/oskar` that is not OSKar's (another checkout's is taken over,
+as before); it stops and names the file, and `--force` is the explicit
+consent to replace it.
+
 A tarball placed beside `install.sh` is picked up without the flag, and
 `oskar setup --prebuilt <tarball>` / `oskar upgrade --prebuilt <tarball>`
 thread it through the lifecycle command. Without cargo and without a
