@@ -45,6 +45,12 @@ echo "== qml static check"
 echo "== packaging file-set check"
 "$root/tools/package-check.sh" || status=1
 
+# The install script's branches, in a sandbox (a private HOME, a stubbed
+# systemctl, a fake prebuilt tarball): ownership refusals, the prebuilt
+# path, the no-toolchain reruns. Nothing on the machine is touched.
+echo "== install script check"
+"$root/tools/install-check.sh" || status=1
+
 if [[ "${1:-}" != "--js-only" ]]; then
   echo "== helper unit tests"
   cargo test --manifest-path "$root/daemon/Cargo.toml" --quiet || status=1
