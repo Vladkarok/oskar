@@ -163,12 +163,15 @@ hands yet.
 
 ## Security posture
 
-One sentence: OSKar is a **same-user** tool. Everything it owns lives
-under your `/run/user/<uid>/oskar/` and `~/.config/oskar/` with
-`0700`/`0600` permissions, the daemon runs as your user without
-privileges, and the control socket is connectable only by processes
-running as you — other users on the machine cannot inject keystrokes
-or read your keymap.
+One sentence: OSKar is a **same-user** tool. What it keeps lives in
+your `/run/user/<uid>/oskar/`, `~/.config/oskar/` and
+`~/.local/state/oskar/`, plus the three installed files and the install
+record listed below; a directory OSKar creates is `0700` and its files
+`0600`, a directory that already exists keeps its mode, and parents such
+as `~/.local/state` are created with your umask. The daemon runs as your
+user without privileges, and the control socket is connectable only by
+processes running as you — other users on the machine cannot inject
+keystrokes or read your keymap.
 
 Honest edges: root can do what root always can (no same-user tool
 draws that line); the daemon trusts its same-user callers on a line
@@ -193,61 +196,92 @@ back. This list is the contract: a change that is not here is a bug.
   `~/.config/systemd/user/`. The pacman package itself installs under
   `/usr` only.
 - **Settings and state.** `~/.config/oskar/config.json` holds the
-  settings you changed and `~/.local/state/oskar/state.json` the panel's
-  placement, emoji usage, skin tone and last layout. A directory OSKar
-  creates is `0700`, each file `0600`; a directory that already exists
-  keeps its mode. A file that does not parse is never overwritten: the
-  panel shows the error and keeps the last valid values. A file that is
-  a symlink (a dotfile manager's) is written through: the link stays and
-  its target is replaced in one rename. Keys OSKar does not know are
-  kept.
+  settings you changed. `~/.local/state/oskar/state.json` holds the
+  panel's placement, emoji usage, skin tone and last layout, and is
+  written without any action of yours: after an emoji pick, when you
+  move the panel or the emoji page, and when the helper acknowledges a
+  layout group or names a keyboard the panel has not remembered yet. A
+  directory OSKar creates is `0700`, each file `0600`; a directory that
+  already exists keeps its mode, and its parents are created with your
+  umask. A file that does not parse is never overwritten: the panel
+  shows the error and keeps the last valid values. A file that is a
+  symlink (a dotfile manager's) is written through: the link stays, and
+  its target is replaced by a new file with mode `0600` (hard links to
+  the old target no longer share it). Keys OSKar does not know are kept,
+  up to 64 KiB of them; a file carrying more is treated as unparseable.
 - **Runtime files.** `$XDG_RUNTIME_DIR/oskar/` holds the control socket,
   the keymap the helper publishes (`keymap.xkb`), the record of your own
   `kb_file` (`user-keymap-source`) and, with the click sound on,
-  `keyclick.wav`. The directory goes away at logout.
+  `keyclick.wav`. The directory goes away when your last session ends.
 - **What the panel reads.** While the panel is open it reads the
   clipboard on every change, up to 64 KiB, to show the paste chip's
-  preview. Content a password manager marks secret (the
-  `x-kde-passwordManagerHint` type) is never read or shown: the chip
-  says "Hidden content" and still pastes it.
+  preview. Content a password manager marks secret is never read or
+  shown: the chip says "Hidden content" and still pastes it. Only content
+  offered with the `x-kde-passwordManagerHint` type is recognised as
+  secret; a manager that does not add it is read like any other text.
 - **The clipboard.** An emoji pick goes through the clipboard: the emoji
   replaces what the clipboard held, and a delivered pick leaves it there.
-  A pick that fails puts back what was there before if it was text of
-  up to 64 KiB that the panel had already read, as plain text. An image,
-  other non-text content, or text copied an instant before the pick is
-  not put back, and neither is content marked secret; the clipboard then
-  keeps the emoji. The emoji page says
-  that a pick replaces the clipboard.
-- **`input:kb_file` (Hyprland, runtime only).** While the helper runs it
-  points `input:kb_file` at its published keymap, so every keyboard on
-  the seat compiles the keymap the helper types with. Without that,
-  applications switch layout on every focus change (decisions §35). Your
-  own `kb_file`, if you set one, is recorded and built into that keymap.
-  Your value (or none) is put back when the helper stops — `systemctl
-  stop`, `oskar upgrade`, logout — and when the shell running the panel
-  exits. A config reload (`hyprctl reload`, a theme change) also resets
-  it to your config's value, and the panel then shares the keymap again.
-  The helper does not take over a relative `kb_file`, because it could
-  not put it back: the panel then shows that layout sync failed, and
-  typing still works. Known limit: while OSKar runs, the global
-  `kb_file` also applies to keyboards that have their own layout in a
-  `device` section, so per-device keymaps are overridden.
+  A pick that fails puts back what was there before, as plain text, only
+  if it was text of up to 64 KiB that the panel had read and the
+  clipboard still holds the pick; if anything else was copied during the
+  pick, that stays. An image, other non-text content, or content marked
+  secret is not put back; the clipboard then keeps the emoji. The emoji
+  page says that a pick replaces the clipboard. What OSKar puts on the
+  clipboard stays there after the shell restarts or the plugin is
+  disabled, until something else is copied. The **Copy** button of the
+  "not installed" and "needs updating" notices writes the install command
+  to the clipboard when you click it; that copy belongs to the shell and
+  is gone when the shell exits.
+- **`input:kb_file` (Hyprland, runtime only).** As soon as the shell
+  loads the plugin and the helper answers — whether or not the panel is
+  open — the panel asks the helper to point `input:kb_file` at its
+  published keymap, so every keyboard on the seat compiles the keymap the
+  helper types with. That keymap is your own (your layouts, or your own
+  `kb_file`) with OSKar's reserved symbol block added on levels five to
+  eight (the Level5 modifier) of the digit row `AE01`–`AE12`, then as
+  needed of `AD11`, `AD12`, `AC10`, `AC11`, `AB08`–`AB10`, `TLDE`, `BKSL`
+  and `LSGT`, and of `AB11` and `AE13` where your keymap leaves them
+  free. A position is used only when your layouts put nothing above
+  level four on it and it does not change with Lock, Control, Alt or
+  Super; if any of your keys already reaches level five, only the free
+  positions are used. Without the shared keymap, applications switch layout on
+  every focus change (decisions §35). Your own `kb_file`, if you set one,
+  is recorded verbatim, even when the file it names is missing. Your value
+  (or none) is put back when the helper stops — `systemctl stop`, `oskar
+  upgrade`, logout — and when the shell running the panel exits cleanly.
+  A config reload (`hyprctl reload`, a theme change) also resets it to
+  your config's value, and the panel then shares the keymap again. The
+  helper does not take over a relative `kb_file`, because it could not
+  put it back: the panel then shows that layout sync failed, and typing
+  still works. Known limit: while OSKar runs, the global `kb_file` also
+  applies to keyboards that have their own layout in a `device` section,
+  so per-device keymaps are overridden.
 - **`general:gaps_out` (Hyprland, docked mode only).** When the docked
-  panel appears, OSKar raises the first number of `gaps_out` by one for
-  about one frame and writes your exact value back, so Hyprland moves
-  already-tiled windows above the panel. It uses `hyprctl keyword`; a
-  Lua config refuses that, and nothing changes. A value in a form OSKar
-  does not recognise is left alone. If writing the value back fails
-  twice, the journal names the original value.
+  panel appears and when it closes, OSKar raises the first number of
+  `gaps_out` by one and writes your exact value back about 60 ms later
+  (plus two `hyprctl` calls), so Hyprland moves already-tiled windows
+  around the panel. Every write is checked by reading the value back.
+  It uses `hyprctl keyword`, which Omarchy's Lua config refuses: there
+  it is a no-op. A value in a form OSKar does not recognise is left
+  alone. If writing the value back fails twice, the journal names the
+  original value. A shell killed inside that window leaves the first
+  number one higher until a config reload.
 - **`cursor:hide_on_key_press` (Hyprland, runtime only).** Turned off
   while the panel is open, so the pointer does not vanish while you
   click keys, and set back to your value when it closes. A config
   reload also restores it.
-- **Layouts.** The panel's language button moves every physical
-  keyboard on the seat to the chosen layout together.
+- **Layouts.** The panel's language button moves the keyboards OSKar
+  positively identifies as physical and that share the reading
+  keyboard's layout list, together, to the chosen layout.
+- **Buttons that run something.** The dependency banner's **Install
+  package** button opens a terminal that runs `omarchy pkg add hyprland`
+  when you click it. **Retry** starts `oskar.service` through `oskar
+  start`, which starts it only when the unit systemd resolves is
+  OSKar's.
 - **Not put back after a crash or `SIGKILL`.** If the helper is killed
-  outright, it cannot put `kb_file` back: the next helper start or the
-  shell's exit does, and otherwise a config reload or logout. If the
+  outright, it cannot put `kb_file` back: the compositor stays on the
+  published keymap (the file stays and typing works) until the panel
+  shares again with the next helper, a config reload, or logout. If the
   shell is killed while the panel is open, cursor hiding stays off until
   a config reload. A key the helper holds at the moment it is killed
   stays pressed for the application that has focus.

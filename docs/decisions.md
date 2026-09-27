@@ -2521,3 +2521,31 @@ only partly.
   lands with its line. Rejected: scattering it across the configuration,
   install and troubleshooting sections, where no reviewer can check it
   as a whole.
+
+## 114. A restore is owed only to content that is still OSKar's; OSKar's content outlives the shell
+
+The review of §113's batch found the restores themselves could harm.
+
+- **The clipboard.** A failed pick puts the previous text back only
+  while the clipboard provably still holds the pick: a refused chord or
+  a cancellation during the paste reads the clipboard once more first; a
+  verify that ran out of mismatches never writes (its last read was the
+  previous text or someone else's copy); a stalled verify writes unless
+  foreign content was seen before it stalled. Rejected: restoring
+  whenever a snapshot exists — a copy the user made during the pick is
+  theirs. Every write feeds `wl-copy` on stdin (argv is readable by every
+  local user) and runs it without `--foreground`, so the owner is not
+  the shell's child and the content survives a shell restart. Rejected:
+  a tracked foreground owner handed over at settle time — one detached
+  path does the same with nothing to hand over.
+- **The kb_file restore's time.** The put-back after a failed share and
+  the shutdown restore each run on their own bound (5 s: a write and a
+  read-back at 2 s each), never on what the failed step left; the share
+  checks the stop flag between every step; the shutdown waits for the
+  gate at most 7 s. seat.rs states the arithmetic against the 15 s hold
+  cap, the 20 s exit watchdog and systemd's 90 s stop timeout.
+- **A missing user kb_file.** The record keeps the user's literal value
+  even when the file is missing; only the keymap is compiled without it.
+  This replaces §46's rule that such a value is forgotten after one warn.
+- **Foreign keys in the settings files** are carried up to 64 KiB; a
+  file with more is refused as malformed rather than growing every save.
