@@ -675,9 +675,17 @@ function effectiveKeyRadius(stored, scale) {
     return n * s
 }
 
+// The MIME type a password manager adds to a copy it marks secret
+// (KDE's convention, also offered by KeePassXC and others). Compared
+// case-insensitively.
+var PASSWORD_MANAGER_HINT = "x-kde-passwordmanagerhint"
+
 // wl-paste --list-types classification for the header paste chip. Empty
 // CLIPBOARD hides the chip; text shows a preview; anything else keeps the
 // glyph. `text/html` without text/plain is not a preview (no bogus markup).
+// "hidden" is content a password manager marked secret: decided from the
+// type list alone, before anything reads the payload — it is never read,
+// previewed or snapshotted, only pasted by the chord.
 function clipboardKind(typesText, exitCode) {
     var raw = String(typesText || "")
     if (exitCode && exitCode !== 0 && raw.replace(/^\s+|\s+$/g, "") === "")
@@ -686,12 +694,14 @@ function clipboardKind(typesText, exitCode) {
     var hasAny = false
     var hasText = false
     var hasImage = false
+    var secret = false
     for (var i = 0; i < lines.length; i++) {
         var t = lines[i].replace(/^\s+|\s+$/g, "")
         if (!t) continue
         if (/^nothing is copied/i.test(t)) continue
         hasAny = true
         var lower = t.toLowerCase()
+        if (lower === PASSWORD_MANAGER_HINT) secret = true
         if (lower.indexOf("image/") === 0)
             hasImage = true
         if (lower === "text/plain" || lower.indexOf("text/plain;") === 0
@@ -700,6 +710,7 @@ function clipboardKind(typesText, exitCode) {
             hasText = true
     }
     if (!hasAny) return "empty"
+    if (secret) return "hidden"
     // Screenshots often advertise text/plain plus image/png; the text
     // offer is empty or garbage. Prefer the glyph over a broken preview.
     if (hasImage) return "other"
@@ -718,8 +729,14 @@ function pastePreviewText(raw) {
 // Chip kind from types classification, the preview string, and whether
 // wl-paste --no-newline succeeded. Empty and other apply immediately;
 // text stays empty (hidden) until a non-empty preview exists.
+// Whether a kind's payload may be read at all (the preview, a snapshot):
+// only plain text, and never content marked secret.
+function clipboardContentReadable(kind) {
+    return kind === "text"
+}
+
 function pasteChipKind(typesKind, preview, textExitOk) {
-    if (typesKind === "other") return "other"
+    if (typesKind === "other" || typesKind === "hidden") return typesKind
     if (typesKind !== "text") return "empty"
     if (!textExitOk) return "empty"
     return pastePreviewText(preview) ? "text" : "empty"

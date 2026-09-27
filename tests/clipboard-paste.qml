@@ -653,6 +653,13 @@ QtObject {
             T.deepEqual(ClipboardPaste.restoreSnapshot("text", wide, 4, 4, false),
                 { none: "too large" })
             T.equal(ClipboardPaste.utf8Length("😀€a"), 8)
+            // Marked secret: never a snapshot, whatever text is lying around.
+            T.deepEqual(ClipboardPaste.restoreSnapshot("hidden", "stale text", 4, 4, false),
+                { none: "secret" })
+            var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(), "😀", "foot",
+                { none: "secret" })
+            T.deepEqual(ClipboardPaste.txnVerifyTimedOut(started.state, started.state.seq).restore,
+                { none: "secret" }, "a failed pick leaves a secret clipboard as it is")
         })
 
         Qt.exit(T.report("clipboard-paste"))

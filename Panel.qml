@@ -775,10 +775,17 @@ Item {
             clipboardGoneTimer.stop()
         }
         // Text stays hidden until wl-paste --no-newline returns a
-        // non-empty preview; empty/other apply immediately.
+        // non-empty preview; empty/other/hidden apply immediately.
         root.clipboardKind = ConfigFile.pasteChipKind(kind, "", false)
         root.clipboardPreview = ""
-        if (kind !== "text") return
+        // Only plain text is read. Content a password manager marked secret
+        // ("hidden") is decided from the type list and never read: the chip
+        // shows a neutral label and the chord still pastes it.
+        if (!ConfigFile.clipboardContentReadable(kind)) {
+            root.clipboardFullText = ""
+            root.clipboardFullTextSeq = -1
+            return
+        }
         if (clipboardText.retiring) {
             root.clipboardRefreshQueued = true
             return
@@ -794,8 +801,17 @@ Item {
         clipboardText.running = true
     }
 
-    function applyClipboardText(text, seq, exitOk) {
+    function applyClipboardText(text, seq, exitOk, secret) {
         if (seq !== root.clipboardSeq) return
+        if (secret) {
+            // Marked secret between the type list and this read: the read
+            // stopped before the payload.
+            root.clipboardKind = "hidden"
+            root.clipboardPreview = ""
+            root.clipboardFullText = ""
+            root.clipboardFullTextSeq = -1
+            return
+        }
         var preview = ConfigFile.pastePreviewText(text)
         root.clipboardKind = ConfigFile.pasteChipKind("text", preview, exitOk)
         root.clipboardPreview = root.clipboardKind === "text" ? preview : ""
@@ -1534,8 +1550,9 @@ Item {
         property bool retiring: false
         // head caps the stream (the security audit): a malicious clipboard
         // owner cannot balloon the shell's memory through the collector —
-        // SIGPIPE closes wl-paste past the bound.
-        command: ["setsid", "bash", "-c", "wl-paste --no-newline | head -c 65536"]
+        // SIGPIPE closes wl-paste past the bound. Content a password
+        // manager marks secret is not read (exit 3, no bytes).
+        command: ["setsid", "bash", "-c", "wl-paste --list-types | grep -qix x-kde-passwordmanagerhint && exit 3; wl-paste --no-newline | head -c 65536"]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.finishLocalClipboardRead(
@@ -1622,8 +1639,9 @@ Item {
         property bool retiring: false
         // head caps the stream (the security audit): a malicious clipboard
         // owner cannot balloon the shell's memory through the collector —
-        // SIGPIPE closes wl-paste past the bound.
-        command: ["setsid", "bash", "-c", "wl-paste --no-newline | head -c 65536"]
+        // SIGPIPE closes wl-paste past the bound. Content a password
+        // manager marks secret is not read (exit 3, no bytes).
+        command: ["setsid", "bash", "-c", "wl-paste --list-types | grep -qix x-kde-passwordmanagerhint && exit 3; wl-paste --no-newline | head -c 65536"]
         stdout: StdioCollector {
             id: clipboardTextOut
             waitForEnd: true
@@ -1639,7 +1657,7 @@ Item {
                 return
             }
             root.applyClipboardText(clipboardTextOut.text, clipboardText.seq,
-                exitCode === 0)
+                exitCode === 0, exitCode === 3)
         }
     }
 
@@ -2761,8 +2779,9 @@ Item {
 
             // Current-content paste: the reserved top-centre
             // header place. Empty CLIPBOARD hides the chip. Text shows a
-            // single-line preview elided to the chip width; non-text keeps
-            // the clipboard glyph. Click pastes CLIPBOARD without writing
+            // single-line preview elided to the chip width; content a
+            // password manager marked secret shows a neutral label; other
+            // non-text keeps the clipboard glyph. Click pastes CLIPBOARD without writing
             // it. Settings live on a separate overlay with a hole over this
             // card, so the chip does not fight a dismiss mask. Hex insert
             // reads CLIPBOARD via wl-paste, not Quickshell.clipboardText.
@@ -2774,7 +2793,7 @@ Item {
                     bottomMargin: keyboard.cellGap
                 }
                 visible: root.clipboardKind !== "empty"
-                width: root.clipboardKind === "text"
+                width: root.clipboardKind === "text" || root.clipboardKind === "hidden"
                     ? Math.min(Math.max(tokens.space(30),
                         pasteLabel.implicitWidth + tokens.space(16)),
                         tokens.space(240))
@@ -2792,10 +2811,13 @@ Item {
 
                 Text {
                     id: pasteLabel
-                    visible: root.clipboardKind === "text"
+                    visible: root.clipboardKind === "text" || root.clipboardKind === "hidden"
                     anchors { centerIn: parent }
                     width: Math.min(implicitWidth, parent.width - tokens.space(12))
-                    text: root.clipboardPreview
+                    // Content a password manager marked secret was never
+                    // read; the chip names it neutrally.
+                    text: root.clipboardKind === "hidden"
+                        ? UiStrings.tr("paste.hidden", root.uiLang) : root.clipboardPreview
                     // PlainText, always (the security audit): AutoText
                     // renders rich clipboard content — a text/plain
                     // payload with a remote <img> made the preview issue

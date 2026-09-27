@@ -82,8 +82,9 @@ Item {
         property bool retiring: false
         // head caps the stream: a malicious clipboard owner cannot balloon
         // the shell's memory through the collector — SIGPIPE closes
-        // wl-paste past the bound.
-        command: ["setsid", "bash", "-c", "wl-paste --no-newline | head -c 65536"]
+        // wl-paste past the bound. Content a password manager marks secret
+        // is not read at all: the empty answer is a mismatch.
+        command: ["setsid", "bash", "-c", "wl-paste --list-types | grep -qix x-kde-passwordmanagerhint && exit 3; wl-paste --no-newline | head -c 65536"]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
@@ -302,7 +303,11 @@ Item {
     function restoreClipboard(restore) {
         if (!restore) return
         if (restore.text === undefined) {
-            if (restore.none !== "unchanged")
+            if (restore.none === "secret")
+                console.log("[oskar] the clipboard keeps the failed pick: its"
+                    + " previous content was marked secret by a password manager,"
+                    + " so it was never read and is not republished")
+            else if (restore.none !== "unchanged")
                 console.log("[oskar] the clipboard keeps the failed pick: its"
                     + " previous content could not be put back (" + restore.none + ")")
             return

@@ -205,12 +205,18 @@ back. This list is the contract: a change that is not here is a bug.
   the keymap the helper publishes (`keymap.xkb`), the record of your own
   `kb_file` (`user-keymap-source`) and, with the click sound on,
   `keyclick.wav`. The directory goes away at logout.
+- **What the panel reads.** While the panel is open it reads the
+  clipboard on every change, up to 64 KiB, to show the paste chip's
+  preview. Content a password manager marks secret (the
+  `x-kde-passwordManagerHint` type) is never read or shown: the chip
+  says "Hidden content" and still pastes it.
 - **The clipboard.** An emoji pick goes through the clipboard: the emoji
   replaces what the clipboard held, and a delivered pick leaves it there.
   A pick that fails puts back what was there before if it was text of
   up to 64 KiB that the panel had already read, as plain text. An image,
   other non-text content, or text copied an instant before the pick is
-  not put back; the clipboard then keeps the emoji. The emoji page says
+  not put back, and neither is content marked secret; the clipboard then
+  keeps the emoji. The emoji page says
   that a pick replaces the clipboard.
 - **`input:kb_file` (Hyprland, runtime only).** While the helper runs it
   points `input:kb_file` at its published keymap, so every keyboard on

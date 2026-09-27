@@ -899,6 +899,26 @@ QtObject {
             T.equal(Config.clipboardKind("text/html\nimage/png\n", 0), "other")
             T.equal(Config.clipboardKind("text/plain\nimage/png\n", 0), "other")
             T.equal(Config.clipboardKind("text/uri-list\ntext/plain\n", 0), "text")
+            T.equal(Config.clipboardContentReadable("text"), true)
+            T.equal(Config.clipboardContentReadable("other"), false)
+            T.equal(Config.clipboardContentReadable("empty"), false)
+        })
+
+        // A password manager marks a secret copy with an extra MIME type.
+        // The type list alone decides: the payload is never read, so it can
+        // never be previewed, snapshotted or republished.
+        T.test("content a password manager marks secret is hidden and never read", function () {
+            var secret = "text/plain\ntext/plain;charset=utf-8\nx-kde-passwordManagerHint\n"
+            T.equal(Config.clipboardKind(secret, 0), "hidden")
+            T.equal(Config.clipboardKind("X-KDE-PASSWORDMANAGERHINT\nUTF8_STRING\n", 0),
+                "hidden")
+            T.equal(Config.clipboardKind("image/png\nx-kde-passwordManagerHint\n", 0), "hidden")
+            T.equal(Config.clipboardContentReadable("hidden"), false, "no read action")
+            T.equal(Config.pasteChipKind("hidden", "", false), "hidden",
+                "the chip still shows, and still pastes")
+            T.equal(Config.pasteChipKind("hidden", "leaked", true), "hidden")
+            // Without the hint, as before.
+            T.equal(Config.clipboardKind("text/plain\nx-kde-something-else\n", 0), "text")
             T.equal(Config.pastePreviewText("http://172.25.30.242/\n"),
                 "http://172.25.30.242/")
             T.equal(Config.pastePreviewText("a\nb\tc"), "a b c")

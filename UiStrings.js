@@ -44,6 +44,13 @@ var STRINGS = {
         ru: "Выбор не прошёл — попробуйте ещё раз через мгновение",
         uk: "Вибір не пройшов — спробуйте ще за мить"
     },
+    // The paste chip's label for content a password manager marked
+    // secret: never read, so never previewed.
+    "paste.hidden": {
+        en: "Hidden content",
+        ru: "Скрытое содержимое",
+        uk: "Прихований вміст"
+    },
     "hint.pasteBusy": {
         en: "Paste did not start — try again in a moment",
         ru: "Вставка не началась — попробуйте ещё раз через мгновение",

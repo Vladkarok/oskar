@@ -160,7 +160,9 @@ function restoreFor(state, served) {
 // to the newest sequence — the chip's watch re-reads on every change, so
 // that is the moment it describes the clipboard as it is. Text past the
 // reading's own cap (a 65536-byte stream) may be cut short, so it is not
-// put back; neither is anything that is not text.
+// put back; neither is anything that is not text, nor content a password
+// manager marked secret (kind "hidden"): it was never read, and
+// republishing it would leave a secret as plain text owned by OSKar.
 var SNAPSHOT_CAP = 65536
 
 function utf8Length(text) {
@@ -176,6 +178,7 @@ function utf8Length(text) {
 }
 
 function restoreSnapshot(kind, text, textSeq, currentSeq, refreshing) {
+    if (kind === "hidden") return { none: "secret" }
     if (refreshing) return { none: "stale" }
     if (kind === "empty") return { none: "empty" }
     if (kind !== "text") return { none: "not text" }
