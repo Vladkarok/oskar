@@ -2566,39 +2566,58 @@ virtual keyboard re-emits every key and holds the flag, and this helper's
 own device takes it after every OSK keystroke. With a stale anchor, §59's
 "a mover that is not the anchor is a sleeping twin" rejected the one
 keyboard carrying the truth. The rule never ran while the shell path
-stored the mover as `device,<layout name>`, which matched no device;
-the helper names devices correctly, and the rule began to run.
+stored the mover as `device,<layout name>`, which matched no device.
 
-**A layout event that names one positively identified keyboard, that
-the panel did not command, and that arrives alone makes that keyboard
-the anchor, and its live group is the reading.** Alone means: in the
-seat reading that follows the event, it is the only safe keyboard whose
-group differs from the previous reading (`LayoutDevices.loneMover`).
-Several changed together is a burst (a reload, a keymap share, another
-tool moving the seat) and re-anchors nothing; the older tiers answer,
-and a burst that left every keyboard on one group answers that group.
-Not commanded means: not the echo of the panel's own click
-(`SettleGuard.isEcho`: a device the click's loop moved, the group it
-commanded, within 500 ms of it — the loop's three moves were announced
-within ~125 ms on the owner's seat, and a longer window costs nothing
-because a toggle made after a click moves a keyboard off the commanded
-group). A reading with no reading before it on the same helper
-connection proves nothing about who moved, so a fresh connection starts
-without one. `main` keeps its rank where it sits on a safe keyboard: it
-moves on every key press, so a safe `main` that is not the mover says
-the mover was not moved by the user's hands. The settle guard is
-unchanged: inside its window a lone mover's group is held and re-read
-once after the quiesce, like any uncommanded flip. Following a toggle
-moves the panel and not the other keyboards; the seat stays diverged
-until the next language-button click, which moves the whole set to one
-group.
+**A keyboard that moved by itself becomes the anchor, and its live group
+is the reading.** By itself means three things, judged in
+`SeatMotion.js` (time) and `LayoutDevices.loneMover` (the seat):
+
+- **Alone in time.** No other device moved within `QUIET_MS` (150 ms)
+  before or after it — pseudo-devices and unidentified keyboards count
+  as evidence of a burst; virtual keyboards do not (fcitx5's mirrors
+  every toggle within 1–5 ms, this helper's moves on every configure).
+  The capture's two compositor-wide bursts (18:48:47 and 18:48:48, every
+  device in enumeration order) spaced their events 1–9 ms apart and 72 ms
+  at the widest; the owner's toggles came at least 149 ms apart. A
+  reading taken mid-burst sees one keyboard changed (18:48:48.126, after
+  8295's event and before the next), and the first cut of this rule took
+  it for a toggle. So a lone-looking move is a candidate; the panel's
+  quiet timer asks for the reading that judges it, and the same keyboard
+  moving again restarts the wait.
+- **Not the panel's own click.** An event naming a device the click moved,
+  with the commanded group, within `ECHO_MS` (500 ms) of the click, is its
+  echo (`SettleGuard.isEcho`, on the panel's one clock). Measured in the
+  lab, five clicks over three keyboards: all three echoes within 1–3 ms of
+  each other, the last 3–8 ms after the command. A later echo still
+  arrives beside its siblings, which the quiet reads as a burst.
+- **The only keyboard changed.** In the reading after the quiet, it is the
+  only positively identified keyboard whose group differs from the reading
+  before it moved.
+
+The group follows at once when every identified keyboard agrees, and
+otherwise after the quiet. The anchor is learned only when the move is
+FOLLOWED (`LayoutDevices.anchorAfter`): inside the settle guard's window
+a lone move is a held flip like any other, and a flip the guard then
+judges as churn leaves the anchor where it was — the §53 incident shape (a
+click, then the compositor putting at-translated alone back on 0) stays
+on the clicked group. A new helper connection forgets every event of the
+old one (mover, echo marker, candidate) and keeps the last reading for
+exactly one comparison, so a keyboard toggled while the helper was away
+is found by the first reading after it. `main` keeps its rank where it
+sits on a safe keyboard. Following a toggle moves the panel and not the
+other keyboards; the next language-button click moves the whole set to
+one group.
 
 Rejected: keeping `main` as the only source of the anchor — it is the
-defect on any seat with an input method, and on this one after every
-OSK keystroke. Trusting every mover — every click moves the set one
-keyboard at a time, so the anchor would land on whichever echo came
-last (§34's reason for not learning the anchor from events), and a
-reload burst's last device would decide. Residuals: two keyboards
-toggled within one reading of each other read as a burst; a compositor
-burst that happens to change exactly one keyboard reads as a toggle on
-it.
+defect on any seat with an input method. Trusting every mover, or every
+reading that shows one keyboard changed — the click and the compositor's
+bursts move keyboards one at a time, so the anchor would land on
+whichever came last or was read between two of them.
+
+Known and accepted (README "Known problems" 3): with two real keyboards
+the caps show the group of the one toggled last, and typing on the other
+types its own group until the button reunites them; two keyboards toggled
+within the quiet read as a burst and fall back to the remembered group; a
+safe `main` outranks a lone mover; a script that moves one idle keyboard
+alone is followed as if the user had switched; a toggle inside the settle
+window is not learned unless the panel already reads that keyboard.

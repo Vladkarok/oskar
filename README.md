@@ -407,27 +407,35 @@ Notes from the survey:
    a keyboard's group moves or the device set changes — and the panel reads
    layouts from the most convincing typed keyboard among them: the
    compositor's active-keyboard flag (`main`, the seat's current keyboard) if
-   a filtered device holds it; else a filtered keyboard that just moved by
-   itself (a toggle such as Alt+Shift moves only the keyboard it was pressed
-   on, so the one keyboard that changed since the previous reading, when the
-   panel's own click did not move it, is the one under your hands); else the
-   keyboard learned that way before; else layout progress. That second tier
-   is what keeps the caps right when an input method such as fcitx5 holds
-   `main` for good. Following a toggle moves only the panel: the other
-   keyboards stay on their group until the next language-button click, which
-   moves them all to one group. With no positive evidence the language
-   button does nothing rather than guess. The evidence tiers cannot be
-   closed completely: hotplug and mouse media keys can move the flag until
-   the next physical keypress; two keyboards toggled within one reading of
-   each other count as a burst, and that reading falls back to the tiers
-   below;
-   a compositor burst (a config reload, a keymap re-application) that
-   happens to change exactly one keyboard reads as a toggle on it; and
-   tied-at-zero devices are assumed to share the seat's RMLVO. The root
-   cause is upstream: layout state lives per device (including power
-   buttons and gaming mice), and nothing announces a change of the seat's
-   current keyboard. An upstream discussion with Sway's keyboard-group
-   semantics as prior art is planned.
+   a filtered device holds it; else a filtered keyboard that moved by itself
+   (a toggle such as Alt+Shift moves only the keyboard it was pressed on:
+   one keyboard moved, nothing else moved within 150 ms of it, and the
+   panel's own click did not move it); else the keyboard learned that way
+   before; else layout progress. That second tier is what keeps the caps
+   right when an input method such as fcitx5 holds `main` for good. With no
+   positive evidence the language button does nothing rather than guess.
+   What remains, in plain words:
+   - With two real keyboards, the caps show the group of the keyboard you
+     toggled last. Typing on the other one types its own group, which may
+     differ, until you press the language button: it moves both keyboards to
+     one group.
+   - Two keyboards toggled within the same instant (150 ms) read as one
+     burst; the panel then falls back to the group it remembers.
+   - A keyboard holding the compositor's current-keyboard flag outranks a
+     keyboard that moved by itself.
+   - A script that moves one idle keyboard alone is followed as if you had
+     switched on it.
+   - A toggle made in the first ten seconds after the helper restarts (the
+     settle window) is not learned unless the panel already reads that
+     keyboard; the next toggle is.
+   - Hotplug and mouse media keys can move the flag until the next physical
+     keypress, and tied-at-zero devices are assumed to share the seat's
+     RMLVO.
+
+   The root cause is upstream: layout state lives per device (including
+   power buttons and gaming mice), and nothing announces a change of the
+   seat's current keyboard. An upstream discussion with Sway's
+   keyboard-group semantics as prior art is planned.
 4. ~~**Held keys are tracked per connection**~~ **Closed.** The device is
    shared, so held keys carry per-connection claims: the press belongs to the
    first claim, the release to the last, a release from a connection that
