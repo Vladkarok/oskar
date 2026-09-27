@@ -32,8 +32,14 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      # The battery runs as an ordinary user, the way OSKar is installed:
+      # root ignores directory modes, and the install check's read-only
+      # cases would be skipped.
       - name: Host battery (16 suites + qml gates)
-        run: ./tools/run-tests.sh
+        run: |
+          useradd --create-home ci
+          chown -R ci: .
+          runuser -u ci -- env HOME=/home/ci ./tools/run-tests.sh
       - name: Clippy
         run: cargo clippy --manifest-path daemon/Cargo.toml
               --all-targets -- -D warnings
