@@ -219,19 +219,27 @@ back. This list is the contract: a change that is not here is a bug.
   24 characters"). The text itself is read only while you point at the
   paste chip (or hold it, on touch), shown in its tooltip and dropped when
   you move away; at the moment you paste into OSKar's own fields (the
-  emoji search, a colour field); and once at an emoji pick, to be able
-  to put it back if the pick fails. Content a password manager marks
-  secret is never read: the chip says "Hidden content" and still pastes
-  it. Only content offered with the `x-kde-passwordManagerHint` type is
-  recognised as secret; a manager that does not add it is treated like
-  any other text.
+  emoji search, a colour field); and during an emoji pick: once before
+  publishing, to be able to put it back if the pick fails; up to five
+  times to verify that its own publish landed; and, if the pick fails,
+  once more to decide whether to put the previous text back. The text
+  read before publishing is held only until the pick settles; what the
+  other pick reads return is compared and not kept. Every read checks the type
+  list before and after reading and discards the text if content is
+  marked secret by a password manager (the `x-kde-passwordManagerHint`
+  type) at either check; the chip then says "Hidden content" and still
+  pastes it. Only content offered with that type is recognised as secret,
+  and a secret that appears and is replaced again between the two checks
+  of a single read could be read.
 - **The clipboard.** An emoji pick goes through the clipboard: the emoji
   replaces what the clipboard held, and a delivered pick leaves it there.
   A pick that fails puts back what was there before, as plain text, only
-  if it was text of up to 64 KiB that the pick could read and the
-  clipboard still holds the pick; if anything else was copied during the
-  pick, that stays. An image, other non-text content, or content marked
-  secret is not put back; the clipboard then keeps the emoji. The emoji
+  if it was text of up to 64 KiB that the pick could read and a read
+  right before shows the clipboard still holds the pick; if anything else
+  was copied during the pick, that stays. Known limit: something copied
+  in the moment between that read and the put-back is replaced. An
+  image, other non-text content, or content marked secret is not put
+  back; the clipboard then keeps the emoji. The emoji
   page says that a pick replaces the clipboard. What OSKar puts on the
   clipboard stays there after the shell restarts or the plugin is
   disabled, until something else is copied. The **Copy** button of the
@@ -265,7 +273,7 @@ back. This list is the contract: a change that is not here is a bug.
 - **`general:gaps_out` (Hyprland, docked mode only).** When the docked
   panel appears and when it closes, OSKar raises the first number of
   `gaps_out` by one and writes your exact value back about 60 ms later
-  (plus two `hyprctl` calls), so Hyprland moves already-tiled windows
+  (plus four `hyprctl` calls), so Hyprland moves already-tiled windows
   around the panel. Every write is checked by reading the value back.
   It uses `hyprctl keyword`, which Omarchy's Lua config refuses: there
   it is a no-op. A value in a form OSKar does not recognise is left
@@ -286,8 +294,9 @@ back. This list is the contract: a change that is not here is a bug.
   OSKar's.
 - **Not put back after a crash or `SIGKILL`.** If the helper is killed
   outright, it cannot put `kb_file` back: the compositor stays on the
-  published keymap (the file stays and typing works) until the panel
-  shares again with the next helper, a config reload, or logout. If the
+  published keymap until a Hyprland reload or logout (or until a helper
+  started later stops cleanly and puts your value back); typing keeps
+  working because the published file persists. If the
   shell is killed while the panel is open, cursor hiding stays off until
   a config reload. A key the helper holds at the moment it is killed
   stays pressed for the application that has focus.

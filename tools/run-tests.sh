@@ -48,6 +48,11 @@ echo "== packaging file-set check"
 # The install script's branches, in a sandbox (a private HOME, a stubbed
 # systemctl, a fake prebuilt tarball): the install record, the prebuilt
 # path, the no-toolchain reruns. Nothing on the machine is touched.
+# The README's disclosure is mapped to code, line by line; a map whose
+# citations no longer exist has rotted.
+echo "== disclosure map check"
+"$root/tools/disclosure-map-check.sh" || status=1
+
 echo "== install script check"
 "$root/tools/install-check.sh" || status=1
 
