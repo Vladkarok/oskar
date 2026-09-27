@@ -59,6 +59,11 @@ for other desks.
   cargo they keep the helper already installed instead of refusing, and a
   quick install-setup-upgrade sequence no longer trips the service's
   start-rate limit.
+- The caps follow a layout switch made on the keyboard you type on, even
+  when the compositor's current-keyboard flag sits on another device.
+- The paste chip shows the kind and size of the clipboard and its text only
+  while you point at it; content a password manager marks secret is never
+  shown. A failed emoji pick puts the previous clipboard text back.
 - `install.sh`, `uninstall.sh` and `oskar` replace, remove, move or
   switch on and off only files OSKar recorded when it wrote them and that
   are unchanged since. Anything else is left in place; `install.sh
