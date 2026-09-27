@@ -4,6 +4,7 @@
 .import "ModifierReducer.js" as Modifiers
 .import "SettleGuard.js" as SettleGuard
 .import "LayoutDevices.js" as Devices
+.import "SeatMotion.js" as SeatMotion
 
 // What one line from the helper MEANS: the reply dispatch, as a pure
 // function of the panel's reply state. Nothing here writes a line, calls
@@ -39,20 +40,17 @@
 //   startupKeyboards, startupInventorySeen, startupKeyboardName,
 //   anchorKeyboardName   the device inventory the `seat` reply's `safe`
 //                        list fills
-//   lastLayoutEventDevice  the keyboard the newest `event\tlayout` named:
-//                        the device that just MOVED, whoever moved it
-//   lastLayoutEventCommanded  whether that event was the echo of the
-//                        panel's own click (SettleGuard.isEcho)
-//   lastSeatDevices      the keyboards of the last seat reading, or null
-//                        when this connection has read none: what the next
-//                        reading is compared with to see who moved alone
+//   seatMotion           who moved on the seat, over time (SeatMotion.js):
+//                        the newest mover, whether it was the panel's own
+//                        echo, a lone move awaiting its quiet, and the
+//                        last reading
 //   seatAsk              the seat request coalescer: "idle", "asked" (one
 //                        `seat` outstanding) or "again" (asked, and
 //                        something changed since the ask went out)
 //
 // The context the steps read: { groupCount, capsPositions, now } — how
 // many groups the configured keymap carries, the declared positions a caps
-// request names, and the wall clock a layout event is judged an echo by.
+// request names, and the panel's clock, which layout events are timed by.
 //
 // Actions, each { op, … }:
 //   set { key, value }       write one state field (a key of STATE_KEYS)
@@ -72,11 +70,13 @@
 //                            (PasteChords.chordAckTimedOut: the ledger's
 //                            chordSettled plus done(false))
 //   groupConfirmed { group } the ack's group, for the restart fallback
-//   seatFacts { devices, kbFile, titles, previous }   the seat's reading,
-//                            and the one before it on this connection (or
-//                            null), for the keyboard's layout ingest (the
-//                            LayoutDevices tiers, the settle guard, the
-//                            configure)
+//   seatFacts { devices, kbFile, titles, moved, motion }   the seat's
+//                            reading, the newest mover, and the lone-move
+//                            question it answers (SeatMotion.reading), for
+//                            the keyboard's layout ingest (the LayoutDevices
+//                            tiers, the settle guard, the configure)
+//   quietAt { at }           call motionQuiet at this time on the panel's
+//                            clock: a lone-looking move awaits its quiet
 //   configureUnseated        configure from what the panel already holds:
 //                            the helper has no seat to read, and typing
 //                            needs one configure to open the gate
@@ -94,8 +94,7 @@ var STATE_KEYS = [
     "inputReady", "serviceIncompatible", "capsFactsFailed",
     "socketReconnected",
     "startupKeyboards", "startupInventorySeen", "startupKeyboardName",
-    "anchorKeyboardName", "lastLayoutEventDevice", "lastLayoutEventCommanded",
-    "lastSeatDevices", "seatAsk"
+    "anchorKeyboardName", "seatMotion", "seatAsk"
 ]
 
 /// The refusals a seat verb (`seat`, `switch`, `share`, `events`) can earn:
@@ -292,6 +291,9 @@ function connectionLost(state) {
     // A `seat` outstanding on the dead socket is never answered; the next
     // connection's hello asks afresh.
     set(p, "seatAsk", "idle")
+    // Its events die with it: no candidate waits for a quiet the dead
+    // socket can no longer report, and the next reading is after a gap.
+    set(p, "seatMotion", SeatMotion.reconnected(p.state.seatMotion))
     return result(p)
 }
 
@@ -318,18 +320,29 @@ function seatWanted(state) {
     return result(p)
 }
 
+/// The quiet timer's tick (SeatMotion.quiet), as a program the keyboard
+/// runs like a reply's: when the lone-looking move stayed alone, the next
+/// reading judges it.
+function motionQuiet(state, now) {
+    var p = program(state)
+    var q = SeatMotion.quiet(p.state.seatMotion, now)
+    set(p, "seatMotion", q.state)
+    if (q.ask) askSeat(p)
+    else if (q.confirmAt >= 0) emit(p, { op: "quietAt", at: q.confirmAt })
+    return result(p)
+}
+
 /// A pushed event. `event\tlayout\t<device>\t<group>`: a keyboard's group
-/// moved. The device is recorded BEFORE the reading it triggers, so
-/// LayoutDevices.select sees who moved, together with whether the move was
-/// the echo of the panel's own click — the event's group against the
-/// click's (SettleGuard.isEcho), judged at arrival. The group is not
-/// otherwise taken from the event: the reading is the evidence, judged by
-/// the settle guard like every reading. Adopting every mover as the anchor
-/// would make the panel read its own echo; LayoutDevices adopts one only
-/// when it moved alone and the panel did not command it. `event\tdevices`:
-/// the device set or the input configuration changed (hotplug, a config
-/// reload) — the layout list itself may have moved without any group
-/// moving. Unknown kinds are a newer helper's and mean nothing here.
+/// moved. Every device but a virtual keyboard is recorded in SeatMotion
+/// BEFORE the reading it triggers — pseudo-devices too, as evidence of a
+/// burst — with whether the move was the echo of the panel's own click
+/// (the event's group against the click's, SettleGuard.isEcho, on the
+/// context's clock). The group is not otherwise taken from the event: the
+/// reading is the evidence, judged by the settle guard like every reading.
+/// `event\tdevices`: the device set or the input configuration changed
+/// (hotplug, a config reload) — the layout list itself may have moved
+/// without any group moving. Unknown kinds are a newer helper's and mean
+/// nothing here.
 function eventLine(p, line, ctx) {
     var fields = line.split("\t")
     if (fields[1] === "layout") {
@@ -344,13 +357,17 @@ function eventLine(p, line, ctx) {
         // keyboard flips to 0 after every switch, and a pseudo-device sits
         // on a group nobody types in. None of them asks anything; which
         // TYPED device may answer is LayoutDevices' decision, not this one.
-        if (device !== "" && !Devices.isTyped(device)) return
+        var now = ctx && typeof ctx.now === "number" && isFinite(ctx.now)
+            ? ctx.now : 0
         if (device !== "") {
-            set(p, "lastLayoutEventDevice", device)
-            set(p, "lastLayoutEventCommanded", SettleGuard.isEcho(
-                p.state.settleGuard, device, parseInt(fields[3], 10),
-                ctx ? ctx.now : undefined))
+            var moved = SeatMotion.event(p.state.seatMotion, device,
+                SettleGuard.isEcho(p.state.settleGuard, device,
+                    parseInt(fields[3], 10), now),
+                now, p.state.startupKeyboards)
+            set(p, "seatMotion", moved.state)
+            if (moved.confirmAt >= 0) emit(p, { op: "quietAt", at: moved.confirmAt })
         }
+        if (device !== "" && !Devices.isTyped(device)) return
         askSeat(p)
     } else if (fields[1] === "devices") {
         askSeat(p)
@@ -406,11 +423,12 @@ function seatReply(p, reply) {
         var seat = parseSeat(reply)
         if (seat) {
             inventory(p, seat.safe)
-            var previous = Array.isArray(p.state.lastSeatDevices)
-                ? p.state.lastSeatDevices : null
+            var judged = SeatMotion.reading(p.state.seatMotion, seat.devices)
+            var motion = p.state.seatMotion || SeatMotion.initial()
+            set(p, "seatMotion", judged.state)
             emit(p, { op: "seatFacts", devices: seat.devices,
-                kbFile: seat.kbFile, titles: seat.titles, previous: previous })
-            set(p, "lastSeatDevices", seat.devices)
+                kbFile: seat.kbFile, titles: seat.titles,
+                moved: String(motion.mover || ""), motion: judged.motion })
         } else {
             emit(p, { op: "warn", args: ["[oskar] unreadable seat reply"] })
         }
@@ -477,10 +495,9 @@ function helloAcked(p) {
         // or commanded belongs to the old socket. The next reading
         // establishes and arms the post-reconnect window.
         emit(p, { op: "settleGuardConnected" })
-        // No reading of the old connection is compared with the new one's:
-        // the gap between them may hide any number of moves, so a group
-        // that differs across it proves nothing about who moved alone.
-        set(p, "lastSeatDevices", null)
+        // The old connection's events die with it; its last reading is the
+        // base the first reading after the gap is compared with.
+        set(p, "seatMotion", SeatMotion.reconnected(p.state.seatMotion))
         emit(p, { op: "modifiers", event: { type: "releaseAll" } })
         // Session bookkeeping starts over with the connection: the next
         // configure's identity must be compared against what THIS helper

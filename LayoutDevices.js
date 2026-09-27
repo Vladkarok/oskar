@@ -102,22 +102,21 @@ function safeGroups(devices, safeNames) {
 /// The keyboard that moved BY ITSELF between two readings, or "".
 ///
 /// A group toggle is per device: Alt+Shift moves the one keyboard its keys
-/// came from and nothing else. So a layout event that names a positively
-/// identified keyboard, followed by a reading in which that keyboard is the
-/// ONLY safe one whose group differs from the previous reading, is the user
-/// switching layout on the keyboard under their hands. Anything else is not
-/// that evidence: no previous reading (a cold start, a fresh helper
-/// connection whose gap may hide other moves), a safe set that gained or
-/// lost a member (hotplug), several keyboards changed together (a reload,
-/// a keymap share, a tool moving the seat), or the named device did not
-/// change at all. The caller rules out the panel's own echo first
-/// (SettleGuard.isEcho): its click moves the set one device at a time, and
-/// the reading between two of those moves looks exactly like this.
+/// came from and nothing else. So when `movedDevice` — a positively
+/// identified keyboard — is the ONLY safe keyboard whose group differs
+/// from `previous`, it moved alone. An empty `movedDevice` asks for
+/// whichever one keyboard changed (the reading after a reconnect, when no
+/// event could name it). Anything else is not that evidence: no previous
+/// reading, a safe set that gained or lost a member (hotplug), several
+/// keyboards changed, or the named one did not change. Whether the move
+/// was part of a burst in TIME — the panel's own click, a compositor-wide
+/// switch, a keymap re-application — is SeatMotion's question, answered
+/// before this one is asked.
 function loneMover(previous, devices, safeNames, movedDevice) {
     var moved = String(movedDevice || "")
     var names = Array.isArray(safeNames) ? safeNames : []
     if (!Array.isArray(previous) || previous.length === 0) return ""
-    if (!isTyped(moved) || !isSafe(moved, names)) return ""
+    if (moved !== "" && (!isTyped(moved) || !isSafe(moved, names))) return ""
     var before = safeGroups(previous, names)
     var after = safeGroups(devices, names)
     var changed = []
@@ -128,11 +127,12 @@ function loneMover(previous, devices, safeNames, movedDevice) {
     for (var gone in before) {
         if (!(gone in after)) return ""
     }
-    return changed.length === 1 && changed[0] === moved ? moved : ""
+    if (changed.length !== 1) return ""
+    return moved === "" || changed[0] === moved ? changed[0] : ""
 }
 
 /// (devices, anchor, safeNames, fallbackGroup, movedDevice, motion)
-///   -> { reading, typing, switchSet, group }
+///   -> { reading, typing, lone, switchSet, group }
 ///
 /// `anchor` is the keyboard the caller believes is typed on. It is learned
 /// from two kinds of evidence and nothing else: the seat's `main` flag on a
@@ -147,12 +147,14 @@ function loneMover(previous, devices, safeNames, movedDevice) {
 /// evidence about MOTION, not about typing, and it only breaks a diverged
 /// seat open when it names the anchor.
 ///
-/// `motion` is what makes the mover evidence about typing: { previous,
-/// commanded } — the seat reading the caller held before this one, and
-/// whether the newest layout event was the echo of the panel's own click.
-/// An uncommanded mover that is the only safe keyboard to change since
-/// `previous` becomes the anchor and its live group is the reading, exactly
-/// as for a keyboard holding `main`. A safe keyboard holding `main`
+/// `motion` is what makes a mover evidence about typing: { base,
+/// candidate, gap } from SeatMotion.reading — a move the seat stayed quiet
+/// around, uncommanded, and the reading from before it (or, after a
+/// reconnect, the reading from before the gap). When the candidate is the
+/// only safe keyboard changed since `base` it is `lone`: its live group is
+/// the reading, exactly as for a keyboard holding `main`, and the caller
+/// adopts it as the anchor once the move is followed (anchorAfter). A safe
+/// keyboard holding `main`
 /// outranks it: the flag moves on every key press, so a safe `main` that is
 /// not the mover says the mover is not under the user's hands (a script
 /// moved it). The flag only ever sits off the typed keyboard when an IME's
@@ -178,7 +180,7 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, mot
         return device && isTyped(device.name) && isSafe(device.name, names)
     })
     if (safe.length === 0) {
-        return { reading: null, typing: "", switchSet: [], group: 0 }
+        return { reading: null, typing: "", lone: "", switchSet: [], group: 0 }
     }
 
     // The seat's current keyboard first — HyprCtl prints IKeyboard::m_active
@@ -187,8 +189,9 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, mot
     // there is one (loneMover), else the one learned before. Then the
     // remembered group, then the set's own consensus.
     var current = safe.filter(function (device) { return device.main === true })[0]
-    var lone = !current && motion && motion.commanded !== true
-        ? loneMover(motion.previous, all, names, moved) : ""
+    var lone = !current && motion
+        ? loneMover(motion.base, all, names,
+            motion.gap === true ? "" : String(motion.candidate || "")) : ""
     if (lone !== "") named = lone
     var namedMatch = safe.filter(function (device) { return device.name === named })[0]
     var reading = current || namedMatch || null
@@ -214,7 +217,7 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, mot
     //   reading before it to tell. Neither live index is trustworthy
     //   then, so consensus device + remembered group answer — the same
     //   tie-break the cold-start arm uses.
-    var moverIsAnchor = moved !== "" && moved === named
+    var moverIsAnchor = lone !== "" || (moved !== "" && moved === named)
     var divergedWithAnchor = !moverIsAnchor && reading && !current
         && safe.length > 1 && safe.some(function (device) {
             return groupOf(device) !== groupOf(safe[0])
@@ -250,6 +253,7 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, mot
             return {
                 reading: facts,
                 typing: "",
+                lone: "",
                 switchSet: switchSetFor(facts, safe),
                 group: remembered
             }
@@ -267,16 +271,29 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, mot
 
     return {
         reading: reading,
-        // The keyboard the evidence says is typed on: the seat's flag on a
-        // keyboard this panel may act on, or the keyboard that just moved
-        // by itself. Empty means "no evidence right now" — the helper's own
-        // virtual keyboard holds the flag for a moment after every OSK
-        // keystroke, and most readings follow no lone move — and the caller
-        // keeps what it last knew rather than adopting a guess.
-        typing: String((current || {}).name || lone || ""),
+        // The keyboard the seat's flag says produced the last key, when it
+        // is one this panel may act on. Empty means "no evidence right now"
+        // — the helper's own virtual keyboard holds the flag for a moment
+        // after every OSK keystroke — and the caller keeps what it last
+        // knew rather than adopting a guess.
+        typing: String((current || {}).name || ""),
+        // The keyboard that moved by itself and answers this reading, or "".
+        lone: lone,
         switchSet: switchSet,
         group: groupOf(reading)
     }
+}
+
+/// The anchor a reading teaches, once the caller knows whether the settle
+/// guard let the reading's group through: the seat's flag always, and a
+/// keyboard that moved by itself only when its move was followed. A lone
+/// move the guard holds is a candidate like any uncommanded flip; if the
+/// guard later judges it churn, the anchor never moved, and the re-read
+/// answers from the anchor the panel had.
+function anchorAfter(picked, followed) {
+    if (!picked) return ""
+    if (picked.typing) return picked.typing
+    return followed === true ? String(picked.lone || "") : ""
 }
 
 /// The layout code the reading device is currently on, by index into its own

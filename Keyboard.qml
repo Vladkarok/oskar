@@ -12,6 +12,7 @@ import "KeyboardSession.js" as Session
 import "Config.js" as ConfigFile
 import "LayoutDevices.js" as LayoutDevices
 import "SettleGuard.js" as SettleGuard
+import "SeatMotion.js" as SeatMotion
 import "SocketWatch.js" as SocketWatch
 import "ChordAcks.js" as ChordAcks
 import "HelperReplies.js" as HelperReplies
@@ -314,18 +315,11 @@ Item {
     // of the REAL device instead of a re-enumerated flag.
     property string rememberedLayoutDevice: ""
     signal layoutDeviceNamed(string name)
-    // The keyboard the most recent `event\tlayout` from the helper named —
-    // the device that just MOVED, whatever moved it (a deliberate toggle,
-    // the panel's own switch, or the compositor flipping a group on its
-    // own) — and whether that event was the echo of the panel's own click.
-    // LayoutDevices.select adopts the mover as the anchor only when it
-    // moved alone and uncommanded. Written by HelperReplies (its
-    // `lastLayoutEventDevice` and `lastLayoutEventCommanded` state fields).
-    property string lastLayoutEventDevice: ""
-    property bool lastLayoutEventCommanded: false
-    // The keyboards of the last seat reading on this connection, or null:
-    // HelperReplies hands it to the ingest beside the next reading.
-    property var lastSeatDevices: null
+    // Who moved on the seat, over time (SeatMotion.js): the newest mover,
+    // whether it was the panel's own echo, a lone move awaiting its quiet,
+    // the last reading. Written only by HelperReplies (its `seatMotion`
+    // state field); the ingest receives what it needs with each reading.
+    property var seatMotion: SeatMotion.initial()
     // HelperReplies' seat request coalescer: one `seat` in flight at a time.
     property string seatAsk: "idle"
     // Every device carrying the same layout list. A language-button click
@@ -821,8 +815,9 @@ Item {
     /// Two selections, deliberately different. The reading (group, layout
     /// list, RMLVO) comes from whichever typed keyboard the evidence
     /// favours: the seat's active keyboard if a filtered device holds it,
-    /// then a filtered keyboard that just moved by itself (the only one to
-    /// change since the previous reading, and not the panel's own click),
+    /// then a filtered keyboard that moved by itself (alone in time, not
+    /// the panel's own click, the only one changed — SeatMotion judges it
+    /// and HelperReplies hands the question over with the reading),
     /// then the anchor learned before, then layout progress. The
     /// compositor keeps XKB group state per device and announces a layout
     /// move not only for deliberate switches but also for hotplug, keymap
@@ -859,7 +854,7 @@ Item {
     /// device answers and which ones the button moves is decided in
     /// LayoutDevices.js, where it is tested (tests/layout-devices.qml
     /// carries the zoo).
-    function ingestSeatFacts(devices, kbFile, discoveredTitles, previousDevices) {
+    function ingestSeatFacts(devices, kbFile, discoveredTitles, movedDevice, motion) {
         // Merge any newly discovered names into the map. Done before the
         // selection can bail out: the names are a property of the machine's
         // xkb rules, not of which keyboard answers today.
@@ -867,22 +862,11 @@ Item {
 
         var picked = LayoutDevices.select(devices, anchorKeyboardName,
             startupKeyboards, root.rememberedLayoutGroup,
-            root.lastLayoutEventDevice,
-            { previous: previousDevices, commanded: root.lastLayoutEventCommanded })
+            movedDevice, motion)
         // Cleared unconditionally: a refresh that finds no safe target must
         // not leave the language button aiming at a device that has gone
         // missing or was never safe to advance.
         switchKeyboards = picked.switchSet
-        // Sticky, and only from typing evidence: the seat's own flag on a
-        // safe keyboard, or a safe keyboard that just moved by itself. The
-        // flag lands on the helper's virtual keyboard for a moment after
-        // every OSK keystroke, so "no answer" has to mean "keep what we
-        // knew", not "forget".
-        if (picked.typing) {
-            if (picked.typing !== anchorKeyboardName)
-                root.layoutDeviceNamed(picked.typing)
-            anchorKeyboardName = picked.typing
-        }
         if (!picked.reading) return
 
         var reading = picked.reading
@@ -895,6 +879,7 @@ Item {
             ? picked.group : (reading.active_layout_index || 0)
         console.log("[oskar] layout reading:", reading.name, "group:", configGroup,
             "named:", anchorKeyboardName || "(none)",
+            "lone:", picked.lone || "(none)",
             "remembered:", root.rememberedLayoutGroup)
         // The restart-settle guard: for a short window after
         // the establishing configure that follows a daemon (re)connect, an
@@ -914,7 +899,7 @@ Item {
         // the remembered tie-breaker answering on a cold start
         // (SettleGuard.decide's first arm).
         var settle = SettleGuard.decide(root.settleGuard, configGroup,
-            Date.now())
+            root.clock())
         root.settleGuard = settle.state
         if (!settle.follow) {
             console.log("[oskar] settle guard: holding group", settle.held,
@@ -922,6 +907,18 @@ Item {
                 "inside the post-reconnect window")
             configGroup = settle.held
             settleRecheck.restart()
+        }
+        // Sticky, and only from typing evidence: the seat's own flag on a
+        // safe keyboard, or a safe keyboard that moved by itself — the
+        // latter only once its move is followed (LayoutDevices.anchorAfter).
+        // The flag lands on the helper's virtual keyboard for a moment
+        // after every OSK keystroke, so "no answer" has to mean "keep what
+        // we knew", not "forget".
+        var learned = LayoutDevices.anchorAfter(picked, settle.follow)
+        if (learned) {
+            if (learned !== anchorKeyboardName)
+                root.layoutDeviceNamed(learned)
+            anchorKeyboardName = learned
         }
         var active = (configGroup !== (reading.active_layout_index || 0))
             ? LayoutDevices.activeLayoutForGroup(reading, configGroup)
@@ -1066,7 +1063,7 @@ Item {
         // untouched — the guard only gates the panel's FOLLOW of what the
         // seat then reads.
         root.settleGuard = SettleGuard.commanded(root.settleGuard, next,
-            Date.now(), switchKeyboards)
+            root.clock(), switchKeyboards)
         // The compositor stores the group per device. Move every device
         // with this layout list to one absolute index; switching one guessed
         // physical keyboard changed the panel while another keyboard kept
@@ -1478,16 +1475,30 @@ Item {
             startupInventorySeen: root.startupInventorySeen,
             startupKeyboardName: root.startupKeyboardName,
             anchorKeyboardName: root.anchorKeyboardName,
-            lastLayoutEventDevice: root.lastLayoutEventDevice,
-            lastLayoutEventCommanded: root.lastLayoutEventCommanded,
-            lastSeatDevices: root.lastSeatDevices,
+            seatMotion: root.seatMotion,
             seatAsk: root.seatAsk
         }
     }
 
     function replyContext() {
         return { groupCount: root.groupCount, capsPositions: root.capsPositions,
-            now: Date.now() }
+            now: root.clock() }
+    }
+
+    // The one clock the seat's decisions are timed by: the command record,
+    // the layout events judged against it, the settle guard, the quiet.
+    function clock() { return Date.now() }
+
+    // The quiet timer: HelperReplies asks for a tick at a time on the
+    // panel's clock when a lone-looking move must be judged (`quietAt`).
+    Timer {
+        id: motionQuietTimer
+        repeat: false
+        onTriggered: {
+            if (!root.session.helloOk) return
+            root.runReplyActions(
+                HelperReplies.motionQuiet(root.replyState(), root.clock()).actions)
+        }
     }
 
     /// Runs a HelperReplies program verbatim, in order. Every transition
@@ -1532,7 +1543,12 @@ Item {
                 root.groupConfirmed(a.group)
                 break
             case "seatFacts":
-                root.ingestSeatFacts(a.devices, a.kbFile, a.titles, a.previous)
+                root.ingestSeatFacts(a.devices, a.kbFile, a.titles, a.moved,
+                    a.motion)
+                break
+            case "quietAt":
+                motionQuietTimer.interval = Math.max(1, a.at - root.clock())
+                motionQuietTimer.restart()
                 break
             case "configureUnseated":
                 root.configureUnseated()
@@ -1578,9 +1594,7 @@ Item {
         case "startupInventorySeen": root.startupInventorySeen = value; break
         case "startupKeyboardName": root.startupKeyboardName = value; break
         case "anchorKeyboardName": root.anchorKeyboardName = value; break
-        case "lastLayoutEventDevice": root.lastLayoutEventDevice = value; break
-        case "lastLayoutEventCommanded": root.lastLayoutEventCommanded = value; break
-        case "lastSeatDevices": root.lastSeatDevices = value; break
+        case "seatMotion": root.seatMotion = value; break
         case "seatAsk": root.seatAsk = value; break
         default: console.error("[oskar] unknown reply state field:", key)
         }

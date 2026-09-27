@@ -10,6 +10,7 @@ import "../KeyboardSession.js" as Session
 import "../ModifierReducer.js" as Modifiers
 import "../SettleGuard.js" as SettleGuard
 import "../LayoutDevices.js" as LayoutDevices
+import "../SeatMotion.js" as SeatMotion
 import "harness.js" as T
 
 QtObject {
@@ -55,7 +56,7 @@ QtObject {
             startupInventorySeen: false,
             startupKeyboardName: "",
             anchorKeyboardName: "",
-            lastLayoutEventDevice: "",
+            seatMotion: SeatMotion.initial(),
             seatAsk: "idle"
         }
     }
@@ -297,7 +298,7 @@ QtObject {
                 "the Ctrl press's ok is not the verdict")
             var lost = Replies.connectionLost(ok.state)
             T.deepEqual(lost.actions.map(function (a) { return a.op }),
-                ["chordTimedOut", "set", "set"])
+                ["chordTimedOut", "set", "set", "set"])
             T.deepEqual(lost.state.chordAcks, ChordAcks.initial(), "the ledger is drained")
             // The new connection's traffic — and a straggler — settle nothing.
             var s2 = with_(lost.state, { socketReconnected: true })
@@ -307,7 +308,9 @@ QtObject {
             T.equal(opsNamed(r.actions, "chordTimedOut").length, 0)
             // No chord armed: a drop has nothing to fail.
             var idle = Replies.connectionLost(readyAt(3))
-            T.deepEqual(idle.actions.map(function (a) { return a.op }), ["set", "set"])
+            T.deepEqual(idle.actions.map(function (a) { return a.op }), ["set", "set", "set"])
+            T.deepEqual(opsNamed(idle.actions, "set").map(function (a) { return a.key }),
+                ["chordAcks", "seatAsk", "seatMotion"])
         })
 
         T.test("a pong popped inside a chord region poisons the chord", function () {
@@ -474,7 +477,7 @@ QtObject {
         T.test("event layout records who moved and asks the seat, coalesced", function () {
             var s = readyAt(3)
             var r = feed(s, ["event\tlayout\tkbd-b\t1"])
-            T.equal(r.state.lastLayoutEventDevice, "kbd-b",
+            T.equal(r.state.seatMotion.mover, "kbd-b",
                 "recorded before the reading it triggers")
             T.deepEqual(sends(r.actions), ["seat"])
             T.equal(r.state.seatAsk, "asked")
@@ -482,7 +485,7 @@ QtObject {
             r = feed(r.state, ["event\tlayout\tkbd-a\t1", "event\tdevices"])
             T.deepEqual(sends(r.actions), [])
             T.equal(r.state.seatAsk, "again")
-            T.equal(r.state.lastLayoutEventDevice, "kbd-a", "the newest mover")
+            T.equal(r.state.seatMotion.mover, "kbd-a", "the newest mover")
             // The answer lands and the owed ask goes out once.
             r = feed(r.state, [seatLine([kbd("kbd-a", false, 1)], ["kbd-a"])])
             T.deepEqual(sends(r.actions), ["seat"])
@@ -492,7 +495,7 @@ QtObject {
             T.equal(r.state.seatAsk, "idle")
             // A device-less layout event still asks; it names nobody.
             r = feed(r.state, ["event\tlayout"])
-            T.equal(r.state.lastLayoutEventDevice, "kbd-a")
+            T.equal(r.state.seatMotion.mover, "kbd-a")
             T.deepEqual(sends(r.actions), ["seat"])
             // The panel's own wish rides the same coalescer.
             var wanted = Replies.seatWanted(r.state)
@@ -507,18 +510,19 @@ QtObject {
             // panel's own follow (seen live: Alt+Shift moved the physical
             // keyboard, the panel followed, then fell back to the old group).
             var s = with_(readyAt(3), { startupKeyboards: ["kbd-a", "kbd-b"],
-                lastLayoutEventDevice: "kbd-b" })
+                seatMotion: SeatMotion.event(SeatMotion.initial(), "kbd-b", false, 0,
+                    ["kbd-a", "kbd-b"]).state })
             var noise = ["hl-virtual-keyboard-oskar-daemon", "hl-virtual-keyboard-fcitx5",
                 "power-button", "video-bus-1"]
             for (var i = 0; i < noise.length; i++) {
                 var r = feed(s, ["event\tlayout\t" + noise[i] + "\t1"])
                 T.deepEqual(sends(r.actions), [], noise[i] + " asked the seat")
-                T.equal(r.state.lastLayoutEventDevice, "kbd-b", noise[i] + " became the mover")
+                T.equal(r.state.seatMotion.mover, "kbd-b", noise[i] + " became the mover")
             }
             // A named physical keyboard's move still is.
             var real = feed(s, ["event\tlayout\tkbd-a\t1"])
             T.deepEqual(sends(real.actions), ["seat"])
-            T.equal(real.state.lastLayoutEventDevice, "kbd-a")
+            T.equal(real.state.seatMotion.mover, "kbd-a")
             // A compositor suffix on a duplicate is the same keyboard.
             T.deepEqual(sends(feed(s, ["event\tlayout\tkbd-a-2\t1"]).actions), ["seat"])
             // A typed device the helper has not named (a mouse's keyboard
@@ -528,7 +532,7 @@ QtObject {
             T.deepEqual(sends(feed(s, ["event\tlayout\trazer-razer-deathadder-v3\t1"]).actions), ["seat"])
         })
 
-        T.test("a layout event is judged the click's echo at arrival, and the reading carries the one before", function () {
+        T.test("a layout event is judged the click's echo at arrival on the context's clock", function () {
             var s = with_(readyAt(3), {
                 settleGuard: SettleGuard.commanded(SettleGuard.initial(), 1, 1000,
                     ["kbd-a", "kbd-b"]) })
@@ -536,44 +540,77 @@ QtObject {
                 return { groupCount: 2, capsPositions: "AD01", now: now }
             }
             var r = feed(s, ["event\tlayout\tkbd-a\t1"], at(1100))
-            T.equal(r.state.lastLayoutEventCommanded, true, "the click's own move")
+            T.equal(r.state.seatMotion.commanded, true, "the click's own move")
+            T.equal(opsNamed(r.actions, "quietAt").length, 0, "an echo is never a candidate")
             r = feed(s, ["event\tlayout\tkbd-a\t0"], at(1100))
-            T.equal(r.state.lastLayoutEventCommanded, false, "another group is not the click's")
+            T.equal(r.state.seatMotion.commanded, false, "another group is not the click's")
             r = feed(s, ["event\tlayout\tkbd-a\t1"], at(1000 + SettleGuard.ECHO_MS))
-            T.equal(r.state.lastLayoutEventCommanded, false, "too late to be the click's")
+            T.equal(r.state.seatMotion.commanded, false, "too late to be the click's")
             r = feed(s, ["event\tlayout\tkbd-c\t1"], at(1100))
-            T.equal(r.state.lastLayoutEventCommanded, false, "not a device the click moved")
-            // A pseudo-device's event changes neither field.
+            T.equal(r.state.seatMotion.commanded, false, "not a device the click moved")
+            // A virtual keyboard's event changes nothing.
             var echo = feed(s, ["event\tlayout\tkbd-a\t1"], at(1100)).state
             r = feed(echo, ["event\tlayout\thl-virtual-keyboard-oskar-daemon\t0"], at(1200))
-            T.equal(r.state.lastLayoutEventDevice, "kbd-a")
-            T.equal(r.state.lastLayoutEventCommanded, true)
+            T.equal(r.state.seatMotion.mover, "kbd-a")
+            T.equal(r.state.seatMotion.commanded, true)
+        })
 
-            // Each reading carries the one before it on this connection.
+        T.test("a lone move asks for its quiet, the tick asks the seat, and the reading carries the question", function () {
+            var at = function (now) {
+                return { groupCount: 2, capsPositions: "AD01", now: now }
+            }
             var first = [kbd("kbd-a", false, 0), kbd("kbd-b", false, 0)]
-            var second = [kbd("kbd-a", false, 1), kbd("kbd-b", false, 0)]
-            r = feed(with_(readyAt(3), { lastSeatDevices: null }),
-                [seatLine(first, ["kbd-a", "kbd-b"])])
-            T.equal(opsNamed(r.actions, "seatFacts")[0].previous, null)
-            r = feed(r.state, [seatLine(second, ["kbd-a", "kbd-b"])])
+            var moved = [kbd("kbd-a", false, 1), kbd("kbd-b", false, 0)]
+            var s = with_(readyAt(3), { startupKeyboards: ["kbd-a", "kbd-b"] })
+            var r = feed(s, [seatLine(first, ["kbd-a", "kbd-b"])], at(900))
+            T.equal(opsNamed(r.actions, "seatFacts")[0].motion, null)
+            r = feed(r.state, ["event\tlayout\tkbd-a\t1"], at(1000))
+            T.deepEqual(opsNamed(r.actions, "quietAt").map(function (a) { return a.at }),
+                [1000 + SeatMotion.QUIET_MS])
+            r = feed(r.state, [seatLine(moved, ["kbd-a", "kbd-b"])], at(1005))
             var facts = opsNamed(r.actions, "seatFacts")[0]
-            T.deepEqual(facts.previous.map(function (d) { return d.active_layout_index }), [0, 0])
-            T.deepEqual(r.state.lastSeatDevices.map(function (d) { return d.active_layout_index }), [1, 0])
-            // A fresh connection forgets it: the gap may hide any move.
+            T.equal(facts.motion, null, "the move's own reading asks nothing yet")
+            T.equal(facts.moved, "kbd-a")
+            var tick = Replies.motionQuiet(r.state, 1000 + SeatMotion.QUIET_MS)
+            T.deepEqual(sends(tick.actions), ["seat"])
+            r = feed(tick.state, [seatLine(moved, ["kbd-a", "kbd-b"])], at(1160))
+            facts = opsNamed(r.actions, "seatFacts")[0]
+            T.equal(facts.motion.candidate, "kbd-a")
+            T.deepEqual(facts.motion.base.map(function (d) { return d.active_layout_index }), [0, 0])
+            // A tick with nothing waiting asks nothing.
+            T.deepEqual(sends(Replies.motionQuiet(r.state, 2000).actions), [])
+        })
+
+        T.test("a fresh connection forgets the old one's events and keeps its last reading once", function () {
+            var at = function (now) {
+                return { groupCount: 2, capsPositions: "AD01", now: now }
+            }
+            var s = with_(readyAt(3), { startupKeyboards: ["kbd-a", "kbd-b"] })
+            var r = feed(s, [seatLine([kbd("kbd-a", false, 0), kbd("kbd-b", false, 0)],
+                ["kbd-a", "kbd-b"]), "event\tlayout\tkbd-b\t0"], at(1000))
+            T.equal(r.state.seatMotion.mover, "kbd-b")
             var fresh = panelSends(with_(r.state, { socketReconnected: true }),
                 "hello " + Session.PROTOCOL_VERSION)
-            fresh = feed(fresh, ["hello " + Session.PROTOCOL_VERSION]).state
-            T.equal(fresh.lastSeatDevices, null)
-            // The repair timer's re-hello of a live socket keeps it.
+            fresh = feed(fresh, ["hello " + Session.PROTOCOL_VERSION], at(5000)).state
+            T.equal(fresh.seatMotion.mover, "", "the dead connection's mover is gone")
+            T.equal(fresh.seatMotion.commanded, false)
+            T.equal(fresh.seatMotion.gap, true)
+            var after = feed(fresh, [seatLine([kbd("kbd-a", false, 1), kbd("kbd-b", false, 0)],
+                ["kbd-a", "kbd-b"])], at(5100))
+            var facts = opsNamed(after.actions, "seatFacts")[0]
+            T.equal(facts.moved, "")
+            T.equal(facts.motion.gap, true)
+            // The repair timer's re-hello of a live socket keeps everything.
             var live = panelSends(r.state, "hello " + Session.PROTOCOL_VERSION)
-            live = feed(live, ["hello " + Session.PROTOCOL_VERSION]).state
-            T.equal(Array.isArray(live.lastSeatDevices), true)
+            live = feed(live, ["hello " + Session.PROTOCOL_VERSION], at(5000)).state
+            T.equal(live.seatMotion.mover, "kbd-b")
+            T.equal(live.seatMotion.gap, false)
         })
 
         T.test("event devices asks the seat, and the facts reach the ingest", function () {
             var r = feed(readyAt(3), ["event\tdevices"])
             T.deepEqual(sends(r.actions), ["seat"])
-            T.equal(r.state.lastLayoutEventDevice, "", "hotplug names no mover")
+            T.equal(r.state.seatMotion.mover, "", "hotplug names no mover")
             r = feed(r.state, [seatLine([kbd("kbd-a", false, 0), kbd("kbd-b", true, 1)],
                 ["kbd-a", "kbd-b"], "/home/u/my.xkb")])
             T.deepEqual(r.state.startupKeyboards, ["kbd-a", "kbd-b"], "hotplug refreshes the list")
@@ -629,7 +666,7 @@ QtObject {
                 kbd("hl-virtual-keyboard", true, 0)], ["kbd-a", "kbd-b"])])
             var facts = opsNamed(r.actions, "seatFacts")[0]
             var picked = LayoutDevices.select(facts.devices, r.state.anchorKeyboardName,
-                r.state.startupKeyboards, 0, r.state.lastLayoutEventDevice)
+                r.state.startupKeyboards, 0, r.state.seatMotion.mover)
             T.equal(picked.reading.name, "kbd-a", "the mover answers, not the vote")
             T.equal(picked.group, 1)
             // Inside the post-reconnect window an uncommanded flip is held;
@@ -792,7 +829,7 @@ QtObject {
         T.test("every action the suite saw is one the executor knows", function () {
             var known = ["set", "session", "modifiers", "settleGuardConnected",
                 "gateFromSession", "gateOpenIfReady", "send", "chordVerdict", "chordTimedOut",
-                "groupConfirmed", "seatFacts", "configureUnseated", "seatUnavailable",
+                "groupConfirmed", "seatFacts", "quietAt", "configureUnseated", "seatUnavailable",
                 "shareKeymap",
                 "shareFinished", "log", "warn", "error"]
             for (var i = 0; i < allActions.length; i++) {

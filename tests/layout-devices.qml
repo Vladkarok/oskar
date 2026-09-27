@@ -393,17 +393,20 @@ QtObject {
                 "ite-tech.-inc.-ite-device(8176)-keyboard", safeNames, 0,
                 "ite-tech.-inc.-ite-device(8295)-keyboard")
             T.equal(picked.group, 0, "consensus + remembered still answer")
-            T.equal(picked.typing, "")
-            // The same mover, shown to have moved alone and uncommanded
-            // since the reading before, is a toggle on the keyboard under
-            // the user's hands: it becomes the anchor and answers.
+            T.equal(picked.lone, "")
+            // The same mover, confirmed as a move the seat stayed quiet
+            // around and the only keyboard changed since the reading
+            // before it, is a toggle on the keyboard under the user's
+            // hands: it answers, and the caller adopts it once followed.
             var alone = Devices.select(desync,
                 "ite-tech.-inc.-ite-device(8176)-keyboard", safeNames, 0,
                 "ite-tech.-inc.-ite-device(8295)-keyboard",
-                { previous: zoo(0, "hl-virtual-keyboard-oskar-daemon"), commanded: false })
+                { base: zoo(0, "hl-virtual-keyboard-oskar-daemon"),
+                  candidate: "ite-tech.-inc.-ite-device(8295)-keyboard", gap: false })
             T.equal(alone.group, 1)
             T.equal(alone.reading.name, "ite-tech.-inc.-ite-device(8295)-keyboard")
-            T.equal(alone.typing, "ite-tech.-inc.-ite-device(8295)-keyboard")
+            T.equal(alone.lone, "ite-tech.-inc.-ite-device(8295)-keyboard")
+            T.equal(alone.typing, "", "the seat's flag said nothing")
         })
 
         // ---- a keyboard that moved by itself ----
@@ -438,10 +441,12 @@ QtObject {
             var after = owner(groups(1, 0, 1))
             T.equal(Devices.loneMover(before, after, safeNames, ite76), ite76)
             var picked = Devices.select(after, at, safeNames, 1, ite76,
-                { previous: before, commanded: false })
+                { base: before, candidate: ite76, gap: false })
             T.equal(picked.reading.name, ite76)
             T.equal(picked.group, 0, "the toggled keyboard answers, not the two that did not move")
-            T.equal(picked.typing, ite76, "the caller adopts it as the anchor")
+            T.equal(picked.lone, ite76)
+            T.equal(Devices.anchorAfter(picked, true), ite76, "adopted once followed")
+            T.equal(Devices.anchorAfter(picked, false), "", "never while the guard holds it")
             T.equal(picked.switchSet.length, 3)
             // Without the motion facts the same seat answers the old way —
             // the consensus device and the remembered group — which is the
@@ -449,14 +454,16 @@ QtObject {
             T.equal(Devices.select(after, at, safeNames, 1, ite76).group, 1)
         })
 
-        T.test("the panel's own echo never re-anchors, however alone it arrives", function () {
-            // The click's loop moves one device at a time; the reading
-            // between two of its moves shows one keyboard changed.
+        T.test("after a reconnect, the one keyboard that changed across the gap answers", function () {
             var before = owner(groups(1, 1, 1))
-            var after = owner(groups(0, 1, 1))
-            var picked = Devices.select(after, ite76, safeNames, 1, ite95,
-                { previous: before, commanded: true })
-            T.equal(picked.typing, "")
+            var after = owner(groups(1, 0, 1))
+            T.equal(Devices.loneMover(before, after, safeNames, ""), ite76)
+            var picked = Devices.select(after, at, safeNames, 1, "",
+                { base: before, candidate: "", gap: true })
+            T.equal(picked.lone, ite76)
+            T.equal(picked.group, 0)
+            // Two changed across the gap: nobody is named.
+            T.equal(Devices.loneMover(before, owner(groups(0, 0, 1)), safeNames, ""), "")
         })
 
         T.test("a lone mover the helper did not identify is ignored", function () {
@@ -472,8 +479,8 @@ QtObject {
                 T.equal(Devices.loneMover(before, after, safeNames, pseudo[i]), "",
                     pseudo[i] + " was taken for a lone mover")
                 var picked = Devices.select(after, at, safeNames, 0, pseudo[i],
-                    { previous: before, commanded: false })
-                T.equal(picked.typing, "", pseudo[i] + " became the anchor")
+                    { base: before, candidate: pseudo[i], gap: false })
+                T.equal(picked.lone, "", pseudo[i] + " became the anchor")
                 T.equal(picked.group, 0, pseudo[i] + " moved the reading")
             }
         })
@@ -483,15 +490,15 @@ QtObject {
             var burst = owner(groups(1, 1, 0))
             T.equal(Devices.loneMover(before, burst, safeNames, ite76), "")
             var picked = Devices.select(burst, at, safeNames, 0, ite76,
-                { previous: before, commanded: false })
-            T.equal(picked.typing, "", "not re-anchored")
+                { base: before, candidate: ite76, gap: false })
+            T.equal(picked.lone, "", "not re-anchored")
             T.equal(picked.group, 0, "the existing tiers answer: consensus + remembered")
             // A burst that left every keyboard on one group answers that
             // group, whoever the anchor is.
             var together = owner(groups(1, 1, 1))
             var same = Devices.select(together, at, safeNames, 0, ite76,
-                { previous: before, commanded: false })
-            T.equal(same.typing, "")
+                { base: before, candidate: ite76, gap: false })
+            T.equal(same.lone, "")
             T.equal(same.group, 1)
         })
 
@@ -521,10 +528,11 @@ QtObject {
             var after = zoo(0, at)
             after[3].active_layout_index = 1
             var picked = Devices.select(after, at, safeNames, 0, ite76,
-                { previous: before, commanded: false })
+                { base: before, candidate: ite76, gap: false })
             T.equal(picked.reading.name, at)
             T.equal(picked.group, 0)
-            T.equal(picked.typing, at)
+            T.equal(picked.lone, "")
+            T.equal(Devices.anchorAfter(picked, false), at, "the flag teaches whatever the guard does")
         })
 
         Qt.exit(T.report("layout devices"))

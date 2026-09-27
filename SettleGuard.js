@@ -51,14 +51,15 @@ var WINDOW_MS = 10000
 var QUIESCE_MS = 1000
 
 /// How long after the panel's own click a layout event can still be that
-/// click's echo. Measured on the owner's seat (2026-09-27): the burst that
-/// followed a language click spanned ~125 ms from its first announcement
-/// to its last (18:48:48.121 to 18:48:48.244, the helper's own virtual
-/// keyboard last). Four times that absorbs a loaded compositor.
-/// The length costs nothing at the other end: after a click every device
-/// in the set sits ON the commanded group, so a user's toggle made right
-/// after it moves a keyboard OFF that group and never matches the echo's
-/// group clause.
+/// click's echo. Measured in the lab (the lone-toggle leg, 2026-09-27):
+/// five clicks over a three-keyboard switch set announced all three moves
+/// within 1–3 ms of each other, the last 3–8 ms after the command. The
+/// window leaves two orders of magnitude for a loaded compositor, and an
+/// echo later still arrives within a few milliseconds of its siblings,
+/// which SeatMotion reads as a burst. The length costs nothing at the other
+/// end: after a click every device in the set sits ON the commanded group,
+/// so a user's toggle made right after it moves a keyboard OFF that group
+/// and never matches the echo's group clause.
 var ECHO_MS = 500
 
 function initial() {

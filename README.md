@@ -46,6 +46,7 @@ explains why it works that way.
 | `LanguageControl.js` | the language control's shapes and the chooser's entries; languages named in their own language |
 | `LayoutDevices.js` | which keyboard the panel reads its layout from, and which ones the language button moves |
 | `SettleGuard.js` | the post-reconnect echo window: which uncommanded group flips to follow |
+| `SeatMotion.js` | who moved on the seat over time: a keyboard toggled alone, told from a burst and from the panel's own click |
 | `HoverTooltip.qml` | one shared hover tooltip for ambiguous icon controls |
 | `ModifierReducer.js` | the modifier state machine (pure, tested) |
 | `Config.js` | maintained defaults plus override/state validation and serialization |
