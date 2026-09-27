@@ -632,6 +632,21 @@ QtObject {
                 "an ASCII state file: bytes equal characters")
         })
 
+        T.test("the writer's temp name and its sweep pattern are one fixed, OSKar-only shape", function () {
+            T.equal(Config.PRIVATE_TEMP_TEMPLATE, ".oskar-save.XXXXXXXXXX")
+            T.equal(Config.PRIVATE_TEMP_PATTERN, ".oskar-save.??????????")
+            // One `?` per `X`: the sweep matches the template's shape exactly.
+            T.equal(Config.PRIVATE_TEMP_PATTERN.replace(/\?/g, "X"), Config.PRIVATE_TEMP_TEMPLATE)
+            var script = Config.PRIVATE_WRITE_SCRIPT
+            T.equal(script.indexOf("-name '" + Config.PRIVATE_TEMP_PATTERN + "'") >= 0, true,
+                "the pattern is single-quoted: no shell expansion")
+            T.equal(script.indexOf("mktemp \"$dir/" + Config.PRIVATE_TEMP_TEMPLATE + "\"") >= 0,
+                true)
+            T.equal(script.indexOf("basename") < 0, true,
+                "no user-controlled name reaches the temp name or the pattern")
+            T.equal(script.indexOf("-type f") >= 0 && script.indexOf("-maxdepth 1") >= 0, true)
+        })
+
         T.test("foreign keys past 64 KiB are refused, not carried", function () {
             var blob = new Array(66000).join("x")
             var state = Config.reloadState(Config.stateDefaults(),

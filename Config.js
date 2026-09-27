@@ -272,6 +272,35 @@ function unknownTooLarge(unknown) {
     return utf8Bytes(JSON.stringify(unknown)) > UNKNOWN_KEYS_CAP
 }
 
+// The private writer's temp files: a name holding nothing the user
+// controls, used by nothing but OSKar, so the sweep of stale ones can never
+// match a user's own file (a backup beside a dotfile-managed target). The
+// sweep's pattern is the template's exact shape: ten `?` for ten `X`.
+var PRIVATE_TEMP_TEMPLATE = ".oskar-save.XXXXXXXXXX"
+var PRIVATE_TEMP_PATTERN = ".oskar-save.??????????"
+
+// The private writer. $1 is the path, $2 the payload's byte count; the
+// payload arrives on stdin. The write lands on the file the path RESOLVES
+// to — a symlinked config.json or state.json is written through and the
+// link survives — via a temp file beside the target renamed over it, only
+// when the temp file holds exactly $2 bytes (a stdin that ended early,
+// the shell dying mid-write, leaves a short file, removed instead). A
+// target directory that cannot be written fails the save with nothing
+// touched. Before writing, this writer's own temp files older than a
+// minute (a writer killed before its trap ran) are removed: that exact
+// name shape, regular files only, that directory only, no symlink
+// followed (find's default).
+var PRIVATE_WRITE_SCRIPT = "umask 077; target=$(readlink -f -- \"$1\") || exit 5; "
+    + "[[ -n \"$target\" && ! -d \"$target\" ]] || exit 5; "
+    + "dir=$(dirname -- \"$target\"); "
+    + "[[ -d \"$dir\" && -w \"$dir\" ]] || exit 5; "
+    + "find \"$dir\" -maxdepth 1 -type f -name '" + PRIVATE_TEMP_PATTERN + "' -mmin +1 -delete 2>/dev/null; "
+    + "t=$(mktemp \"$dir/" + PRIVATE_TEMP_TEMPLATE + "\") || exit 5; "
+    + "trap 'rm -f -- \"$t\"' EXIT; "
+    + "cat > \"$t\" || exit 6; "
+    + "[[ $(wc -c < \"$t\") == \"$2\" ]] || exit 6; "
+    + "chmod 600 -- \"$t\" && mv -fT -- \"$t\" \"$target\""
+
 /// The private writer's positional arguments: the path, and the byte count
 /// the payload arriving on stdin must have. A writer whose stdin ended
 /// early (the shell died mid-write) holds fewer bytes and must not rename

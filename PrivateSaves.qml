@@ -187,36 +187,18 @@ Item {
         }
     }
 
-    // The write lands on the file the path RESOLVES to: a config.json or
-    // state.json that is a symlink (a dotfile manager's) is written
-    // through, and the link survives — the temp file sits beside the
-    // target and is renamed over the target, never over the link. A
-    // target whose directory cannot be written fails the save (the
-    // saveFailed hint) with nothing touched. The temp file is renamed
-    // only when it holds exactly the byte count the panel sent ($2): a
-    // stdin that ended early (the shell died mid-write) leaves a short
-    // file, which is removed instead, and the old file stays. Temp files
-    // of this writer's own naming older than a minute — a writer killed
-    // before its trap ran — are swept from the same directory.
+    // The write itself is Config.PRIVATE_WRITE_SCRIPT: through a symlink
+    // to its target, renamed into place only when complete, with its own
+    // stale temp files swept (the rules are stated there, beside the two
+    // name literals its suite pins).
     function runPrivateWrite(path, payload, retried) {
         root.privateWriteInFlight = {
             path: path, payload: payload, retried: retried === true
         }
         privateWriter.payload = payload
         privateWriter.stdinEnabled = true
-        privateWriter.command = ["bash", "-c",
-            "umask 077; target=$(readlink -f -- \"$1\") || exit 5; "
-            + "[[ -n \"$target\" && ! -d \"$target\" ]] || exit 5; "
-            + "dir=$(dirname -- \"$target\"); "
-            + "[[ -d \"$dir\" && -w \"$dir\" ]] || exit 5; "
-            + "base=.$(basename -- \"$target\"); "
-            + "find \"$dir\" -maxdepth 1 -type f -name \"$base.??????\" -mmin +1 -delete 2>/dev/null; "
-            + "t=$(mktemp -p \"$dir\" \"$base.XXXXXX\") || exit 5; "
-            + "trap 'rm -f -- \"$t\"' EXIT; "
-            + "cat > \"$t\" || exit 6; "
-            + "[[ $(wc -c < \"$t\") == \"$2\" ]] || exit 6; "
-            + "chmod 600 -- \"$t\" && mv -fT -- \"$t\" \"$target\""]
-            .concat(["oskar-private-write"], ConfigFile.privateWriteArgs(path, payload))
+        privateWriter.command = ["bash", "-c", ConfigFile.PRIVATE_WRITE_SCRIPT,
+            "oskar-private-write"].concat(ConfigFile.privateWriteArgs(path, payload))
         privateWriter.running = true
         // A writer that cannot start reports no exit at all: it is a failed
         // write, said the same way.
