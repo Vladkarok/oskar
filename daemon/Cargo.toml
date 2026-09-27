@@ -1,6 +1,6 @@
 [package]
 name = "oskar-daemon"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Persistent Wayland virtual keyboard driven over a unix socket"
 license = "MIT"
