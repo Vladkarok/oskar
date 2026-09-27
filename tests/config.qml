@@ -621,6 +621,17 @@ QtObject {
             T.equal(legacy.error, "")
         })
 
+        T.test("the private writer is told the payload's exact byte count", function () {
+            T.deepEqual(Config.privateWriteArgs("/h/.config/oskar/config.json", "{}\n"),
+                ["/h/.config/oskar/config.json", "3"])
+            // Bytes, not characters: é is two, € three, 😀 four.
+            T.deepEqual(Config.privateWriteArgs("/p", "é€😀"), ["/p", "9"])
+            T.deepEqual(Config.privateWriteArgs("/p", ""), ["/p", "0"])
+            var state = Config.serializeState(Config.stateDefaults())
+            T.equal(Config.privateWriteArgs("/p", state)[1], String(state.length),
+                "an ASCII state file: bytes equal characters")
+        })
+
         T.test("foreign keys past 64 KiB are refused, not carried", function () {
             var blob = new Array(66000).join("x")
             var state = Config.reloadState(Config.stateDefaults(),

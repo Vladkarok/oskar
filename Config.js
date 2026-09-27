@@ -256,15 +256,28 @@ function storeUnknown(map, key, value) {
 // own saves grow without bound.
 var UNKNOWN_KEYS_CAP = 65536
 
-function unknownTooLarge(unknown) {
-    var text = JSON.stringify(unknown)
+/// The UTF-8 byte length of `text`, the unit files and pipes count in.
+function utf8Bytes(text) {
+    var value = String(text)
     var bytes = 0
-    for (var i = 0; i < text.length; i++) {
-        var code = text.charCodeAt(i)
+    for (var i = 0; i < value.length; i++) {
+        var code = value.charCodeAt(i)
         bytes += code < 0x80 ? 1 : code < 0x800 ? 2
             : (code >= 0xd800 && code <= 0xdbff) ? (i++, 4) : 3
     }
-    return bytes > UNKNOWN_KEYS_CAP
+    return bytes
+}
+
+function unknownTooLarge(unknown) {
+    return utf8Bytes(JSON.stringify(unknown)) > UNKNOWN_KEYS_CAP
+}
+
+/// The private writer's positional arguments: the path, and the byte count
+/// the payload arriving on stdin must have. A writer whose stdin ended
+/// early (the shell died mid-write) holds fewer bytes and must not rename
+/// its partial file over the good one.
+function privateWriteArgs(path, payload) {
+    return [String(path), String(utf8Bytes(payload))]
 }
 
 function parseOverrides(text) {
