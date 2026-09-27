@@ -38,10 +38,11 @@ explains why it works that way.
 | `Keyboard.qml` + the extracted seams (`HelperLink.qml`, `PasteChords.qml`, `HoldMenu.qml`) | key grid, layout tracking, reply dispatch, keycap pipeline; the socket client and paste chords live in their seams (§105–§106) |
 | `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
 | `EmojiPage.qml`, `EmojiCatalog.js` | the panel's own emoji page over the keys; catalogue generated from vendored Unicode data (`third_party/emoji/`) |
-| `ClipboardPaste.js` | the emoji delivery transaction and the paste chip's target rule (colour field, emoji search, external client) |
+| `ClipboardPaste.js` | the emoji delivery transaction (a failed pick puts the previous text back) and the paste chip's target rule (colour field, emoji search, external client) |
 | `ChordAcks.js` | reply correlation: every command one queue slot, every reply pops it — the paste chord's verdict is its own final line's ack |
 | `PasteFlow.js` | the paste lifecycle: busy-gate, dispatch region, ordered cancellation |
 | `ShareQueue.js` | the keymap-share scheduler: one share run at a time, the pending generation consumed on success |
+| `GapsNudge.js` | the docked relayout nudge: reads `general:gaps_out` in any form Hyprland answers, writes the exact value back |
 | `LanguageControl.js` | the language control's shapes and the chooser's entries; languages named in their own language |
 | `LayoutDevices.js` | which keyboard the panel reads its layout from, and which ones the language button moves |
 | `SettleGuard.js` | the post-reconnect echo window: which uncommanded group flips to follow |
@@ -107,7 +108,8 @@ its default without rewriting the user's sparse file.
 press through QtMultimedia — nothing is spawned per keystroke. It needs
 `qt6-multimedia` and `ffmpeg`; the theme's Vorbis file is transcoded to PCM
 once at startup (SoundEffect plays uncompressed WAV only), into
-`$XDG_RUNTIME_DIR`. Without them the keyboard works and stays silent.
+`$XDG_RUNTIME_DIR/oskar/keyclick.wav`. Without them the keyboard works and
+stays silent.
 Colours, fonts and corner radius all come from the shared Omarchy style tokens,
 so switching the theme redraws the keyboard where it stands — no restart of the
 shell or the plugin, and nothing on the typing path is touched. `follow_theme:
@@ -173,6 +175,76 @@ draws that line); the daemon trusts its same-user callers on a line
 protocol (the same-user trust boundary is documented in
 SECURITY.md; there is no network listener, no telemetry, no accounts — the
 vision document calls the product a system utility and means it.
+
+## What OSKar changes on your system
+
+Everything OSKar changes outside its own directories, and what it puts
+back. This list is the contract: a change that is not here is a bug.
+
+- **Installed files.** A source install writes three files outside the
+  checkout: the user unit `~/.config/systemd/user/oskar.service`, the
+  helper `~/.local/libexec/oskar-daemon` and the command
+  `~/.local/bin/oskar`, and lists them in
+  `~/.local/state/oskar/install-record`. It replaces or removes only
+  files that record lists unchanged (see Install). `oskar setup`
+  registers the plugin under `~/.config/omarchy/plugins/` (a link to the
+  checkout or the package's copy), enables it with `omarchy plugin
+  enable`, and enables `oskar.service`, which adds systemd's link under
+  `~/.config/systemd/user/`. The pacman package itself installs under
+  `/usr` only.
+- **Settings and state.** `~/.config/oskar/config.json` holds the
+  settings you changed and `~/.local/state/oskar/state.json` the panel's
+  placement, emoji usage, skin tone and last layout. A directory OSKar
+  creates is `0700`, each file `0600`; a directory that already exists
+  keeps its mode. A file that does not parse is never overwritten: the
+  panel shows the error and keeps the last valid values. A file that is
+  a symlink (a dotfile manager's) is written through: the link stays and
+  its target is replaced in one rename. Keys OSKar does not know are
+  kept.
+- **Runtime files.** `$XDG_RUNTIME_DIR/oskar/` holds the control socket,
+  the keymap the helper publishes (`keymap.xkb`), the record of your own
+  `kb_file` (`user-keymap-source`) and, with the click sound on,
+  `keyclick.wav`. The directory goes away at logout.
+- **The clipboard.** An emoji pick goes through the clipboard: the emoji
+  replaces what the clipboard held, and a delivered pick leaves it there.
+  A pick that fails puts back what was there before if it was text of
+  up to 64 KiB that the panel had already read, as plain text. An image,
+  other non-text content, or text copied an instant before the pick is
+  not put back; the clipboard then keeps the emoji. The emoji page says
+  that a pick replaces the clipboard.
+- **`input:kb_file` (Hyprland, runtime only).** While the helper runs it
+  points `input:kb_file` at its published keymap, so every keyboard on
+  the seat compiles the keymap the helper types with. Without that,
+  applications switch layout on every focus change (decisions §35). Your
+  own `kb_file`, if you set one, is recorded and built into that keymap.
+  Your value (or none) is put back when the helper stops — `systemctl
+  stop`, `oskar upgrade`, logout — and when the shell running the panel
+  exits. A config reload (`hyprctl reload`, a theme change) also resets
+  it to your config's value, and the panel then shares the keymap again.
+  The helper does not take over a relative `kb_file`, because it could
+  not put it back: the panel then shows that layout sync failed, and
+  typing still works. Known limit: while OSKar runs, the global
+  `kb_file` also applies to keyboards that have their own layout in a
+  `device` section, so per-device keymaps are overridden.
+- **`general:gaps_out` (Hyprland, docked mode only).** When the docked
+  panel appears, OSKar raises the first number of `gaps_out` by one for
+  about one frame and writes your exact value back, so Hyprland moves
+  already-tiled windows above the panel. It uses `hyprctl keyword`; a
+  Lua config refuses that, and nothing changes. A value in a form OSKar
+  does not recognise is left alone. If writing the value back fails
+  twice, the journal names the original value.
+- **`cursor:hide_on_key_press` (Hyprland, runtime only).** Turned off
+  while the panel is open, so the pointer does not vanish while you
+  click keys, and set back to your value when it closes. A config
+  reload also restores it.
+- **Layouts.** The panel's language button moves every physical
+  keyboard on the seat to the chosen layout together.
+- **Not put back after a crash or `SIGKILL`.** If the helper is killed
+  outright, it cannot put `kb_file` back: the next helper start or the
+  shell's exit does, and otherwise a config reload or logout. If the
+  shell is killed while the panel is open, cursor hiding stays off until
+  a config reload. A key the helper holds at the moment it is killed
+  stays pressed for the application that has focus.
 
 ## Languages
 

@@ -2474,3 +2474,50 @@ walk served only machines the author set up, and it stopped, disabled,
 moved and removed files by name alone, several of them in the user's
 config and state. Rejected: keeping it behind the record, which would
 be new code to protect a population of one.
+
+## 113. What OSKar changes outside its directories is restored by the one who changed it, and listed
+
+The marketplace checklist asks that a plugin never change user
+configuration without consent; the running panel and helper change three
+things that are the user's — Hyprland's `input:kb_file`, the clipboard on
+an emoji pick, and a few runtime compositor settings — and restored them
+only partly.
+
+- **The helper owns the `kb_file` restore.** It is the process that
+  points the compositor at its published keymap, so it is the one that
+  puts it back: `share` reads the current value before changing anything,
+  changes it in one write (a clear first only to re-read a republished
+  file under the same name), and on any failure puts the value it read
+  back — the recorded user source when the compositor was already on the
+  published keymap. On SIGTERM/SIGINT/SIGHUP, after the key release, a
+  `kb_file` still naming the published keymap is set to the recorded
+  source or cleared, bounded to 2 s; from the moment shutdown begins the
+  seat verbs answer `err shutting down`, and every `kb_file` change runs
+  under one gate, so no share interleaves with the restore. The record is
+  never deleted while the compositor is last seen on the published keymap
+  (an empty configure then leaves it), because the restore reads it. A
+  relative `kb_file` is never taken over (`err user keymap not
+  restorable`): the helper could not put it back. The panel's
+  destruction-time restore stays for a shell that exits while the helper
+  lives; it sends the same line. Rejected: the panel alone restoring —
+  it cannot cover a helper stop, an exit between clear and set, or a
+  first share that failed after the clear.
+- **The clipboard rule.** A delivered pick leaves the emoji in the
+  clipboard (§42, §91: restoring after a paste races the pasting client).
+  A failed pick — verify mismatch exhausted, the verify watchdog, a
+  refused or errored chord, a cancellation — puts back what the clipboard
+  held before it when the panel's own reading had it as current text
+  within the 64 KiB read cap; otherwise the clipboard keeps the emoji and
+  the journal says why. A failure with a queued pick behind it restores
+  nothing: the next pick replaces the clipboard anyway. The emoji page
+  says, in one standing line, that a pick replaces the clipboard.
+  Rejected: refusing a pick when the clipboard holds content OSKar could
+  not put back — a refusal the user cannot act on, where a standing
+  statement is enough; and a setting.
+- **The disclosure section is the contract.** README.md's "What OSKar
+  changes on your system" lists every change outside OSKar's own
+  directories, what is put back and when, and what a crash or SIGKILL
+  leaves behind. A change that is not listed there is a bug; a new one
+  lands with its line. Rejected: scattering it across the configuration,
+  install and troubleshooting sections, where no reviewer can check it
+  as a whole.

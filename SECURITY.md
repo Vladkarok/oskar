@@ -68,6 +68,11 @@ daemon's own sloppy writes.
   `permissions: contents: read`, and persists no credentials; the
   panel no longer falls back to a predictable `/tmp` sound file.
 
+**What OSKar changes outside its own directories** — installed files,
+settings files, the clipboard, Hyprland runtime settings — what it puts
+back, and what a crash leaves behind, is listed in README.md, "What
+OSKar changes on your system". That list is the contract.
+
 **The honest boundary**: OSKar is a same-user tool. The control socket
 is reachable by anything running as you — that is the design, and the
 0700 runtime directory is the wall other users cannot cross. Root sees
