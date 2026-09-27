@@ -231,7 +231,7 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         // itself going away (the `PartOf=` teardown) may never answer. The
         // release is best-effort and systemd must not sit through its stop
         // timeout for it, so leaving is bounded either way.
-        thread::spawn(|| {
+        let watchdog = thread::Builder::new().name("osk-exit-watchdog".into()).spawn(|| {
             // Generous against the release's own compositor round-trips
             // and the kb_file restore after it: an exit that raced a live
             // round-trip could strand the very keys the release exists to
@@ -245,6 +245,11 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
             );
             std::process::exit(0);
         });
+        if watchdog.is_err() {
+            // The release and the restore are each bounded on their own;
+            // only the overall cap is missing, and the stop must still run.
+            eprintln!("cannot start the exit watchdog; shutting down without it");
+        }
         // The keys first: the restore below waits on the compositor, and
         // nothing may hold up the release. `release_everything` also closes
         // the command gate, which refuses the seat verbs from here on.

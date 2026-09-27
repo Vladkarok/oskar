@@ -52,7 +52,10 @@ RestrictAddressFamilies=AF_UNIX
 # it misbehave, sacrifice keyboard input before the desktop becomes unusable.
 CPUQuota=10%
 MemoryMax=64M
-TasksMax=16
+# Threads at worst: main, the signal waiter, the socket accept loop, the
+# seat event reader, the hotplug watch, four clients, four seat-verb workers
+# and the exit watchdog — 14. 20 leaves six spare.
+TasksMax=20
 
 [Install]
 WantedBy=graphical-session.target
