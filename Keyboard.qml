@@ -564,6 +564,11 @@ Item {
     // published-branch snapshot and the clear would never stick (the
     // seed's own record fighting the clear).
     property bool userKeymapObserved: false
+    // The compositor's own kb_file exactly as last observed, even when it
+    // names a file that does not exist: the keymap is compiled without a
+    // missing file, but the user's setting is still theirs, and the
+    // destruction restore puts that literal value back.
+    property string userKeymapLiteral: ""
     // Consecutive failed runs of the current share: the retry ladder's
     // count, reset by a success, by giving up and by a new connection.
     property int shareAttempts: 0
@@ -785,7 +790,7 @@ Item {
     // left alone with a warning.
     Component.onDestruction: {
         if (sharedKeymapGen === 0) return
-        var source = String(userKeymapFile || "")
+        var source = String((userKeymapObserved ? userKeymapLiteral : userKeymapFile) || "")
         if (source !== "" && source.charAt(0) !== "/") {
             console.warn("[oskar] cannot restore a relative kb_file:", source)
             return
@@ -942,6 +947,7 @@ Item {
             // A live observation of the user's own setting — including an
             // explicit empty: from here the recovery seed stays silent.
             userKeymapObserved = true
+            userKeymapLiteral = kbFile
             // The live arm of the existence rule: a compositor setting that
             // names a file which does not exist — a foreign runtime's
             // published map, deleted with it while this panel watched —

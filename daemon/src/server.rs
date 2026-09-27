@@ -14,8 +14,8 @@ use crate::apply::{apply, expire_stuck_keys, hold_deadline, release_all};
 use crate::events::{Outbox, SUBSCRIBERS};
 use crate::protocol::{negotiate, parse, parse_hello, parse_seat, SeatCommand, SEAT_VERSION};
 use crate::seat::{
-    seat_reply, share_reply, startup_keyboard_reply, switch_reply, OwnFiles, SeatBackend,
-    SeatError,
+    seat_reply, share_reply, startup_keyboard_reply, switch_reply, LastSeen, OwnFiles,
+    SeatBackend, SeatError,
 };
 use crate::state::SharedRef;
 
@@ -352,8 +352,8 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection, 
             // configure path's record decision. Judged before the typing
             // lock is taken: the judgement reads the filesystem.
             let observe = |kb_file: &str| {
-                let ours = OwnFiles::from_env().is_some_and(|own| own.is_published(kb_file));
-                shared.lock().unwrap().compositor_on_published = ours;
+                let seen = LastSeen::of(kb_file, OwnFiles::from_env().as_ref());
+                shared.lock().unwrap().compositor_kb_file = seen;
             };
             let reply = match seat_command {
                 // Once shutdown has begun the seat verbs are refused, so

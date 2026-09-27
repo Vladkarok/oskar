@@ -69,10 +69,10 @@ pub(crate) struct Shared {
     /// release, and a claim is what authorizes a release.
     pub(crate) held: std::collections::HashMap<u32, Hold>,
     pub(crate) uploads: std::collections::VecDeque<Instant>,
-    /// Whether the compositor's `kb_file` was last seen — by a `seat` read
-    /// or a confirmed `share` — naming the published keymap. The configure
-    /// path reads it without asking the compositor under this lock.
-    pub(crate) compositor_on_published: bool,
+    /// The compositor's `kb_file` as last seen by a `seat` read or a
+    /// `share`. The configure path reads it without asking the compositor
+    /// under this lock.
+    pub(crate) compositor_kb_file: crate::seat::LastSeen,
 }
 
 impl Shared {

@@ -199,7 +199,7 @@ fn apply_locked(
         if let Some(own) = OwnFiles::from_env() {
             let dir = own.dir();
             let decision =
-                user_source_decision(&config.kb_file, shared.compositor_on_published);
+                user_source_decision(&config.kb_file, &shared.compositor_kb_file);
             let outcome = match decision {
                 SourceDecision::Remember(path) => persist_user_source(dir, Some(&path)),
                 SourceDecision::Clear => persist_user_source(dir, None),

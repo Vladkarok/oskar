@@ -112,7 +112,8 @@ fn restorable(value: &str) -> bool {
 /// What a configure's `kb_file` says about the user's own keymap source.
 #[derive(Debug, PartialEq)]
 pub(crate) enum SourceDecision {
-    /// The user's own file: remember it verbatim for shell-crash recovery.
+    /// The user's own file: remember it verbatim for shell-crash recovery
+    /// and for the restore on shutdown.
     Remember(String),
     /// No custom source: the recovery record must not outlive the setting.
     Clear,
@@ -123,15 +124,45 @@ pub(crate) enum SourceDecision {
     Leave,
 }
 
-/// `compositor_on_published` is the helper's last observation of the
-/// compositor's `kb_file` (a `seat` read or a confirmed `share`).
-pub(crate) fn user_source_decision(kb_file: &str, compositor_on_published: bool) -> SourceDecision {
+/// The compositor's `kb_file` as the helper last saw it — a `seat` read, a
+/// share's capture, a confirmed share.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) enum LastSeen {
+    #[default]
+    Unknown,
+    Empty,
+    Published,
+    /// The user's own value, verbatim, whether or not the file exists.
+    User(String),
+}
+
+impl LastSeen {
+    pub(crate) fn of(kb_file: &str, own: Option<&OwnFiles>) -> Self {
+        let value = kb_file.trim();
+        if value.is_empty() {
+            LastSeen::Empty
+        } else if own.is_some_and(|own| own.is_published(value)) {
+            LastSeen::Published
+        } else {
+            LastSeen::User(value.to_string())
+        }
+    }
+}
+
+/// A configure's `kb_file` decides the record, read together with what the
+/// compositor was last seen to hold. An empty configure is not always "the
+/// user has none": the panel configures without a `kb_file` that names a
+/// missing file (it cannot be compiled), and while the compositor is on the
+/// published keymap the record is the only memory of the user's value. The
+/// user's setting is theirs either way, so it is remembered literally —
+/// the record holds a path, never the keymap, and nothing here reads it.
+pub(crate) fn user_source_decision(kb_file: &str, last_seen: &LastSeen) -> SourceDecision {
     let trimmed = kb_file.trim();
     if trimmed.is_empty() {
-        return if compositor_on_published {
-            SourceDecision::Leave
-        } else {
-            SourceDecision::Clear
+        return match last_seen {
+            LastSeen::Published => SourceDecision::Leave,
+            LastSeen::User(value) => SourceDecision::Remember(value.clone()),
+            LastSeen::Empty | LastSeen::Unknown => SourceDecision::Clear,
         };
     }
     if is_published_keymap(trimmed) {
@@ -1021,7 +1052,7 @@ mod tests {
     /// destroy the record.
     #[test]
     fn a_user_source_is_remembered_ours_is_left_and_empty_clears() {
-        match user_source_decision("/home/u/custom.xkb", false) {
+        match user_source_decision("/home/u/custom.xkb", &LastSeen::Unknown) {
             SourceDecision::Remember(path) => {
                 assert_eq!(path, "/home/u/custom.xkb")
             }
@@ -1031,15 +1062,15 @@ mod tests {
         // is still the user's.
         let lookalike = "/home/u/backups/oskar/keymap.xkb";
         assert!(matches!(
-            user_source_decision(lookalike, false),
+            user_source_decision(lookalike, &LastSeen::Unknown),
             SourceDecision::Remember(_)
         ));
-        assert!(matches!(user_source_decision("", false), SourceDecision::Clear));
-        assert!(matches!(user_source_decision("  ", false), SourceDecision::Clear));
+        assert!(matches!(user_source_decision("", &LastSeen::Empty), SourceDecision::Clear));
+        assert!(matches!(user_source_decision("  ", &LastSeen::Unknown), SourceDecision::Clear));
         if let Some(ours) = published_keymap_path() {
             let spelling = ours.to_string_lossy().to_string();
             assert!(matches!(
-                user_source_decision(&spelling, false),
+                user_source_decision(&spelling, &LastSeen::Unknown),
                 SourceDecision::Leave
             ));
         }
@@ -1051,12 +1082,31 @@ mod tests {
     /// A user path still replaces it: that is new knowledge, not a loss.
     #[test]
     fn the_record_survives_an_empty_configure_while_the_compositor_is_ours() {
-        assert_eq!(user_source_decision("", true), SourceDecision::Leave);
-        assert_eq!(user_source_decision(" ", true), SourceDecision::Leave);
+        assert_eq!(user_source_decision("", &LastSeen::Published), SourceDecision::Leave);
+        assert_eq!(user_source_decision(" ", &LastSeen::Published), SourceDecision::Leave);
         assert_eq!(
-            user_source_decision("/home/u/new.xkb", true),
+            user_source_decision("/home/u/new.xkb", &LastSeen::Published),
             SourceDecision::Remember("/home/u/new.xkb".into())
         );
+    }
+
+    /// A user kb_file naming a missing file: the panel configures without
+    /// it (it cannot compile), and the record still keeps the user's
+    /// literal value, so the restore on shutdown puts back what they set.
+    #[test]
+    fn a_missing_user_file_is_remembered_literally() {
+        let seen = LastSeen::of("/home/u/on-unplugged-media.xkb", None);
+        assert_eq!(seen, LastSeen::User("/home/u/on-unplugged-media.xkb".into()));
+        assert_eq!(
+            user_source_decision("", &seen),
+            SourceDecision::Remember("/home/u/on-unplugged-media.xkb".into())
+        );
+        assert_eq!(LastSeen::of("  ", None), LastSeen::Empty);
+        let dir = scratch("seen");
+        let own = OwnFiles::in_dir(&dir);
+        let published = own.dir().join("keymap.xkb").to_string_lossy().to_string();
+        assert_eq!(LastSeen::of(&published, Some(&own)), LastSeen::Published);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn scratch(tag: &str) -> PathBuf {
