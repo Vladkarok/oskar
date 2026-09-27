@@ -220,15 +220,67 @@ reset; run --prebuilt "$matching" >/dev/null
 check "uninstall after an install succeeds" "$(unrun)" 0
 check "  the three are gone" "$([[ -e "$unit" || -e "$helper" || -L "$cli" ]] && echo left || echo gone)" gone
 check "  and the record with them" "$([[ -e "$record_file" ]] && echo left || echo gone)" gone
+check "  the enablement of the removed unit is cleaned up" "$(calls '^systemctl --user disable oskar.service$')" 1
 reset; run --prebuilt "$matching" >/dev/null; printf '# my tweak\n' >> "$unit"; printf 'someone elses program\n' > "$helper"
 check "uninstall with an edited unit and a replaced helper" "$(unrun)" 0
 check "  the edited unit stays" "$(grep -c '# my tweak' "$unit")" 1
 check "  the replaced helper stays" "$(cat "$helper")" "someone elses program"
 check "  the command, ours, is gone" "$([[ -L "$cli" ]] && echo left || echo gone)" gone
 check "  the record forgot only the command" "$(grep -c -F "$cli" "$record_file"; wc -l < "$record_file")" "$(printf '0\n2')"
-check "  it lists what stays" "$(grep -c -x -F -e "  $unit" -e "  $helper" "$sandbox/out")" 2
-check "  as not matching, never as not OSKar's" "$(grep -c 'do not match what OSKar installed' "$sandbox/out")$(grep -c 'did not install' "$sandbox/out")" 10
+check "  it lists what stays, as not matching, never as not OSKar's" "$(grep -c -F -e "  $unit (does not match what OSKar installed)" -e "  $helper (does not match what OSKar installed)" "$sandbox/out")$(grep -c 'did not install' "$sandbox/out")" 20
 check "  and says what oskar.service is now" "$(grep -c 'oskar.service is now enabled and inactive' "$sandbox/out")" 1
+check "  the unit that stays is not disabled" "$(calls 'disable')" 0
+
+# An edited unit that still runs the helper keeps the helper: no enabled
+# unit is left pointing at a missing binary.
+reset; run --prebuilt "$matching" >/dev/null; printf '# my tweak\n' >> "$unit"; hsum="$(sum "$helper")"; : > "$sandbox/systemctl.log"
+check "uninstall with an edited unit that runs the helper" "$(unrun)" 0
+check "  the unit stays" "$(grep -c '# my tweak' "$unit")" 1
+check "  the helper stays with it, unchanged" "$(sum "$helper")" "$hsum"
+check "  the command stays too, so uninstall.sh can finish" "$([[ -L "$cli" ]] && echo left || echo gone)" left
+check "  it says why and how to finish" "$(grep -c -F "  $helper (OSKar's, kept because $unit was changed since OSKar installed it and still runs it)" "$sandbox/out")$(grep -c 'uninstall.sh --force' "$sandbox/out")" 11
+check "  nothing disabled" "$(calls 'disable')" 0
+check "  the helper stays recorded" "$(rec matches "$helper")" 0
+check "then uninstall.sh --force" "$(sbx bash "$root/uninstall.sh" --force >"$sandbox/out" 2>&1; echo $?)" 0
+check "  moves the edited unit aside, content kept" "$(grep -l '# my tweak' "$unit".uninstalled-* 2>/dev/null | wc -l)$([[ -e "$unit" ]] && echo left || echo gone)" 1gone
+check "  removes the helper and the command" "$([[ -e "$helper" || -L "$cli" ]] && echo left || echo gone)" gone
+check "  cleans the dangling enablement (the unit file is gone)" "$(calls '^systemctl --user disable oskar.service$')" 1
+check "  and the record is gone" "$([[ -e "$record_file" ]] && echo left || echo gone)" gone
+check "  it says where the unit went" "$(grep -c "moved aside as $unit.uninstalled-" "$sandbox/out")" 1
+
+# A unit under our name that does not run our helper holds nothing back.
+reset; run --prebuilt "$matching" >/dev/null; printf '[Service]\nExecStart=/usr/bin/something-else\n' > "$unit"; : > "$sandbox/systemctl.log"
+check "uninstall with someone else's unit under the name" "$(unrun)" 0
+check "  their unit stays" "$(grep -c something-else "$unit")" 1
+check "  our helper goes" "$([[ -e "$helper" ]] && echo left || echo gone)" gone
+check "  nothing disabled" "$(calls 'disable')" 0
+
+# --force never disables a unit file that stays: here systemd runs /etc's.
+reset; run --prebuilt "$matching" >/dev/null; printf '# my tweak\n' >> "$unit"; : > "$sandbox/systemctl.log"
+check "uninstall --force while systemd resolves an /etc unit" "$(STUB_FRAGMENT=/etc/systemd/user/oskar.service sbx bash "$root/uninstall.sh" --force >"$sandbox/out" 2>&1; echo $?)" 0
+check "  no disable of any kind" "$(calls 'disable')" 0
+
+# --force is all or nothing.
+reset; run --prebuilt "$matching" >/dev/null; printf '# my tweak\n' >> "$unit"; printf 'someone elses\n' > "$helper"
+chmod 555 "$(dirname "$helper")"
+check "uninstall --force with the helper's directory read-only: exit 1" "$(sbx bash "$root/uninstall.sh" --force >"$sandbox/out" 2>&1; echo $?)" 1
+chmod 755 "$(dirname "$helper")"
+check "  the unit is at its own name, edit kept" "$(grep -c '# my tweak' "$unit")" 1
+check "  the helper too" "$(cat "$helper")" "someone elses"
+check "  the command too" "$([[ -L "$cli" ]] && echo kept)" kept
+check "  no aside anywhere" "$(find "$home" -name '*.uninstalled-*' | wc -l)" 0
+
+# ---- oskar start: the panel's Retry ----
+reset; run --prebuilt "$matching" >/dev/null; : > "$sandbox/systemctl.log"
+check "start with our recorded unit" "$(oskar start)" 0
+check "  starts it" "$(calls '^systemctl --user start oskar.service$')" 1
+reset; mkdir -p "$(dirname "$unit")"; printf '[Service]\nExecStart=/usr/bin/something-else\n' > "$unit"
+check "start with a foreign unit: exit 1" "$(oskar start)" 1
+check "  starts nothing" "$(calls '(start|restart|reset-failed).*oskar.service')" 0
+check "  and says why" "$(grep -c "not proven OSKar's" "$sandbox/out")" 1
+reset
+check "start with no unit at all: exit 1" "$(oskar start)" 1
+check "  starts nothing" "$(calls '(start|restart|reset-failed).*oskar.service')" 0
 
 # ---- uninstall.sh over an install older than the record ----
 reset; run --prebuilt "$matching" >/dev/null; rm -f "$record_file"; ln -s "$root" "$reg" 2>/dev/null || { mkdir -p "$(dirname "$reg")"; ln -s "$root" "$reg"; }
@@ -236,7 +288,7 @@ before="$(what "$unit") $(what "$helper") $(what "$cli")"; : > "$sandbox/systemc
 check "uninstall with no file matching the record: exit 3" "$(unrun)" 3
 check "  the three are untouched" "$(what "$unit") $(what "$helper") $(what "$cli")" "$before"
 check "  no teardown: registration kept, plugin not disabled, unit not disabled" "$([[ -L "$reg" ]] && echo kept)$(wc -l < "$sandbox/omarchy.log")$(calls 'disable')" kept00
-check "  it says the truth and the way out" "$(grep -c 'older than its install record' "$sandbox/out")$(grep -c 'install.sh --force once' "$sandbox/out")" 11
+check "  it says the truth and both ways out" "$(grep -c 'older than its install record' "$sandbox/out")$(grep -c 'install.sh --force once' "$sandbox/out")$(grep -c 'or run uninstall.sh --force' "$sandbox/out")" 111
 reset; run --prebuilt "$matching" >/dev/null
 for how in missing unreadable; do
   other="$sandbox/other"; rm -rf "$other"; mkdir -p "$other"

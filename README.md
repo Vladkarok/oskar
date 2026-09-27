@@ -378,6 +378,12 @@ bash ~/.config/omarchy/plugins/io.github.vladkarok.oskar/uninstall.sh
 omarchy plugin remove io.github.vladkarok.oskar
 ```
 
+`uninstall.sh` removes only the files the install record proves
+unchanged, and keeps the helper while a unit you edited still runs it, so
+no enabled service is left pointing at a missing program. `uninstall.sh
+--force` finishes anyway by moving the files that do not match the
+record aside under a dated name; it deletes nothing of yours.
+
 ### From a source checkout
 
 ```sh

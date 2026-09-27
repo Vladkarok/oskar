@@ -2457,7 +2457,11 @@ string. Rejected: content predicates (the unit's `ExecStart`, the
 helper's log prefix, the manifest behind a link), which both passed
 foreign files and failed genuine ones, and a per-checkout record, which
 would make taking over another checkout's install a `--force` case.
-Installs made before the record exists need `--force` once.
+Installs made before the record exists need `--force` once. Removal
+also leaves nothing broken: `uninstall.sh` keeps the helper while an
+edited unit that stays still runs it, `uninstall.sh --force` moves what
+does not match aside, and the panel's Retry starts the service through
+the same guard (`oskar start`).
 
 The `omarchy-osk` → `oskar` migration in `oskar setup`, `upgrade`,
 `teardown` and `doctor` is deleted, with `replaces=`/`conflicts=` on

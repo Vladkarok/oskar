@@ -11,6 +11,8 @@
 #   oskar doctor                     diagnose; read-only, exits 1
 #                                          when something is wrong
 #   oskar teardown                   deactivate, keep config/state
+#   oskar start                      start the helper, when its unit is
+#                                          OSKar's (the panel's Retry)
 #   oskar record ...                 the install record (install.sh and
 #                                          uninstall.sh ask through it)
 #
@@ -671,6 +673,17 @@ setup --migrate-source moves it aside"
   fi
 }
 
+# The panel's Retry. Starting runs whatever file systemd resolves for
+# the name, so it asks the same question every other systemctl step
+# here asks, and starts nothing that is not proven OSKar's.
+cmd_start() {
+  detect_mode
+  unit_is_ours || die "$(unit_not_ours_reason); not starting it"
+  systemctl --user reset-failed "$UNIT" 2>/dev/null || true
+  systemctl --user start "$UNIT"
+  say "helper started"
+}
+
 cmd_teardown() {
   detect_mode
   if omarchy plugin disable "$PLUGIN_ID" >/dev/null 2>&1; then
@@ -1217,6 +1230,7 @@ upgrade) shift; cmd_upgrade "$@" ;;
 status) [[ $# -eq 1 ]] || die "status takes no arguments"; cmd_status ;;
 doctor) [[ $# -eq 1 ]] || die "doctor takes no arguments"; cmd_doctor ;;
 teardown) [[ $# -eq 1 ]] || die "teardown takes no arguments"; cmd_teardown ;;
+start) [[ $# -eq 1 ]] || die "start takes no arguments"; cmd_start ;;
 record) shift; cmd_record "$@" ;;
 -h|--help|help)
   cat <<'EOF'
@@ -1241,6 +1255,8 @@ Usage: oskar <command>
   teardown                  Disable the plugin and unit, unlink the
                              registration if it is ours. Keeps config,
                              state and foreign directories.
+  start                     Start the helper service when the unit systemd
+                             runs is OSKar's; otherwise say why, exit 1.
   record matches <path> | write <path>... | forget <path>... | aside <path> <word> | usable
                             The install record install.sh and
                              uninstall.sh consult: what OSKar wrote
@@ -1249,7 +1265,7 @@ EOF
   ;;
 *)
   cat <<'EOF' >&2
-Usage: oskar {setup|upgrade|status|doctor|teardown|record}
+Usage: oskar {setup|upgrade|status|doctor|teardown|start|record}
 Run: oskar help
 EOF
   exit 1

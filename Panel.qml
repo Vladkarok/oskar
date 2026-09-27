@@ -581,8 +581,15 @@ Item {
         : "bash " + (Quickshell.env("HOME") || "")
             + "/.config/omarchy/plugins/io.github.vladkarok.oskar/install.sh"
 
+    // Starting goes through `oskar start`, which starts oskar.service only
+    // when the unit systemd resolves is OSKar's. A source checkout (or an
+    // `omarchy plugin add` clone) carries bin/oskar in the plugin
+    // directory; the package's payload does not, and its command is on PATH.
     function retryService() {
-        Quickshell.execDetached(["systemctl", "--user", "start", "oskar.service"])
+        Quickshell.execDetached(["bash", "-c",
+            "d=\"$HOME/.config/omarchy/plugins/io.github.vladkarok.oskar\"; "
+            + "if [ -f \"$d/bin/oskar\" ]; then exec bash \"$d/bin/oskar\" start; "
+            + "else exec oskar start; fi"])
     }
 
     function copyInstallCommand() {

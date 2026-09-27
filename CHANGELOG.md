@@ -64,5 +64,8 @@ for other desks.
   are unchanged since. Anything else is left in place; `install.sh
   --force` moves it aside under a new dated name and deletes nothing. An
   install made before this release has no record and needs
-  `./install.sh --force` once.
+  `./install.sh --force` once. `uninstall.sh` never leaves an enabled
+  unit pointing at a removed helper (`uninstall.sh --force` moves what
+  does not match aside), and the panel's Retry starts the service only
+  when its unit is OSKar's.
 
