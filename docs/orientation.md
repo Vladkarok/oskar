@@ -30,7 +30,7 @@ switching for every client behind fcitx5 (decisions.md has the detail).
 |---|---|
 | `Panel.qml`, `BarWidget.qml` | the floating or docked window and the bar toggle; saves in `PrivateSaves.qml`, the emoji transaction in `EmojiDelivery.qml`, settings in `SettingsLayer.qml` |
 | `Keyboard.qml` | key grid, layout tracking, keycap pipeline; the reply dispatch in `HelperReplies.js` (pure), the socket client in `HelperLink.qml`, paste chords in `PasteChords.qml`, the hold menu in `HoldMenu.qml` |
-| `*.js` (twenty pure modules) | every decision the panel makes — rows and keysyms, modifiers, emoji search, config validation, device choice, settle windows; each has an offscreen suite under `tests/` |
+| `*.js` (twenty-three pure modules, plus three generated emoji-data files) | every decision the panel makes — rows and keysyms, modifiers, emoji search, config validation, device choice, settle windows; each has an offscreen suite under `tests/` |
 | `daemon/src/` | the Rust helper owning one `zwp_virtual_keyboard_v1`: `protocol.rs` (wire format), `server.rs` (socket, handshake), `events.rs` (the shared writer, pushed events), `apply.rs` (commands), `keymap.rs`, `seat.rs` (the `SeatBackend` trait), `hyprland.rs` (its Hyprland IPC implementation), `json.rs`, `state.rs`, `main.rs` |
 | `systemd/oskar.service` | user unit, tied to `graphical-session.target` |
 | `bin/oskar` | the lifecycle command: setup / upgrade / status / doctor / teardown |

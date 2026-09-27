@@ -257,14 +257,15 @@ back. This list is the contract: a change that is not here is a bug.
 One product, four languages, each with a job:
 
 - **QML** (the Quickshell panel) — what the panel is and where it draws.
-- **JavaScript** (twenty pure modules beside the QML) — every decision
+- **JavaScript** (twenty-three pure modules beside the QML, plus three
+  generated emoji-data files) — every decision
   the panel makes: what each keycap types, which modifiers a
   hold-column pick needs, how the emoji search ranks, whether the panel
-  follows a layout-group change. Pure, stateless, and covered by 501
+  follows a layout-group change. Pure, stateless, and covered by 572
   offscreen test cases — the repo's main regression net.
 - **Rust** (the `oskar-daemon` helper) — everything at the seat: it
   compiles and mirrors the XKB keymap, owns the virtual keyboard, and
-  speaks the versioned socket protocol. 44 unit tests.
+  speaks the versioned socket protocol. 81 unit tests.
 - **Python and one C file** (`tools/integration/`) — not part of the
   product: the lab harness that drives a real panel with real pointer
   events inside a throwaway VM, and a tiny Wayland client that spies on
