@@ -306,6 +306,20 @@ Item {
                 panelLoader.active = false
                 log("unloaded")
                 break
+            case "pick": {
+                // One pick through the whole transaction: publish, the
+                // verify reads, the chord.
+                var dp = delivery()
+                if (!dp) { log("no-delivery"); break }
+                dp.request(parts[1], "foot", { none: "canary" })
+                log("picked")
+                break
+            }
+            case "txn": {
+                var dt = delivery()
+                log("txn " + (dt ? dt.emojiTxnState.phase : "none"))
+                break
+            }
             case "publish": {
                 // The one clipboard publisher a pick and a restore use.
                 var d = delivery()
@@ -819,6 +833,20 @@ def _run_leg(repo, window_start):
                               f"['\u0439', \u2026]")
             print(f"ok    helper caps reply: ua group {ua_group} AD01 = "
                   f"{facts['AD01']!r}")
+
+            # 4a. One pick through the real transaction: the verify reads
+            #     must see the pick (no drop), and the clipboard serves it.
+            emoji = "\U0001F9EA"
+            panel.command(f"pick {emoji}", "picked")
+            wait_for(lambda: panel.command("txn", "txn ") == "txn idle", 15,
+                     "the pick's transaction to settle")
+            dropped = [line for line in panel.raw_lines()
+                       if "publication not confirmed" in line or "verify stalled" in line]
+            if dropped:
+                raise Failure(f"the pick's verify never saw it: {dropped[-1]!r}")
+            if wl_paste() != emoji:
+                raise Failure(f"after the pick the clipboard serves {wl_paste()!r}")
+            print("ok    a pick published, verified and settled; the clipboard serves it")
 
             # 4. The clipboard OSKar publishes: never on any process's
             #    argv, and still served after the shell that published it
