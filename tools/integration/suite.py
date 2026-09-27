@@ -1614,10 +1614,33 @@ def seat_share_and_clear(helper, keyboard):
     client.close()
 
 
-@test("a helper stopped mid-hold releases the key before it exits")
+def _set_compositor_kb_file(value):
+    """Set the nested compositor's input:kb_file the way a user's config does."""
+    expression = f"hl.config({{input = {{kb_file = '{value}'}}}})"
+    proc = subprocess.run(["hyprctl", "eval", expression], capture_output=True, text=True)
+    if proc.returncode != 0 or "error" in proc.stdout.lower():
+        raise Failure(f"compositor refused input:kb_file = {value!r}: "
+                      f"{(proc.stdout + proc.stderr).strip()!r}")
+    for _ in range(80):
+        if compositor_kb_file() == value:
+            return
+        time.sleep(0.05)
+    raise Failure(f"input:kb_file never became {value!r}; it is {compositor_kb_file()!r}")
+
+
+@test("a helper stopped mid-hold releases the key, then puts the user's kb_file back")
 def shutdown_releases_a_hold(helper, keyboard):
     # Last in the file because it stops the helper: nothing can run after it.
     #
+    # The kb_file half: a user with their own kb_file, a panel that
+    # configured with it (the helper's record) and shared the published
+    # keymap over it. Stopping the helper must hand the compositor back the
+    # user's file, not leave it compiling a keymap nobody keeps current.
+    #
+    # The custom file is the one the previous test left installed in the
+    # helper, byte for byte (same path, same compile), so this configure is
+    # the same keymap: it records the source and compiles nothing inside
+    # the churn window that test already spent.
     # SIGTERM must not kill the process with `shared.held` still full:
     # that would destroy the virtual keyboard while holding the key,
     # leaving it down for the focused client to repeat for the rest of
@@ -1635,8 +1658,27 @@ def shutdown_releases_a_hold(helper, keyboard):
     #    real time instead of sitting in the terminal's line buffer. Holding
     #    a letter here would look "clean" whatever the helper did, which is
     #    the trap that made a first cut of this fix read as working.
-    target = TypingTarget()
+    custom = os.path.join(os.path.expanduser("~"), "osk-custom-keymap.xkb")
+    compiled = subprocess.run(
+        ["xkbcli", "compile-keymap", "--layout", "us"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    with open(custom, "w", encoding="utf-8") as handle:
+        handle.write(compiled)
+    published = os.path.join(os.environ.get("XDG_RUNTIME_DIR", ""), "oskar", "keymap.xkb")
+    target = None
     try:
+        _set_compositor_kb_file(custom)
+        seat = EventClient(helper.socket_path)
+        seat.expect("hello 7", "hello 7")
+        before = helper.compiles()
+        seat.configure(f"configure\tevdev\tpc105\t\t\t\t{custom}\t0")
+        helper.expect_compiles(before)
+        seat.expect(f"share\t{published}", "ok")
+        if compositor_kb_file() != published:
+            raise Failure(f"after share the compositor has {compositor_kb_file()!r}")
+
+        target = TypingTarget()
         client = helper.connect()
         client.expect("hello 6", "hello 6")
         client.expect("down RTRN", "ok")
@@ -1672,8 +1714,22 @@ def shutdown_releases_a_hold(helper, keyboard):
         # an unconditional "released" line cannot tell the fixed helper apart
         # from one that found nothing held.
         helper.expect_log("released held keys")
+
+        # The helper's own restore, after the release: the compositor is on
+        # the user's file again.
+        if compositor_kb_file() != custom:
+            raise Failure(
+                f"after the helper stopped the compositor has {compositor_kb_file()!r}, "
+                f"not the user's {custom!r}"
+            )
+        helper.expect_log("kb_file restored to the user's")
     finally:
-        target.close()
+        if target is not None:
+            target.close()
+        try:
+            os.remove(custom)
+        except FileNotFoundError:
+            pass
 
 
 

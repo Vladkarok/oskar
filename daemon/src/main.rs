@@ -41,7 +41,8 @@
 //!   switch<TAB>device<TAB>group
 //!                     move one keyboard to an absolute group
 //!   share<TAB>path    point the compositor's kb_file at an absolute path, or
-//!                     clear it with `share<TAB>-`; verified by read-back
+//!                     clear it with `share<TAB>-`; verified by read-back,
+//!                     and the previous value put back on failure
 //!   events on|off     push `event<TAB>...` lines to this connection
 //! Replies are `ok`, `hello <n>`,
 //! `configured<TAB><generation>`, `pong`,
@@ -73,7 +74,7 @@ mod seat;
 mod server;
 mod state;
 
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -83,7 +84,10 @@ use wayland_client::{Connection, EventQueue};
 use crate::apply::release_everything;
 use crate::events::SUBSCRIBERS;
 use crate::hyprland::Hyprland;
-use crate::seat::{socket_path, EventSink, SeatBackend};
+use crate::seat::{
+    claim_runtime_dir, restore_on_shutdown, EventSink, OwnFiles, SeatBackend, ShutdownRestore,
+    SHUTDOWN_RESTORE_BOUND,
+};
 use crate::server::{serve, Seat};
 use crate::state::{Shared, SharedRef, State};
 
@@ -118,6 +122,14 @@ fn run(mut queue: EventQueue<State>, mut state: State) -> Result<(), Box<dyn std
 }
 
 fn run_main() -> Result<(), Box<dyn std::error::Error>> {
+    // Before anything else: the runtime directory is judged and a second
+    // instance refused before a keymap is published into it (the first
+    // install below publishes one) or anything there is touched.
+    let runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|_| {
+        StartupFailure("XDG_RUNTIME_DIR is unset; this must run inside a user session".into())
+    })?;
+    let path = claim_runtime_dir(std::path::Path::new(&runtime)).map_err(StartupFailure)?;
+
     let connection = Connection::connect_to_env()
         .map_err(|e| StartupFailure(e.to_string()))?;
     let mut queue = connection.new_event_queue();
@@ -159,19 +171,8 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
     connection.flush()?;
     queue.roundtrip(&mut state)?;
 
-    let path = socket_path().map_err(|e| StartupFailure(e.to_string()))?;
-    // Refuse to be the second instance. Connecting is the test rather than a
-    // lock file, because it tells a live owner apart from a socket left behind
-    // by a crash; unlinking blindly would let a newcomer steal the path from a
-    // running daemon and leave both serving.
-    if UnixStream::connect(&path).is_ok() {
-        return Err(StartupFailure(format!(
-            "another daemon already owns {}",
-            path.display()
-        ))
-        .into());
-    }
-    let _ = std::fs::remove_file(&path);
+    // A helper that started meanwhile won the path: binding fails instead
+    // of stealing it.
     let listener = UnixListener::bind(&path)
         .map_err(|error| StartupFailure(format!("cannot bind {}: {error}", path.display())))?;
     eprintln!("listening on {}", path.display());
@@ -195,41 +196,6 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
     }
 
-    let signal_shared = Arc::clone(&shared);
-    let signal_connection = connection.clone();
-    thread::spawn(move || {
-        let set = shutdown_signal_set();
-        let mut received: libc::c_int = 0;
-        // SAFETY: both pointers are to live locals, and these signals are
-        // blocked process-wide, which is sigwait's precondition.
-        if unsafe { libc::sigwait(&set, &mut received) } != 0 {
-            return;
-        }
-        // The release waits on the compositor, and a compositor that is
-        // itself going away (the `PartOf=` teardown) may never answer. The
-        // release is best-effort and systemd must not sit through its stop
-        // timeout for it, so leaving is bounded either way.
-        thread::spawn(|| {
-            // Generous against the release's own compositor round-trips:
-            // every path under it is bounded well inside this, and an exit
-            // that raced a live round-trip could strand the very keys the
-            // release exists to lift.
-            thread::sleep(Duration::from_secs(6));
-            eprintln!("compositor did not acknowledge the shutdown release; leaving anyway");
-            std::process::exit(0);
-        });
-        let lifted = release_everything(&signal_shared, &signal_connection);
-        if lifted.is_empty() {
-            eprintln!("signal {received}; nothing was held, exiting");
-        } else {
-            eprintln!("signal {received}; released held keys {lifted:?}, exiting");
-        }
-        // Straight out rather than unwinding: the main thread is parked in the
-        // Wayland queue and has no path back that does not risk sending more
-        // key events after the release.
-        std::process::exit(0);
-    });
-
     // The seat backend is optional by design: without one the seat verbs
     // answer `err no seat backend`, no events flow, and typing is untouched.
     let seat: Seat = match Hyprland::from_env() {
@@ -244,6 +210,62 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     };
+
+    let signal_shared = Arc::clone(&shared);
+    let signal_connection = connection.clone();
+    let signal_seat = seat.clone();
+    thread::spawn(move || {
+        let set = shutdown_signal_set();
+        let mut received: libc::c_int = 0;
+        // SAFETY: both pointers are to live locals, and these signals are
+        // blocked process-wide, which is sigwait's precondition.
+        if unsafe { libc::sigwait(&set, &mut received) } != 0 {
+            return;
+        }
+        // The release waits on the compositor, and a compositor that is
+        // itself going away (the `PartOf=` teardown) may never answer. The
+        // release is best-effort and systemd must not sit through its stop
+        // timeout for it, so leaving is bounded either way.
+        thread::spawn(|| {
+            // Generous against the release's own compositor round-trips
+            // and the kb_file restore after it (bounded by
+            // SHUTDOWN_RESTORE_BOUND): an exit that raced a live round-trip
+            // could strand the very keys the release exists to lift.
+            thread::sleep(Duration::from_secs(8));
+            eprintln!("compositor did not acknowledge the shutdown release; leaving anyway");
+            std::process::exit(0);
+        });
+        // The keys first: the restore below waits on the compositor, and
+        // nothing may hold up the release. `release_everything` also closes
+        // the command gate, which refuses the seat verbs from here on.
+        let lifted = release_everything(&signal_shared, &signal_connection);
+        if lifted.is_empty() {
+            eprintln!("signal {received}; nothing was held");
+        } else {
+            eprintln!("signal {received}; released held keys {lifted:?}");
+        }
+        if let (Some(backend), Some(own)) = (signal_seat.as_deref(), OwnFiles::from_env()) {
+            let deadline = std::time::Instant::now() + SHUTDOWN_RESTORE_BOUND;
+            match restore_on_shutdown(backend, &own, deadline) {
+                ShutdownRestore::NotOurs => {}
+                ShutdownRestore::Restored(value) if value.is_empty() => {
+                    eprintln!("kb_file cleared: it named the published keymap")
+                }
+                ShutdownRestore::Restored(value) => {
+                    eprintln!("kb_file restored to the user's {value:?}")
+                }
+                ShutdownRestore::Failed(error) => eprintln!(
+                    "could not restore kb_file on shutdown ({}); a config reload resets it",
+                    error.reply()
+                ),
+            }
+        }
+        eprintln!("exiting");
+        // Straight out rather than unwinding: the main thread is parked in the
+        // Wayland queue and has no path back that does not risk sending more
+        // key events after the release.
+        std::process::exit(0);
+    });
 
     let socket_shared = Arc::clone(&shared);
     let socket_connection = connection.clone();

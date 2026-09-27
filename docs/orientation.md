@@ -52,7 +52,7 @@ group <n> | tap <AD01|code> | down … | up … | mods <mask> | ping
 # protocol 7 only; a v6 connection answers these `err unknown command`
 seat                                      -> seat\t<json> | err no seat backend | err seat …
 switch\t<device>\t<group>                  -> ok | err …
-share\t</absolute/kb_file> | share\t-      -> ok | err share path must be absolute | err share timed out | err …
+share\t</absolute/kb_file> | share\t-      -> ok | err share path must be absolute | err share timed out | err user keymap not restorable | err …
 events on | events off                    -> ok
 ```
 
@@ -63,10 +63,17 @@ own `name`, `main`, `active_layout_index`, `layout`, `variant`, `rules`,
 `titles` (layout code to human name). The panel reads the seat only through
 these verbs: it asks `seat` after its hello and on every event, moves
 layouts with `switch`, and shares the published keymap with `share`; it
-spawns nothing for devices, switches, hotplug or the share. `share` clears
-and then sets the compositor's `input:kb_file` and verifies it by reading it
-back, all inside one 6 s deadline (below the 15 s hold cap). The helper never checks the file
-itself — its `/tmp` is private — so the read-back is the verification.
+spawns nothing for devices, switches, hotplug or the share. `share` reads
+the compositor's `input:kb_file` first, sets it (clearing first only to
+re-read a republished file under the same name) and verifies it by reading
+it back, all inside one 6 s deadline; on any failure it puts the value it
+read back (1.5 s more, still below the 15 s hold cap). It will not take the
+compositor over from a relative `kb_file` it could not put back. The helper
+never checks the file itself — its `/tmp` is private — so the read-back is
+the verification. On its own shutdown the helper puts a `kb_file` that
+still names its published keymap back to the user's recorded source, and
+from the moment shutdown begins every seat verb answers `err shutting
+down`.
 
 A v7 connection that sent `events on` also receives unsolicited lines:
 `event\tlayout\t<device>\t<group>` when a keyboard's group moves (whoever

@@ -13,7 +13,10 @@ use wayland_client::Connection;
 use crate::apply::{apply, expire_stuck_keys, hold_deadline, release_all};
 use crate::events::{Outbox, SUBSCRIBERS};
 use crate::protocol::{negotiate, parse, parse_hello, parse_seat, SeatCommand, SEAT_VERSION};
-use crate::seat::{seat_reply, share_reply, startup_keyboard_reply, switch_reply, SeatBackend};
+use crate::seat::{
+    seat_reply, share_reply, startup_keyboard_reply, switch_reply, OwnFiles, SeatBackend,
+    SeatError,
+};
 use crate::state::SharedRef;
 
 /// The compositor seat backend, if this session has one. Shared by every
@@ -344,12 +347,26 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection, 
             } else {
                 None
             };
+            let stopping = || shared.lock().unwrap().shutting_down;
+            // What the compositor's kb_file was seen to be, for the
+            // configure path's record decision. Judged before the typing
+            // lock is taken: the judgement reads the filesystem.
+            let observe = |kb_file: &str| {
+                let ours = OwnFiles::from_env().is_some_and(|own| own.is_published(kb_file));
+                shared.lock().unwrap().compositor_on_published = ours;
+            };
             let reply = match seat_command {
-                Some(SeatCommand::Seat) => seat_reply(seat.as_deref()),
+                // Once shutdown has begun the seat verbs are refused, so
+                // nothing a connection asks can interleave with the restore
+                // the shutdown makes.
+                Some(_) if stopping() => SeatError::ShuttingDown.reply(),
+                Some(SeatCommand::Seat) => seat_reply(seat.as_deref(), &observe),
                 Some(SeatCommand::Switch { device, group }) => {
                     switch_reply(seat.as_deref(), &device, group)
                 }
-                Some(SeatCommand::Share(path)) => share_reply(seat.as_deref(), path.as_deref()),
+                Some(SeatCommand::Share(path)) => {
+                    share_reply(seat.as_deref(), path.as_deref(), &stopping, &observe)
+                }
                 Some(SeatCommand::Events(on)) => {
                     if on {
                         SUBSCRIBERS.subscribe(conn_id, &out);

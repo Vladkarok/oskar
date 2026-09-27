@@ -3,6 +3,8 @@
 //! compositor-neutral half of the seat verbs (`SeatBackend`).
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// Where the helper publishes the keymap it installed, for the compositor to
 /// compile the very same one.
@@ -17,29 +19,17 @@ use std::path::{Path, PathBuf};
 /// `/tmp` is the helper's own, and `ProtectHome=read-only` rules out `$HOME`.
 /// It also means the file dies with the session, which is what keeps a stale
 /// `kb_file` from outliving the panel that pointed at it.
+///
+/// A path only: the directory is created and checked once, at startup
+/// (`claim_runtime_dir`), before anything is written into it.
 pub(crate) fn published_keymap_path() -> Option<PathBuf> {
     let dir = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    let dir = PathBuf::from(dir).join("oskar");
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join("keymap.xkb"))
+    Some(PathBuf::from(dir).join("oskar").join("keymap.xkb"))
 }
 
 /// Whether a `kb_file` names the file this helper publishes.
-///
-/// Compared after canonicalising, because the panel builds this path from
-/// `$XDG_RUNTIME_DIR` and the two spellings need not be byte-identical — a
-/// doubled separator or a symlinked runtime directory would otherwise let our
-/// own output back in as an input.
 pub(crate) fn is_published_keymap(path: &str) -> bool {
-    let Some(ours) = published_keymap_path() else {
-        return false;
-    };
-    let theirs = Path::new(path);
-    ours == theirs
-        || match (ours.canonicalize(), theirs.canonicalize()) {
-            (Ok(a), Ok(b)) => a == b,
-            _ => false,
-        }
+    OwnFiles::from_env().is_some_and(|own| own.is_published(path))
 }
 
 /// The recovery record's file name, beside the published keymap in the
@@ -52,6 +42,73 @@ pub(crate) fn is_published_keymap(path: &str) -> bool {
 /// source while the compositor keeps compiling the published keymap.
 const SOURCE_SIDECAR: &str = "user-keymap-source";
 
+/// The helper's own files: the published keymap and the recovery record
+/// beside it. Everything that asks "is this ours?" or "what did the user
+/// have?" asks this, so the suites can point it at a scratch directory
+/// instead of the live session's.
+pub(crate) struct OwnFiles {
+    published: PathBuf,
+}
+
+impl OwnFiles {
+    pub(crate) fn from_env() -> Option<Self> {
+        published_keymap_path().map(|published| OwnFiles { published })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn in_dir(dir: &Path) -> Self {
+        OwnFiles {
+            published: dir.join("keymap.xkb"),
+        }
+    }
+
+    pub(crate) fn dir(&self) -> &Path {
+        self.published.parent().unwrap_or(Path::new("."))
+    }
+
+    /// Compared after canonicalising, because the panel builds this path from
+    /// `$XDG_RUNTIME_DIR` and the two spellings need not be byte-identical — a
+    /// doubled separator or a symlinked runtime directory would otherwise let
+    /// our own output back in as an input.
+    pub(crate) fn is_published(&self, path: &str) -> bool {
+        let theirs = Path::new(path);
+        if path.is_empty() {
+            return false;
+        }
+        self.published == theirs
+            || match (self.published.canonicalize(), theirs.canonicalize()) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => false,
+            }
+    }
+
+    /// The user's own `kb_file` as the last configure recorded it, or empty
+    /// when none is recorded.
+    pub(crate) fn recorded_source(&self) -> String {
+        std::fs::read_to_string(self.dir().join(SOURCE_SIDECAR))
+            .map(|text| text.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    /// What the compositor's current `kb_file` would have to be put back to
+    /// if a change failed: the value itself, or — when the compositor is
+    /// already on the published keymap — the user's own recorded source.
+    fn capture(&self, current: &str) -> String {
+        if self.is_published(current) {
+            self.recorded_source()
+        } else {
+            current.to_string()
+        }
+    }
+}
+
+/// Whether the helper can put a `kb_file` value back faithfully: empty, or an
+/// absolute path. A relative one would be resolved against whatever the
+/// compositor resolves it against, which the helper cannot know.
+fn restorable(value: &str) -> bool {
+    value.is_empty() || value.starts_with('/')
+}
+
 /// What a configure's `kb_file` says about the user's own keymap source.
 #[derive(Debug, PartialEq)]
 pub(crate) enum SourceDecision {
@@ -59,15 +116,23 @@ pub(crate) enum SourceDecision {
     Remember(String),
     /// No custom source: the recovery record must not outlive the setting.
     Clear,
-    /// Our own published path: ambiguous input, refused as an input
-    /// elsewhere; keep whatever is recorded rather than destroy it.
+    /// Our own published path, or an empty one while the compositor still
+    /// compiles the published keymap: keep whatever is recorded. The record
+    /// is then the only memory of what the user had, and the restore on
+    /// shutdown reads it.
     Leave,
 }
 
-pub(crate) fn user_source_decision(kb_file: &str) -> SourceDecision {
+/// `compositor_on_published` is the helper's last observation of the
+/// compositor's `kb_file` (a `seat` read or a confirmed `share`).
+pub(crate) fn user_source_decision(kb_file: &str, compositor_on_published: bool) -> SourceDecision {
     let trimmed = kb_file.trim();
     if trimmed.is_empty() {
-        return SourceDecision::Clear;
+        return if compositor_on_published {
+            SourceDecision::Leave
+        } else {
+            SourceDecision::Clear
+        };
     }
     if is_published_keymap(trimmed) {
         return SourceDecision::Leave;
@@ -114,31 +179,75 @@ pub(crate) fn publish_keymap(text: &str) {
     }
 }
 
-pub(crate) fn socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let dir = std::env::var("XDG_RUNTIME_DIR")
-        .map_err(|_| "XDG_RUNTIME_DIR is unset; this must run inside a user session")?;
-    let dir = PathBuf::from(dir).join("oskar");
-    std::fs::create_dir_all(&dir)?;
-    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-    // The daemon's own guarantee, not systemd's: the directory must belong
-    // to this uid and carry no group/other bits. A pre-created
-    // group-writable directory, or one another user planted to bind their
-    // own socket for the panel, is refused loudly instead of trusted.
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let meta = std::fs::metadata(&dir)?;
-    if meta.uid() != nix_uid() || (meta.mode() & 0o077) != 0 {
+/// Takes the runtime directory for this process and returns the control
+/// socket's path, before anything is written there.
+///
+/// The directory is created 0700 when absent and never re-moded when present:
+/// it must already belong to this uid, be a real directory and carry no
+/// group/other bits. A pre-created group-writable directory, or one another
+/// user planted to bind their own socket for the panel, is refused loudly
+/// instead of trusted — or "repaired" into looking trustworthy.
+///
+/// A live socket at the path is another helper, and this one refuses to be
+/// the second: connecting tells a live owner apart from a socket left behind
+/// by a crash, which is unlinked. Anything at the path that is not a socket
+/// is not this helper's to remove.
+pub(crate) fn claim_runtime_dir(runtime: &Path) -> Result<PathBuf, String> {
+    use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt};
+    let dir = runtime.join("oskar");
+    match std::fs::symlink_metadata(&dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+                Ok(()) => {}
+                // Lost a race with another creator: judged below like any
+                // directory that was already there.
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(format!("cannot create {}: {error}", dir.display())),
+            }
+        }
+        Err(error) => return Err(format!("cannot inspect {}: {error}", dir.display())),
+        Ok(_) => {}
+    }
+    let meta = std::fs::symlink_metadata(&dir)
+        .map_err(|error| format!("cannot inspect {}: {error}", dir.display()))?;
+    if !meta.file_type().is_dir() || meta.uid() != nix_uid() || (meta.mode() & 0o077) != 0 {
         return Err(format!(
-            "runtime dir {:?} is uid {} mode {:o}; expected uid {} and no \
-             group/other bits — refusing to serve from a directory we do \
-             not solely own",
+            "runtime dir {:?} is {} uid {} mode {:o}; expected a directory of \
+             uid {} with no group/other bits — refusing to serve from a \
+             directory we do not solely own",
             dir,
+            if meta.file_type().is_symlink() {
+                "a symlink,"
+            } else if meta.file_type().is_dir() {
+                "a directory,"
+            } else {
+                "not a directory,"
+            },
             meta.uid(),
             meta.mode() & 0o777,
             nix_uid()
-        )
-        .into());
+        ));
     }
-    Ok(dir.join("control.sock"))
+    let socket = dir.join("control.sock");
+    if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+        return Err(format!("another daemon already owns {}", socket.display()));
+    }
+    match std::fs::symlink_metadata(&socket) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("cannot inspect {}: {error}", socket.display())),
+        Ok(meta) if meta.file_type().is_socket() => {
+            std::fs::remove_file(&socket).map_err(|error| {
+                format!("cannot remove the stale socket {}: {error}", socket.display())
+            })?;
+        }
+        Ok(_) => {
+            return Err(format!(
+                "{} exists and is not a socket; refusing to remove it",
+                socket.display()
+            ))
+        }
+    }
+    Ok(socket)
 }
 
 fn nix_uid() -> u32 {
@@ -325,6 +434,11 @@ pub(crate) enum SeatError {
     TimedOut,
     /// The request would not fit the compositor's request buffer.
     TooLong,
+    /// `share` would take the compositor over from a `kb_file` the helper
+    /// could not put back (a relative path): the user's setting stays.
+    NotRestorable,
+    /// The helper is shutting down; nothing more changes the compositor.
+    ShuttingDown,
 }
 
 impl SeatError {
@@ -338,6 +452,8 @@ impl SeatError {
             SeatError::NotApplied => "err share not applied".to_string(),
             SeatError::TimedOut => "err share timed out".to_string(),
             SeatError::TooLong => "err path too long".to_string(),
+            SeatError::NotRestorable => "err user keymap not restorable".to_string(),
+            SeatError::ShuttingDown => "err shutting down".to_string(),
         }
     }
 }
@@ -395,13 +511,181 @@ pub(crate) trait SeatBackend: Send + Sync {
     fn keyboards(&self) -> Result<Vec<Keyboard>, SeatError>;
     /// The compositor's `kb_file` setting, empty when unset.
     fn kb_file(&self) -> Result<String, SeatError>;
+    /// `kb_file`, answered by `deadline`.
+    fn kb_file_by(&self, deadline: Instant) -> Result<String, SeatError>;
     fn switch_group(&self, device: &str, group: u32) -> Result<(), SeatError>;
-    /// Points the compositor's `kb_file` at `path`, or clears it for
-    /// `None`, and verifies the setting by reading it back.
-    fn share(&self, path: Option<&str>) -> Result<(), SeatError>;
+    /// Sets the compositor's `kb_file` to `value` (empty clears it), without
+    /// verifying: `Ok` is the compositor accepting the request.
+    fn write_kb_file(&self, value: &str, deadline: Instant) -> Result<(), SeatError>;
+    /// Reads `kb_file` back until it is `value` or `deadline` passes.
+    fn confirm_kb_file(&self, value: &str, deadline: Instant) -> Result<(), SeatError>;
     /// Starts delivering events to `sink` on threads of the backend's own.
     /// Their failure ends the events, never the helper.
     fn watch(self: std::sync::Arc<Self>, sink: std::sync::Arc<dyn EventSink>);
+}
+
+/// Every change to the compositor's `kb_file` runs under this, so a `share`
+/// from one connection never interleaves with another's, or with the
+/// restore on shutdown. Waiting for it counts against the waiter's own
+/// deadline.
+static KB_FILE_GATE: Mutex<()> = Mutex::new(());
+
+fn gate_by(deadline: Instant) -> Option<std::sync::MutexGuard<'static, ()>> {
+    loop {
+        match KB_FILE_GATE.try_lock() {
+            Ok(guard) => return Some(guard),
+            // A panicked holder changed nothing this waiter relies on: the
+            // gate orders writes, it guards no data.
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => return Some(poisoned.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        }
+    }
+}
+
+/// The whole `share` — waiting for the gate, the capture, the change and
+/// every read-back — finishes inside this. It must stay below the helper's
+/// hold cap (15 s) with the restore's grace added: the connection asking is
+/// the panel's typing connection, and a key it holds is only lifted by the
+/// cap between its lines.
+pub(crate) const SHARE_BOUND: Duration = Duration::from_secs(6);
+/// How far past a failed share's deadline its restore may run.
+pub(crate) const RESTORE_GRACE: Duration = Duration::from_millis(1500);
+/// How long the shutdown restore may take, gate included. It runs after the
+/// key release, never before it.
+pub(crate) const SHUTDOWN_RESTORE_BOUND: Duration = Duration::from_secs(2);
+
+/// Puts `value` back as the compositor's `kb_file`, verified, by `deadline`.
+/// No clear first: the value differs from what the compositor holds, or
+/// setting it is a no-op that leaves it in place either way.
+fn put_back(backend: &dyn SeatBackend, value: &str, deadline: Instant) -> Result<(), SeatError> {
+    backend.write_kb_file(value, deadline)?;
+    backend.confirm_kb_file(value, deadline)
+}
+
+/// `share` as one transaction: the compositor's `kb_file` is captured before
+/// anything changes, changed and read back, and on any failure put back to
+/// what was captured (best effort, inside `deadline` plus `RESTORE_GRACE`).
+/// The compositor is never left empty unless it was empty, or the put-back
+/// itself failed — which is logged.
+///
+/// Taking the compositor over — pointing it at the published keymap — is
+/// refused while it carries a `kb_file` the helper could not put back.
+/// `stopping` is asked between the steps: once shutdown has begun, a share
+/// in flight puts the capture back and ends. `observe` hears every value the
+/// compositor was seen to hold.
+pub(crate) fn share_transaction(
+    backend: &dyn SeatBackend,
+    own: &OwnFiles,
+    path: Option<&str>,
+    deadline: Instant,
+    stopping: &dyn Fn() -> bool,
+    observe: &dyn Fn(&str),
+) -> Result<(), SeatError> {
+    let Some(_gate) = gate_by(deadline) else {
+        return Err(SeatError::TimedOut);
+    };
+    if stopping() {
+        return Err(SeatError::ShuttingDown);
+    }
+    let wanted = path.unwrap_or("");
+    let current = backend.kb_file_by(deadline)?;
+    observe(&current);
+    let captured = own.capture(&current);
+    let taking_over = own.is_published(wanted);
+    if !restorable(&captured) && taking_over {
+        eprintln!(
+            "[oskar] not sharing the keymap: the compositor's kb_file {captured:?} is not an \
+             absolute path, so it could not be put back"
+        );
+        return Err(SeatError::NotRestorable);
+    }
+    let changed = (|| {
+        // Cleared first only when the setting already names the target:
+        // assigning the value it holds is a no-op, and a keymap republished
+        // under the same name has to be re-read or the compositor keeps
+        // compiling the one before it. Any other change is one write, so
+        // there is no moment at which the compositor holds nothing.
+        if !wanted.is_empty() && current == wanted {
+            backend.write_kb_file("", deadline)?;
+            if stopping() {
+                return Err(SeatError::ShuttingDown);
+            }
+        }
+        backend.write_kb_file(wanted, deadline)?;
+        backend.confirm_kb_file(wanted, deadline)
+    })();
+    match changed {
+        Ok(()) => {
+            observe(wanted);
+            Ok(())
+        }
+        Err(error) => {
+            if !restorable(&captured) {
+                eprintln!(
+                    "[oskar] share failed ({}); the previous kb_file {captured:?} cannot be put back",
+                    error.reply()
+                );
+                return Err(error);
+            }
+            let grace = deadline.max(Instant::now()) + RESTORE_GRACE;
+            match put_back(backend, &captured, grace) {
+                Ok(()) => observe(&captured),
+                Err(restore) => eprintln!(
+                    "[oskar] share failed ({}) and putting kb_file back to {captured:?} failed \
+                     too ({})",
+                    error.reply(),
+                    restore.reply()
+                ),
+            }
+            Err(error)
+        }
+    }
+}
+
+/// What the restore on shutdown did.
+#[derive(Debug, PartialEq)]
+pub(crate) enum ShutdownRestore {
+    /// The compositor is not on the published keymap: its setting is
+    /// someone else's (the user's, a reload's) and stays.
+    NotOurs,
+    /// The compositor was on the published keymap and now holds this.
+    Restored(String),
+    /// It could not be read or changed in time.
+    Failed(SeatError),
+}
+
+/// On the helper's own shutdown, after its keys are released: a compositor
+/// still compiling the published keymap is put back to the user's recorded
+/// source, or cleared when none is recorded. The published file dies with
+/// the runtime directory at logout, and a `kb_file` naming it must not
+/// outlive the process that keeps it current.
+pub(crate) fn restore_on_shutdown(
+    backend: &dyn SeatBackend,
+    own: &OwnFiles,
+    deadline: Instant,
+) -> ShutdownRestore {
+    let Some(_gate) = gate_by(deadline) else {
+        return ShutdownRestore::Failed(SeatError::TimedOut);
+    };
+    let current = match backend.kb_file_by(deadline) {
+        Ok(current) => current,
+        Err(error) => return ShutdownRestore::Failed(error),
+    };
+    if !own.is_published(&current) {
+        return ShutdownRestore::NotOurs;
+    }
+    let mut value = own.recorded_source();
+    if !restorable(&value) {
+        eprintln!("[oskar] the recorded kb_file {value:?} is not absolute; clearing instead");
+        value.clear();
+    }
+    match put_back(backend, &value, deadline) {
+        Ok(()) => ShutdownRestore::Restored(value),
+        Err(error) => ShutdownRestore::Failed(error),
+    }
 }
 
 /// xkb's human names for layout codes, the table the panel labels with.
@@ -493,7 +777,7 @@ fn seat_json(
 /// `seat`: one line, `seat<TAB><json>`, or the error that kept it from
 /// being answered. Both compositor reads must succeed — a failed kb_file
 /// read is an error, never an empty value.
-pub(crate) fn seat_reply(backend: Option<&dyn SeatBackend>) -> String {
+pub(crate) fn seat_reply(backend: Option<&dyn SeatBackend>, observe: &dyn Fn(&str)) -> String {
     let Some(backend) = backend else {
         return SeatError::NoBackend.reply();
     };
@@ -505,6 +789,7 @@ pub(crate) fn seat_reply(backend: Option<&dyn SeatBackend>) -> String {
         Ok(kb_file) => kb_file,
         Err(error) => return error.reply(),
     };
+    observe(&kb_file);
     let safe = physical_keyboard_names(Path::new("/sys/class/input"), Path::new("/run/udev/data"));
     let base_lst = std::fs::File::open(BASE_LST)
         .and_then(|file| {
@@ -536,14 +821,23 @@ pub(crate) fn switch_reply(backend: Option<&dyn SeatBackend>, device: &str, grou
 /// compositor's. The path only has to be absolute — a relative one would
 /// resolve against the compositor's working directory — and the
 /// compositor's read-back is the verification.
-pub(crate) fn share_reply(backend: Option<&dyn SeatBackend>, path: Option<&str>) -> String {
+pub(crate) fn share_reply(
+    backend: Option<&dyn SeatBackend>,
+    path: Option<&str>,
+    stopping: &dyn Fn() -> bool,
+    observe: &dyn Fn(&str),
+) -> String {
     let Some(backend) = backend else {
         return SeatError::NoBackend.reply();
     };
     if path.is_some_and(|path| !path.starts_with('/')) {
         return SeatError::NotAbsolute.reply();
     }
-    match backend.share(path) {
+    let Some(own) = OwnFiles::from_env() else {
+        return SeatError::Unreadable.reply();
+    };
+    let deadline = Instant::now() + SHARE_BOUND;
+    match share_transaction(backend, &own, path, deadline, stopping, observe) {
         Ok(()) => "ok".to_string(),
         Err(error) => error.reply(),
     }
@@ -692,7 +986,7 @@ mod tests {
     /// destroy the record.
     #[test]
     fn a_user_source_is_remembered_ours_is_left_and_empty_clears() {
-        match user_source_decision("/home/u/custom.xkb") {
+        match user_source_decision("/home/u/custom.xkb", false) {
             SourceDecision::Remember(path) => {
                 assert_eq!(path, "/home/u/custom.xkb")
             }
@@ -702,18 +996,101 @@ mod tests {
         // is still the user's.
         let lookalike = "/home/u/backups/oskar/keymap.xkb";
         assert!(matches!(
-            user_source_decision(lookalike),
+            user_source_decision(lookalike, false),
             SourceDecision::Remember(_)
         ));
-        assert!(matches!(user_source_decision(""), SourceDecision::Clear));
-        assert!(matches!(user_source_decision("  "), SourceDecision::Clear));
+        assert!(matches!(user_source_decision("", false), SourceDecision::Clear));
+        assert!(matches!(user_source_decision("  ", false), SourceDecision::Clear));
         if let Some(ours) = published_keymap_path() {
             let spelling = ours.to_string_lossy().to_string();
             assert!(matches!(
-                user_source_decision(&spelling),
+                user_source_decision(&spelling, false),
                 SourceDecision::Leave
             ));
         }
+    }
+
+    /// While the compositor compiles the published keymap, the record is
+    /// the only memory of the user's own kb_file — the restore on shutdown
+    /// reads it — so an empty configure in that state leaves it standing.
+    /// A user path still replaces it: that is new knowledge, not a loss.
+    #[test]
+    fn the_record_survives_an_empty_configure_while_the_compositor_is_ours() {
+        assert_eq!(user_source_decision("", true), SourceDecision::Leave);
+        assert_eq!(user_source_decision(" ", true), SourceDecision::Leave);
+        assert_eq!(
+            user_source_decision("/home/u/new.xkb", true),
+            SourceDecision::Remember("/home/u/new.xkb".into())
+        );
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("osk-claim-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::symlink_metadata(path).unwrap().mode() & 0o777
+    }
+
+    /// Startup takes the runtime directory before anything is written into
+    /// it: an absent one is created 0700, a stale socket is unlinked, and a
+    /// live one means another helper — this one refuses.
+    #[test]
+    fn claiming_the_runtime_dir_creates_it_private_and_clears_a_stale_socket() {
+        let runtime = scratch("fresh");
+        let socket = claim_runtime_dir(&runtime).expect("an absent dir is created");
+        assert_eq!(socket, runtime.join("oskar/control.sock"));
+        assert_eq!(mode_of(&runtime.join("oskar")), 0o700);
+
+        // A socket nobody listens on is a crash's leftover.
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        assert!(socket.exists());
+        claim_runtime_dir(&runtime).expect("a stale socket is cleared");
+        assert!(!socket.exists());
+
+        let live = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let refused = claim_runtime_dir(&runtime).unwrap_err();
+        assert!(refused.contains("another daemon"), "{refused}");
+        assert!(socket.exists(), "a live helper's socket is left alone");
+        drop(live);
+        let _ = std::fs::remove_dir_all(runtime);
+    }
+
+    /// Anything at the socket path that is not a socket is not the helper's
+    /// to remove; an existing directory is judged, never re-moded.
+    #[test]
+    fn claiming_refuses_a_foreign_file_and_a_loose_dir_and_changes_neither() {
+        use std::os::unix::fs::PermissionsExt;
+        let runtime = scratch("foreign");
+        let dir = runtime.join("oskar");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(dir.join("control.sock"), "not a socket").unwrap();
+        let refused = claim_runtime_dir(&runtime).unwrap_err();
+        assert!(refused.contains("is not a socket"), "{refused}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("control.sock")).unwrap(),
+            "not a socket"
+        );
+        std::fs::remove_file(dir.join("control.sock")).unwrap();
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o750)).unwrap();
+        let refused = claim_runtime_dir(&runtime).unwrap_err();
+        assert!(refused.contains("mode 750"), "{refused}");
+        assert_eq!(mode_of(&dir), 0o750, "an existing directory is never re-moded");
+
+        std::fs::remove_dir(&dir).unwrap();
+        let elsewhere = scratch("elsewhere");
+        std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &dir).unwrap();
+        let refused = claim_runtime_dir(&runtime).unwrap_err();
+        assert!(refused.contains("symlink"), "{refused}");
+        let _ = std::fs::remove_dir_all(runtime);
+        let _ = std::fs::remove_dir_all(elsewhere);
     }
 
     /// The sidecar sits beside the published keymap — the one
@@ -766,7 +1143,7 @@ mod tests {
     struct FakeSeat {
         keyboards: Result<Vec<Keyboard>, SeatError>,
         kb_file: Result<String, SeatError>,
-        shared: std::sync::Mutex<Vec<Option<String>>>,
+        shared: std::sync::Mutex<Vec<String>>,
     }
 
     impl SeatBackend for FakeSeat {
@@ -783,8 +1160,14 @@ mod tests {
                 Err(SeatError::Refused("device not found".into()))
             }
         }
-        fn share(&self, path: Option<&str>) -> Result<(), SeatError> {
-            self.shared.lock().unwrap().push(path.map(str::to_string));
+        fn kb_file_by(&self, _deadline: Instant) -> Result<String, SeatError> {
+            self.kb_file.clone()
+        }
+        fn write_kb_file(&self, value: &str, _deadline: Instant) -> Result<(), SeatError> {
+            self.shared.lock().unwrap().push(value.to_string());
+            Ok(())
+        }
+        fn confirm_kb_file(&self, _value: &str, _deadline: Instant) -> Result<(), SeatError> {
             Ok(())
         }
         fn watch(self: std::sync::Arc<Self>, _sink: std::sync::Arc<dyn EventSink>) {}
@@ -853,9 +1236,11 @@ mod tests {
 
     #[test]
     fn the_seat_verbs_answer_one_line_each_way() {
-        assert_eq!(seat_reply(None), "err no seat backend");
+        let never = || false;
+        let ignore = |_: &str| {};
+        assert_eq!(seat_reply(None, &ignore), "err no seat backend");
         assert_eq!(switch_reply(None, "kbd", 1), "err no seat backend");
-        assert_eq!(share_reply(None, None), "err no seat backend");
+        assert_eq!(share_reply(None, None, &never, &ignore), "err no seat backend");
 
         let good = fake(
             Ok(vec![Keyboard {
@@ -865,7 +1250,9 @@ mod tests {
             }]),
             Ok(String::new()),
         );
-        let reply = seat_reply(Some(&good));
+        let seen = std::sync::Mutex::new(Vec::new());
+        let reply = seat_reply(Some(&good), &|kb: &str| seen.lock().unwrap().push(kb.to_string()));
+        assert_eq!(*seen.lock().unwrap(), [String::new()], "the kb_file read is observed");
         assert!(reply.starts_with("seat\t{\"keyboards\":[{\"name\":\"kbd\""), "{reply}");
         assert!(!reply.contains('\n'));
         assert_eq!(switch_reply(Some(&good), "kbd", 1), "ok");
@@ -876,25 +1263,31 @@ mod tests {
 
         // A failed read of either half is an error, never a partial answer.
         let blind = fake(Err(SeatError::Unreadable), Ok(String::new()));
-        assert_eq!(seat_reply(Some(&blind)), "err seat unreadable");
+        assert_eq!(seat_reply(Some(&blind), &ignore), "err seat unreadable");
         let no_kb_file = fake(Ok(vec![]), Err(SeatError::Unreachable));
-        assert_eq!(seat_reply(Some(&no_kb_file)), "err seat unreachable");
+        assert_eq!(seat_reply(Some(&no_kb_file), &ignore), "err seat unreachable");
 
         // share: a relative path is refused before the compositor is asked;
         // an absolute one goes through whether or not the helper's own
         // namespace can see it (the compositor's read-back decides).
         for relative in ["keymap.xkb", "./keymap.xkb", "~/keymap.xkb", " /x"] {
             assert_eq!(
-                share_reply(Some(&good), Some(relative)),
+                share_reply(Some(&good), Some(relative), &never, &ignore),
                 "err share path must be absolute"
             );
         }
-        assert_eq!(share_reply(Some(&good), Some("/tmp/only-the-compositor-sees-this.xkb")), "ok");
-        assert_eq!(share_reply(Some(&good), None), "ok");
+        assert_eq!(
+            share_reply(Some(&good), Some("/tmp/only-the-compositor-sees-this.xkb"), &never, &ignore),
+            "ok"
+        );
+        assert_eq!(share_reply(Some(&good), None, &never, &ignore), "ok");
         assert_eq!(
             *good.shared.lock().unwrap(),
-            [Some("/tmp/only-the-compositor-sees-this.xkb".to_string()), None]
+            ["/tmp/only-the-compositor-sees-this.xkb".to_string(), String::new()]
         );
+        // Once shutdown has begun nothing more changes the compositor.
+        assert_eq!(share_reply(Some(&good), None, &|| true, &ignore), "err shutting down");
+        assert_eq!(good.shared.lock().unwrap().len(), 2);
     }
 
     #[test]
@@ -908,6 +1301,8 @@ mod tests {
             SeatError::NotApplied,
             SeatError::TimedOut,
             SeatError::TooLong,
+            SeatError::NotRestorable,
+            SeatError::ShuttingDown,
         ] {
             let reply = error.reply();
             assert!(reply.starts_with("err "), "{reply}");

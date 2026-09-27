@@ -579,11 +579,13 @@ Item {
         if (next.start) startShareRun()
     }
 
-    /// One run: the helper clears the compositor's kb_file, sets it to the
-    /// published keymap and reads it back, all inside its own deadline —
-    /// clear-then-set because assigning the same path again is a no-op,
-    /// and a republished file under the same name has to be re-read or the
-    /// compositor keeps compiling the keymap before this one. The path
+    /// One run: the helper reads the compositor's kb_file, sets it to the
+    /// published keymap and reads it back, all inside its own deadline,
+    /// and puts the value it read back if anything fails. It clears first
+    /// only when the setting already names the path: assigning the same
+    /// path again is a no-op, and a republished file under the same name
+    /// has to be re-read or the compositor keeps compiling the keymap
+    /// before this one. The path
     /// comes from the same normalizing builder the identity comparison
     /// uses (Session.publishedKeymapPath), so what is SET and what is
     /// compared as "ours" cannot drift apart over an environment spelling,
@@ -641,6 +643,27 @@ Item {
             root.shareAttempts = 0
             console.warn("[oskar] the published keymap is not shared: the"
                 + " helper has no seat backend")
+            return
+        }
+        if (reply === "err shutting down") {
+            // The helper is on its way out and has put the user's kb_file
+            // back itself; the connection reset that follows clears the
+            // scheduler for the helper that replaces it. No retry, no hint.
+            root.shareAttempts = 0
+            console.log("[oskar] the helper is shutting down; the share waits for the next one")
+            return
+        }
+        if (reply === "err user keymap not restorable") {
+            // The compositor carries a kb_file the helper could not put
+            // back, so it will not take it over: retrying cannot change
+            // that, and typing is unaffected (the helper's own device
+            // types). Said at once, where the user sees it.
+            root.shareAttempts = 0
+            root.shareQueue = ShareQueue.runAbandoned(root.shareQueue)
+            console.warn("[oskar] the published keymap is not shared: the"
+                + " compositor's kb_file is not an absolute path, and the helper"
+                + " would not be able to put it back")
+            keymapShareGivenUp()
             return
         }
         // Retried, then said out loud, because a seat left with two keymaps

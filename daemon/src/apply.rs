@@ -1,13 +1,12 @@
 //! Commands applied to the device, and every path that lifts a held key.
 
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use wayland_client::Connection;
 
 use crate::keymap::{compile_keymap_with, hash_bytes, read_kb_file_bounded};
 use crate::protocol::{caps_reply, keycap_facts_for_groups, Command, Key};
-use crate::seat::{persist_user_source, published_keymap_path, user_source_decision, SourceDecision};
+use crate::seat::{persist_user_source, user_source_decision, OwnFiles, SourceDecision};
 use crate::state::{stamp, Hold, Shared, SharedRef};
 
 /// How long a non-modifier code may stay held before the helper lifts it.
@@ -197,14 +196,13 @@ fn apply_locked(
         // a refused configure is evidence of what the user had configured,
         // and the recovery read happens on a shell that no longer has the
         // value anywhere else.
-        if let Some(published) = published_keymap_path() {
-            let dir = published
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| Path::new(".").to_path_buf());
-            let outcome = match user_source_decision(&config.kb_file) {
-                SourceDecision::Remember(path) => persist_user_source(&dir, Some(&path)),
-                SourceDecision::Clear => persist_user_source(&dir, None),
+        if let Some(own) = OwnFiles::from_env() {
+            let dir = own.dir();
+            let decision =
+                user_source_decision(&config.kb_file, shared.compositor_on_published);
+            let outcome = match decision {
+                SourceDecision::Remember(path) => persist_user_source(dir, Some(&path)),
+                SourceDecision::Clear => persist_user_source(dir, None),
                 SourceDecision::Leave => Ok(()),
             };
             if let Err(error) = outcome {

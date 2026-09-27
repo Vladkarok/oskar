@@ -663,6 +663,35 @@ QtObject {
             T.equal(opsNamed(other.actions, "shareFinished").length, 0)
         })
 
+        T.test("the helper's new refusals are the seat's, never the typing gate's", function () {
+            // A share the helper would not make over a kb_file it could not
+            // put back: the run's verdict, the gate stands.
+            var sh = panelSends(readyAt(3), "share\t/run/user/1000/oskar/keymap.xkb")
+            var notRestorable = feed(sh, ["err user keymap not restorable"])
+            T.deepEqual(opsNamed(notRestorable.actions, "shareFinished"),
+                [{ op: "shareFinished", ok: false, reply: "err user keymap not restorable" }])
+            T.equal(notRestorable.state.inputReady, true)
+            // A helper shutting down refuses every seat verb the same way.
+            var down = feed(sh, ["err shutting down"])
+            T.deepEqual(opsNamed(down.actions, "shareFinished"),
+                [{ op: "shareFinished", ok: false, reply: "err shutting down" }])
+            T.equal(down.state.inputReady, true)
+            var seat = feed(panelSends(with_(readyAt(3), { seatAsk: "asked" }), "seat"),
+                ["err shutting down"])
+            T.equal(seat.state.inputReady, true)
+            T.equal(seat.state.seatAsk, "idle")
+            T.equal(opsNamed(seat.actions, "seatFacts").length, 0)
+            var sw = feed(panelSends(readyAt(3), "switch\tkbd\t1"), ["err shutting down"])
+            T.equal(sw.state.inputReady, true)
+            var ev = feed(panelSends(readyAt(3), "events on"), ["err shutting down"])
+            T.equal(ev.state.inputReady, true)
+            T.equal(opsNamed(ev.actions, "seatUnavailable").length, 0)
+            // Unattributed, the share refusal is still the seat's.
+            var loose = feed(readyAt(3), ["err user keymap not restorable"])
+            T.equal(loose.state.inputReady, true)
+            T.equal(opsNamed(loose.actions, "warn").length, 1)
+        })
+
         T.test("a misaligned seat-verb slot never swallows a content-named reply", function () {
             // A stale `seat` slot at the head of the queue: whatever pops
             // it, a reply that names what it answers is routed by its text.

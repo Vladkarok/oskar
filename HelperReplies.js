@@ -93,11 +93,15 @@ var STATE_KEYS = [
 /// The refusals a seat verb (`seat`, `switch`, `share`, `events`) can earn:
 /// the seat's own words, plus the two any line can earn before or outside
 /// the negotiated command set. Anything else under a seat verb's slot is a
-/// reply that belongs to another arm.
+/// reply that belongs to another arm. `err shutting down` is the helper on
+/// its way out (the connection drop follows); `err user keymap not
+/// restorable` is a share the helper would not make over a kb_file it
+/// could not put back — neither is about typing.
 function isSeatRefusal(reply) {
     return reply === "err no seat backend" || reply.indexOf("err seat ") === 0
         || reply.indexOf("err share ") === 0 || reply === "err path too long"
         || reply === "err hello first" || reply === "err unknown command"
+        || reply === "err shutting down" || reply === "err user keymap not restorable"
 }
 
 /// Whether a line is a pushed event rather than a reply. Events take no
@@ -619,7 +623,8 @@ function errReply(p, reply, verb) {
     } else if (reply === "err cannot configure keymap") {
         cannotConfigure(p)
     } else if (reply === "err no seat backend" || reply.indexOf("err seat ") === 0
-            || reply.indexOf("err share ") === 0 || reply === "err path too long") {
+            || reply.indexOf("err share ") === 0 || reply === "err path too long"
+            || reply === "err user keymap not restorable") {
         // A seat verb's refusal the FIFO could not attribute (the verb
         // arms above take the attributed ones). These words answer only
         // the seat verbs, so it is the seat's business whatever answered

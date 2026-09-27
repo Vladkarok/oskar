@@ -34,11 +34,6 @@ const MAX_EVENT_LINE: usize = 64 * 1024;
 /// apart: the setting is applied on the compositor's own loop.
 const READBACK_TRIES: u32 = 10;
 const READBACK_GAP: Duration = Duration::from_millis(50);
-/// The whole `share` — clear, set and every read-back — finishes inside
-/// this. It must stay below the helper's hold cap (15 s): the connection
-/// asking is the panel's typing connection, and a key it holds is only
-/// lifted by the cap between its lines.
-const SHARE_BOUND: Duration = Duration::from_secs(6);
 
 pub(crate) struct Hyprland {
     socket1: PathBuf,
@@ -136,53 +131,14 @@ impl Hyprland {
         }
     }
 
-    /// `share` against one absolute deadline over every step. A step that
-    /// fails because the deadline ran out answers `TimedOut`, whatever the
+    /// A step that failed for want of time answers `TimedOut`, whatever the
     /// step was.
-    fn share_by(&self, path: Option<&str>, deadline: Instant) -> Result<(), SeatError> {
-        let timed = |result: Result<(), SeatError>| match result {
+    fn timed<T>(result: Result<T, SeatError>, deadline: Instant) -> Result<T, SeatError> {
+        match result {
             Err(SeatError::Unreachable) if Instant::now() >= deadline => Err(SeatError::TimedOut),
             other => other,
-        };
-        // Cleared and then set, never just set: assigning the value the
-        // setting already holds is a no-op, and a keymap republished under
-        // the same name has to be re-read, or the compositor keeps compiling
-        // the one before it. `eval`, not `keyword`: the Lua config parser
-        // refuses `keyword` outright.
-        let set = path.map(kb_file_eval);
-        if set.as_ref().is_some_and(|body| body.len() > MAX_REQUEST) {
-            return Err(SeatError::TooLong);
         }
-        timed(self.command_by(&kb_file_eval(""), deadline))?;
-        if let Some(set) = set {
-            timed(self.command_by(&set, deadline))?;
-        }
-        // Read back rather than trust: `eval` answers `ok` for a call the
-        // parser accepted, which is not the value being in place.
-        let wanted = path.unwrap_or("");
-        let mut last = Err(SeatError::NotApplied);
-        for attempt in 0..READBACK_TRIES {
-            if attempt > 0 {
-                if deadline.saturating_duration_since(Instant::now()) <= READBACK_GAP {
-                    return Err(SeatError::TimedOut);
-                }
-                thread::sleep(READBACK_GAP);
-            }
-            let read = self
-                .request_by("j/getoption input:kb_file", deadline)
-                .and_then(|text| parse_kb_file(&text));
-            last = match read {
-                Ok(actual) if actual == wanted => return Ok(()),
-                Ok(_) => Err(SeatError::NotApplied),
-                Err(error) => timed(Err(error)),
-            };
-            if last == Err(SeatError::TimedOut) {
-                break;
-            }
-        }
-        last
     }
-
     /// Reads the event stream until it ends; `Err` only for a stream that
     /// could not be opened at all. `resumed` says an earlier stream ended:
     /// whatever it carried in between is lost, so listeners are told to
@@ -258,6 +214,11 @@ impl SeatBackend for Hyprland {
         parse_kb_file(&self.request("j/getoption input:kb_file")?)
     }
 
+    fn kb_file_by(&self, deadline: Instant) -> Result<String, SeatError> {
+        Self::timed(self.request_by("j/getoption input:kb_file", deadline), deadline)
+            .and_then(|text| parse_kb_file(&text))
+    }
+
     fn switch_group(&self, device: &str, group: u32) -> Result<(), SeatError> {
         // The request is space-separated on the compositor's side, so a
         // name with whitespace would address some other device.
@@ -267,8 +228,37 @@ impl SeatBackend for Hyprland {
         self.command(&format!("/switchxkblayout {device} {group}"))
     }
 
-    fn share(&self, path: Option<&str>) -> Result<(), SeatError> {
-        self.share_by(path, Instant::now() + SHARE_BOUND)
+    fn write_kb_file(&self, value: &str, deadline: Instant) -> Result<(), SeatError> {
+        // `eval`, not `keyword`: the Lua config parser refuses `keyword`
+        // outright.
+        let body = kb_file_eval(value);
+        if body.len() > MAX_REQUEST {
+            return Err(SeatError::TooLong);
+        }
+        Self::timed(self.command_by(&body, deadline), deadline)
+    }
+
+    fn confirm_kb_file(&self, value: &str, deadline: Instant) -> Result<(), SeatError> {
+        // Read back rather than trust: `eval` answers `ok` for a call the
+        // parser accepted, which is not the value being in place.
+        let mut last = Err(SeatError::NotApplied);
+        for attempt in 0..READBACK_TRIES {
+            if attempt > 0 {
+                if deadline.saturating_duration_since(Instant::now()) <= READBACK_GAP {
+                    return Err(SeatError::TimedOut);
+                }
+                thread::sleep(READBACK_GAP);
+            }
+            last = match self.kb_file_by(deadline) {
+                Ok(actual) if actual == value => return Ok(()),
+                Ok(_) => Err(SeatError::NotApplied),
+                Err(error) => Err(error),
+            };
+            if last == Err(SeatError::TimedOut) {
+                break;
+            }
+        }
+        last
     }
 
     fn watch(self: Arc<Self>, sink: Arc<dyn EventSink>) {
@@ -539,6 +529,10 @@ fn connect_nonblocking(path: &Path) -> std::io::Result<UnixStream> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::seat::{
+        restore_on_shutdown, share_transaction, OwnFiles, ShutdownRestore, RESTORE_GRACE,
+        SHARE_BOUND, SHUTDOWN_RESTORE_BOUND,
+    };
     use std::os::unix::net::UnixListener;
     use std::sync::Mutex;
 
@@ -788,39 +782,91 @@ mod tests {
         (Hyprland::at(&dir), asked, dir)
     }
 
-    #[test]
-    fn share_clears_sets_and_reads_back_through_socket1() {
-        let current = Arc::new(Mutex::new(String::from("[[EMPTY]]")));
+    type Asked = Arc<Mutex<Vec<String>>>;
+
+    /// A compositor holding one `kb_file` value: `eval` sets it (unless
+    /// `refuse` says otherwise for that value — `Some(reply)` answers the
+    /// eval with `reply` and changes nothing, or `"<drop>"` accepts it and
+    /// leaves the setting empty), `getoption` reads it.
+    fn stateful_compositor(
+        tag: &str,
+        initial: &str,
+        refuse: impl Fn(&str) -> Option<String> + Send + 'static,
+    ) -> (Hyprland, Asked, PathBuf, Arc<Mutex<String>>) {
+        let current = Arc::new(Mutex::new(initial.to_string()));
         let state = Arc::clone(&current);
-        let (hyprland, asked, dir) = fake_compositor("share", move |request| {
+        let (hyprland, asked, dir) = fake_compositor(tag, move |request| {
             if let Some(lua) = request.strip_prefix("/eval hl.config({input = {kb_file = ") {
                 let literal = lua.strip_suffix("}})").unwrap();
                 let value = String::from_utf8(lua_unquote(literal)).unwrap();
-                *state.lock().unwrap() = if value.is_empty() { "[[EMPTY]]".into() } else { value };
-                "ok".to_string()
+                match refuse(&value).as_deref() {
+                    Some("<drop>") => {
+                        state.lock().unwrap().clear();
+                        "ok".to_string()
+                    }
+                    Some(reply) => reply.to_string(),
+                    None => {
+                        *state.lock().unwrap() = value;
+                        "ok".to_string()
+                    }
+                }
             } else if request == "j/getoption input:kb_file" {
+                let value = state.lock().unwrap().clone();
+                let value = if value.is_empty() { "[[EMPTY]]".to_string() } else { value };
                 format!("{{\"option\": \"input:kb_file\", \"str\": {}, \"set\": true }}",
-                    json::quote(&state.lock().unwrap()))
+                    json::quote(&value))
             } else {
                 "unknown request".to_string()
             }
         });
+        (hyprland, asked, dir, current)
+    }
+
+    /// The helper's own files in a scratch directory, never the session's.
+    fn own_files(tag: &str, record: Option<&str>) -> (OwnFiles, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("osk-own-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::seat::persist_user_source(&dir, record).unwrap();
+        (OwnFiles::in_dir(&dir), dir)
+    }
+
+    fn share(
+        backend: &Hyprland,
+        own: &OwnFiles,
+        path: Option<&str>,
+        bound: Duration,
+    ) -> Result<(), SeatError> {
+        share_transaction(backend, own, path, Instant::now() + bound, &|| false, &|_| {})
+    }
+
+    #[test]
+    fn share_captures_then_sets_and_reads_back_through_socket1() {
+        let (hyprland, asked, dir, _) = stateful_compositor("share", "", |_| None);
+        let (own, own_dir) = own_files("share", None);
         let path = "/run/user/1000/oskar/it's keymap.xkb";
-        assert_eq!(hyprland.share(Some(path)), Ok(()));
+        assert_eq!(share(&hyprland, &own, Some(path), SHARE_BOUND), Ok(()));
         assert_eq!(hyprland.kb_file(), Ok(path.to_string()));
+        // Read first, then one write: a change to a different value never
+        // passes through an empty kb_file.
         assert_eq!(
             asked.lock().unwrap()[..3],
             [
-                "/eval hl.config({input = {kb_file = ''}})".to_string(),
+                "j/getoption input:kb_file".to_string(),
                 format!("/eval hl.config({{input = {{kb_file = {}}}}})", lua_quote(path)),
                 "j/getoption input:kb_file".to_string(),
             ]
         );
+        // The same value again is a republish: cleared, then set.
         asked.lock().unwrap().clear();
-        assert_eq!(hyprland.share(None), Ok(()));
+        assert_eq!(share(&hyprland, &own, Some(path), SHARE_BOUND), Ok(()));
+        assert_eq!(asked.lock().unwrap()[1], "/eval hl.config({input = {kb_file = ''}})");
+        asked.lock().unwrap().clear();
+        assert_eq!(share(&hyprland, &own, None, SHARE_BOUND), Ok(()));
         assert_eq!(hyprland.kb_file(), Ok(String::new()));
-        assert_eq!(asked.lock().unwrap()[0], "/eval hl.config({input = {kb_file = ''}})");
+        assert_eq!(asked.lock().unwrap()[1], "/eval hl.config({input = {kb_file = ''}})");
         let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
     }
 
     #[test]
@@ -834,11 +880,12 @@ mod tests {
                 "{\"str\": \"/somewhere/else\"}".to_string()
             }
         });
+        let (own, own_dir) = own_files("refuse", None);
         assert_eq!(
             refusing.switch_group("nope", 1),
             Err(SeatError::Refused("device not found".into()))
         );
-        assert!(matches!(refusing.share(Some("/x")), Err(SeatError::Refused(_))));
+        assert!(matches!(share(&refusing, &own, Some("/x"), SHARE_BOUND), Err(SeatError::Refused(_))));
         assert_eq!(
             refusing.switch_group("two words", 1),
             Err(SeatError::Refused("device name".into()))
@@ -852,15 +899,130 @@ mod tests {
                 "{\"str\": \"/somewhere/else\"}".to_string()
             }
         });
-        assert_eq!(stale.share(Some("/x")), Err(SeatError::NotApplied));
+        assert_eq!(share(&stale, &own, Some("/x"), SHARE_BOUND), Err(SeatError::NotApplied));
         let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
+    }
+
+    /// A share whose change does not land puts the captured value back:
+    /// the compositor accepts the published path but reads back empty, and
+    /// the user's own file is what it holds when the share answers.
+    #[test]
+    fn a_failed_share_puts_the_captured_kb_file_back() {
+        let (own, own_dir) = own_files("putback", None);
+        let published = own.dir().join("keymap.xkb").to_string_lossy().to_string();
+        let target = published.clone();
+        let (hyprland, _, dir, current) = stateful_compositor("putback", "/home/u/custom.xkb",
+            move |value| (value == target).then(|| "<drop>".to_string()));
+        assert_eq!(
+            share(&hyprland, &own, Some(&published), Duration::from_millis(1200)),
+            Err(SeatError::NotApplied)
+        );
+        assert_eq!(*current.lock().unwrap(), "/home/u/custom.xkb");
+        let _ = std::fs::remove_dir_all(dir);
+
+        // A republish: the compositor is on the published keymap, the clear
+        // lands and the set is refused. The capture is the recorded user
+        // source, and that is what the compositor holds afterwards — never
+        // the empty value the clear left.
+        let _ = std::fs::remove_dir_all(&own_dir);
+        let (own, own_dir) = own_files("putback", Some("/home/u/custom.xkb"));
+        let target = published.clone();
+        let (hyprland, _, dir, current) = stateful_compositor("republish", &published,
+            move |value| (value == target).then(|| "error: busy".to_string()));
+        assert!(matches!(
+            share(&hyprland, &own, Some(&published), SHARE_BOUND),
+            Err(SeatError::Refused(_))
+        ));
+        assert_eq!(*current.lock().unwrap(), "/home/u/custom.xkb");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
+    }
+
+    /// Shutdown beginning between the clear and the set ends the share
+    /// with the capture put back, not with the compositor left empty.
+    #[test]
+    fn a_share_interrupted_by_shutdown_puts_the_capture_back() {
+        let (own, own_dir) = own_files("stop", Some("/home/u/custom.xkb"));
+        let published = own.dir().join("keymap.xkb").to_string_lossy().to_string();
+        let (hyprland, _, dir, current) = stateful_compositor("stop", &published, |_| None);
+        let asked = std::sync::atomic::AtomicU32::new(0);
+        // The first ask is before anything changes; the second is after
+        // the clear.
+        let stopping = || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 1;
+        assert_eq!(
+            share_transaction(&hyprland, &own, Some(&published),
+                Instant::now() + SHARE_BOUND, &stopping, &|_| {}),
+            Err(SeatError::ShuttingDown)
+        );
+        // The capture of the published keymap is the recorded source.
+        assert_eq!(*current.lock().unwrap(), "/home/u/custom.xkb");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
+    }
+
+    /// A relative kb_file cannot be put back faithfully, so the helper does
+    /// not take the compositor over from it: nothing is written.
+    #[test]
+    fn share_refuses_to_take_over_an_unrestorable_kb_file() {
+        let (own, own_dir) = own_files("relative", None);
+        let published = own.dir().join("keymap.xkb").to_string_lossy().to_string();
+        let (hyprland, asked, dir, current) =
+            stateful_compositor("relative", "keymaps/mine.xkb", |_| None);
+        assert_eq!(
+            share(&hyprland, &own, Some(&published), SHARE_BOUND),
+            Err(SeatError::NotRestorable)
+        );
+        assert_eq!(SeatError::NotRestorable.reply(), "err user keymap not restorable");
+        assert_eq!(*current.lock().unwrap(), "keymaps/mine.xkb");
+        assert!(asked.lock().unwrap().iter().all(|request| !request.starts_with("/eval")));
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
+    }
+
+    #[test]
+    fn shutdown_restores_the_recorded_source_or_clears() {
+        let (own, own_dir) = own_files("down", Some("/home/u/custom.xkb"));
+        let published = own.dir().join("keymap.xkb").to_string_lossy().to_string();
+        let (hyprland, _, dir, current) = stateful_compositor("down", &published, |_| None);
+        assert_eq!(
+            restore_on_shutdown(&hyprland, &own, Instant::now() + SHUTDOWN_RESTORE_BOUND),
+            ShutdownRestore::Restored("/home/u/custom.xkb".into())
+        );
+        assert_eq!(*current.lock().unwrap(), "/home/u/custom.xkb");
+        let _ = std::fs::remove_dir_all(dir);
+
+        crate::seat::persist_user_source(own.dir(), None).unwrap();
+        let (hyprland, _, dir, current) = stateful_compositor("down-clear", &published, |_| None);
+        assert_eq!(
+            restore_on_shutdown(&hyprland, &own, Instant::now() + SHUTDOWN_RESTORE_BOUND),
+            ShutdownRestore::Restored(String::new())
+        );
+        assert_eq!(*current.lock().unwrap(), "");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
+    }
+
+    #[test]
+    fn shutdown_leaves_a_kb_file_that_is_not_ours() {
+        let (own, own_dir) = own_files("foreign", Some("/home/u/custom.xkb"));
+        let (hyprland, asked, dir, current) =
+            stateful_compositor("foreign", "/home/u/other.xkb", |_| None);
+        assert_eq!(
+            restore_on_shutdown(&hyprland, &own, Instant::now() + SHUTDOWN_RESTORE_BOUND),
+            ShutdownRestore::NotOurs
+        );
+        assert_eq!(*current.lock().unwrap(), "/home/u/other.xkb");
+        assert!(asked.lock().unwrap().iter().all(|request| !request.starts_with("/eval")));
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
     }
 
     #[test]
     fn share_answers_timed_out_inside_one_deadline() {
-        // The evals answer at once; every read-back is left hanging past
-        // the per-request bound. Without one deadline over the whole share
-        // this would take ten read-backs of two seconds each.
+        // The evals answer at once; every read is left hanging past the
+        // per-request bound. Without one deadline over the whole share this
+        // would take ten read-backs of two seconds each.
         let (wedged, _, dir) = fake_compositor("wedged", |request| {
             if request.starts_with("/eval") {
                 "ok".to_string()
@@ -869,14 +1031,17 @@ mod tests {
                 String::new()
             }
         });
+        let (own, own_dir) = own_files("wedged", None);
         let started = Instant::now();
         let bound = Duration::from_millis(1500);
-        assert_eq!(wedged.share_by(Some("/x"), started + bound), Err(SeatError::TimedOut));
+        assert_eq!(share(&wedged, &own, Some("/x"), bound), Err(SeatError::TimedOut));
         assert!(started.elapsed() < bound + Duration::from_millis(300), "{:?}", started.elapsed());
         assert_eq!(SeatError::TimedOut.reply(), "err share timed out");
-        // The shipped bound sits below the hold cap.
-        assert!(SHARE_BOUND < Duration::from_secs(15));
+        // The shipped bound, with the restore's grace, sits below the hold
+        // cap.
+        assert!(SHARE_BOUND + RESTORE_GRACE < Duration::from_secs(15));
         let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
     }
 
     #[test]
