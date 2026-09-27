@@ -51,7 +51,7 @@ OURS = re.compile(
     r"(Panel|Keyboard|HelperLink|PasteChords|PrivateSaves|EmojiDelivery|HoldMenu|DragLine|BarWidget|Theme|HoverTooltip|KeyClickSound|CursorPolicy|SettingsLayer"
     r"|Settings\w*|EmojiPage|EmojiCatalog|LanguageControl|HoldColumn"
     r"|LayoutDevices|ModifierReducer|KeyboardSession|ClipboardPaste|Config|HelperReplies"
-    r"|TextGlyphs|UiStrings|ShareQueue|SocketWatch|SettleGuard|Dwell"
+    r"|TextGlyphs|UiStrings|ShareQueue|SocketWatch|SettleGuard|Dwell|GapsNudge"
     r"|InputProfile|SettingsPlacement)\.(qml|js)")
 OURS_LINE = re.compile(r"oskar")
 GRANDFATHERED = "Cannot anchor to an item that isn't a parent or sibling"

@@ -6,6 +6,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "ClipboardPaste.js" as ClipboardPaste
+import "GapsNudge.js" as GapsNudge
 import "PasteFlow.js" as PasteFlow
 import "Config.js" as ConfigFile
 import "EmojiPage.js" as EmojiGrid
@@ -975,21 +976,19 @@ Item {
     // height) and NEW tiled windows respect it, but Hyprland does not
     // relayout the windows that were tiled while the panel was closed —
     // their bottoms stay behind the strip until something else forces a
-    // layout. One config keyword write forces it. The value is read, set
-    // one above, and restored on the next tick: at a gap setting of 0
-    // the visible cost is a one-frame one-pixel gap.
+    // layout. One config keyword write forces it: GapsNudge.js reads
+    // general:gaps_out in whatever form Hyprland answers, moves one number
+    // by one, and the restore on the next tick writes the exact original
+    // text back. An answer it does not understand writes nothing.
     //
-    // Review-hardened: a nudge arriving while the chain is busy is skipped
-    // (a second read in the +1 window would capture the nudged value and
-    // strand it for the session), and a read that does not parse aborts
-    // the whole chain — a failed probe must not write anything, or it
-    // would clobber a nonzero user setting with 0.
+    // One chain at a time: a nudge arriving while the chain is busy is
+    // QUEUED and re-runs from the chain's end (a rapid open-close-open
+    // must not leave tiled windows under the strip), never started in the
+    // +1 window, where its read would capture the nudged value as the
+    // original.
     property bool relayoutBusy: false
-    // A nudge that arrived mid-chain is QUEUED, not dropped (the
-    // cold-audit's finding: a rapid open-close-open left the zone-add
-    // nudge skipped and tiled windows under the strip until the next
-    // toggle): the chain re-runs from its own restore exit.
     property bool relayoutPending: false
+    property var relayoutNudge: GapsNudge.initial()
     Timer {
         id: relayoutKickoff
         interval: 150
@@ -998,52 +997,50 @@ Item {
     }
     Process {
         id: relayoutProbe
-        property int value: 0
         command: ["hyprctl", "getoption", "-j", "general:gaps_out"]
         stdout: StdioCollector {
             waitForEnd: true
-            onStreamFinished: {
-                try {
-                    relayoutProbe.value = JSON.parse(this.text).int || 0
-                } catch (error) {
-                    root.relayoutBusy = false
-                    console.warn("[oskar] cannot read gaps_out; no relayout nudge")
-                    return
-                }
-                // A fresh cycle: this write is the +1 nudge, the next is
-                // the restore (flag armed in relayoutSet.onExited).
-                relayoutSet.restoring = false
-                relayoutSet.command = ["hyprctl", "keyword", "general:gaps_out",
-                    String(relayoutProbe.value + 1)]
-                relayoutSet.running = true
-            }
+            onStreamFinished: root.runRelayoutStep(GapsNudge.start(this.text))
         }
     }
     Process {
         id: relayoutSet
-        property bool restoring: false
         command: []
-        onExited: {
-            if (!restoring) {
-                restoring = true
-                relayoutRestore.restart()
-            } else {
-                root.relayoutBusy = false
-                if (root.relayoutPending) {
-                    root.relayoutPending = false
-                    nudgeHyprlandRelayout()
-                }
-            }
+        stdout: StdioCollector {
+            id: relayoutSetOut
+            waitForEnd: true
+        }
+        // The collector's streamFinished lands before exited, so its text
+        // is this write's answer.
+        onExited: function (exitCode) {
+            root.runRelayoutStep(GapsNudge.written(root.relayoutNudge,
+                GapsNudge.writeLanded(exitCode, relayoutSetOut.text)))
         }
     }
     Timer {
         id: relayoutRestore
         interval: 60
         repeat: false
-        onTriggered: () => {
-            relayoutSet.command = ["hyprctl", "keyword", "general:gaps_out",
-                String(relayoutProbe.value)]
+        onTriggered: root.runRelayoutStep(GapsNudge.restoreDue(root.relayoutNudge))
+    }
+    function runRelayoutStep(step) {
+        root.relayoutNudge = step.state
+        if (step.log) {
+            if (step.log.level === "error") console.error(step.log.text)
+            else if (step.log.level === "warn") console.warn(step.log.text)
+            else console.log(step.log.text)
+        }
+        if (step.action === "write") {
+            relayoutSet.command = ["hyprctl", "keyword", "general:gaps_out", step.value]
             relayoutSet.running = true
+        } else if (step.action === "wait") {
+            relayoutRestore.restart()
+        } else {
+            root.relayoutBusy = false
+            if (root.relayoutPending) {
+                root.relayoutPending = false
+                nudgeHyprlandRelayout()
+            }
         }
     }
 
