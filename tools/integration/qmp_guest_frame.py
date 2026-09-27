@@ -144,7 +144,7 @@ def frame():
                     daemon.wait_socket()
                     note(f"daemon-pid {daemon.process.pid}")
                     note("bounced")
-                elif command in ("chip", "chipgeom", "tip"):
+                elif command in ("chip", "chipgeom", "tip", "tipwatch", "tipprobe"):
                     note(panel.command(command, command + " "))
                 elif command == "state":
                     note("state " + " ".join(panel.marker_lines()[-2:]))

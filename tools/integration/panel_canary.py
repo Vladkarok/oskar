@@ -51,7 +51,7 @@ OURS = re.compile(
     r"(Panel|Keyboard|HelperLink|PasteChords|PrivateSaves|EmojiDelivery|HoldMenu|DragLine|BarWidget|Theme|HoverTooltip|KeyClickSound|CursorPolicy|SettingsLayer"
     r"|Settings\w*|EmojiPage|EmojiCatalog|LanguageControl|HoldColumn"
     r"|LayoutDevices|ModifierReducer|KeyboardSession|ClipboardPaste|Config|HelperReplies"
-    r"|TextGlyphs|UiStrings|ShareQueue|SocketWatch|SettleGuard|Dwell|GapsNudge"
+    r"|TextGlyphs|UiStrings|ShareQueue|SocketWatch|SettleGuard|SeatMotion|Dwell|GapsNudge"
     r"|InputProfile|SettingsPlacement)\.(qml|js)")
 OURS_LINE = re.compile(r"oskar")
 GRANDFATHERED = "Cannot anchor to an item that isn't a parent or sibling"
@@ -230,6 +230,78 @@ Item {
         return null
     }
 
+    // The tooltip's timeline for one hover of the paste chip, sampled every
+    // 5 ms from `tipwatch`: when the chip's host saw the pointer, and when
+    // each text first reached the host and first stood on screen.
+    property var tipHost: null
+    property var tipLine: ({ hoverAt: 0, texts: {}, shown: {} })
+    Timer {
+        id: tipWatch
+        interval: 5
+        repeat: true
+        onTriggered: {
+            var host = root.tipHost
+            if (!host) return
+            var now = Date.now()
+            var line = root.tipLine
+            if (host.hovered && !line.hoverAt) line.hoverAt = now
+            if (host.hovered && host.text !== "" && line.texts[host.text] === undefined)
+                line.texts[host.text] = now
+            var shared = ToolTip.toolTip
+            if (shared && shared.visible && shared.text !== ""
+                    && line.shown[shared.text] === undefined)
+                line.shown[shared.text] = now
+        }
+    }
+
+    function chipTooltipHost() {
+        var chipNow = pasteChip()
+        return chipNow ? findObject(chipNow, function (o) {
+            return o.held !== undefined && o.hovered !== undefined
+                && o.refresh !== undefined
+        }, 0) : null
+    }
+
+    // A HoverTooltip of our own on a small window: hovered, then its text
+    // changed 300 ms into the wait — the peek's shape, pushed late enough
+    // that a wait restarted by the text would show at ~800 ms, not ~500.
+    FloatingWindow {
+        id: probeWindow
+        visible: false
+        implicitWidth: 160
+        implicitHeight: 60
+        Item {
+            anchors.fill: parent
+            Plugin.HoverTooltip { id: probeTip }
+        }
+    }
+    property double probeStart: 0
+    Timer {
+        id: probeLate
+        interval: 300
+        onTriggered: probeTip.text = "probe-late"
+    }
+    Timer {
+        id: probePoll
+        interval: 5
+        repeat: true
+        onTriggered: {
+            var shared = ToolTip.toolTip
+            var waited = Date.now() - root.probeStart
+            if (shared && shared.visible && shared.text === "probe-late") {
+                running = false
+                probeTip.hovered = false
+                probeWindow.visible = false
+                log("tipprobe " + JSON.stringify({ shownMs: waited }))
+            } else if (waited > 3000) {
+                running = false
+                probeTip.hovered = false
+                probeWindow.visible = false
+                log("tipprobe " + JSON.stringify({ shownMs: -1 }))
+            }
+        }
+    }
+
     // The paste chip: the one item carrying the chip's rest label.
     function pasteChip() {
         return findObject(panel, function (o) {
@@ -345,18 +417,32 @@ Item {
                 // The tooltip actually on screen: the shared instance every
                 // HoverTooltip shows through, and the chip's own host.
                 var shared = ToolTip.toolTip
-                var chipNow = pasteChip()
-                var host = chipNow ? findObject(chipNow, function (o) {
-                    return o.held !== undefined && o.hovered !== undefined
-                        && o.refresh !== undefined
-                }, 0) : null
+                var host = chipTooltipHost()
                 log("tip " + JSON.stringify({
                     visible: shared ? shared.visible : null,
                     text: shared ? shared.text : null,
                     hostText: host ? host.text : null,
-                    hovered: host ? host.hovered : null }))
+                    hovered: host ? host.hovered : null,
+                    timeline: root.tipLine }))
                 break
             }
+            case "tipprobe":
+                probeWindow.visible = true
+                probeTip.hovered = false
+                probeTip.text = "probe-early"
+                Qt.callLater(function () {
+                    root.probeStart = Date.now()
+                    probeTip.hovered = true
+                    probeLate.restart()
+                    probePoll.restart()
+                })
+                break
+            case "tipwatch":
+                root.tipHost = chipTooltipHost()
+                root.tipLine = { hoverAt: 0, texts: {}, shown: {} }
+                tipWatch.running = root.tipHost !== null
+                log("tipwatch " + JSON.stringify({ armed: tipWatch.running }))
+                break
             case "unload":
                 root.kb = null
                 panelLoader.active = false
@@ -1370,8 +1456,13 @@ def real_click_leg(red=False):
 
 
 # The paste chip's tooltip waits this long before it opens (HoverTooltip's
-# ToolTip.delay); the clipboard peek it shows lands inside that wait.
+# `opening`); the clipboard peek it shows lands inside that wait, and the
+# tooltip must open with it by TOOLTIP_BOUND_MS after the pointer lands —
+# the wait plus a frame budget, and short of the wait restarted by the text.
 TOOLTIP_DELAY_S = 0.5
+TOOLTIP_BOUND_MS = 800
+# A restarted wait would open the probe at 300 + 500 ms.
+TOOLTIP_PROBE_BOUND_MS = 700
 
 
 def _chip_point():
@@ -1417,14 +1508,29 @@ def chip_hover_leg():
     if phrase in json.dumps(chip):
         raise Failure(f"the chip holds the text before any hover: {chip}")
     x, y, band_top = _chip_point()
+    if not _frame_query("tipwatch").get("armed"):
+        raise Failure("the chip's tooltip host was not found to time it")
     _qmp_move(x, y)
-    time.sleep(TOOLTIP_DELAY_S + 0.5)
+    time.sleep(TOOLTIP_DELAY_S + 0.7)
     tip = _frame_query("tip")
     if tip.get("visible") is not True or tip.get("text") != phrase:
         raise Failure(f"hovering the chip at ({x}, {y}) shows tooltip "
                       f"{tip}, expected the copied {phrase!r} on screen")
-    print(f"ok    hover on the chip at ({x}, {y}): the tooltip on screen "
-          f"reads the copied text after the {TOOLTIP_DELAY_S:.1f} s delay")
+    line = tip["timeline"]
+    hover_at = line.get("hoverAt") or 0
+    shown_at = line.get("shown", {}).get(phrase)
+    text_at = line.get("texts", {}).get(phrase)
+    if not hover_at or shown_at is None:
+        raise Failure(f"the tooltip timeline is incomplete: {line}")
+    opened = shown_at - hover_at
+    if opened > TOOLTIP_BOUND_MS:
+        raise Failure(f"the copied text reached the screen {opened} ms after "
+                      f"the pointer landed (bound {TOOLTIP_BOUND_MS} ms; the "
+                      f"text landed at +{(text_at or 0) - hover_at} ms): the "
+                      "wait restarted on the text")
+    print(f"ok    hover on the chip at ({x}, {y}): the copied text landed at "
+          f"+{(text_at or 0) - hover_at} ms and stood on screen at "
+          f"+{opened} ms (bound {TOOLTIP_BOUND_MS} ms)")
     _qmp_move(x, max(0, band_top - 120))
     time.sleep(0.6)
     chip = _frame_query("chip")
@@ -1437,6 +1543,17 @@ def chip_hover_leg():
                       f"left: {tip}")
     print("ok    pointer away: the chip's state holds no text, the tooltip "
           "is gone")
+    # The wait itself: a text that changes 300 ms into it must not restart
+    # it. The chip's peek lands too early (tens of ms) for its timing to
+    # tell a restarted wait from a kept one; this probe does not.
+    probe = _frame_query("tipprobe")
+    shown = probe.get("shownMs", -1)
+    if shown < 0 or shown > TOOLTIP_PROBE_BOUND_MS:
+        raise Failure(f"a HoverTooltip whose text changed 300 ms into its wait "
+                      f"opened at {shown} ms (bound {TOOLTIP_PROBE_BOUND_MS} "
+                      "ms): the text restarted the wait")
+    print(f"ok    a text changed 300 ms into the wait opens at {shown} ms, "
+          f"not a wait after the change (bound {TOOLTIP_PROBE_BOUND_MS} ms)")
 
 
 def _start_frame(tree):

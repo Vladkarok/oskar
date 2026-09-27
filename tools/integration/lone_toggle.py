@@ -29,7 +29,9 @@ owner's seat (measured: with no text client focused, the toggle hands
    group, and the mover is the anchor;
 4. drives the panel's own click to the next group and asserts the seat
    reunites on it, the panel's group holds on it through the echoes, the
-   anchor stays the mover, and the helper logged exactly one group move.
+   anchor stays the mover, and the helper logged exactly one group move;
+5. times the echoes of five more clicks through the helper's own event
+   stream: from the command to the last echo, against SettleGuard.ECHO_MS.
 
 Run inside the VM's lab session:
 
@@ -38,8 +40,11 @@ Run inside the VM's lab session:
 
 import json
 import os
+import re
+import socket
 import subprocess
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -95,6 +100,93 @@ def focus_text_client():
     wait_for(lambda: main_holders() == [FCITX], 10,
              f"fcitx5 to hold `main` (now {main_holders()}); the leg needs "
              "the owner's input-method seat")
+
+
+def echo_window_ms(repo):
+    """SettleGuard.ECHO_MS, read from the tree the leg hosts."""
+    with open(os.path.join(repo, "SettleGuard.js"), encoding="utf-8") as handle:
+        found = re.search(r"var ECHO_MS = (\d+)", handle.read())
+    if not found:
+        raise Failure("SettleGuard.js carries no ECHO_MS")
+    return int(found.group(1))
+
+
+class EventTap:
+    """A second client of the leg's helper, subscribed to its events:
+    every `event\tlayout` line with the monotonic time it arrived."""
+
+    def __init__(self, socket_path):
+        self.lines = []
+        self.client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.client.settimeout(5)
+        self.client.connect(socket_path)
+        self.client.sendall(b"hello 7\n")
+        self.buffer = b""
+        if not self._line().startswith("hello"):
+            raise Failure("the leg's helper refused the event tap's hello")
+        self.client.sendall(b"events on\n")
+        if self._line() != "ok":
+            raise Failure("the leg's helper refused `events on`")
+        self.client.settimeout(0.5)
+        self.running = True
+        self.thread = threading.Thread(target=self._read, daemon=True)
+        self.thread.start()
+
+    def _line(self):
+        while b"\n" not in self.buffer:
+            chunk = self.client.recv(4096)
+            if not chunk:
+                raise Failure("the leg's helper closed the event tap")
+            self.buffer += chunk
+        line, self.buffer = self.buffer.split(b"\n", 1)
+        return line.decode("utf-8", "replace")
+
+    def _read(self):
+        while self.running:
+            try:
+                line = self._line()
+            except (socket.timeout, OSError, Failure):
+                continue
+            if line.startswith("event\tlayout\t"):
+                self.lines.append((time.monotonic(), line.split("\t")))
+
+    def close(self):
+        self.running = False
+        try:
+            self.client.close()
+        except OSError:
+            pass
+
+
+def time_click_echoes(panel, switch_set, codes, tap, echo_ms):
+    """Five clicks, each timed from the command to its last echo."""
+    spans = []
+    for _ in range(5):
+        wait_for(lambda: panel.state()["ready"] is True, 30,
+                 "readiness before a timed click")
+        target = (panel.state()["group"] + 1) % len(codes)
+        moving = [n for n in switch_set if keyboard_groups().get(n) != target]
+        start = time.monotonic()
+        tap_from = len(tap.lines)
+        panel.command(f"group {target}", "grouped")
+        wait_for(lambda: all(keyboard_groups().get(n) == target
+                             for n in switch_set), 10,
+                 f"the timed click to reunite the seat on {target}")
+        time.sleep(1.0)
+        echoes = [(t, f[2]) for t, f in tap.lines[tap_from:]
+                  if f[2] in switch_set and f[3] == str(target)]
+        named = sorted({name for _, name in echoes})
+        if not set(moving) <= set(named) or not echoes:
+            raise Failure(f"the click to {target} echoed {named}, expected "
+                          f"at least {sorted(moving)}")
+        first = (echoes[0][0] - start) * 1000
+        last = (echoes[-1][0] - start) * 1000
+        spans.append((len(echoes), first, last))
+    worst = max(last for _, _, last in spans)
+    if worst >= echo_ms:
+        raise Failure(f"a click's last echo arrived {worst:.0f} ms after the "
+                      f"command, past ECHO_MS ({echo_ms} ms): {spans}")
+    return spans
 
 
 def converge(panel, group, switch_set, note):
@@ -219,6 +311,16 @@ def run(repo, rt):
               f"{keyboard_groups_of(switch_set)}, panel held {target} "
               f"through the echoes, anchor still {mover!r}, one helper "
               "group move")
+        tap = EventTap(daemon.socket_path)
+        try:
+            echo_ms = echo_window_ms(repo)
+            spans = time_click_echoes(panel, switch_set, codes, tap, echo_ms)
+        finally:
+            tap.close()
+        print("ok    five clicks timed through the helper's events (echoes, "
+              "command->first, command->last ms): "
+              + ", ".join(f"({n}, {a:.0f}, {b:.0f})" for n, a, b in spans)
+              + f"; the window is {echo_ms} ms")
         print(f"ok    LONE TOGGLE LEG GREEN: four lone toggles followed "
               f"{followed}, the click reunited the seat without a flip")
     finally:
