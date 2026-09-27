@@ -3,6 +3,18 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
+## 0.1.1
+
+The keyboard behaves as it did in 0.1.0. This release is about reading
+and checking it.
+
+- The README opens with the install. The source checkout, the pacman
+  package and the prebuilt helper moved to "Other ways to install", and a
+  row of links sits under the introduction.
+- The test battery passes on GitHub again. It had failed there since the
+  install record arrived, because the container ran it as root and one
+  helper test expected a user session. Both were faults of the tests.
+
 ## 0.1.0 — the first release
 
 The first published version: what the author has daily-driven, packaged
