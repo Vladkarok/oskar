@@ -544,57 +544,100 @@ QtObject {
             return ClipboardPaste.txnPick(ClipboardPaste.txnInitial(), "😀", "foot", before)
         }
 
-        T.test("a delivered pick restores nothing and becomes the next pick's before", function () {
+        T.test("a delivered pick restores nothing and the snapshot does not outlive it", function () {
             var started = pickWith({ text: "user text" })
             var served = ClipboardPaste.txnServed(started.state, started.state.seq, "😀")
             var done = ClipboardPaste.txnChordDone(served.state, served.state.seq, true)
             T.equal(done.action, "completed")
             T.equal(done.restore, undefined, "success leaves the emoji in the clipboard")
-            T.deepEqual(done.state.before, { text: "😀" })
+            T.deepEqual(done.state.before, { none: "unread" }, "no text kept once idle")
+            // A queued pick behind a delivered one inherits the emoji.
+            var a = pickWith({ text: "user text" })
+            var b = ClipboardPaste.txnPick(a.state, "🔥", "foot")
+            var s2 = ClipboardPaste.txnServed(b.state, b.state.seq, "😀")
+            var d2 = ClipboardPaste.txnChordDone(s2.state, s2.state.seq, true)
+            T.deepEqual(d2.state.before, { text: "😀" })
         })
 
-        T.test("an exhausted verify mismatch puts the snapshot back", function () {
-            var state = pickWith({ text: "user text" }).state
-            var out
-            for (var i = 0; i < 5; i++) {
-                out = ClipboardPaste.txnServed(state, state.seq, "something odd")
-                state = out.state
+        T.test("an exhausted verify mismatch never overwrites what the clipboard holds", function () {
+            // The verify's last read was not the pick: either the snapshot
+            // is still there (nothing to write) or someone else's copy is.
+            function exhaust(reads) {
+                var state = pickWith({ text: "user text" }).state
+                var out
+                for (var i = 0; i < 5; i++) {
+                    out = ClipboardPaste.txnServed(state, state.seq, reads[i])
+                    state = out.state
+                }
+                return out
             }
-            T.equal(out.action, "drop")
-            T.deepEqual(out.restore, { text: "user text" })
-            // A clipboard that already holds the snapshot (the publish never
-            // took) needs nothing written.
-            state = pickWith({ text: "user text" }).state
-            for (var j = 0; j < 5; j++) {
-                out = ClipboardPaste.txnServed(state, state.seq, "user text")
-                state = out.state
-            }
-            T.deepEqual(out.restore, { none: "unchanged" })
+            var still = exhaust(["user text", "user text", "user text", "user text", "user text"])
+            T.equal(still.action, "drop")
+            T.deepEqual(still.restore, { none: "unchanged" })
+            var copied = exhaust(["user text", "user text", "their copy", "their copy", "their copy"])
+            T.deepEqual(copied.restore, { none: "foreign" }, "an interleaved copy stays")
+            var back = exhaust(["their copy", "user text", "user text", "user text", "user text"])
+            T.deepEqual(back.restore, { none: "unchanged" })
         })
 
-        T.test("the verify watchdog puts the snapshot back", function () {
+        T.test("the verify watchdog restores only when nothing foreign was seen", function () {
             var started = pickWith({ text: "line one\nline two" })
             var timedOut = ClipboardPaste.txnVerifyTimedOut(started.state, started.state.seq)
             T.equal(timedOut.action, "drop")
             T.deepEqual(timedOut.restore, { text: "line one\nline two" })
+            T.deepEqual(timedOut.state.before, { none: "unread" }, "handed out once, not kept")
+            // The pick had not landed yet: the snapshot is not foreign.
+            var early = pickWith({ text: "user text" })
+            var prev = ClipboardPaste.txnServed(early.state, early.state.seq, "user text")
+            T.deepEqual(ClipboardPaste.txnVerifyTimedOut(prev.state, prev.state.seq).restore,
+                { text: "user text" })
+            // A foreign copy seen before the stall is the user's.
+            var raced = pickWith({ text: "user text" })
+            var theirs = ClipboardPaste.txnServed(raced.state, raced.state.seq, "their copy")
+            T.deepEqual(ClipboardPaste.txnVerifyTimedOut(theirs.state, theirs.state.seq).restore,
+                { none: "foreign" })
         })
 
-        T.test("a refused or errored chord puts the snapshot back", function () {
-            var started = pickWith({ text: "user text" })
-            var served = ClipboardPaste.txnServed(started.state, started.state.seq, "😀")
-            var refused = ClipboardPaste.txnChordDone(served.state, served.state.seq, false)
-            T.equal(refused.action, "cancelled")
-            T.deepEqual(refused.restore, { text: "user text" })
-            T.deepEqual(refused.state.before, { text: "user text" },
-                "a failed pick does not become the next one's before")
+        T.test("a refused chord reads the clipboard first and restores only the pick", function () {
+            function refused() {
+                var started = pickWith({ text: "user text" })
+                var served = ClipboardPaste.txnServed(started.state, started.state.seq, "😀")
+                return ClipboardPaste.txnChordDone(served.state, served.state.seq, false)
+            }
+            var r = refused()
+            T.equal(r.action, "cancelled")
+            T.equal(typeof r.restore.check, "number", "a check read comes first")
+            var ours = ClipboardPaste.txnRestoreChecked(r.state, r.restore.check, "😀", false)
+            T.deepEqual(ours.restore, { text: "user text" })
+            T.equal(ours.state.restoreCheck, null, "the snapshot is gone after the check")
+            r = refused()
+            T.deepEqual(ClipboardPaste.txnRestoreChecked(r.state, r.restore.check,
+                "their copy", false).restore, { none: "foreign" }, "an interleaved copy stays")
+            r = refused()
+            T.deepEqual(ClipboardPaste.txnRestoreChecked(r.state, r.restore.check,
+                "", true).restore, { none: "foreign" }, "a secret that arrived stays")
+            r = refused()
+            T.deepEqual(ClipboardPaste.txnRestoreChecked(r.state, r.restore.check,
+                null, false).restore, { none: "unread" }, "an unanswered check writes nothing")
+            // A new pick abandons the check: its late answer is stale.
+            r = refused()
+            var next = ClipboardPaste.txnPick(r.state, "🔥", "foot", { text: "x" })
+            T.equal(ClipboardPaste.txnRestoreChecked(next.state, r.restore.check,
+                "😀", false).action, "stale")
         })
 
-        T.test("a cancellation of a published pick puts the snapshot back", function () {
-            var started = pickWith({ text: "user text" })
-            var queued = ClipboardPaste.txnPick(started.state, "🔥", "foot")
-            var cancelled = ClipboardPaste.txnCancel(queued.state)
+        T.test("a cancellation follows the same rule as the phase it interrupts", function () {
+            var publishing = pickWith({ text: "user text" })
+            var queued = ClipboardPaste.txnPick(publishing.state, "🔥", "foot")
+            T.deepEqual(ClipboardPaste.txnCancel(queued.state).restore, { text: "user text" })
+            var raced = ClipboardPaste.txnServed(publishing.state, publishing.state.seq, "their copy")
+            T.deepEqual(ClipboardPaste.txnCancel(raced.state).restore, { none: "foreign" })
+            var pasting = ClipboardPaste.txnServed(publishing.state, publishing.state.seq, "😀")
+            var cancelled = ClipboardPaste.txnCancel(pasting.state)
             T.equal(cancelled.action, "dropped")
-            T.deepEqual(cancelled.restore, { text: "user text" })
+            T.equal(typeof cancelled.restore.check, "number")
+            T.deepEqual(ClipboardPaste.txnRestoreChecked(cancelled.state,
+                cancelled.restore.check, "their copy", false).restore, { none: "foreign" })
         })
 
         T.test("with no snapshot the clipboard stays, and says why", function () {
@@ -629,6 +672,17 @@ QtObject {
             var second = ClipboardPaste.txnNext(done.state)
             var lost = ClipboardPaste.txnVerifyTimedOut(second.state, second.state.seq)
             T.deepEqual(lost.restore, { text: "😀" })
+        })
+
+        T.test("every payload read lists the types before and after reading", function () {
+            var script = ClipboardPaste.READ_SCRIPT
+            var first = script.indexOf("--list-types")
+            var read = script.indexOf("--no-newline")
+            var last = script.lastIndexOf("--list-types")
+            T.equal(first >= 0 && read > first && last > read, true, script)
+            T.equal(script.indexOf("x-kde-passwordmanagerhint") >= 0, true)
+            T.equal(ClipboardPaste.READ_SECRET_EXIT, 3)
+            T.equal(script.indexOf("exit 3") >= 0, true)
         })
 
         T.test("the panel's reading is a snapshot only when it is current text", function () {

@@ -103,34 +103,61 @@ function readTimedOut(state, seq, target) {
 // The clipboard a pick replaces. A delivered pick leaves its emoji in the
 // clipboard — that is how an emoji picker works, and putting the old
 // content back after the paste would race the client still reading it.
-// A pick that FAILS puts back what the clipboard held before it: `before`
-// is that content, `{ text }` when the panel could read it as text, or
-// `{ none: why }` when it could not be put back (see restoreSnapshot).
-// The first pick of a burst brings the panel's snapshot; a delivered pick
-// makes its own emoji the next pick's `before`; a failed one leaves
-// `before` as it was. Every terminal failure that leaves the machine idle
-// carries `restore` — `{ text }` to publish, or `{ none: why }` to say in
-// the journal that the clipboard stays as it is. A failure with a queued
-// pick behind it carries `restore: null`: the next pick replaces the
-// clipboard anyway, and its own outcome decides.
+// A pick that FAILS puts back what the clipboard held before it, but only
+// while the clipboard is provably still OSKar's: the user may have copied
+// something during the pick, and that is theirs.
+//
+// `before` is the pick's snapshot: `{ text }` when the previous content
+// could be read as text, `{ none: why }` when it could not be put back
+// (see restoreSnapshot). The first pick of a burst brings it; a delivered
+// pick makes its own emoji the next queued pick's `before`; a failed one
+// leaves `before` as it was. It lives only as long as the transaction:
+// the machine clears it when it goes idle with nothing queued, and a
+// failure hands the text out once, in its `restore`.
+//
+// `observed` is what the verify reads saw since this pick published, other
+// than the pick itself: "none", "previous" (the snapshot's own text — the
+// publish had not landed yet) or "foreign" (anything else: the user's
+// copy, an empty clipboard). Every terminal failure that leaves the
+// machine idle carries `restore`:
+//   { text }         publish it: the clipboard is still OSKar's
+//   { none: why }    write nothing, and say why in the journal
+//   { check: id }    read the clipboard first (txnRestoreChecked decides)
+// A failure with a queued pick behind it carries `restore: null`: the next
+// pick replaces the clipboard anyway, and its own outcome decides.
+//
+// The rule, per failure: the verify's last read (mismatch exhausted) was
+// not the pick, so the clipboard holds either the snapshot already or
+// someone else's content — nothing is written. The verify watchdog saw no
+// answer, so it restores unless something foreign was seen earlier. A
+// refused chord or a cancellation during the paste happens after the
+// verify saw the pick, so the clipboard is read once more and restored
+// only if it still serves the pick.
 function txnInitial() {
     return { seq: 0, phase: "idle", pending: "", clientClass: "",
-        attempts: 0, queue: [], before: { none: "unread" } }
+        attempts: 0, queue: [], before: { none: "unread" }, observed: "none",
+        restoreCheck: null }
 }
 
 function txnWith(state, changes) {
     var next = {
         seq: state.seq, phase: state.phase, pending: state.pending,
         clientClass: state.clientClass, attempts: state.attempts,
-        queue: state.queue, before: state.before
+        queue: state.queue, before: state.before, observed: state.observed,
+        restoreCheck: state.restoreCheck
     }
     for (var key in changes) next[key] = changes[key]
     return next
 }
 
+var NO_SNAPSHOT = { none: "unread" }
+
+// The machine going idle: the snapshot outlives the transaction only for a
+// queued pick, which inherits it.
 function txnIdle(state, changes) {
     var idle = txnWith(state, { phase: "idle", pending: "", clientClass: "",
-        attempts: 0 })
+        attempts: 0, observed: "none" })
+    if (idle.queue.length === 0) idle.before = NO_SNAPSHOT
     return changes ? txnWith(idle, changes) : idle
 }
 
@@ -140,16 +167,27 @@ function snapshotOf(before) {
     return { none: before && typeof before.none === "string" ? before.none : "unread" }
 }
 
-// What a terminal failure owes the clipboard: nothing while a queued pick
-// is about to replace it, otherwise the snapshot. `served` is the verify's
-// last read, when there was one: a clipboard already holding the snapshot
-// needs nothing written.
+// What a failure owes the clipboard when no fresh read is needed. `served`
+// is the verify's last read when the failure is its mismatch.
 function restoreFor(state, served) {
     if (state.queue.length > 0) return null
     var before = snapshotOf(state.before)
-    if (before.text !== undefined && served !== undefined && String(served) === before.text)
-        return { none: "unchanged" }
+    if (before.text === undefined) return before
+    if (served !== undefined)
+        return String(served) === before.text ? { none: "unchanged" } : { none: "foreign" }
+    if (state.observed === "foreign") return { none: "foreign" }
     return before
+}
+
+// A failure after the verify saw the pick: ask for one more read.
+function checkFor(state) {
+    if (state.queue.length > 0) return { restore: null, check: null }
+    var before = snapshotOf(state.before)
+    if (before.text === undefined) return { restore: before, check: null }
+    return {
+        restore: { check: state.seq },
+        check: { id: state.seq, emoji: state.pending, before: before }
+    }
 }
 
 // The panel's clipboard reading, as a snapshot a failed pick could put
@@ -190,6 +228,20 @@ function restoreSnapshot(kind, text, textSeq, currentSeq, refreshing) {
     return { text: value }
 }
 
+// The one clipboard reader every payload read uses (the chip's preview,
+// the panel-local paste, the emoji verify, the restore check). It lists the
+// types before AND after reading: content a password manager marks secret
+// (x-kde-passwordManagerHint) is not read at all, and a secret that
+// landed during the read is discarded unprinted. Exit 3 means secret. The
+// stream is capped (a malicious owner cannot balloon the shell's memory),
+// and it runs under setsid so a watchdog can kill the whole group.
+var READ_SCRIPT = "h=x-kde-passwordmanagerhint; "
+    + "wl-paste --list-types 2>/dev/null | grep -qix \"$h\" && exit 3; "
+    + "data=$(wl-paste --no-newline 2>/dev/null | head -c 65536; printf .); "
+    + "wl-paste --list-types 2>/dev/null | grep -qix \"$h\" && exit 3; "
+    + "printf %s \"${data%.}\""
+var READ_SECRET_EXIT = 3
+
 function txnPick(state, emoji, clientClass, before) {
     var payload = String(emoji || "")
     var cls = String(clientClass || "")
@@ -212,10 +264,13 @@ function txnPick(state, emoji, clientClass, before) {
             action: "queued"
         }
     }
+    // A new burst: a restore still waiting for its check is abandoned — this
+    // pick owns the clipboard now.
     return {
         state: txnWith(state, {
             seq: state.seq + 1, phase: "publishing", pending: payload,
-            clientClass: cls, attempts: 0, before: snapshotOf(before)
+            clientClass: cls, attempts: 0, before: snapshotOf(before),
+            observed: "none", restoreCheck: null
         }),
         action: "publish"
     }
@@ -238,14 +293,19 @@ function txnServed(state, seq, served) {
         return { state: state, action: "stale" }
     if (String(served) === state.pending)
         return { state: txnWith(state, { phase: "pasting" }), action: "chord" }
+    var before = snapshotOf(state.before)
+    var observed = state.observed === "foreign"
+        || before.text === undefined || String(served) !== before.text
+        ? "foreign" : "previous"
+    var seen = txnWith(state, { observed: observed })
     var attempts = state.attempts + 1
     if (attempts >= 5)
-        return { state: txnIdle(state), action: "drop",
-            restore: restoreFor(state, served) }
+        return { state: txnIdle(seen), action: "drop",
+            restore: restoreFor(seen, served) }
     // A retry is a NEW verify run: the sequence moves, so the answer of
     // the wl-paste this retry is about to kill cannot masquerade as it.
     return {
-        state: txnWith(state, { seq: state.seq + 1, attempts: attempts }),
+        state: txnWith(seen, { seq: state.seq + 1, attempts: attempts }),
         action: "retry"
     }
 }
@@ -265,10 +325,31 @@ function txnChordDone(state, seq, success) {
         return { state: state, action: "ignore" }
     if (seq !== state.seq)
         return { state: state, action: "stale" }
-    if (success === true)
-        return { state: txnIdle(state, { before: { text: state.pending } }),
-            action: "completed", emoji: state.pending }
-    return { state: txnIdle(state), action: "cancelled", restore: restoreFor(state) }
+    if (success === true) {
+        var done = txnIdle(state)
+        if (done.queue.length > 0) done.before = { text: state.pending }
+        return { state: done, action: "completed", emoji: state.pending }
+    }
+    var owed = checkFor(state)
+    return { state: txnIdle(state, { restoreCheck: owed.check }), action: "cancelled",
+        restore: owed.restore }
+}
+
+// The restore check's answer: `served` is what the clipboard held (null
+// when the read failed or timed out), `secret` that it was marked secret.
+// The snapshot goes back only if the clipboard still serves the pick.
+function txnRestoreChecked(state, id, served, secret) {
+    var check = state.restoreCheck
+    if (!check || check.id !== id)
+        return { state: state, action: "stale", restore: null }
+    var next = txnWith(state, { restoreCheck: null })
+    var restore
+    if (secret) restore = { none: "foreign" }
+    else if (served === null || served === undefined) restore = { none: "unread" }
+    else if (String(served) === check.emoji) restore = check.before
+    else if (String(served) === check.before.text) restore = { none: "unchanged" }
+    else restore = { none: "foreign" }
+    return { state: next, action: "checked", restore: restore }
 }
 
 // Starts the next queued pick after a terminal outcome. Called by the QML
@@ -284,7 +365,7 @@ function txnNext(state) {
     var pick = state.queue[0]
     var next = txnWith(state, {
         seq: state.seq + 1, phase: "publishing", pending: pick.emoji,
-        clientClass: pick.clientClass, attempts: 0,
+        clientClass: pick.clientClass, attempts: 0, observed: "none",
         queue: state.queue.slice(1)
     })
     return { state: next, action: "publish", emoji: pick.emoji }
@@ -293,15 +374,21 @@ function txnNext(state) {
 // Cancel the running pick and everything queued. A chord already
 // dispatching cannot be un-dispatched; its late completion lands on the
 // idle machine as "ignore" and records nothing. A pick that had already
-// published owes the clipboard its snapshot.
+// published owes the clipboard its snapshot, by the same rule as its own
+// failure would.
 function txnCancel(state) {
     if (state.phase === "idle" && state.queue.length === 0)
         return { state: state, action: "ignore" }
     var cleared = txnWith(state, { queue: [] })
+    if (state.phase === "pasting") {
+        var owed = checkFor(cleared)
+        return { state: txnIdle(cleared, { restoreCheck: owed.check }), action: "dropped",
+            restore: owed.restore }
+    }
     return {
         state: txnIdle(cleared),
         action: "dropped",
-        restore: state.phase !== "idle" ? restoreFor(cleared) : null
+        restore: state.phase === "publishing" ? restoreFor(cleared) : null
     }
 }
 

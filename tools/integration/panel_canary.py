@@ -207,6 +207,14 @@ Item {
 
     function log(line) { console.log("[canary] " + line) }
 
+    // The emoji delivery seam (EmojiDelivery.qml), found by its own state.
+    function delivery() {
+        var kids = panel.data
+        for (var i = 0; i < kids.length; i++)
+            if (kids[i] && kids[i].emojiTxnState !== undefined) return kids[i]
+        return null
+    }
+
     function state() {
         var kb = keyboard()
         if (!kb) { log("state no-keyboard"); return }
@@ -283,6 +291,14 @@ Item {
                 panel.customEditorField = ""
                 log("overlay-cleared")
                 break
+            case "publish": {
+                // The one clipboard publisher a pick and a restore use.
+                var d = delivery()
+                if (!d) { log("no-delivery"); break }
+                d.publishClipboard(parts[1])
+                log("published")
+                break
+            }
             }
         }
         onLoadFailed: function (error) {
@@ -769,12 +785,54 @@ def _run_leg(repo, window_start):
             print(f"ok    helper caps reply: ua group {ua_group} AD01 = "
                   f"{facts['AD01']!r}")
 
+            # 4. The clipboard OSKar publishes: never on any process's
+            #    argv, and still served after the shell that published it
+            #    has exited (the owner is not the shell's child).
+            word = f"oskar-canary-{os.getpid()}-{int(time.time())}"
+            panel.command(f"publish {word}", "published")
+            wait_for(lambda: wl_paste() == word, 10,
+                     "the published text on the clipboard")
+            on_argv = [pid for pid, args in process_argv() if word in args]
+            if on_argv:
+                raise Failure(f"the published text is on the argv of pid(s) {on_argv}")
+            panel.close()
+            panel = None
+            time.sleep(1.0)
+            if wl_paste() != word:
+                raise Failure(f"the clipboard lost the published text when the "
+                              f"shell exited: it serves {wl_paste()!r}")
+            print("ok    published text rides stdin (on no process's argv) and "
+                  "outlives the shell that published it")
+
             print("ok    CANARY GREEN: the real panel opened, both groups "
                   "drew their keymaps, the journal stayed clean")
         finally:
             if panel:
                 panel.close()
             daemon.close()
+
+
+def wl_paste():
+    try:
+        return subprocess.run(["wl-paste", "--no-newline"], capture_output=True,
+                              text=True, timeout=5).stdout
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def process_argv():
+    """Every readable process's argv, as (pid, joined args)."""
+    out = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/cmdline", "rb") as handle:
+                raw = handle.read()
+        except OSError:
+            continue
+        out.append((int(entry), raw.replace(b"\0", b" ").decode("utf-8", "replace")))
+    return out
 
 
 def restore_service():

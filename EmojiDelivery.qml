@@ -63,28 +63,47 @@ Item {
     // another is unfinished queues in order, so a queued payload never
     // replaces the clipboard owner an unfinished paste still depends on,
     // and usage/settle/close fire only from the chord's real completion,
-    // never from the paste's dispatch. The publisher stays alive as the
-    // selection owner — killing it would leave clipboard ownership
-    // homeless; the next pick replaces it, which is replacement, not
-    // loss. The pick's payload is what replaces the clipboard; a pick that
-    // fails puts back what the clipboard held before it, when the panel
-    // could read that as text (ClipboardPaste's `restore`).
+    // never from the paste's dispatch. The pick's payload is what replaces
+    // the clipboard; a pick that fails puts back what the clipboard held
+    // before it while the clipboard is still OSKar's (ClipboardPaste's
+    // `restore`).
     property var emojiTxnState: ClipboardPaste.txnInitial()
 
+    // The one way OSKar puts text on the clipboard, for a pick and for a
+    // restore alike. The text rides wl-copy's stdin, never its argv (argv
+    // is readable by every local user for as long as the owner lives).
+    // wl-copy without --foreground reads the text, forks, and its child
+    // serves the selection until something replaces it: the owner is not
+    // this shell's tracked child, so the content outlives a shell restart
+    // or the plugin being disabled. This Process lives only until that
+    // fork; the verify reads the clipboard itself, never the process.
     Process {
         id: emojiClipboardPublish
-        command: []
+        command: ["wl-copy", "--type", "text/plain;charset=utf-8"]
+        stdinEnabled: true
+        property string payload: ""
+        onStarted: {
+            write(payload)
+            stdinEnabled = false
+        }
+    }
+
+    function publishClipboard(text) {
+        if (emojiClipboardPublish.running)
+            emojiClipboardPublish.running = false
+        emojiClipboardPublish.payload = text
+        emojiClipboardPublish.stdinEnabled = true
+        emojiClipboardPublish.running = true
     }
 
     Process {
         id: emojiClipboardVerify
         property int seq: 0
         property bool retiring: false
-        // head caps the stream: a malicious clipboard owner cannot balloon
-        // the shell's memory through the collector — SIGPIPE closes
-        // wl-paste past the bound. Content a password manager marks secret
-        // is not read at all: the empty answer is a mismatch.
-        command: ["setsid", "bash", "-c", "wl-paste --list-types | grep -qix x-kde-passwordmanagerhint && exit 3; wl-paste --no-newline | head -c 65536"]
+        // The shared reader (ClipboardPaste.READ_SCRIPT): capped, and
+        // content marked secret is never read — its empty answer is a
+        // mismatch.
+        command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
@@ -220,10 +239,7 @@ Item {
     // verify. Called for the first pick and for every pick the queue
     // hands over — never for a pick still waiting its turn.
     function beginEmojiPublish(emoji) {
-        if (emojiClipboardPublish.running)
-            emojiClipboardPublish.running = false
-        emojiClipboardPublish.command = ["wl-copy", "--foreground", "--", emoji]
-        emojiClipboardPublish.running = true
+        publishClipboard(emoji)
         emojiPublishVerifyTimer.restart()
     }
 
@@ -295,28 +311,85 @@ Item {
         startNextEmojiTxn()
     }
 
-    // A failed pick's debt to the clipboard. `{ text }` is published by the
-    // same owner process a pick uses, replacing the failed pick's emoji
-    // (and any wl-copy still serving it); `{ none }` leaves the clipboard
-    // as it is and says why; null means a queued pick takes the clipboard
-    // next and its own outcome decides.
+    // A failed pick's debt to the clipboard (ClipboardPaste's `restore`):
+    // `{ text }` is published the way a pick is; `{ check }` reads the
+    // clipboard once first, and the machine decides from what it serves;
+    // `{ none }` leaves the clipboard as it is and says why; null means a
+    // queued pick takes the clipboard next and its own outcome decides.
     function restoreClipboard(restore) {
         if (!restore) return
+        if (restore.check !== undefined) {
+            startRestoreCheck(restore.check)
+            return
+        }
         if (restore.text === undefined) {
             if (restore.none === "secret")
                 console.log("[oskar] the clipboard keeps the failed pick: its"
                     + " previous content was marked secret by a password manager,"
                     + " so it was never read and is not republished")
+            else if (restore.none === "foreign")
+                console.log("[oskar] the clipboard keeps what it holds: it changed"
+                    + " during the failed pick, and that content is not OSKar's to replace")
             else if (restore.none !== "unchanged")
                 console.log("[oskar] the clipboard keeps the failed pick: its"
                     + " previous content could not be put back (" + restore.none + ")")
             return
         }
-        if (emojiClipboardPublish.running)
-            emojiClipboardPublish.running = false
-        emojiClipboardPublish.command = ["wl-copy", "--foreground", "--", restore.text]
-        emojiClipboardPublish.running = true
+        publishClipboard(restore.text)
         console.log("[oskar] the failed pick's clipboard is put back")
+    }
+
+    // The restore check: one bounded read of the clipboard, by the shared
+    // reader, answered to the machine by id — a pick that starts meanwhile
+    // makes the answer stale.
+    Process {
+        id: emojiRestoreCheck
+        property int checkId: 0
+        command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
+        stdout: StdioCollector {
+            id: emojiRestoreCheckOut
+            waitForEnd: true
+        }
+        // A check that must wait for a killed run's exit before the
+        // Process can start again.
+        property int queuedId: 0
+        onExited: function (exitCode) {
+            emojiRestoreCheckWatchdog.stop()
+            // A killed run answers null for its own id, which the machine
+            // has already moved past: stale, and nothing is written.
+            root.finishRestoreCheck(emojiRestoreCheck.checkId,
+                exitCode === 0 ? emojiRestoreCheckOut.text : null,
+                exitCode === ClipboardPaste.READ_SECRET_EXIT)
+            if (emojiRestoreCheck.queuedId !== 0) {
+                var id = emojiRestoreCheck.queuedId
+                emojiRestoreCheck.queuedId = 0
+                root.startRestoreCheck(id)
+            }
+        }
+    }
+    Timer {
+        id: emojiRestoreCheckWatchdog
+        interval: 1000
+        repeat: false
+        onTriggered: {
+            killProcessGroup(emojiRestoreCheck)
+            root.finishRestoreCheck(emojiRestoreCheck.checkId, null, false)
+        }
+    }
+    function startRestoreCheck(id) {
+        if (emojiRestoreCheck.running) {
+            emojiRestoreCheck.queuedId = id
+            killProcessGroup(emojiRestoreCheck)
+            return
+        }
+        emojiRestoreCheck.checkId = id
+        emojiRestoreCheck.running = true
+        emojiRestoreCheckWatchdog.restart()
+    }
+    function finishRestoreCheck(id, served, secret) {
+        var checked = ClipboardPaste.txnRestoreChecked(root.emojiTxnState, id, served, secret)
+        root.emojiTxnState = checked.state
+        if (checked.action === "checked") restoreClipboard(checked.restore)
     }
 
     function startNextEmojiTxn() {

@@ -1554,9 +1554,11 @@ Item {
         property bool retiring: false
         // head caps the stream (the security audit): a malicious clipboard
         // owner cannot balloon the shell's memory through the collector —
-        // SIGPIPE closes wl-paste past the bound. Content a password
-        // manager marks secret is not read (exit 3, no bytes).
-        command: ["setsid", "bash", "-c", "wl-paste --list-types | grep -qix x-kde-passwordmanagerhint && exit 3; wl-paste --no-newline | head -c 65536"]
+        // SIGPIPE closes wl-paste past the bound. The shared reader
+        // (ClipboardPaste.READ_SCRIPT) lists the types before and after:
+        // content a password manager marks secret is never read or kept
+        // (exit 3, no bytes).
+        command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.finishLocalClipboardRead(
@@ -1643,9 +1645,11 @@ Item {
         property bool retiring: false
         // head caps the stream (the security audit): a malicious clipboard
         // owner cannot balloon the shell's memory through the collector —
-        // SIGPIPE closes wl-paste past the bound. Content a password
-        // manager marks secret is not read (exit 3, no bytes).
-        command: ["setsid", "bash", "-c", "wl-paste --list-types | grep -qix x-kde-passwordmanagerhint && exit 3; wl-paste --no-newline | head -c 65536"]
+        // SIGPIPE closes wl-paste past the bound. The shared reader
+        // (ClipboardPaste.READ_SCRIPT) lists the types before and after:
+        // content a password manager marks secret is never read or kept
+        // (exit 3, no bytes).
+        command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
         stdout: StdioCollector {
             id: clipboardTextOut
             waitForEnd: true
@@ -1661,7 +1665,7 @@ Item {
                 return
             }
             root.applyClipboardText(clipboardTextOut.text, clipboardText.seq,
-                exitCode === 0, exitCode === 3)
+                exitCode === 0, exitCode === ClipboardPaste.READ_SECRET_EXIT)
         }
     }
 
