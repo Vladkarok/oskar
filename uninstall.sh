@@ -28,9 +28,20 @@ fi
 # service mid-flight.
 cli="$HOME/.local/bin/oskar"
 cli_owner="$(readlink -f "$cli" 2>/dev/null || true)"
+owns() { bash "$here/bin/oskar" owns "$1" "$2"; }
 if [[ "$cli_owner" == "$(readlink -f "$here/bin/oskar")" ]]; then
-  rm -f "$HOME/.config/systemd/user/oskar.service"
-  rm -f "$HOME/.local/libexec/oskar-daemon"
+  # The symlink says this checkout installed last; each file is still
+  # proven OSKar's by what it is before it goes. One that is not was put
+  # there by someone else since, and stays.
+  for entry in "unit:$HOME/.config/systemd/user/oskar.service" \
+      "helper:$HOME/.local/libexec/oskar-daemon"; do
+    kind="${entry%%:*}"; path="${entry#*:}"
+    if owns "$kind" "$path"; then
+      rm -f "$path"
+    elif [[ -e "$path" || -L "$path" ]]; then
+      echo "uninstall.sh: $path is not OSKar's; left in place" >&2
+    fi
+  done
   rm -f "$cli"
   systemctl --user daemon-reload
   if [[ -e "$reg" || -L "$reg" ]] \

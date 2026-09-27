@@ -69,6 +69,78 @@ die() { printf 'oskar: %s\n' "$*" >&2; exit 1; }
 
 self_path() { realpath "$0" 2>/dev/null || readlink -f "$0"; }
 
+# --- ownership ---------------------------------------------------------------
+#
+# Every path this product writes or removes outside its own checkout is a
+# name someone else may already be using. Before a file is replaced or
+# removed it must be PROVEN ours by what it is, never by what it is
+# called; what cannot be proven is left alone or, on explicit consent,
+# moved aside — nothing foreign is ever overwritten or deleted. The rule
+# lives here once: install.sh and uninstall.sh ask through `oskar owns`.
+
+# The helper binary: a regular file carrying the helper's own diagnostic
+# prefix (under either name the product has had).
+owns_helper() {
+  [[ -f "$1" && ! -L "$1" ]] || return 1
+  grep -a -q -F -e 'oskar-daemon: ' -e 'omarchy-osk-daemon: ' "$1" 2>/dev/null
+}
+
+# The user unit: a regular file that runs the helper.
+owns_unit() {
+  [[ -f "$1" && ! -L "$1" ]] || return 1
+  grep -q -E '^ExecStart=.*(oskar|omarchy-osk)-daemon' "$1" 2>/dev/null
+}
+
+# The lifecycle command on PATH: a symlink to a checkout's bin/ whose
+# manifest carries one of our plugin ids. A DANGLING link whose text names
+# a bin/oskar is ours too — its checkout is gone and it protects nothing.
+owns_cli() {
+  [[ -L "$1" ]] || return 1
+  local text resolved checkout
+  text="$(readlink "$1")"
+  case "$(basename "$text")" in oskar|omarchy-osk) ;; *) return 1 ;; esac
+  [[ "$(basename "$(dirname "$text")")" == "bin" ]] || return 1
+  [[ -e "$1" ]] || return 0
+  resolved="$(readlink -f "$1")"
+  checkout="$(dirname "$(dirname "$resolved")")"
+  [[ -f "$checkout/manifest.json" ]] || return 1
+  grep -q -F -e "\"$PLUGIN_ID\"" -e "\"$OLD_PLUGIN_ID\"" "$checkout/manifest.json"
+}
+
+# The session runtime directory of the old name: ours when it holds
+# nothing but what the helper wrote there.
+owns_runtime_dir() {
+  [[ -d "$1" && ! -L "$1" ]] || return 1
+  local entry
+  for entry in "$1"/* "$1"/.[!.]*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    case "$(basename "$entry")" in
+      control.sock|keymap.xkb|keymap.xkb.new|user-keymap-source|user-keymap-source.new) ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+# Out of the way, never gone: the file keeps its content under a name
+# that says when and why.
+set_aside() {
+  local stamp
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  mv "$1" "$1.$2-$stamp"
+  say "$1 is not OSKar's; moved aside as $1.$2-$stamp"
+}
+
+cmd_owns() {
+  [[ $# -eq 2 ]] || die "usage: oskar owns <helper|unit|cli> <path>"
+  case "$1" in
+    helper) owns_helper "$2" ;;
+    unit) owns_unit "$2" ;;
+    cli) owns_cli "$2" ;;
+    *) die "usage: oskar owns <helper|unit|cli> <path>" ;;
+  esac
+}
+
 detect_mode() {
   SELF="$(self_path)"
   if [[ "$SELF" == /usr/bin/oskar && -d /usr/share/oskar/plugin ]]; then
@@ -159,16 +231,22 @@ migrate_source() {
     mv "$USER_UNIT" "$USER_UNIT.migrated-$stamp"
     say "user unit moved aside: $USER_UNIT.migrated-$stamp"
   fi
-  if [[ -f "$SOURCE_HELPER" ]]; then
+  if owns_helper "$SOURCE_HELPER"; then
     rm "$SOURCE_HELPER"
     say "source helper binary removed (rebuild it any time from the checkout)"
+  elif [[ -e "$SOURCE_HELPER" || -L "$SOURCE_HELPER" ]]; then
+    set_aside "$SOURCE_HELPER" migrated
   fi
   # The ~/.local/bin symlink shadows /usr/bin on default PATHs; left
   # behind, the next bare `oskar setup` resolves to the source
   # copy and silently re-creates the legacy state just migrated away.
-  if [[ -L "$HOME/.local/bin/oskar" ]]; then
+  if owns_cli "$HOME/.local/bin/oskar"; then
     rm "$HOME/.local/bin/oskar"
     say "source lifecycle symlink removed from ~/.local/bin"
+  elif [[ -e "$HOME/.local/bin/oskar" || -L "$HOME/.local/bin/oskar" ]]; then
+    warn "$HOME/.local/bin/oskar is not OSKar's command; left in place \
+(it shadows /usr/bin/oskar on your PATH — call the packaged one by its \
+full path, or move that file yourself)"
   fi
   systemctl --user daemon-reload
 }
@@ -231,17 +309,23 @@ deactivate_old_world() {
     mv "$OLD_REGISTRATION" "$OLD_REGISTRATION.migrated-$stamp"
     say "old registration moved aside: $OLD_REGISTRATION.migrated-$stamp"
   fi
-  if [[ -f "$OLD_USER_UNIT" ]]; then
+  if owns_unit "$OLD_USER_UNIT"; then
     mv "$OLD_USER_UNIT" "$OLD_USER_UNIT.migrated-$stamp"
     say "old user unit moved aside: $OLD_USER_UNIT.migrated-$stamp"
+  elif [[ -e "$OLD_USER_UNIT" || -L "$OLD_USER_UNIT" ]]; then
+    warn "$OLD_USER_UNIT does not run the OSKar helper; left in place"
   fi
-  if [[ -f "$OLD_SOURCE_HELPER" ]]; then
+  if owns_helper "$OLD_SOURCE_HELPER"; then
     rm "$OLD_SOURCE_HELPER"
     say "old helper binary removed: $OLD_SOURCE_HELPER"
+  elif [[ -e "$OLD_SOURCE_HELPER" || -L "$OLD_SOURCE_HELPER" ]]; then
+    set_aside "$OLD_SOURCE_HELPER" migrated
   fi
-  if [[ -L "$OLD_SHADOW" ]]; then
+  if owns_cli "$OLD_SHADOW"; then
     rm "$OLD_SHADOW"
     say "old lifecycle symlink removed: $OLD_SHADOW"
+  elif [[ -e "$OLD_SHADOW" || -L "$OLD_SHADOW" ]]; then
+    warn "$OLD_SHADOW is not an OSKar command; left in place"
   fi
   systemctl --user daemon-reload
 }
@@ -275,9 +359,11 @@ beside it — merge by hand if something was wanted from it"
   # Session-scoped (socket, published keymap, recovery record): dies
   # with the session anyway; removing it keeps a same-session
   # restart from finding a stale old-name record.
-  if [[ -d "$OLD_RUNTIME_DIR" ]]; then
+  if owns_runtime_dir "$OLD_RUNTIME_DIR"; then
     rm -rf "$OLD_RUNTIME_DIR"
     say "old runtime directory removed: $OLD_RUNTIME_DIR"
+  elif [[ -e "$OLD_RUNTIME_DIR" || -L "$OLD_RUNTIME_DIR" ]]; then
+    warn "$OLD_RUNTIME_DIR holds files the helper did not write; left in place"
   fi
   if command -v pacman >/dev/null 2>&1 \
     && pacman -Q omarchy-osk >/dev/null 2>&1; then
@@ -309,6 +395,9 @@ want the $MODE payload registered instead"
     say "plugin registration already points at the $MODE payload"
     return
   fi
+  # The registration path is named by OUR plugin id, so a symlink there
+  # is a registration of this product whatever payload it names; a real
+  # directory was refused above. Re-pointing replaces the link only.
   [[ -n "$target" ]] && say "re-pointing registration (was: $target)"
   mkdir -p "$(dirname "$REGISTRATION")"
   ln -sfn "$PAYLOAD" "$REGISTRATION"
@@ -1086,6 +1175,7 @@ upgrade) shift; cmd_upgrade "$@" ;;
 status) [[ $# -eq 1 ]] || die "status takes no arguments"; cmd_status ;;
 doctor) [[ $# -eq 1 ]] || die "doctor takes no arguments"; cmd_doctor ;;
 teardown) [[ $# -eq 1 ]] || die "teardown takes no arguments"; cmd_teardown ;;
+owns) shift; cmd_owns "$@" ;;
 -h|--help|help)
   cat <<'EOF'
 Usage: oskar <command>

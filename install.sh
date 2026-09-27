@@ -28,42 +28,34 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Ownership before any write — the mirror of uninstall.sh's rule. The unit,
-# the helper binary and the ~/.local/bin command are SHARED paths: another
-# OSKar checkout may own them (then this install takes them over, as it
-# always did), but a unit or a command that is not OSKar's at all is
-# someone else's and is never overwritten silently. `--force` is the
-# explicit consent.
+# Ownership before any write — the mirror of uninstall.sh's rule, and the
+# same predicates (`oskar owns`, in bin/oskar). The unit, the helper
+# binary and the ~/.local/bin command are SHARED paths: another OSKar
+# checkout may own them (then this install takes them over, as it always
+# did), but a file that is not OSKar's at all is someone else's. It is
+# never overwritten: without consent the install stops and names it, and
+# `--force` moves it aside under a dated name before writing.
 cli="$HOME/.local/bin/oskar"
-is_ours_cli() {
-  # A symlink to some checkout's bin/oskar whose manifest carries our id.
-  [[ -L "$cli" ]] || return 1
-  local target
-  target="$(readlink -f "$cli" 2>/dev/null || true)"
-  [[ "$(basename "$target")" == "oskar" ]] || return 1
-  local checkout
-  checkout="$(dirname "$(dirname "$target")")"
-  [[ -f "$checkout/manifest.json" ]] && grep -q '"io.github.vladkarok.oskar"' "$checkout/manifest.json"
-}
-is_ours_unit() {
-  grep -q 'oskar-daemon' "$unit" 2>/dev/null
-}
-foreign=""
-if [[ -e "$cli" || -L "$cli" ]] && ! is_ours_cli; then
-  foreign+="  $cli is not an OSKar command (expected a symlink to a checkout's bin/oskar)"$'\n'
-fi
-if [[ -e "$unit" ]] && ! is_ours_unit; then
-  foreign+="  $unit is not OSKar's unit (no oskar-daemon in it)"$'\n'
-fi
-if [[ -n "$foreign" && -z "$force" ]]; then
-  echo "install.sh: refusing to overwrite files that are not OSKar's:" >&2
-  printf '%s' "$foreign" >&2
-  echo "Move them aside, or rerun with --force to replace them." >&2
+owns() { bash "$here/bin/oskar" owns "$1" "$2"; }
+foreign=()
+for entry in "cli:$cli" "unit:$unit" "helper:$binary"; do
+  kind="${entry%%:*}"; path="${entry#*:}"
+  if [[ -e "$path" || -L "$path" ]] && ! owns "$kind" "$path"; then
+    foreign+=("$path")
+  fi
+done
+if ((${#foreign[@]})) && [[ -z "$force" ]]; then
+  echo "install.sh: refusing to replace files that are not OSKar's:" >&2
+  printf '  %s\n' "${foreign[@]}" >&2
+  echo "Move them aside yourself, or rerun with --force: it moves them aside (nothing is deleted)." >&2
   exit 3
-elif [[ -n "$foreign" ]]; then
-  echo "install.sh: --force: replacing files that are not OSKar's:" >&2
-  printf '%s' "$foreign" >&2
 fi
+for path in ${foreign[@]+"${foreign[@]}"}; do
+  aside="$path.replaced-$(date +%Y%m%d-%H%M%S)"
+  mv "$path" "$aside"
+  echo "install.sh: --force: $path was not OSKar's; moved aside as $aside" >&2
+done
+
 if [[ -z "$prebuilt" ]]; then
   for candidate in "$here"/oskar-daemon-*-"$(uname -m)".tar.gz; do
     [[ -f "$candidate" ]] && prebuilt="$candidate"
