@@ -2443,11 +2443,15 @@ they are exactly what was recorded: the file's sha256, or the link's
 text. `install.sh`, `uninstall.sh` and `oskar setup --migrate-source`
 replace, remove or move nothing else; `--force` moves the rest aside
 under a name that does not exist yet and deletes nothing. Every
-`systemctl` step that enables, restarts or disables `oskar.service`
+`systemctl` step that enables, starts, restarts or stops `oskar.service`
 first asks systemd which file it resolves and acts only on the
 recorded user unit, or on /usr/lib's unit where it is the oskar
 package's (packaged mode, or pacman says so) — a checkout proves nothing
-about /usr/lib. `install.sh` obtains its helper
+about /usr/lib. Switching off never uses `systemctl disable`, which acts
+by name and would drop another program's oskar.service enablement: only
+links whose text is OSKar's own unit path are removed. `install.sh`
+refuses, without `--force`, to shadow an oskar.service already on the
+system. `install.sh` obtains its helper
 before it touches anything, so a failed build leaves the home directory
 as it was. The rule lives once, in `bin/oskar record`. The marketplace
 checklist asks that a plugin never overwrite user configuration without

@@ -430,9 +430,12 @@ names it. `--force` moves it aside under a dated name and then
 installs; nothing is deleted. An install made by an OSKar version older
 than the install record has no record yet, so it needs `--force` once.
 Another checkout's install is taken over without it. `uninstall.sh` and
-`oskar setup --migrate-source` follow the same rule, and `oskar` restarts,
-enables or disables `oskar.service` only when the unit systemd
-runs is the oskar package's or the recorded one.
+`oskar setup --migrate-source` follow the same rule, and `oskar` starts,
+restarts, enables or stops `oskar.service` only when the unit systemd
+runs is the oskar package's or the recorded one. Switching it off removes
+only the enablement links that point at OSKar's own unit, and
+`install.sh` will not shadow another program's `oskar.service` without
+`--force`.
 
 A tarball placed beside `install.sh` is picked up without the flag, and
 `oskar setup --prebuilt <tarball>` / `oskar upgrade --prebuilt <tarball>`

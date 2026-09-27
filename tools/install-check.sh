@@ -19,17 +19,37 @@ record_file="$home/.local/state/oskar/install-record"
 reg="$home/.config/omarchy/plugins/io.github.vladkarok.oskar"
 mkdir -p "$sandbox/bin" "$sandbox/run" "$sandbox/toolbox" "$sandbox/withcargo" "$sandbox/datestub"
 
-# systemctl: every call logged; is-active answers $STUB_ACTIVE (1: no
-# session); FragmentPath is the user unit when one exists, like systemd,
-# unless $STUB_FRAGMENT names another file.
+# systemctl: every call logged (per case, and for the whole run);
+# is-active answers $STUB_ACTIVE (1: no session). FragmentPath is, like
+# systemd's search order: $STUB_FRAGMENT when set (a higher-priority
+# override), else the user unit when one exists, else $STUB_SYSTEM_UNIT
+# (a lower-priority oskar.service, e.g. /usr/lib's). enable links the
+# resolved file into graphical-session.target.wants and, like systemd,
+# refuses to replace a link there that points elsewhere; disable removes
+# every oskar.service link by name.
 cat > "$sandbox/bin/systemctl" <<EOF
 #!/bin/sh
 echo "systemctl \$*" >> "$sandbox/systemctl.log"
+echo "systemctl \$*" >> "$sandbox/systemctl.all.log"
+frag() {
+  if [ "\$STUB_FRAGMENT" != auto ]; then echo "\$STUB_FRAGMENT"
+  elif [ -e "\$HOME/.config/systemd/user/oskar.service" ]; then echo "\$HOME/.config/systemd/user/oskar.service"
+  else echo "\$STUB_SYSTEM_UNIT"; fi
+}
 case "\$*" in
-  *"show -p FragmentPath"*)
-    if [ "\$STUB_FRAGMENT" != auto ]; then echo "\$STUB_FRAGMENT"
-    elif [ -e "\$HOME/.config/systemd/user/oskar.service" ]; then echo "\$HOME/.config/systemd/user/oskar.service"
-    else echo; fi
+  *"show -p FragmentPath"*) frag; exit 0 ;;
+  "--user enable oskar.service")
+    f=\$(frag); [ -n "\$f" ] || exit 1
+    w="\$HOME/.config/systemd/user/graphical-session.target.wants"; mkdir -p "\$w"
+    if [ -L "\$w/oskar.service" ]; then
+      [ "\$(readlink "\$w/oskar.service")" = "\$f" ] && exit 0
+      echo "Failed to enable unit: File \$w/oskar.service already exists and is a symlink to \$(readlink "\$w/oskar.service")." >&2; exit 1
+    fi
+    ln -s "\$f" "\$w/oskar.service"; exit 0 ;;
+  *disable*oskar.service*)
+    # By name, as systemd does: every oskar.service enablement link goes,
+    # whatever unit file it points at.
+    rm -f "\$HOME"/.config/systemd/user/*.wants/oskar.service "\$HOME"/.config/systemd/user/*.requires/oskar.service
     exit 0 ;;
   *is-enabled*) echo enabled; exit 0 ;;
   *is-active*) if [ "\$STUB_ACTIVE" = 0 ]; then echo active; else echo inactive; fi; exit "\$STUB_ACTIVE" ;;
@@ -66,13 +86,18 @@ sbx() {
   env -i HOME="$home" XDG_RUNTIME_DIR="$sandbox/run" XDG_STATE_HOME="$home/.local/state" \
     XDG_CONFIG_HOME="$home/.config" PATH="$tpath" STUB_ACTIVE="${STUB_ACTIVE:-1}" \
     ${state_home_override:+XDG_STATE_HOME="$state_home_override"} \
-    STUB_FRAGMENT="${STUB_FRAGMENT:-auto}" "$@"
+    STUB_FRAGMENT="${STUB_FRAGMENT:-auto}" STUB_SYSTEM_UNIT="${STUB_SYSTEM_UNIT:-}" "$@"
 }
 run() { sbx bash "${installer:-$root/install.sh}" "$@" >"$sandbox/out" 2>&1; echo $?; }
 unrun() { sbx bash "$root/uninstall.sh" >"$sandbox/out" 2>&1; echo $?; }
 oskar() { sbx bash "$root/bin/oskar" "$@" >"$sandbox/out" 2>&1; echo $?; }
 rec() { sbx bash "$root/bin/oskar" record "$@" >/dev/null 2>&1; echo $?; }
 sum() { sha256sum < "$1" | cut -c1-64; }
+wants="$home/.config/systemd/user/graphical-session.target.wants/oskar.service"
+theirs_link="$home/.config/systemd/user/default.target.wants/oskar.service"
+# Another program's oskar.service, enabled before OSKar came.
+foreign_enabled() { mkdir -p "$(dirname "$theirs_link")"; ln -sfn "$home/.local/share/systemd/user/oskar.service" "$theirs_link"; }
+link_is() { if [[ -L "$1" ]]; then readlink "$1"; else echo none; fi; }
 # What a path is, without following a link: "link:<text>" or "file:<sha256>".
 what() { if [[ -L "$1" ]]; then echo "link:$(readlink "$1")"; else echo "file:$(sum "$1")"; fi; }
 anyaside() { find "$home" "$sandbox/run" \( -name '*.replaced-*' -o -name '*.migrated-*' \) 2>/dev/null | wc -l; }
@@ -123,7 +148,7 @@ check "  the command points at this checkout" "$(readlink -f "$cli")" "$(readlin
 check "  the record lists the three paths" "$(wc -l < "$record_file")" 3
 check "  each matches it" "$(rec matches "$unit")$(rec matches "$helper")$(rec matches "$cli")" 000
 check "  the unit was reloaded and enabled" "$(calls 'daemon-reload|enable oskar.service')" 2
-check "  and systemd was asked which unit it resolves" "$(calls 'show -p FragmentPath --value oskar.service')" 1
+check "  and systemd was asked which unit it resolves (before writing, and after)" "$(calls 'show -p FragmentPath --value oskar.service')" 2
 check "rerun over our own unmodified files succeeds, no --force" "$(run --prebuilt "$matching")" 0
 check "  and moved nothing aside" "$(( $(asides "$unit") + $(asides "$helper") + $(asides "$cli") ))" 0
 check "no cargo, no tarball, our helper: kept, exit 0" "$(run)" 0
@@ -154,7 +179,7 @@ foreign_case() { # <name> <path> <maker>
   check "  and says --force deletes nothing" "$(grep -c 'deletes nothing' "$sandbox/out")" 1
   check "  it is identical (a link keeps its text)" "$(what "$path")" "$before"
   check "  nothing else was written" "$(for p in "$unit" "$helper" "$cli" "$record_file"; do [[ "$p" == "$path" ]] && continue; [[ -e "$p" || -L "$p" ]] && echo "$p"; done | wc -l)" 0
-  check "  and systemd was not called" "$(wc -l < "$sandbox/systemctl.log")" 0
+  check "  and systemd was only asked, never told anything" "$(grep -v -c 'show -p FragmentPath' "$sandbox/systemctl.log")" 0
   check "foreign $name with --force: installs" "$(run --prebuilt "$matching" --force)" 0
   check "  it was moved aside as it was (a link stays a link, same text)" "$(for a in "$path".replaced-*; do what "$a"; done)" "$before"
   check "  and the destination is recorded as ours" "$(rec matches "$path")" 0
@@ -220,7 +245,7 @@ reset; run --prebuilt "$matching" >/dev/null
 check "uninstall after an install succeeds" "$(unrun)" 0
 check "  the three are gone" "$([[ -e "$unit" || -e "$helper" || -L "$cli" ]] && echo left || echo gone)" gone
 check "  and the record with them" "$([[ -e "$record_file" ]] && echo left || echo gone)" gone
-check "  the enablement of the removed unit is cleaned up" "$(calls '^systemctl --user disable oskar.service$')" 1
+check "  its enablement link is removed (the unit file is gone)" "$(link_is "$wants")" none
 reset; run --prebuilt "$matching" >/dev/null; printf '# my tweak\n' >> "$unit"; printf 'someone elses program\n' > "$helper"
 check "uninstall with an edited unit and a replaced helper" "$(unrun)" 0
 check "  the edited unit stays" "$(grep -c '# my tweak' "$unit")" 1
@@ -244,7 +269,7 @@ check "  the helper stays recorded" "$(rec matches "$helper")" 0
 check "then uninstall.sh --force" "$(sbx bash "$root/uninstall.sh" --force >"$sandbox/out" 2>&1; echo $?)" 0
 check "  moves the edited unit aside, content kept" "$(grep -l '# my tweak' "$unit".uninstalled-* 2>/dev/null | wc -l)$([[ -e "$unit" ]] && echo left || echo gone)" 1gone
 check "  removes the helper and the command" "$([[ -e "$helper" || -L "$cli" ]] && echo left || echo gone)" gone
-check "  cleans the dangling enablement (the unit file is gone)" "$(calls '^systemctl --user disable oskar.service$')" 1
+check "  removes its own enablement link (the unit file is gone)" "$(link_is "$wants")" none
 check "  and the record is gone" "$([[ -e "$record_file" ]] && echo left || echo gone)" gone
 check "  it says where the unit went" "$(grep -c "moved aside as $unit.uninstalled-" "$sandbox/out")" 1
 
@@ -259,6 +284,22 @@ check "  nothing disabled" "$(calls 'disable')" 0
 reset; run --prebuilt "$matching" >/dev/null; printf '# my tweak\n' >> "$unit"; : > "$sandbox/systemctl.log"
 check "uninstall --force while systemd resolves an /etc unit" "$(STUB_FRAGMENT=/etc/systemd/user/oskar.service sbx bash "$root/uninstall.sh" --force >"$sandbox/out" 2>&1; echo $?)" 0
 check "  no disable of any kind" "$(calls 'disable')" 0
+
+# Another program's enablement of an oskar.service survives every way
+# OSKar switches itself off; OSKar's own link goes.
+for how in uninstall force teardown; do
+  reset; run --prebuilt "$matching" >/dev/null; foreign_enabled
+  [[ "$how" == force ]] && printf '# my tweak\n' >> "$unit"
+  case "$how" in
+    uninstall) r="$(unrun)" ;;
+    force) r="$(sbx bash "$root/uninstall.sh" --force >"$sandbox/out" 2>&1; echo $?)" ;;
+    teardown) r="$(oskar teardown)" ;;
+  esac
+  check "foreign enablement link with $how: exit 0" "$r" 0
+  check "  their link survives, same text" "$(link_is "$theirs_link")" "$home/.local/share/systemd/user/oskar.service"
+  check "  ours is removed" "$(link_is "$wants")" none
+  check "  and the output says which was left and why" "$(grep -c -F "enablement link left: $theirs_link" "$sandbox/out")" 1
+done
 
 # --force is all or nothing.
 reset; run --prebuilt "$matching" >/dev/null; printf '# my tweak\n' >> "$unit"; printf 'someone elses\n' > "$helper"
@@ -341,7 +382,8 @@ check "  and teardown says why" "$(grep -c "not proven OSKar's" "$sandbox/out")"
 check "  the foreign unit is byte-identical" "$(grep -c something-else "$unit")" 1
 reset; run --prebuilt "$matching" >/dev/null; : > "$sandbox/systemctl.log"
 check "teardown with our recorded unit" "$(oskar teardown)" 0
-check "  disables it" "$(calls 'disable --now oskar.service')" 1
+check "  stops it" "$(calls '^systemctl --user stop oskar.service$')" 1
+check "  and removes its enablement link" "$(link_is "$wants")" none
 reset; run --prebuilt "$matching" >/dev/null; : > "$sandbox/systemctl.log"
 check "teardown when systemd resolves another file" "$(STUB_FRAGMENT=/etc/systemd/user/oskar.service oskar teardown)" 0
 check "  leaves it alone" "$(calls '(disable|stop).*oskar.service')" 0
@@ -358,9 +400,25 @@ reset; STUB_ACTIVE=0 oskar setup --prebuilt "$matching" >/dev/null; : > "$sandbo
 check "  upgrade does not finish" "$(STUB_ACTIVE=0 STUB_FRAGMENT=$pk oskar upgrade --prebuilt "$matching")" 1
 check "  no enable, restart or disable" "$(calls '(enable|start|restart|disable|stop).*oskar.service')" 0
 mkdir -p "$sandbox/pacman"; printf '#!/bin/sh\n[ "$1 $2" = "-Qqo %s" ] && echo oskar\n' "$pk" > "$sandbox/pacman/pacman"; chmod +x "$sandbox/pacman/pacman"
-reset; : > "$sandbox/systemctl.log"
+reset; mkdir -p "$(dirname "$wants")"; ln -s "$pk" "$wants"; : > "$sandbox/systemctl.log"
 check "source mode, pacman says the oskar package owns $pk: teardown" "$(tpath="$sandbox/pacman:$sandbox/bin:$sandbox/toolbox" STUB_FRAGMENT=$pk oskar teardown)" 0
-check "  disables it" "$(calls 'disable --now oskar.service')" 1
+check "  stops it" "$(calls '^systemctl --user stop oskar.service$')" 1
+check "  and removes the link to it" "$(link_is "$wants")" none
+
+# ---- install.sh does not shadow another oskar.service unasked ----
+for other_unit in /usr/lib/systemd/user/oskar.service "$home/.local/share/systemd/user/oskar.service"; do
+  reset
+  check "another oskar.service at $other_unit: refused, exit 3" "$(STUB_SYSTEM_UNIT="$other_unit" run --prebuilt "$matching")" 3
+  check "  it says so" "$(grep -c "a unit named oskar.service from $other_unit is already on this system" "$sandbox/out")" 1
+  check "  nothing written" "$(written)" untouched
+  foreign_enabled
+  check "  with --force: installs" "$(STUB_SYSTEM_UNIT="$other_unit" run --prebuilt "$matching" --force)" 0
+  check "  their enablement link is untouched" "$(link_is "$theirs_link")" "$home/.local/share/systemd/user/oskar.service"
+done
+reset; mkdir -p "$(dirname "$wants")"; ln -s /usr/lib/systemd/user/oskar.service "$wants"
+check "--force when their link holds the very name OSKar would enable: exit 1" "$(STUB_SYSTEM_UNIT=/usr/lib/systemd/user/oskar.service run --prebuilt "$matching" --force)" 1
+check "  their link is untouched" "$(link_is "$wants")" /usr/lib/systemd/user/oskar.service
+check "  and it says OSKar's unit is installed but not enabled" "$(grep -c 'installed but not enabled' "$sandbox/out")" 1
 
 reset; mkdir -p "$(dirname "$unit")"; printf '[Service]\nExecStart=/usr/bin/something-else\n' > "$unit"
 check "setup with a foreign unit present: dies" "$(oskar setup --prebuilt "$matching")" 1
@@ -389,6 +447,8 @@ check "  and nothing was moved aside beside them" "$(command ls -d "$home"/.conf
 check "  systemctl never named it" "$(calls 'omarchy-osk')" 0
 check "  the shell calls were logged (the check below is not vacuous)" "$(grep -c 'omarchy plugin enable io.github.vladkarok.oskar' "$sandbox/omarchy.log")" 1
 check "  nor did the shell calls" "$(grep -c -E 'omarchy-osk|vladkarok\.osk( |$)' "$sandbox/omarchy.log")" 0
+
+check "the whole run never asked systemctl to disable anything (it acts by name)" "$(grep -c 'disable' "$sandbox/systemctl.all.log")" 0
 
 echo "install-check: $passed passed, $failed failed"
 ((failed == 0))

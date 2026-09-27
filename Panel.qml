@@ -584,12 +584,14 @@ Item {
     // Starting goes through `oskar start`, which starts oskar.service only
     // when the unit systemd resolves is OSKar's. A source checkout (or an
     // `omarchy plugin add` clone) carries bin/oskar in the plugin
-    // directory; the package's payload does not, and its command is on PATH.
+    // directory; the package's payload does not, and installs the command
+    // as /usr/bin/oskar — named by full path, because PATH may put another
+    // program called oskar first. With neither, Retry does nothing.
     function retryService() {
         Quickshell.execDetached(["bash", "-c",
             "d=\"$HOME/.config/omarchy/plugins/io.github.vladkarok.oskar\"; "
             + "if [ -f \"$d/bin/oskar\" ]; then exec bash \"$d/bin/oskar\" start; "
-            + "else exec oskar start; fi"])
+            + "elif [ -x /usr/bin/oskar ]; then exec /usr/bin/oskar start; fi"])
     }
 
     function copyInstallCommand() {

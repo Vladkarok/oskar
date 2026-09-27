@@ -284,6 +284,49 @@ unit_not_ours_reason() {
   fi
 }
 
+# Switching the unit off without touching anyone else's enablement.
+# `systemctl disable` works by NAME: it removes every oskar.service link
+# in the user's config whatever unit file each points at, and another
+# program's oskar.service may have been enabled here before OSKar came.
+# So OSKar stops only a unit proven its own, and removes only the
+# enablement links whose text is exactly its own unit's path; a link
+# pointing anywhere else is named and left.
+own_unit_path() {
+  if [[ "$UNIT_FRAGMENT" == "$PACKAGED_UNIT" ]]; then
+    printf '%s\n' "$PACKAGED_UNIT"
+  else
+    printf '%s\n' "$USER_UNIT"
+  fi
+}
+remove_own_enablement() {
+  local own="$1" conf link text
+  conf="${XDG_CONFIG_HOME:-}"
+  [[ "$conf" == /* ]] || conf="$HOME/.config"
+  for link in "$conf"/systemd/user/*.wants/"$UNIT" "$conf"/systemd/user/*.requires/"$UNIT"; do
+    [[ -L "$link" ]] || continue
+    text="$(readlink -- "$link")" || continue
+    if [[ "$text" == "$own" ]]; then
+      if rm -f -- "$link"; then
+        say "enablement link removed: $link"
+      else
+        warn "could not remove the enablement link $link"
+      fi
+    else
+      say "enablement link left: $link -> $text (another unit file, not OSKar's)"
+    fi
+  done
+}
+stop_own_unit() {
+  # Callers have proven unit_is_ours.
+  if systemctl --user stop "$UNIT" >/dev/null 2>&1; then
+    say "unit stopped"
+  else
+    warn "could not stop $UNIT"
+  fi
+  remove_own_enablement "$(own_unit_path)"
+  systemctl --user daemon-reload
+}
+
 # A user unit named oskar.service overrides the packaged one. When the
 # record does not prove it OSKar's, nothing here moves it, flag or not:
 # the message says what is known and names what to move by hand.
@@ -396,8 +439,9 @@ migrate_source() {
     # Off before it moves: a unit renamed while enabled leaves a dangling
     # wants link and a running helper that nothing will stop.
     if unit_is_ours; then
-      systemctl --user disable --now "$UNIT" >/dev/null 2>&1 \
-        || warn "could not disable the source-install unit; it may still be enabled"
+      stop_own_unit
+    else
+      remove_own_enablement "$USER_UNIT"
     fi
     dest="$(record_aside "$USER_UNIT" migrated)" || exit 1
     record_update forget "$USER_UNIT"
@@ -694,13 +738,9 @@ cmd_teardown() {
   # Teardown's other steps stand on their own: a unit that is not
   # OSKar's is named and left running, and the rest still happens.
   if unit_is_ours; then
-    if systemctl --user disable --now "$UNIT" >/dev/null 2>&1; then
-      say "unit disabled and stopped"
-    else
-      say "unit already inactive"
-    fi
+    stop_own_unit
   elif [[ -z "$UNIT_FRAGMENT" ]]; then
-    say "no $UNIT unit installed; nothing to disable"
+    say "no $UNIT unit installed; nothing to stop"
   else
     warn "$(unit_not_ours_reason); left as it is"
   fi
@@ -1230,6 +1270,10 @@ upgrade) shift; cmd_upgrade "$@" ;;
 status) [[ $# -eq 1 ]] || die "status takes no arguments"; cmd_status ;;
 doctor) [[ $# -eq 1 ]] || die "doctor takes no arguments"; cmd_doctor ;;
 teardown) [[ $# -eq 1 ]] || die "teardown takes no arguments"; cmd_teardown ;;
+unlink-enablement)
+  # uninstall.sh, after the user unit is gone: its links, and no others.
+  [[ $# -eq 1 ]] || die "unlink-enablement takes no arguments"
+  remove_own_enablement "$USER_UNIT" ;;
 start) [[ $# -eq 1 ]] || die "start takes no arguments"; cmd_start ;;
 record) shift; cmd_record "$@" ;;
 -h|--help|help)

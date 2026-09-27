@@ -92,7 +92,26 @@ else
   exit 1
 fi
 
-# ---- 2. ownership of the three destinations, before any write ----
+# ---- 2. another oskar.service that this unit would shadow ----
+# A user unit takes the place of any oskar.service at a lower-priority
+# path (/usr/lib, ~/.local/share) for this user. That is another
+# program's unit unless it is the oskar package's own; installing over it
+# needs consent, and even then its file and its enablement links are
+# left alone.
+resolved="$(systemctl --user show -p FragmentPath --value oskar.service 2>/dev/null || true)"
+if [[ -n "$resolved" && "$resolved" != "$unit" ]] && ! [[ -e "$unit" && "$resolved" -ef "$unit" ]] \
+    && ! { [[ "$resolved" == /usr/lib/systemd/user/oskar.service ]] \
+      && command -v pacman >/dev/null 2>&1 \
+      && [[ "$(pacman -Qqo "$resolved" 2>/dev/null)" == oskar ]]; }; then
+  if [[ -z "$force" ]]; then
+    echo "install.sh: a unit named oskar.service from $resolved is already on this system; installing OSKar's unit would take its place for this user." >&2
+    echo "Nothing was changed. Rerun with --force to install anyway: that unit's file is not touched (it is shadowed), and its enablement links are left alone." >&2
+    exit 3
+  fi
+  echo "install.sh: --force: OSKar's unit will shadow oskar.service from $resolved for this user; that file and its enablement links are left alone" >&2
+fi
+
+# ---- 3. ownership of the three destinations, before any write ----
 foreign=()
 for path in "$unit" "$binary" "$cli"; do
   if [[ -e "$path" || -L "$path" ]] && ! ours "$path"; then
@@ -141,7 +160,7 @@ for i in "${!moved_from[@]}"; do
   echo "install.sh: --force: ${moved_from[i]} did not match OSKar's install record; moved aside as ${moved_to[i]}" >&2
 done
 
-# ---- 3. the writes, then the record of what was written ----
+# ---- 4. the writes, then the record of what was written ----
 if [[ -n "$staged" ]]; then
   install -Dm755 "$staged" "$binary"
 fi
@@ -161,7 +180,7 @@ if ! record write "$unit" "$binary" "$cli"; then
   exit 1
 fi
 
-# ---- 4. systemd ----
+# ---- 5. systemd ----
 systemctl --user daemon-reload
 # enable/restart act on whatever file systemd resolves for the name; a
 # unit elsewhere on its search path that shadows the one just written is
@@ -171,7 +190,13 @@ if [[ -z "$fragment" || "$(realpath -e -- "$fragment" 2>/dev/null)" != "$(realpa
   echo "install.sh: systemd resolves oskar.service to ${fragment:-nothing}, not the unit just installed at $unit; OSKar will not enable or start that one. Remove the other unit yourself, then rerun." >&2
   exit 1
 fi
-systemctl --user enable oskar.service
+# Enabling acts on the unit just proven ours. If another unit's
+# enablement link already holds the same name, systemctl refuses rather
+# than replace it, and so does this script.
+if ! systemctl --user enable oskar.service; then
+  echo "install.sh: systemctl could not enable oskar.service (its message is above); OSKar's unit is installed but not enabled, and no other unit's enablement link was changed" >&2
+  exit 1
+fi
 
 # Only start it now if there is a session to attach to. Outside one the unit
 # would refuse on ConditionEnvironment and look like a failure.

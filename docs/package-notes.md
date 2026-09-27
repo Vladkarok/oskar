@@ -41,7 +41,8 @@ restart a healthy helper in a live session; the end state is the same). A source
   enabled state, unit enabled/active, socket presence, protocol
   compatibility. Read-only.
 - **`oskar teardown`** — disable the plugin through Omarchy,
-  disable/stop the unit, unlink the registration — but only a
+  stop the unit and remove only the enablement links that point at
+  OSKar's own unit file, unlink the registration — but only a
   registration whose target is the packaged payload (a git clone or a
   developer checkout is left untouched). Config
   (`~/.config/oskar`) and state (`~/.local/state/oskar`) are

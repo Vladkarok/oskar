@@ -5,7 +5,7 @@
 # FIRST, but only when this checkout's registration is the live one — a
 # packaged install (or another checkout) must not be switched off by
 # uninstalling this. In a mixed state (registration at this checkout
-# while the packaged unit is the one systemd runs) the teardown disables
+# while the packaged unit is the one systemd runs) the teardown stops
 # the packaged unit — recoverable with `oskar setup`. Config and the
 # panel's state are never touched; the install record under
 # ~/.local/state/oskar forgets each path removed here and goes with the
@@ -144,17 +144,6 @@ for path in ${remove[@]+"${remove[@]}"} ${aside[@]+"${aside[@]}"}; do
   fi
 done
 
-# Which file systemd runs for the name, asked before any of them moves:
-# if it is the user unit and that file goes, the enablement left behind
-# points at nothing and is cleaned up below.
-fragment="$(systemctl --user show -p FragmentPath --value oskar.service 2>/dev/null || true)"
-fragment_is_user_unit=""
-if [[ -n "$fragment" ]] && [[ "$fragment" == "$unit" \
-    || "$(realpath -e -- "$fragment" 2>/dev/null)" == "$(realpath -e -- "$unit" 2>/dev/null)" ]] \
-    && present "$unit"; then
-  fragment_is_user_unit=1
-fi
-
 # ---- act ----
 # The moves first: they are the step that can still be undone whole, so a
 # failure there leaves nothing switched off either.
@@ -199,10 +188,16 @@ if ((${#gone[@]})); then
   oskar_cmd record forget "${gone[@]}" \
     || echo "uninstall.sh: the install record could not be updated" >&2
 fi
-if [[ -n "$fragment_is_user_unit" ]] && ! present "$unit"; then
-  # The unit file is gone; disable only removes the wants link left
-  # pointing at it.
-  systemctl --user disable oskar.service >/dev/null 2>&1 || true
+unit_gone=""
+for path in ${gone[@]+"${gone[@]}"}; do
+  if [[ "$path" == "$unit" ]]; then unit_gone=1; fi
+done
+if [[ -n "$unit_gone" ]] && ! present "$unit"; then
+  # The unit file this run removed or moved aside leaves its enablement
+  # links pointing at nothing. Only links whose text is exactly that
+  # path go; `systemctl disable` would act by name and also drop another
+  # program's oskar.service enablement.
+  oskar_cmd unlink-enablement >&2 || true
 fi
 systemctl --user daemon-reload
 
