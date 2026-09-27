@@ -99,12 +99,95 @@ function readTimedOut(state, seq, target) {
 // disagree with the click's. Queued picks queue `{emoji, clientClass}`
 // pairs, so promotion is not a re-derivation either; terminal outcomes
 // carry nothing.
+//
+// The clipboard a pick replaces. A delivered pick leaves its emoji in the
+// clipboard — that is how an emoji picker works, and putting the old
+// content back after the paste would race the client still reading it.
+// A pick that FAILS puts back what the clipboard held before it: `before`
+// is that content, `{ text }` when the panel could read it as text, or
+// `{ none: why }` when it could not be put back (see restoreSnapshot).
+// The first pick of a burst brings the panel's snapshot; a delivered pick
+// makes its own emoji the next pick's `before`; a failed one leaves
+// `before` as it was. Every terminal failure that leaves the machine idle
+// carries `restore` — `{ text }` to publish, or `{ none: why }` to say in
+// the journal that the clipboard stays as it is. A failure with a queued
+// pick behind it carries `restore: null`: the next pick replaces the
+// clipboard anyway, and its own outcome decides.
 function txnInitial() {
     return { seq: 0, phase: "idle", pending: "", clientClass: "",
-        attempts: 0, queue: [] }
+        attempts: 0, queue: [], before: { none: "unread" } }
 }
 
-function txnPick(state, emoji, clientClass) {
+function txnWith(state, changes) {
+    var next = {
+        seq: state.seq, phase: state.phase, pending: state.pending,
+        clientClass: state.clientClass, attempts: state.attempts,
+        queue: state.queue, before: state.before
+    }
+    for (var key in changes) next[key] = changes[key]
+    return next
+}
+
+function txnIdle(state, changes) {
+    var idle = txnWith(state, { phase: "idle", pending: "", clientClass: "",
+        attempts: 0 })
+    return changes ? txnWith(idle, changes) : idle
+}
+
+function snapshotOf(before) {
+    if (before && typeof before.text === "string" && before.text !== "")
+        return { text: before.text }
+    return { none: before && typeof before.none === "string" ? before.none : "unread" }
+}
+
+// What a terminal failure owes the clipboard: nothing while a queued pick
+// is about to replace it, otherwise the snapshot. `served` is the verify's
+// last read, when there was one: a clipboard already holding the snapshot
+// needs nothing written.
+function restoreFor(state, served) {
+    if (state.queue.length > 0) return null
+    var before = snapshotOf(state.before)
+    if (before.text !== undefined && served !== undefined && String(served) === before.text)
+        return { none: "unchanged" }
+    return before
+}
+
+// The panel's clipboard reading, as a snapshot a failed pick could put
+// back. `kind` and `text` are the paste chip's reading (Panel.qml's
+// wl-paste probe), `textSeq` the sequence its text was read under and
+// `currentSeq` the newest one; `refreshing` says a read is in flight. The
+// reading is current only when no read is in flight and the text belongs
+// to the newest sequence — the chip's watch re-reads on every change, so
+// that is the moment it describes the clipboard as it is. Text past the
+// reading's own cap (a 65536-byte stream) may be cut short, so it is not
+// put back; neither is anything that is not text.
+var SNAPSHOT_CAP = 65536
+
+function utf8Length(text) {
+    var bytes = 0
+    for (var i = 0; i < text.length; i++) {
+        var code = text.charCodeAt(i)
+        if (code < 0x80) bytes += 1
+        else if (code < 0x800) bytes += 2
+        else if (code >= 0xd800 && code <= 0xdbff) { bytes += 4; i += 1 }
+        else bytes += 3
+    }
+    return bytes
+}
+
+function restoreSnapshot(kind, text, textSeq, currentSeq, refreshing) {
+    if (refreshing) return { none: "stale" }
+    if (kind === "empty") return { none: "empty" }
+    if (kind !== "text") return { none: "not text" }
+    if (textSeq !== currentSeq) return { none: "stale" }
+    var value = String(text === null || text === undefined ? "" : text)
+    if (value === "") return { none: "empty" }
+    if (value.indexOf("\u0000") >= 0) return { none: "not text" }
+    if (utf8Length(value) >= SNAPSHOT_CAP) return { none: "too large" }
+    return { text: value }
+}
+
+function txnPick(state, emoji, clientClass, before) {
     var payload = String(emoji || "")
     var cls = String(clientClass || "")
     // An empty payload is refused rather than queued: nothing could ever
@@ -120,19 +203,17 @@ function txnPick(state, emoji, clientClass) {
         if (state.queue.length >= 3)
             return { state: state, action: "refused-full" }
         return {
-            state: {
-                seq: state.seq, phase: state.phase, pending: state.pending,
-                clientClass: state.clientClass, attempts: state.attempts,
+            state: txnWith(state, {
                 queue: state.queue.concat([{ emoji: payload, clientClass: cls }])
-            },
+            }),
             action: "queued"
         }
     }
     return {
-        state: {
+        state: txnWith(state, {
             seq: state.seq + 1, phase: "publishing", pending: payload,
-            clientClass: cls, attempts: 0, queue: state.queue
-        },
+            clientClass: cls, attempts: 0, before: snapshotOf(before)
+        }),
         action: "publish"
     }
 }
@@ -146,42 +227,22 @@ function txnVerifyTimedOut(state, seq) {
     if (state.phase !== "publishing" || state.pending === ""
             || seq !== state.seq)
         return { state: state, action: "ignore" }
-    return {
-        state: { seq: state.seq, phase: "idle", pending: "", clientClass: "",
-            attempts: 0, queue: state.queue },
-        action: "drop"
-    }
+    return { state: txnIdle(state), action: "drop", restore: restoreFor(state) }
 }
 
 function txnServed(state, seq, served) {
     if (state.phase !== "publishing" || state.pending === "" || seq !== state.seq)
         return { state: state, action: "stale" }
     if (String(served) === state.pending)
-        return {
-            state: {
-                seq: state.seq, phase: "pasting", pending: state.pending,
-                clientClass: state.clientClass, attempts: state.attempts,
-                queue: state.queue
-            },
-            action: "chord"
-        }
+        return { state: txnWith(state, { phase: "pasting" }), action: "chord" }
     var attempts = state.attempts + 1
     if (attempts >= 5)
-        return {
-            state: {
-                seq: state.seq, phase: "idle", pending: "", clientClass: "",
-                attempts: 0, queue: state.queue
-            },
-            action: "drop"
-        }
+        return { state: txnIdle(state), action: "drop",
+            restore: restoreFor(state, served) }
     // A retry is a NEW verify run: the sequence moves, so the answer of
     // the wl-paste this retry is about to kill cannot masquerade as it.
     return {
-        state: {
-            seq: state.seq + 1, phase: "publishing", pending: state.pending,
-            clientClass: state.clientClass, attempts: attempts,
-            queue: state.queue
-        },
+        state: txnWith(state, { seq: state.seq + 1, attempts: attempts }),
         action: "retry"
     }
 }
@@ -201,13 +262,10 @@ function txnChordDone(state, seq, success) {
         return { state: state, action: "ignore" }
     if (seq !== state.seq)
         return { state: state, action: "stale" }
-    var idle = {
-        seq: state.seq, phase: "idle", pending: "", clientClass: "",
-        attempts: 0, queue: state.queue
-    }
-    return success === true
-        ? { state: idle, action: "completed", emoji: state.pending }
-        : { state: idle, action: "cancelled" }
+    if (success === true)
+        return { state: txnIdle(state, { before: { text: state.pending } }),
+            action: "completed", emoji: state.pending }
+    return { state: txnIdle(state), action: "cancelled", restore: restoreFor(state) }
 }
 
 // Starts the next queued pick after a terminal outcome. Called by the QML
@@ -221,24 +279,26 @@ function txnNext(state) {
     if (state.phase !== "idle" || state.queue.length === 0)
         return { state: state, action: "none" }
     var pick = state.queue[0]
-    var next = {
+    var next = txnWith(state, {
         seq: state.seq + 1, phase: "publishing", pending: pick.emoji,
         clientClass: pick.clientClass, attempts: 0,
         queue: state.queue.slice(1)
-    }
+    })
     return { state: next, action: "publish", emoji: pick.emoji }
 }
 
 // Cancel the running pick and everything queued. A chord already
 // dispatching cannot be un-dispatched; its late completion lands on the
-// idle machine as "ignore" and records nothing.
+// idle machine as "ignore" and records nothing. A pick that had already
+// published owes the clipboard its snapshot.
 function txnCancel(state) {
     if (state.phase === "idle" && state.queue.length === 0)
         return { state: state, action: "ignore" }
+    var cleared = txnWith(state, { queue: [] })
     return {
-        state: { seq: state.seq, phase: "idle", pending: "", clientClass: "",
-            attempts: 0, queue: [] },
-        action: "dropped"
+        state: txnIdle(cleared),
+        action: "dropped",
+        restore: state.phase !== "idle" ? restoreFor(cleared) : null
     }
 }
 

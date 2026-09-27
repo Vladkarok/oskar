@@ -796,6 +796,24 @@ Item {
         var preview = ConfigFile.pastePreviewText(text)
         root.clipboardKind = ConfigFile.pasteChipKind("text", preview, exitOk)
         root.clipboardPreview = root.clipboardKind === "text" ? preview : ""
+        // The whole text, not the preview: what a failed emoji pick puts
+        // back (clipboardRestoreSnapshot).
+        root.clipboardFullText = root.clipboardKind === "text" ? String(text) : ""
+        root.clipboardFullTextSeq = root.clipboardKind === "text" ? seq : -1
+    }
+
+    // The chip's reading, as the snapshot a failed emoji pick may put
+    // back. Reused rather than read again: the watch re-reads on every
+    // clipboard change while the panel is open, so with no read in flight
+    // the newest reading is the clipboard as it stands.
+    property string clipboardFullText: ""
+    property int clipboardFullTextSeq: -1
+    function clipboardRestoreSnapshot() {
+        var refreshing = clipboardTypes.running || clipboardTypes.retiring
+            || clipboardText.running || clipboardText.retiring
+            || root.clipboardRefreshQueued
+        return ClipboardPaste.restoreSnapshot(root.clipboardKind, root.clipboardFullText,
+            root.clipboardFullTextSeq, root.clipboardSeq, refreshing)
     }
 
     // The local read's insert. Routing reads the live surfaces: the read's
@@ -3096,7 +3114,7 @@ Item {
                 // refresh of the same memory the event
                 // stream keeps.
                 emojiDelivery.request(delivered.emoji,
-                    root.focusedClientClass())
+                    root.focusedClientClass(), root.clipboardRestoreSnapshot())
             }
             onSkinToneChosen: function (tone) { root.chooseEmojiSkinTone(tone) }
             onDismissed: root.emojiOpen = false

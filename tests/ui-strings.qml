@@ -43,6 +43,24 @@ QtObject {
             T.equal(UiStrings.tr("emoji.searchPlaceholder", "uk"), "Пошук")
         })
 
+        T.test("the emoji page and the setup button say what they do", function () {
+            T.equal(UiStrings.tr("emoji.clipboardNote", "en"),
+                "Picking an emoji replaces the clipboard")
+            T.equal(UiStrings.tr("emoji.clipboardNote", "ru"),
+                "Выбор эмодзи заменяет содержимое буфера обмена")
+            T.equal(UiStrings.tr("emoji.clipboardNote", "uk"),
+                "Вибір емодзі замінює вміст буфера обміну")
+            var langs = ["en", "ru", "uk"]
+            var word = { en: "package", ru: "пакет", uk: "пакет" }
+            for (var i = 0; i < langs.length; i++) {
+                var l = langs[i]
+                T.equal(UiStrings.tr("banner.deps.setup", l).indexOf(word[l]) >= 0, true,
+                    "banner.deps.setup/" + l)
+                T.equal(UiStrings.tr("banner.deps.missing", l).indexOf(word[l]) >= 0, true,
+                    "banner.deps.missing/" + l)
+            }
+        })
+
         T.test("an unknown language falls through to English", function () {
             // The searchPlaceholder rule: a code we do not ship reads as
             // English rather than guessing (a "de" layout, a junk value).

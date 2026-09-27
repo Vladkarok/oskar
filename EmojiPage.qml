@@ -258,8 +258,10 @@ Rectangle {
         tokens.space(18), tokens.space(5), gridGap)
     readonly property real gridIdealHeight:
         gridRowsWanted * (cellSize + gridGap) - gridGap + usageChromeHeight
+    // The clipboard note's line under the grid.
+    readonly property real noteHeight: tokens.space(16)
     readonly property real naturalPageHeight: pageMargin * 2 + headerRow.height
-        + 1 + tabsFlow.height + gridIdealHeight + contentSpacing * 3
+        + 1 + tabsFlow.height + gridIdealHeight + contentSpacing * 4 + noteHeight
         + (dragEnabled ? stripHeight + contentSpacing : 0)
     readonly property real maxPageHeight: hostHeight > 0
         ? Math.max(0, hostHeight - tokens.space(6) * 2) : tokens.space(120)
@@ -617,7 +619,7 @@ Rectangle {
             id: gridArea
             width: parent.width
             height: Math.max(0, contentColumn.height - headerRow.height - 1
-                - tabsFlow.height - emojiRoot.contentSpacing * 3
+                - tabsFlow.height - emojiRoot.contentSpacing * 4 - emojiRoot.noteHeight
                 - (emojiRoot.dragEnabled ? emojiRoot.stripHeight
                     + emojiRoot.contentSpacing : 0))
 
@@ -784,6 +786,19 @@ Rectangle {
                     font.pixelSize: tokens.fontBodySmall
                 }
             }
+        }
+
+        // Standing, not a refusal: every pick goes through the clipboard
+        // and leaves the emoji there, so the page says so where it is used.
+        Text {
+            width: parent.width
+            height: emojiRoot.noteHeight
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+            text: UiStrings.tr("emoji.clipboardNote", emojiRoot.uiLang)
+            color: tokens.muted
+            font.family: tokens.fontFamily
+            font.pixelSize: tokens.fontBodySmall
         }
     }
 

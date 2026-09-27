@@ -66,7 +66,9 @@ Item {
     // never from the paste's dispatch. The publisher stays alive as the
     // selection owner — killing it would leave clipboard ownership
     // homeless; the next pick replaces it, which is replacement, not
-    // loss. The pick's payload is what replaces the clipboard.
+    // loss. The pick's payload is what replaces the clipboard; a pick that
+    // fails puts back what the clipboard held before it, when the panel
+    // could read that as text (ClipboardPaste's `restore`).
     property var emojiTxnState: ClipboardPaste.txnInitial()
 
     Process {
@@ -142,8 +144,8 @@ Item {
             root.emojiTxnState = timedOut.state
             if (timedOut.action !== "drop") return
             killProcessGroup(emojiClipboardVerify)
-            console.warn("[oskar] emoji verify stalled — pick dropped,"
-                + " the clipboard keeps whatever it holds")
+            console.warn("[oskar] emoji verify stalled — pick dropped")
+            restoreClipboard(timedOut.restore)
             // A dropped pick is the user's click vanishing; flash it
             // rather than let it pass in silence.
             root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
@@ -151,7 +153,9 @@ Item {
         }
     }
 
-    function request(emoji, clientClass) {
+    // `before` is the panel's reading of the clipboard at the click
+    // (ClipboardPaste.restoreSnapshot): what a failed pick puts back.
+    function request(emoji, clientClass, before) {
         // The paste CHIP's own paced/awaiting chord owns the clipboard
         // right now (it is not a txn — the txn machine never saw it),
         // and this pick's very first act is wl-copy replacing what that
@@ -179,7 +183,7 @@ Item {
         // spans hundreds of milliseconds. One derivation, one table — the
         // arrival dispatches for the class stored here.
         var picked = ClipboardPaste.txnPick(root.emojiTxnState, emoji,
-            clientClass)
+            clientClass, before)
         root.emojiTxnState = picked.state
         if (picked.action === "queued") {
             console.log("[oskar] emoji pick queued behind an unfinished paste")
@@ -236,6 +240,7 @@ Item {
         if (result.action === "drop") {
             console.warn("[oskar] emoji clipboard publication not confirmed;"
                 + " pick dropped, no chord sent")
+            restoreClipboard(result.restore)
             // The drop is the click vanishing — flash, don't
             // journal.
             root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
@@ -279,13 +284,34 @@ Item {
             root.pickSettled(done.emoji)
         } else if (done.action === "cancelled") {
             console.warn("[oskar] emoji paste chord refused or aborted;"
-                + " no usage recorded (the clipboard keeps the pick)")
+                + " no usage recorded")
+            restoreClipboard(done.restore)
             // The same silence class as the queue caps and the paste
             // chip: a pick whose chord never dispatched must not be
             // the one click that vanishes without a word.
             root.flashRefused(UiStrings.tr("hint.pickFailed", root.uiLang))
         }
         startNextEmojiTxn()
+    }
+
+    // A failed pick's debt to the clipboard. `{ text }` is published by the
+    // same owner process a pick uses, replacing the failed pick's emoji
+    // (and any wl-copy still serving it); `{ none }` leaves the clipboard
+    // as it is and says why; null means a queued pick takes the clipboard
+    // next and its own outcome decides.
+    function restoreClipboard(restore) {
+        if (!restore) return
+        if (restore.text === undefined) {
+            if (restore.none !== "unchanged")
+                console.log("[oskar] the clipboard keeps the failed pick: its"
+                    + " previous content could not be put back (" + restore.none + ")")
+            return
+        }
+        if (emojiClipboardPublish.running)
+            emojiClipboardPublish.running = false
+        emojiClipboardPublish.command = ["wl-copy", "--foreground", "--", restore.text]
+        emojiClipboardPublish.running = true
+        console.log("[oskar] the failed pick's clipboard is put back")
     }
 
     function startNextEmojiTxn() {

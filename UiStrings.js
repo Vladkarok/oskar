@@ -84,15 +84,17 @@ var STRINGS = {
         ru: "Настройки не сохранены — проверьте свободное место и права",
         uk: "Налаштування не збережено — перевірте вільне місце та права"
     },
+    // The dependency banner's button runs `omarchy pkg add hyprland` in a
+    // terminal: its words say that it installs a package.
     "banner.deps.fetching": {
-        en: "Fetching missing components\u2026",
-        ru: "Получаю недостающие компоненты\u2026",
-        uk: "Отримую відсутні компоненти\u2026"
+        en: "Installing the hyprland package\u2026",
+        ru: "Устанавливаю пакет hyprland\u2026",
+        uk: "Встановлюю пакет hyprland\u2026"
     },
     "banner.deps.missing": {
-        en: "Missing input components",
-        ru: "Не хватает компонентов ввода",
-        uk: "Бракує компонентів вводу"
+        en: "hyprctl is missing — the button installs the hyprland package",
+        ru: "Нет hyprctl — кнопка установит пакет hyprland",
+        uk: "Немає hyprctl — кнопка встановить пакет hyprland"
     },
     "banner.deps.busy": {
         en: "Busy\u2026",
@@ -100,9 +102,9 @@ var STRINGS = {
         uk: "Зайнято\u2026"
     },
     "banner.deps.setup": {
-        en: "Set up",
-        ru: "Настроить",
-        uk: "Налаштувати"
+        en: "Install package",
+        ru: "Установить пакет",
+        uk: "Встановити пакет"
     },
     "color.slider.hue": {
         en: "Hue",
@@ -605,6 +607,12 @@ var STRINGS = {
         en: "Recent",
         ru: "Недавние",
         uk: "Нещодавні"
+    },
+    // The page's standing disclosure: a pick goes through the clipboard.
+    "emoji.clipboardNote": {
+        en: "Picking an emoji replaces the clipboard",
+        ru: "Выбор эмодзи заменяет содержимое буфера обмена",
+        uk: "Вибір емодзі замінює вміст буфера обміну"
     },
     "emoji.noMatches": {
         en: "No matches",

@@ -535,6 +535,126 @@ QtObject {
             T.equal(own.emoji, "🔥")
         })
 
+        // ---- the clipboard a pick replaces ----
+        //
+        // A delivered pick leaves its emoji; a failed one puts back what
+        // the clipboard held before it, when that was text the panel read.
+
+        function pickWith(before) {
+            return ClipboardPaste.txnPick(ClipboardPaste.txnInitial(), "😀", "foot", before)
+        }
+
+        T.test("a delivered pick restores nothing and becomes the next pick's before", function () {
+            var started = pickWith({ text: "user text" })
+            var served = ClipboardPaste.txnServed(started.state, started.state.seq, "😀")
+            var done = ClipboardPaste.txnChordDone(served.state, served.state.seq, true)
+            T.equal(done.action, "completed")
+            T.equal(done.restore, undefined, "success leaves the emoji in the clipboard")
+            T.deepEqual(done.state.before, { text: "😀" })
+        })
+
+        T.test("an exhausted verify mismatch puts the snapshot back", function () {
+            var state = pickWith({ text: "user text" }).state
+            var out
+            for (var i = 0; i < 5; i++) {
+                out = ClipboardPaste.txnServed(state, state.seq, "something odd")
+                state = out.state
+            }
+            T.equal(out.action, "drop")
+            T.deepEqual(out.restore, { text: "user text" })
+            // A clipboard that already holds the snapshot (the publish never
+            // took) needs nothing written.
+            state = pickWith({ text: "user text" }).state
+            for (var j = 0; j < 5; j++) {
+                out = ClipboardPaste.txnServed(state, state.seq, "user text")
+                state = out.state
+            }
+            T.deepEqual(out.restore, { none: "unchanged" })
+        })
+
+        T.test("the verify watchdog puts the snapshot back", function () {
+            var started = pickWith({ text: "line one\nline two" })
+            var timedOut = ClipboardPaste.txnVerifyTimedOut(started.state, started.state.seq)
+            T.equal(timedOut.action, "drop")
+            T.deepEqual(timedOut.restore, { text: "line one\nline two" })
+        })
+
+        T.test("a refused or errored chord puts the snapshot back", function () {
+            var started = pickWith({ text: "user text" })
+            var served = ClipboardPaste.txnServed(started.state, started.state.seq, "😀")
+            var refused = ClipboardPaste.txnChordDone(served.state, served.state.seq, false)
+            T.equal(refused.action, "cancelled")
+            T.deepEqual(refused.restore, { text: "user text" })
+            T.deepEqual(refused.state.before, { text: "user text" },
+                "a failed pick does not become the next one's before")
+        })
+
+        T.test("a cancellation of a published pick puts the snapshot back", function () {
+            var started = pickWith({ text: "user text" })
+            var queued = ClipboardPaste.txnPick(started.state, "🔥", "foot")
+            var cancelled = ClipboardPaste.txnCancel(queued.state)
+            T.equal(cancelled.action, "dropped")
+            T.deepEqual(cancelled.restore, { text: "user text" })
+        })
+
+        T.test("with no snapshot the clipboard stays, and says why", function () {
+            var reasons = [{ none: "empty" }, { none: "not text" }, { none: "too large" },
+                { none: "stale" }, undefined, null, { text: "" }]
+            var expected = ["empty", "not text", "too large", "stale", "unread", "unread",
+                "unread"]
+            for (var i = 0; i < reasons.length; i++) {
+                var started = pickWith(reasons[i])
+                var out = ClipboardPaste.txnVerifyTimedOut(started.state, started.state.seq)
+                T.deepEqual(out.restore, { none: expected[i] })
+            }
+        })
+
+        T.test("a failure with a queued pick behind it leaves the clipboard to that pick", function () {
+            var started = pickWith({ text: "user text" })
+            var queued = ClipboardPaste.txnPick(started.state, "🔥", "foot", { text: "ignored" })
+            var dropped = ClipboardPaste.txnVerifyTimedOut(queued.state, queued.state.seq)
+            T.equal(dropped.restore, null)
+            var next = ClipboardPaste.txnNext(dropped.state)
+            T.equal(next.action, "publish")
+            // The queued pick's own snapshot is the burst's, not one taken
+            // behind a pick that owned the clipboard.
+            T.deepEqual(next.state.before, { text: "user text" })
+            var failed = ClipboardPaste.txnVerifyTimedOut(next.state, next.state.seq)
+            T.deepEqual(failed.restore, { text: "user text" })
+            // After a delivered first pick the second's before is the emoji.
+            var a = pickWith({ text: "user text" })
+            var b = ClipboardPaste.txnPick(a.state, "🔥", "foot")
+            var served = ClipboardPaste.txnServed(b.state, b.state.seq, "😀")
+            var done = ClipboardPaste.txnChordDone(served.state, served.state.seq, true)
+            var second = ClipboardPaste.txnNext(done.state)
+            var lost = ClipboardPaste.txnVerifyTimedOut(second.state, second.state.seq)
+            T.deepEqual(lost.restore, { text: "😀" })
+        })
+
+        T.test("the panel's reading is a snapshot only when it is current text", function () {
+            T.deepEqual(ClipboardPaste.restoreSnapshot("text", "hi", 4, 4, false), { text: "hi" })
+            T.deepEqual(ClipboardPaste.restoreSnapshot("text", "hi", 3, 4, false),
+                { none: "stale" }, "text read under an older sequence")
+            T.deepEqual(ClipboardPaste.restoreSnapshot("text", "hi", 4, 4, true),
+                { none: "stale" }, "a read in flight")
+            T.deepEqual(ClipboardPaste.restoreSnapshot("empty", "", 4, 4, false),
+                { none: "empty" })
+            T.deepEqual(ClipboardPaste.restoreSnapshot("other", "", 4, 4, false),
+                { none: "not text" })
+            T.deepEqual(ClipboardPaste.restoreSnapshot("text", "a\u0000b", 4, 4, false),
+                { none: "not text" })
+            var big = new Array(65537).join("a")
+            T.deepEqual(ClipboardPaste.restoreSnapshot("text", big.slice(1), 4, 4, false),
+                { text: big.slice(1) }, "65535 bytes fit")
+            T.deepEqual(ClipboardPaste.restoreSnapshot("text", big, 4, 4, false),
+                { none: "too large" }, "the reading's own cap may have cut it")
+            // Bytes, not UTF-16 units: 21846 three-byte characters are 65538.
+            var wide = new Array(21847).join("€")
+            T.deepEqual(ClipboardPaste.restoreSnapshot("text", wide, 4, 4, false),
+                { none: "too large" })
+            T.equal(ClipboardPaste.utf8Length("😀€a"), 8)
+        })
+
         Qt.exit(T.report("clipboard-paste"))
     }
 }
