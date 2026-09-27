@@ -45,14 +45,7 @@ optdepends=(
   'qt6-multimedia: key-click sound'
   'ffmpeg: key-click sound transcoding'
 )
-conflicts=(oskar-git omarchy-osk)
-# The pre-publish rename (ticket 59): machines that installed the
-# never-published omarchy-osk package walk to this one — pacman -Syu
-# (and AUR helpers' sync installs) replace it via replaces=; a plain
-# pacman -U refuses while the old package stands (conflicts=), so the
-# old one comes out first (sudo pacman -Rns omarchy-osk). `oskar
-# setup` then migrates registration, unit and state.
-replaces=(omarchy-osk)
+conflicts=(oskar-git)
 install=oskar.install
 source=("$url/archive/refs/tags/v$pkgver.tar.gz")
 # SKIP by design — see the checksum paragraph in the header: the real

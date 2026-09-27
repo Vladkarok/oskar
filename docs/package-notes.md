@@ -29,7 +29,11 @@ restart a healthy helper in a live session; the end state is the same). A source
   install's `~/.config/systemd/user` unit overrides the packaged one —
   setup refuses while it stands and `setup --migrate-source` moves it
   aside (kept, renamed `*.migrated-<timestamp>`) and removes
-  `~/.local/libexec/oskar-daemon`.
+  `~/.local/libexec/oskar-daemon` and `~/.local/bin/oskar` — each only
+  when the install record proves it OSKar's and unchanged. A user unit
+  named `oskar.service` that the record does not prove is not a source
+  install: setup stops, says so, and leaves it for the user to rename or
+  remove; no flag moves it.
 - **`oskar upgrade`** — after a package update: daemon-reload,
   restart the helper in a live session, restart the shell so the
   keep-loaded panel reloads its QML. Reports each phase; safe to rerun.
@@ -71,12 +75,9 @@ run is recorded on ticket 32.
 - [x] RENAME FIRST (ticket 59): the tree ships as `oskar` — package,
       plugin id, service, paths, strings — before the public push.
       Done 2026-09-17: the sweep renamed package, binary, payload dirs,
-      unit, plugin id, socket/keymap paths, log prefix and UI strings;
-      `replaces=(omarchy-osk)` walks an installed old-name package to
-      this one on -Syu (a plain -U refuses on conflicts: remove the
-      old package first), and `oskar setup`/`upgrade` migrate the old world
-      (unit, registration, PATH shadow, config and state dirs). The
-      GitHub repo is created/renamed to `oskar` at publish (still
+      unit, plugin id, socket/keymap paths, log prefix and UI strings.
+      Nothing was published under the old name, so nothing walks it
+      (decisions §112). The GitHub repo is created/renamed to `oskar` at publish (still
       owner-gated); the council's record and collision checks live in
       .scratch/next-iteration/evidence/naming-council/.
 

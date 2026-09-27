@@ -3,9 +3,7 @@
 # oskar — one user-facing lifecycle command for the on-screen keyboard.
 #
 #   oskar setup [--migrate-source] [--prebuilt <tarball>]
-#                                    activate; idempotent; also walks
-#                                          an old omarchy-osk install
-#                                          through the rename
+#                                    activate; idempotent
 #   oskar upgrade [--prebuilt <tarball>]
 #                                    reload helper + shell after a
 #                                          package/source update
@@ -13,6 +11,8 @@
 #   oskar doctor                     diagnose; read-only, exits 1
 #                                          when something is wrong
 #   oskar teardown                   deactivate, keep config/state
+#   oskar record ...                 the install record (install.sh and
+#                                          uninstall.sh ask through it)
 #
 # The same script serves both worlds and tells them apart by its own
 # location: installed as /usr/bin/oskar it manages the packaged
@@ -29,10 +29,7 @@
 # `omarchy plugin add` or a developer's checkout, not ours to manage.
 # Teardown unlinks the registration only when it resolves to the payload
 # this script owns. Config (~/.config/oskar) and state
-# (~/.local/state/oskar) are the user's and are never touched — except
-# once, by the rename migration, which MOVES the old
-# ~/.config/omarchy-osk and ~/.local/state/omarchy-osk to the new names
-# instead of letting the keyboard forget its settings.
+# (~/.local/state/oskar) are the user's and are never touched.
 
 set -euo pipefail
 
@@ -40,28 +37,15 @@ PLUGIN_ID="io.github.vladkarok.oskar"
 UNIT="oskar.service"
 REGISTRATION="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 USER_UNIT="$HOME/.config/systemd/user/$UNIT"
+PACKAGED_UNIT="/usr/lib/systemd/user/$UNIT"
 SOURCE_HELPER="$HOME/.local/libexec/oskar-daemon"
+CLI_LINK="$HOME/.local/bin/oskar"
 SOCKET="${XDG_RUNTIME_DIR:-$HOME/.run}/oskar/control.sock"
+RECORD="${XDG_STATE_HOME:-$HOME/.local/state}/oskar/install-record"
 # The newest protocol the helper this tree builds speaks. The helper also
 # accepts the one before (a panel is allowed to lag its helper), so this
 # only has to match the helper, never the panel.
 PROTOCOL_VERSION="7"
-
-# The pre-rename world: every name the product carried before it
-# settled on oskar. setup and upgrade migrate it away, teardown
-# deactivates it, doctor names it. Detection is per-trace and every step
-# is idempotent — a second run finds nothing and says nothing.
-OLD_UNIT="omarchy-osk.service"
-OLD_PLUGIN_ID="io.github.vladkarok.osk"
-OLD_REGISTRATION="$HOME/.config/omarchy/plugins/$OLD_PLUGIN_ID"
-OLD_USER_UNIT="$HOME/.config/systemd/user/$OLD_UNIT"
-OLD_SOURCE_HELPER="$HOME/.local/libexec/omarchy-osk-daemon"
-OLD_SHADOW="$HOME/.local/bin/omarchy-osk"
-OLD_PACKAGED_UNIT="/usr/lib/systemd/user/$OLD_UNIT"
-OLD_WANTS_UNIT="$HOME/.config/systemd/user/graphical-session.target.wants/$OLD_UNIT"
-OLD_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-osk"
-OLD_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-osk"
-OLD_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$HOME/.run}/omarchy-osk"
 
 say() { printf 'oskar: %s\n' "$*"; }
 warn() { printf 'oskar: WARNING: %s\n' "$*" >&2; }
@@ -69,77 +53,194 @@ die() { printf 'oskar: %s\n' "$*" >&2; exit 1; }
 
 self_path() { realpath "$0" 2>/dev/null || readlink -f "$0"; }
 
-# --- ownership ---------------------------------------------------------------
+# --- the install record --------------------------------------------------------
 #
-# Every path this product writes or removes outside its own checkout is a
-# name someone else may already be using. Before a file is replaced or
-# removed it must be PROVEN ours by what it is, never by what it is
-# called; what cannot be proven is left alone or, on explicit consent,
-# moved aside — nothing foreign is ever overwritten or deleted. The rule
-# lives here once: install.sh and uninstall.sh ask through `oskar owns`.
+# Every path this product writes outside its checkout or package is a
+# name someone else may already use. A path is OSKar's only while the
+# install record lists it AND it is exactly what was recorded: a regular
+# file with the recorded sha256, or a symlink with the recorded link
+# text. No record line, an edit since, a replacement, a directory: not
+# ours. Nothing is inferred from a file's name or content. What is not
+# ours is never overwritten or deleted; with explicit consent it is moved
+# aside under a name nothing else holds. install.sh and uninstall.sh ask
+# through `oskar record`, so the rule lives here once, and a failing call
+# reads as "not ours".
+#
+# The record is one line per path, "<kind>\t<digest>\t<absolute path>":
+# kind "file" (digest: sha256 of the bytes) or "link" (digest: the link
+# text). It is replaced whole through a temp file and a rename, so a
+# reader never meets half of it. The record is per user, not per
+# checkout: files one checkout installed match it when another checkout
+# installs, which is how an install moves between checkouts.
 
-# The helper binary: a regular file carrying the helper's own diagnostic
-# prefix (under either name the product has had).
-owns_helper() {
-  [[ -f "$1" && ! -L "$1" ]] || return 1
-  grep -a -q -F -e 'oskar-daemon: ' -e 'omarchy-osk-daemon: ' "$1" 2>/dev/null
+record_path_ok() {
+  [[ "$1" == /* && "$1" != *$'\t'* && "$1" != *$'\n'* ]]
 }
 
-# The user unit: a regular file that runs the helper.
-owns_unit() {
-  [[ -f "$1" && ! -L "$1" ]] || return 1
-  grep -q -E '^ExecStart=.*(oskar|omarchy-osk)-daemon' "$1" 2>/dev/null
+# Lexical only: symlinks along the path are not resolved, so a record
+# line names the path the writer used, spelled canonically.
+record_norm() { realpath -m -s -- "$1"; }
+
+# "<kind>\t<digest>" for what is at the path now; fails for anything
+# that is neither a regular file nor a symlink (absent, a directory, a
+# socket), and for a link text the line format cannot carry.
+record_state() {
+  local text sum
+  if [[ -L "$1" ]]; then
+    text="$(readlink -- "$1" && printf x)" || return 1
+    text="${text%x}"
+    text="${text%$'\n'}"
+    [[ -n "$text" && "$text" != *$'\t'* && "$text" != *$'\n'* ]] || return 1
+    printf 'link\t%s\n' "$text"
+  elif [[ -f "$1" ]]; then
+    sum="$(sha256sum < "$1" 2>/dev/null)" || return 1
+    sum="${sum%% *}"
+    [[ ${#sum} -eq 64 ]] || return 1
+    printf 'file\t%s\n' "$sum"
+  else
+    return 1
+  fi
 }
 
-# The lifecycle command on PATH: a symlink to a checkout's bin/ whose
-# manifest carries one of our plugin ids. A DANGLING link whose text names
-# a bin/oskar is ours too — its checkout is gone and it protects nothing.
-owns_cli() {
-  [[ -L "$1" ]] || return 1
-  local text resolved checkout
-  text="$(readlink "$1")"
-  case "$(basename "$text")" in oskar|omarchy-osk) ;; *) return 1 ;; esac
-  [[ "$(basename "$(dirname "$text")")" == "bin" ]] || return 1
-  [[ -e "$1" ]] || return 0
-  resolved="$(readlink -f "$1")"
-  checkout="$(dirname "$(dirname "$resolved")")"
-  [[ -f "$checkout/manifest.json" ]] || return 1
-  grep -q -F -e "\"$PLUGIN_ID\"" -e "\"$OLD_PLUGIN_ID\"" "$checkout/manifest.json"
+# "<kind>\t<digest>" the record holds for a normalised path.
+record_lookup() {
+  [[ -f "$RECORD" ]] || return 1
+  local kind digest path
+  while IFS=$'\t' read -r kind digest path || [[ -n "$kind" ]]; do
+    if [[ "$path" == "$1" ]]; then
+      printf '%s\t%s\n' "$kind" "$digest"
+      return 0
+    fi
+  done < "$RECORD"
+  return 1
 }
 
-# The session runtime directory of the old name: ours when it holds
-# nothing but what the helper wrote there.
-owns_runtime_dir() {
-  [[ -d "$1" && ! -L "$1" ]] || return 1
-  local entry
-  for entry in "$1"/* "$1"/.[!.]*; do
-    [[ -e "$entry" || -L "$entry" ]] || continue
-    case "$(basename "$entry")" in
-      control.sock|keymap.xkb|keymap.xkb.new|user-keymap-source|user-keymap-source.new) ;;
-      *) return 1 ;;
-    esac
+record_matches() {
+  record_path_ok "${1:-}" || return 1
+  local path want have
+  path="$(record_norm "$1")" || return 1
+  want="$(record_lookup "$path")" || return 1
+  have="$(record_state "$path")" || return 1
+  [[ "$have" == "$want" ]]
+}
+
+# write: record what each path is now, replacing earlier lines for the
+# same paths. forget: drop their lines. The file goes when it is empty.
+record_update() {
+  local op="$1" path state line
+  shift
+  local -A named=()
+  local -a lines=()
+  for path in "$@"; do
+    record_path_ok "$path" || die "record: not an absolute path: $path"
+    path="$(record_norm "$path")"
+    named["$path"]=1
+    if [[ "$op" == write ]]; then
+      state="$(record_state "$path")" \
+        || die "record: $path is neither a file nor a symlink; nothing recorded"
+      lines+=("$state"$'\t'"$path")
+    fi
   done
-  return 0
+  [[ "$op" == write || -f "$RECORD" ]] || return 0
+  local dir tmp kind digest
+  dir="$(dirname "$RECORD")"
+  [[ -d "$dir" ]] || mkdir -p -m 0700 "$dir" || die "record: cannot create $dir"
+  tmp="$(mktemp "$dir/.install-record.XXXXXX")" || die "record: cannot write in $dir"
+  if ! {
+    if [[ -f "$RECORD" ]]; then
+      while IFS=$'\t' read -r kind digest path || [[ -n "$kind" ]]; do
+        case "$kind" in file|link) ;; *) continue ;; esac
+        [[ -n "$digest" && "$path" == /* ]] || continue
+        [[ -z "${named[$path]:-}" ]] || continue
+        printf '%s\t%s\t%s\n' "$kind" "$digest" "$path"
+      done < "$RECORD"
+    fi
+    for line in ${lines[@]+"${lines[@]}"}; do
+      printf '%s\n' "$line"
+    done
+  } > "$tmp"; then
+    rm -f -- "$tmp"
+    die "record: cannot write $tmp"
+  fi
+  if [[ -s "$tmp" ]]; then
+    chmod 0600 "$tmp" && mv -f -- "$tmp" "$RECORD" \
+      || { rm -f -- "$tmp"; die "record: cannot replace $RECORD"; }
+  else
+    rm -f -- "$tmp" "$RECORD"
+  fi
 }
 
-# Out of the way, never gone: the file keeps its content under a name
-# that says when and why.
-set_aside() {
-  local stamp
+# Out of the way, never gone, never onto something else: the path moves
+# to <path>.<word>-<timestamp>, or .1, .2, … after it when that name is
+# taken, and the move is proven (source gone, destination there) before
+# anyone is told it happened. Prints the new name.
+record_aside() {
+  local path="$1" word="$2" stamp dest n=0
+  [[ "$word" =~ ^[a-z]+$ ]] || die "aside: the word must be lowercase letters: $word"
+  [[ -e "$path" || -L "$path" ]] || die "aside: nothing at $path"
   stamp="$(date +%Y%m%d-%H%M%S)"
-  mv "$1" "$1.$2-$stamp"
-  say "$1 is not OSKar's; moved aside as $1.$2-$stamp"
+  dest="$path.$word-$stamp"
+  while [[ -e "$dest" || -L "$dest" ]]; do
+    n=$((n + 1))
+    dest="$path.$word-$stamp.$n"
+  done
+  if ! mv -T -n -- "$path" "$dest" \
+      || [[ -e "$path" || -L "$path" ]] \
+      || ! [[ -e "$dest" || -L "$dest" ]]; then
+    die "could not move $path aside as $dest; it is left where it was"
+  fi
+  printf '%s\n' "$dest"
 }
 
-cmd_owns() {
-  [[ $# -eq 2 ]] || die "usage: oskar owns <helper|unit|cli> <path>"
-  case "$1" in
-    helper) owns_helper "$2" ;;
-    unit) owns_unit "$2" ;;
-    cli) owns_cli "$2" ;;
-    *) die "usage: oskar owns <helper|unit|cli> <path>" ;;
+cmd_record() {
+  local usage="usage: oskar record {matches <path> | write <path>... | \
+forget <path>... | aside <path> <word>}"
+  case "${1:-}" in
+    matches) [[ $# -eq 2 ]] || die "$usage"; record_matches "$2" ;;
+    write|forget) [[ $# -ge 2 ]] || die "$usage"; record_update "$@" ;;
+    aside) [[ $# -eq 3 ]] || die "$usage"; record_aside "$2" "$3" ;;
+    *) die "$usage" ;;
   esac
 }
+
+# --- the unit systemd acts on ------------------------------------------------
+#
+# systemctl enable/restart/stop/disable act on whatever file systemd
+# resolves for oskar.service, which need not be the one OSKar wrote. It
+# is OSKar's when it is the package's (pacman owns /usr/lib) or the user
+# unit the install record proves unchanged. Anything else — a user unit
+# OSKar did not install or one edited since, an /etc override, a masked
+# unit, no unit at all — is not ours to switch on or off.
+UNIT_FRAGMENT=""
+unit_is_ours() {
+  UNIT_FRAGMENT="$(systemctl --user show -p FragmentPath --value "$UNIT" 2>/dev/null || true)"
+  [[ -n "$UNIT_FRAGMENT" ]] || return 1
+  [[ "$UNIT_FRAGMENT" == "$PACKAGED_UNIT" ]] && return 0
+  [[ -f "$USER_UNIT" ]] || return 1
+  [[ "$(realpath -e -- "$UNIT_FRAGMENT" 2>/dev/null)" \
+    == "$(realpath -e -- "$USER_UNIT" 2>/dev/null)" ]] || return 1
+  record_matches "$USER_UNIT"
+}
+
+unit_not_ours_reason() {
+  if [[ -z "$UNIT_FRAGMENT" ]]; then
+    printf 'systemd has no %s unit' "$UNIT"
+  else
+    printf 'systemd resolves %s to %s, which OSKar did not install (or which was changed since)' \
+      "$UNIT" "$UNIT_FRAGMENT"
+  fi
+}
+
+# A user unit named oskar.service overrides the packaged one. When the
+# record does not prove it OSKar's, nothing here moves it, flag or not.
+foreign_user_unit() {
+  [[ -e "$USER_UNIT" || -L "$USER_UNIT" ]] && ! record_matches "$USER_UNIT"
+}
+FOREIGN_UNIT_MSG="$USER_UNIT is a user unit named $UNIT that OSKar did \
+not install (or that was edited since OSKar installed it), and it \
+overrides the packaged unit. OSKar will not touch it: rename or remove it \
+yourself, then rerun this command"
+
 
 detect_mode() {
   SELF="$(self_path)"
@@ -213,172 +314,48 @@ preflight() {
 }
 
 report_legacy_source() {
-  # A source install's user unit OVERRIDES the packaged unit while it
-  # exists, so the packaged helper can be enabled but never runs. Removal
-  # is explicit (--migrate-source) and recoverable: the unit is renamed,
-  # never deleted.
+  # Packaged mode: a source install's unit or helper that the record
+  # proves OSKar's. Its user unit OVERRIDES the packaged unit while it
+  # exists, so the packaged helper can be enabled but never runs.
+  # Removal is explicit (--migrate-source) and recoverable: the unit is
+  # renamed, never deleted.
   local found=0
-  [[ -f "$USER_UNIT" ]] && { found=1; say "legacy source unit: $USER_UNIT"; }
-  [[ -f "$SOURCE_HELPER" ]] && { found=1; say "legacy source helper: $SOURCE_HELPER"; }
-  ((found)) || return 1
-  return 0
+  if record_matches "$USER_UNIT"; then found=1; say "source-install unit: $USER_UNIT"; fi
+  if record_matches "$SOURCE_HELPER"; then found=1; say "source-install helper: $SOURCE_HELPER"; fi
+  ((found))
 }
 
 migrate_source() {
-  local stamp
-  stamp="$(date +%Y%m%d-%H%M%S)"
-  if [[ -f "$USER_UNIT" ]]; then
-    mv "$USER_UNIT" "$USER_UNIT.migrated-$stamp"
-    say "user unit moved aside: $USER_UNIT.migrated-$stamp"
+  # Acts only on what the record proves OSKar's; anything else under
+  # these names is left exactly where it is.
+  local dest
+  if record_matches "$USER_UNIT"; then
+    dest="$(record_aside "$USER_UNIT" migrated)" || exit 1
+    record_update forget "$USER_UNIT"
+    say "user unit moved aside: $dest"
   fi
-  if owns_helper "$SOURCE_HELPER"; then
-    rm "$SOURCE_HELPER"
+  if record_matches "$SOURCE_HELPER"; then
+    rm -f -- "$SOURCE_HELPER"
+    record_update forget "$SOURCE_HELPER"
     say "source helper binary removed (rebuild it any time from the checkout)"
   elif [[ -e "$SOURCE_HELPER" || -L "$SOURCE_HELPER" ]]; then
-    set_aside "$SOURCE_HELPER" migrated
+    say "$SOURCE_HELPER left in place: OSKar did not install it, or it changed since"
   fi
   # The ~/.local/bin symlink shadows /usr/bin on default PATHs; left
   # behind, the next bare `oskar setup` resolves to the source
-  # copy and silently re-creates the legacy state just migrated away.
-  if owns_cli "$HOME/.local/bin/oskar"; then
-    rm "$HOME/.local/bin/oskar"
+  # copy and silently re-creates the source install just moved away.
+  if record_matches "$CLI_LINK"; then
+    rm -f -- "$CLI_LINK"
+    record_update forget "$CLI_LINK"
     say "source lifecycle symlink removed from ~/.local/bin"
-  elif [[ -e "$HOME/.local/bin/oskar" || -L "$HOME/.local/bin/oskar" ]]; then
-    warn "$HOME/.local/bin/oskar is not OSKar's command; left in place \
-(it shadows /usr/bin/oskar on your PATH — call the packaged one by its \
-full path, or move that file yourself)"
+  elif [[ -e "$CLI_LINK" || -L "$CLI_LINK" ]]; then
+    warn "$CLI_LINK is not the command OSKar installed (or it changed \
+since); left in place (it shadows /usr/bin/oskar on your PATH — call the \
+packaged one by its full path, or move that file yourself)"
   fi
   systemctl --user daemon-reload
 }
 
-# --- the rename migration (omarchy-osk -> oskar) ------------------------------
-#
-# The product was born omarchy-osk and renamed oskar before anything was
-# published. Machines that installed the old name walk to the new one
-# through these functions: detection is per-trace, every step is
-# idempotent, nothing of the user's is deleted (registrations that are
-# real directories and old unit files are moved aside with the
-# --migrate-source precedent's *.migrated-<ts> naming), and the state
-# the panel reads moves WITH the name so the keyboard does not forget
-# its settings on rename day.
-
-old_world_found() {
-  # Any live trace of the old name: registration (either kind), unit
-  # (source-install's user unit, the packaged unit file, enabled or
-  # active state), old helper, PATH shadow, the old package's unit on
-  # disk, and the DATA dirs. A machine whose enabled traces are all
-  # gone (the old uninstall ran first, or old teardown + package
-  # removal) still deserves the config/state MOVE on rename day, so
-  # data-only traces count too. Every step of the walk guards its own
-  # inputs, so a data-only find walks a migration that moves the dirs
-  # and no-ops the rest.
-  [[ -e "$OLD_REGISTRATION" || -L "$OLD_REGISTRATION" ]] && return 0
-  [[ -f "$OLD_USER_UNIT" || -f "$OLD_SOURCE_HELPER" ]] && return 0
-  [[ -e "$OLD_SHADOW" || -L "$OLD_SHADOW" ]] && return 0
-  [[ -f "$OLD_PACKAGED_UNIT" ]] && return 0
-  systemctl --user --quiet is-active "$OLD_UNIT" 2>/dev/null && return 0
-  systemctl --user --quiet is-enabled "$OLD_UNIT" 2>/dev/null && return 0
-  [[ -d "$OLD_CONFIG_DIR" || -d "$OLD_STATE_DIR" ]] && return 0
-  return 1
-}
-
-deactivate_old_world() {
-  # Everything the old name had ENABLED, off: unit, plugin id,
-  # registration, PATH shadow. Data is untouched — teardown's contract,
-  # and the safe half of the migration.
-  local stamp
-  stamp="$(date +%Y%m%d-%H%M%S)"
-  if systemctl --user --quiet is-active "$OLD_UNIT" 2>/dev/null; then
-    systemctl --user stop "$OLD_UNIT" \
-      && say "old unit stopped: $OLD_UNIT"
-  fi
-  if systemctl --user is-enabled "$OLD_UNIT" >/dev/null 2>&1; then
-    systemctl --user disable "$OLD_UNIT" >/dev/null 2>&1 || true
-    say "old unit disabled: $OLD_UNIT"
-  fi
-  # disable leaves nothing behind even when the unit FILE is gone (the
-  # old package replaced away): the wants symlink is ours to guarantee.
-  [[ -L "$OLD_WANTS_UNIT" ]] && { rm "$OLD_WANTS_UNIT"; }
-  omarchy plugin disable "$OLD_PLUGIN_ID" >/dev/null 2>&1 || true
-  if [[ -L "$OLD_REGISTRATION" ]]; then
-    rm "$OLD_REGISTRATION"
-    say "old registration unlinked: $OLD_PLUGIN_ID"
-  elif [[ -d "$OLD_REGISTRATION" ]]; then
-    # A real directory is a clone or a provisioned copy (the VM
-    # provisioner rsyncs one) — moved ASIDE, never deleted.
-    mv "$OLD_REGISTRATION" "$OLD_REGISTRATION.migrated-$stamp"
-    say "old registration moved aside: $OLD_REGISTRATION.migrated-$stamp"
-  fi
-  if owns_unit "$OLD_USER_UNIT"; then
-    mv "$OLD_USER_UNIT" "$OLD_USER_UNIT.migrated-$stamp"
-    say "old user unit moved aside: $OLD_USER_UNIT.migrated-$stamp"
-  elif [[ -e "$OLD_USER_UNIT" || -L "$OLD_USER_UNIT" ]]; then
-    warn "$OLD_USER_UNIT does not run the OSKar helper; left in place"
-  fi
-  if owns_helper "$OLD_SOURCE_HELPER"; then
-    rm "$OLD_SOURCE_HELPER"
-    say "old helper binary removed: $OLD_SOURCE_HELPER"
-  elif [[ -e "$OLD_SOURCE_HELPER" || -L "$OLD_SOURCE_HELPER" ]]; then
-    set_aside "$OLD_SOURCE_HELPER" migrated
-  fi
-  if owns_cli "$OLD_SHADOW"; then
-    rm "$OLD_SHADOW"
-    say "old lifecycle symlink removed: $OLD_SHADOW"
-  elif [[ -e "$OLD_SHADOW" || -L "$OLD_SHADOW" ]]; then
-    warn "$OLD_SHADOW is not an OSKar command; left in place"
-  fi
-  systemctl --user daemon-reload
-}
-
-migrate_old_world() {
-  # The full walk, for setup and upgrade. deactivate_old_world plus the
-  # data moves (config, state, the session-scoped runtime dir) plus the
-  # one honest piece of advice pacman will not give (the old package).
-  deactivate_old_world
-  local moved cfg_new state_new
-  cfg_new="${XDG_CONFIG_HOME:-$HOME/.config}/oskar"
-  state_new="${XDG_STATE_HOME:-$HOME/.local/state}/oskar"
-  if [[ -d "$OLD_CONFIG_DIR" ]]; then
-    if [[ -e "$cfg_new" ]]; then
-      warn "$cfg_new already exists; the old $OLD_CONFIG_DIR is left \
-beside it — merge by hand if something was wanted from it"
-    else
-      mv "$OLD_CONFIG_DIR" "$cfg_new"
-      say "config moved: $OLD_CONFIG_DIR -> $cfg_new"
-    fi
-  fi
-  if [[ -d "$OLD_STATE_DIR" ]]; then
-    if [[ -e "$state_new" ]]; then
-      warn "$state_new already exists; the old $OLD_STATE_DIR is left \
-beside it — merge by hand if something was wanted from it"
-    else
-      mv "$OLD_STATE_DIR" "$state_new"
-      say "state moved: $OLD_STATE_DIR -> $state_new"
-    fi
-  fi
-  # Session-scoped (socket, published keymap, recovery record): dies
-  # with the session anyway; removing it keeps a same-session
-  # restart from finding a stale old-name record.
-  if owns_runtime_dir "$OLD_RUNTIME_DIR"; then
-    rm -rf "$OLD_RUNTIME_DIR"
-    say "old runtime directory removed: $OLD_RUNTIME_DIR"
-  elif [[ -e "$OLD_RUNTIME_DIR" || -L "$OLD_RUNTIME_DIR" ]]; then
-    warn "$OLD_RUNTIME_DIR holds files the helper did not write; left in place"
-  fi
-  if command -v pacman >/dev/null 2>&1 \
-    && pacman -Q omarchy-osk >/dev/null 2>&1; then
-    warn "the old omarchy-osk package is still installed; remove it: \
-sudo pacman -Rns omarchy-osk (or let the next pacman -Syu replace it — \
-this package declares replaces=omarchy-osk)"
-  fi
-}
-
-migrate_old_world_if_found() {
-  old_world_found || return 0
-  say "an omarchy-osk-era install was found; walking it to oskar"
-  migrate_old_world
-  say "old install migrated"
-}
 
 ensure_registration() {
   local target
@@ -426,8 +403,17 @@ rescan_and_enable_plugin() {
   fi
 }
 
-enable_unit() {
+# Setup's job is a running OSKar helper; with a unit that is not OSKar's
+# in the way it cannot do it, so it stops before registering anything.
+require_own_unit() {
   systemctl --user daemon-reload
+  unit_is_ours || die "$(unit_not_ours_reason); OSKar will not enable or \
+start it. Rename or remove that unit yourself (or reinstall OSKar's), then \
+rerun: oskar setup"
+}
+
+enable_unit() {
+  require_own_unit
   systemctl --user enable "$UNIT" >/dev/null 2>&1 || true
   if graphical_session_active; then
     systemctl --user reset-failed "$UNIT" 2>/dev/null || true
@@ -467,12 +453,16 @@ cmd_setup() {
   detect_mode
   preflight
 
-  if [[ "$MODE" == "packaged" ]] && report_legacy_source; then
-    if ((migrate)); then
-      migrate_source
-    else
-      die "a source install overrides the packaged unit; rerun with \
---migrate-source to move it aside (kept as *.migrated-<timestamp>)"
+  if [[ "$MODE" == "packaged" ]]; then
+    foreign_user_unit && die "$FOREIGN_UNIT_MSG"
+    if report_legacy_source; then
+      if ((migrate)); then
+        migrate_source
+      else
+        die "a source install overrides the packaged unit; rerun with \
+--migrate-source to move its unit aside (kept as *.migrated-<timestamp>) \
+and remove its helper and command"
+      fi
     fi
   fi
 
@@ -481,12 +471,10 @@ cmd_setup() {
       warn "a packaged install also exists; a bare 'oskar' may resolve \
 to /usr/bin first on your PATH — call this one by its full path"
     fi
-    run_install_sh
+    run_install_sh || die "install.sh did not finish; nothing was activated"
   fi
 
-  # Before the new registration: an omarchy-osk-era world (if any) goes
-  # first, so the shell's rescan below sees one plugin, not two eras.
-  migrate_old_world_if_found
+  require_own_unit
   ensure_registration
   rescan_and_enable_plugin
   enable_unit
@@ -501,46 +489,39 @@ cmd_upgrade() {
     esac
   done
   detect_mode
-  # The rename transition is part of upgrading: a machine coming from
-  # the old name walks it here (and in setup), before any restart.
-  migrate_old_world_if_found
   local target
   target="$(registration_target)"
   # An `omarchy plugin add` clone is this install's registration itself.
   registration_is_payload_clone && target="$PAYLOAD"
   if [[ "$target" != "$PAYLOAD" ]]; then
-    if [[ -z "$target" && "$MODE" == "packaged" ]]; then
-      # The rename case this command owns: the old registration was just
-      # migrated away and no new one exists. Completing the (idempotent)
-      # setup here is the walk; a registration pointing at a DIFFERENT
-      # payload stays a refusal, below.
-      say "registration absent; completing setup for the $MODE payload"
-      ensure_registration
-      rescan_and_enable_plugin
-      enable_unit
-    else
-      die "registration does not point at the \
+    die "registration does not point at the \
 $MODE payload (has: ${target:-none}); run: oskar setup"
-    fi
   fi
-  if [[ "$MODE" == "packaged" ]] && report_legacy_source; then
-    die "a source install overrides the packaged unit; restart would load \
+  if [[ "$MODE" == "packaged" ]]; then
+    foreign_user_unit && die "$FOREIGN_UNIT_MSG"
+    if report_legacy_source; then
+      die "a source install overrides the packaged unit; restart would load \
 incompatible halves; run: oskar setup --migrate-source"
+    fi
   fi
 
   if [[ "$MODE" == "source" ]]; then
-    run_install_sh
+    run_install_sh || die "install.sh did not finish; nothing was restarted"
   else
     systemctl --user daemon-reload
     say "unit definitions reloaded"
   fi
 
-  if systemctl --user --quiet is-active "$UNIT" 2>/dev/null; then
+  # Restarting is part of an upgrade, not the whole of it: a unit that is
+  # not OSKar's is named and left alone, and the shell still reloads.
+  if ! systemctl --user --quiet is-active "$UNIT" 2>/dev/null; then
+    say "helper not running; nothing to restart"
+  elif ! unit_is_ours; then
+    warn "$(unit_not_ours_reason); not restarting it"
+  else
     systemctl --user reset-failed "$UNIT" 2>/dev/null || true
     systemctl --user restart "$UNIT"
     say "helper restarted"
-  else
-    say "helper not running; nothing to restart"
   fi
 
   # The panel is keepLoaded: a live shell keeps the OLD QML until it is
@@ -612,33 +593,36 @@ cmd_status() {
   say "unit active:     ${unit_active:-unknown}"
   say "socket:          $SOCKET ($([[ -S "$SOCKET" ]] && echo present || echo absent))"
   say "protocol:        $proto"
-  if old_world_found; then
-    warn "an omarchy-osk-era install still stands (old unit, registration, package \
-or data dirs); oskar setup migrates it"
-  fi
-  if [[ "$MODE" == "packaged" ]] && report_legacy_source; then
-    warn "a legacy source install overrides the packaged unit; \
+  if [[ "$MODE" == "packaged" ]]; then
+    if foreign_user_unit; then
+      warn "$FOREIGN_UNIT_MSG"
+    elif report_legacy_source; then
+      warn "a legacy source install overrides the packaged unit; \
 setup --migrate-source moves it aside"
+    fi
   fi
 }
 
 cmd_teardown() {
   detect_mode
-  # The OLD name's world deactivates with the new one: teardown means
-  # nothing of this product stays enabled, whichever era installed it.
-  # Data (config/state dirs, moved-aside copies) is preserved.
-  if old_world_found; then
-    say "an omarchy-osk-era install was found; deactivating it too"
-    deactivate_old_world
-  fi
   if omarchy plugin disable "$PLUGIN_ID" >/dev/null 2>&1; then
     say "plugin disabled in the shell"
   else
     say "plugin not enabled (or shell down)"
   fi
-  systemctl --user disable --now "$UNIT" >/dev/null 2>&1 \
-    && say "unit disabled and stopped" \
-    || say "unit already inactive"
+  # Teardown's other steps stand on their own: a unit that is not
+  # OSKar's is named and left running, and the rest still happens.
+  if unit_is_ours; then
+    if systemctl --user disable --now "$UNIT" >/dev/null 2>&1; then
+      say "unit disabled and stopped"
+    else
+      say "unit already inactive"
+    fi
+  elif [[ -z "$UNIT_FRAGMENT" ]]; then
+    say "no $UNIT unit installed; nothing to disable"
+  else
+    warn "$(unit_not_ours_reason); left as it is"
+  fi
   if registration_is_payload_clone; then
     say "the plugin clone stays; remove it with: omarchy plugin remove $PLUGIN_ID"
   elif [[ -e "$REGISTRATION" && ! -L "$REGISTRATION" ]]; then
@@ -812,10 +796,15 @@ command manages; try: oskar setup"
   # so existence follows the link (-e, not -L).
   local shadow="PATH shadow"
   points="$(realpath "$DOCTOR_SHADOW" 2>/dev/null || true)"
-  if [[ "$MODE" == "packaged" && -e "$DOCTOR_SHADOW" ]]; then
+  if [[ "$MODE" == "packaged" && -e "$DOCTOR_SHADOW" ]] \
+      && record_matches "$DOCTOR_SHADOW"; then
     doc_fail "$shadow" "$DOCTOR_SHADOW shadows /usr/bin/oskar, so a \
 bare oskar manages the source world instead of the package; try: \
 oskar setup --migrate-source (it removes the shadow)"
+  elif [[ "$MODE" == "packaged" && -e "$DOCTOR_SHADOW" ]]; then
+    doc_fail "$shadow" "$DOCTOR_SHADOW shadows /usr/bin/oskar, and it is \
+not the command OSKar installed (or it changed since), so OSKar will not \
+remove it; try: move it yourself, or call /usr/bin/oskar by its full path"
   elif [[ "$MODE" == "packaged" ]]; then
     doc_ok "$shadow" "none ($DOCTOR_SHADOW absent; /usr/bin/oskar answers)"
   elif [[ -e "$DOCTOR_SHADOW" && "$points" != "$PAYLOAD/bin/oskar" ]]; then
@@ -832,7 +821,11 @@ install; try: oskar setup (install.sh re-points it)"
   # exists — the packaged helper can be enabled but never runs.
   if [[ "$MODE" == "packaged" ]]; then
     local override="legacy source override"
-    if [[ -f "$USER_UNIT" || -f "$SOURCE_HELPER" ]]; then
+    if foreign_user_unit; then
+      doc_fail "$override" "$USER_UNIT is a user unit OSKar did not \
+install (or one edited since) and it OVERRIDES the packaged unit; OSKar \
+will not touch it; try: rename or remove it yourself"
+    elif record_matches "$USER_UNIT" || record_matches "$SOURCE_HELPER"; then
       doc_fail "$override" "a source install still stands \
 ($USER_UNIT and/or $SOURCE_HELPER) and OVERRIDES the packaged unit; try: \
 oskar setup --migrate-source"
@@ -844,22 +837,6 @@ oskar setup --migrate-source"
 /usr/bin/oskar also exists — PATH order decides which world a bare \
 oskar manages; try: pick one (oskar setup --migrate-source \
 from /usr/bin/oskar, or remove the package)"
-  fi
-
-  # The rename: any LIVE trace of the omarchy-osk era still
-  # standing — old unit enabled/active or on disk, old registration,
-  # old PATH shadow, the old package's unit file. An old unit under
-  # ~/.config would override the packaged one exactly like the legacy
-  # source case above; an old registration keeps a second-era plugin in
-  # the shell's list. Data dirs alone (a kept ~/.config/omarchy-osk) count
-  # too: setup moves them to the new names.
-  local oldworld="old-world leftovers"
-  if old_world_found; then
-    doc_fail "$oldworld" "an omarchy-osk-era install still stands (old \
-unit, registration, PATH shadow, package or data dirs); try: oskar setup (it \
-migrates the old world), then remove the old package if pacman lists it"
-  else
-    doc_ok "$oldworld" "no omarchy-osk-era unit, registration or shadow"
   fi
 }
 
@@ -1175,7 +1152,7 @@ upgrade) shift; cmd_upgrade "$@" ;;
 status) [[ $# -eq 1 ]] || die "status takes no arguments"; cmd_status ;;
 doctor) [[ $# -eq 1 ]] || die "doctor takes no arguments"; cmd_doctor ;;
 teardown) [[ $# -eq 1 ]] || die "teardown takes no arguments"; cmd_teardown ;;
-owns) shift; cmd_owns "$@" ;;
+record) shift; cmd_record "$@" ;;
 -h|--help|help)
   cat <<'EOF'
 Usage: oskar <command>
@@ -1183,33 +1160,31 @@ Usage: oskar <command>
   setup [--migrate-source] [--prebuilt <tarball>]
                             Activate: register the plugin, enable it in
                              the shell, enable/start the helper service.
-                             Idempotent. Detects and migrates an old
-                             omarchy-osk-era install (unit, registration,
-                             config and state move to the oskar names).
-                             --migrate-source moves a legacy source-install
-                             unit aside (kept, renamed).
+                             Idempotent. --migrate-source moves a source
+                             install's unit aside (kept, renamed) when the
+                             install record proves it OSKar's.
   upgrade [--prebuilt <tarball>]
                             After a package/source update: reload unit
                              definitions, restart the helper, restart the
-                             shell so the kept-loaded panel reloads. Also
-                             walks an old omarchy-osk install through the
-                             rename.
+                             shell so the kept-loaded panel reloads.
   status                    Report payload, registration, plugin state,
                              unit state, socket and protocol. Read-only.
   doctor                    Diagnose a broken install: service, socket,
                              protocol, registration, keymap share, keycap
-                             fallback, layouts, theme deps, versions,
-                             old-world leftovers.
+                             fallback, layouts, theme deps, versions.
                              Read-only; exits 1 when something is wrong.
   teardown                  Disable the plugin and unit, unlink the
-                             registration if it is ours (an omarchy-osk-era
-                             world is deactivated too). Keeps config,
+                             registration if it is ours. Keeps config,
                              state and foreign directories.
+  record matches <path> | write <path>... | forget <path>... | aside <path> <word>
+                            The install record install.sh and
+                             uninstall.sh consult: what OSKar wrote
+                             outside its checkout, by digest.
 EOF
   ;;
 *)
   cat <<'EOF' >&2
-Usage: oskar {setup|upgrade|status|doctor|teardown}
+Usage: oskar {setup|upgrade|status|doctor|teardown|record}
 Run: oskar help
 EOF
   exit 1

@@ -59,4 +59,10 @@ for other desks.
   cargo they keep the helper already installed instead of refusing, and a
   quick install-setup-upgrade sequence no longer trips the service's
   start-rate limit.
+- `install.sh`, `uninstall.sh` and `oskar` replace, remove, move or
+  switch on and off only files OSKar recorded when it wrote them and that
+  are unchanged since. Anything else is left in place; `install.sh
+  --force` moves it aside under a new dated name and deletes nothing. An
+  install made before this release has no record and needs
+  `./install.sh --force` once.
 

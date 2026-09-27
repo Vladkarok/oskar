@@ -2433,3 +2433,34 @@ lab's summon-output leg pins it against a headless second output, with
 a `hyprctl` stand-in for the pointer since the compositor's Lua
 dispatch table offers no cursor move.
 
+
+## 112. An install record decides what OSKar may replace; the rename walk is gone
+
+The three files a source install writes outside its checkout — the user
+unit, `~/.local/libexec/oskar-daemon` and `~/.local/bin/oskar` — are
+OSKar's only while `~/.local/state/oskar/install-record` lists them and
+they are exactly what was recorded: the file's sha256, or the link's
+text. `install.sh`, `uninstall.sh` and `oskar setup --migrate-source`
+replace, remove or move nothing else; `--force` moves the rest aside
+under a name that does not exist yet and deletes nothing. Every
+`systemctl` step that enables, restarts or disables `oskar.service`
+first asks systemd which file it resolves and acts only on the
+package's unit or the recorded one. `install.sh` obtains its helper
+before it touches anything, so a failed build leaves the home directory
+as it was. The rule lives once, in `bin/oskar record`. The marketplace
+checklist asks that a plugin never overwrite user configuration without
+consent, and a name or a grep cannot say who wrote a file: a unit the
+user edited still runs the helper, and a foreign file can carry any
+string. Rejected: content predicates (the unit's `ExecStart`, the
+helper's log prefix, the manifest behind a link), which both passed
+foreign files and failed genuine ones, and a per-checkout record, which
+would make taking over another checkout's install a `--force` case.
+Installs made before the record exists need `--force` once.
+
+The `omarchy-osk` → `oskar` migration in `oskar setup`, `upgrade`,
+`teardown` and `doctor` is deleted, with `replaces=`/`conflicts=` on
+the old package. Nothing was ever published under the old name, so the
+walk served only machines the author set up, and it stopped, disabled,
+moved and removed files by name alone, several of them in the user's
+config and state. Rejected: keeping it behind the record, which would
+be new code to protect a population of one.

@@ -46,7 +46,7 @@ echo "== packaging file-set check"
 "$root/tools/package-check.sh" || status=1
 
 # The install script's branches, in a sandbox (a private HOME, a stubbed
-# systemctl, a fake prebuilt tarball): ownership refusals, the prebuilt
+# systemctl, a fake prebuilt tarball): the install record, the prebuilt
 # path, the no-toolchain reruns. Nothing on the machine is touched.
 echo "== install script check"
 "$root/tools/install-check.sh" || status=1

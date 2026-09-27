@@ -412,16 +412,21 @@ Any `install.sh` above takes it in place of the build:
 bash install.sh --prebuilt ~/Downloads/oskar-daemon-0.1.0-x86_64.tar.gz
 ```
 
-`install.sh` replaces three files outside the checkout: the user unit
+`install.sh` writes three files outside the checkout: the user unit
 `~/.config/systemd/user/oskar.service`, the helper
 `~/.local/libexec/oskar-daemon` and the command `~/.local/bin/oskar`.
-Each is replaced only when it is proven OSKar's by what it is (the unit
-runs the helper, the binary carries the helper's own messages, the
-command is a symlink into an OSKar checkout); another checkout's files
-are taken over, as before. Anything else under those names is someone
-else's: the install stops and names it, and `--force` moves it aside
-under a dated name before writing. Nothing is deleted. `uninstall.sh`
-and the `oskar` command's migrations follow the same rule.
+It notes what it wrote in an install record
+(`~/.local/state/oskar/install-record`). OSKar replaces or removes one
+of these files only when the record lists it and it is unchanged since
+OSKar wrote it, so a file you edited or one that belongs to something
+else stays as it is. If the install finds such a file, it stops and
+names it. `--force` moves it aside under a dated name and then
+installs; nothing is deleted. An install made by an OSKar version older
+than the install record has no record yet, so it needs `--force` once.
+Another checkout's install is taken over without it. `uninstall.sh` and
+`oskar setup --migrate-source` follow the same rule, and `oskar` restarts,
+enables or disables `oskar.service` only when the unit systemd
+runs is the package's or the recorded one.
 
 A tarball placed beside `install.sh` is picked up without the flag, and
 `oskar setup --prebuilt <tarball>` / `oskar upgrade --prebuilt <tarball>`
