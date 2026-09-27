@@ -685,35 +685,139 @@ QtObject {
             T.equal(script.indexOf("exit 3") >= 0, true)
         })
 
-        T.test("the panel's reading is a snapshot only when it is current text", function () {
-            T.deepEqual(ClipboardPaste.restoreSnapshot("text", "hi", 4, 4, false), { text: "hi" })
-            T.deepEqual(ClipboardPaste.restoreSnapshot("text", "hi", 3, 4, false),
-                { none: "stale" }, "text read under an older sequence")
-            T.deepEqual(ClipboardPaste.restoreSnapshot("text", "hi", 4, 4, true),
-                { none: "stale" }, "a read in flight")
-            T.deepEqual(ClipboardPaste.restoreSnapshot("empty", "", 4, 4, false),
-                { none: "empty" })
-            T.deepEqual(ClipboardPaste.restoreSnapshot("other", "", 4, 4, false),
-                { none: "not text" })
-            T.deepEqual(ClipboardPaste.restoreSnapshot("text", "a\u0000b", 4, 4, false),
-                { none: "not text" })
+        T.test("the pick's snapshot is one read at the pick, and only of plain text", function () {
+            T.equal(ClipboardPaste.snapshotPlan("text", false), "read")
+            T.deepEqual(ClipboardPaste.snapshotPlan("text", true), { none: "stale" },
+                "a listing in flight")
+            T.deepEqual(ClipboardPaste.snapshotPlan("empty", false), { none: "empty" })
+            T.deepEqual(ClipboardPaste.snapshotPlan("other", false), { none: "not text" })
+            T.deepEqual(ClipboardPaste.snapshotPlan("hidden", false), { none: "secret" },
+                "secret content is never read, so never republished")
+            T.deepEqual(ClipboardPaste.snapshotFromRead(0, "hi"), { text: "hi" })
+            T.deepEqual(ClipboardPaste.snapshotFromRead(3, ""), { none: "secret" })
+            T.deepEqual(ClipboardPaste.snapshotFromRead(1, "x"), { none: "unread" })
+            T.deepEqual(ClipboardPaste.snapshotFromRead(0, null), { none: "unread" })
+            T.deepEqual(ClipboardPaste.snapshotFromRead(0, ""), { none: "empty" })
+            T.deepEqual(ClipboardPaste.snapshotFromRead(0, "a\u0000b"), { none: "not text" })
             var big = new Array(65537).join("a")
-            T.deepEqual(ClipboardPaste.restoreSnapshot("text", big.slice(1), 4, 4, false),
-                { text: big.slice(1) }, "65535 bytes fit")
-            T.deepEqual(ClipboardPaste.restoreSnapshot("text", big, 4, 4, false),
-                { none: "too large" }, "the reading's own cap may have cut it")
-            // Bytes, not UTF-16 units: 21846 three-byte characters are 65538.
+            T.deepEqual(ClipboardPaste.snapshotFromRead(0, big.slice(1)), { text: big.slice(1) },
+                "65535 bytes fit")
+            T.deepEqual(ClipboardPaste.snapshotFromRead(0, big), { none: "too large" },
+                "the reader's own cap may have cut it")
             var wide = new Array(21847).join("€")
-            T.deepEqual(ClipboardPaste.restoreSnapshot("text", wide, 4, 4, false),
-                { none: "too large" })
+            T.deepEqual(ClipboardPaste.snapshotFromRead(0, wide), { none: "too large" })
             T.equal(ClipboardPaste.utf8Length("😀€a"), 8)
-            // Marked secret: never a snapshot, whatever text is lying around.
-            T.deepEqual(ClipboardPaste.restoreSnapshot("hidden", "stale text", 4, 4, false),
+        })
+
+        T.test("a pick reads its snapshot before it publishes, and queues picks meanwhile", function () {
+            var picked = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(), "😀", "foot", "read")
+            T.equal(picked.action, "snapshot")
+            T.equal(picked.state.phase, "snapshotting")
+            var queued = ClipboardPaste.txnPick(picked.state, "🔥", "foot", "read")
+            T.equal(queued.action, "queued")
+            var stale = ClipboardPaste.txnSnapshotted(queued.state, queued.state.seq - 1,
+                { text: "late" })
+            T.equal(stale.action, "stale")
+            var read = ClipboardPaste.txnSnapshotted(queued.state, queued.state.seq,
+                { text: "user text" })
+            T.equal(read.action, "publish")
+            T.equal(read.emoji, "😀")
+            T.deepEqual(read.state.before, { text: "user text" })
+            // A read that ran out of time: the pick goes on without one.
+            var slow = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(), "😀", "foot", "read")
+            var noSnap = ClipboardPaste.txnSnapshotted(slow.state, slow.state.seq,
+                { none: "unread" })
+            T.equal(noSnap.action, "publish")
+            var lost = ClipboardPaste.txnVerifyTimedOut(noSnap.state, noSnap.state.seq)
+            T.deepEqual(lost.restore, { none: "unread" })
+            // A secret clipboard gives no snapshot: a failed pick leaves it be.
+            var secret = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(), "😀", "foot",
+                ClipboardPaste.snapshotPlan("hidden", false))
+            T.equal(secret.action, "publish")
+            T.deepEqual(ClipboardPaste.txnVerifyTimedOut(secret.state, secret.state.seq).restore,
                 { none: "secret" })
-            var started = ClipboardPaste.txnPick(ClipboardPaste.txnInitial(), "😀", "foot",
-                { none: "secret" })
-            T.deepEqual(ClipboardPaste.txnVerifyTimedOut(started.state, started.state.seq).restore,
-                { none: "secret" }, "a failed pick leaves a secret clipboard as it is")
+        })
+
+        // ---- the paste chip: kind and size at rest, text only to peek ----
+
+        function counted(output, exitCode) {
+            var t = ClipboardPaste.chipTypes(ClipboardPaste.chipInitial(), "text")
+            return ClipboardPaste.chipCounted(t.state, t.seq,
+                exitCode === undefined ? 0 : exitCode, output).state
+        }
+
+        function carriesText(state, text) {
+            return JSON.stringify(state).indexOf(text) >= 0
+        }
+
+        T.test("at rest the chip carries no text, only the kind and the size", function () {
+            var t = ClipboardPaste.chipTypes(ClipboardPaste.chipInitial(), "text")
+            T.equal(t.action, "count", "the size is asked for, the text is not")
+            var rest = counted("24 24")
+            T.equal(ClipboardPaste.chipShown(rest), "text")
+            T.equal(rest.peek, "")
+            T.deepEqual(ClipboardPaste.chipLabel(rest), { id: "paste.textCount", args: ["24"] })
+            // Whatever the machine is told at rest, no text is in its state.
+            T.equal(carriesText(rest, "hunter2"), false)
+        })
+
+        T.test("the count label for zero, one, many and the capped case", function () {
+            T.equal(ClipboardPaste.chipShown(counted("0 0")), "empty", "nothing to show")
+            T.deepEqual(ClipboardPaste.chipLabel(counted("0 0")), null)
+            T.deepEqual(ClipboardPaste.chipLabel(counted("1 4")), { id: "paste.textOne", args: [] })
+            T.deepEqual(ClipboardPaste.chipLabel(counted("1500 1600")),
+                { id: "paste.textCount", args: ["1500"] })
+            var capped = counted("65000 65537")
+            T.equal(capped.capped, true)
+            T.deepEqual(ClipboardPaste.chipLabel(capped),
+                { id: "paste.textAtLeast", args: ["64999"] })
+            T.deepEqual(ClipboardPaste.chipLabel(counted("65536 65536")),
+                { id: "paste.textCount", args: ["65536"] }, "exactly at the cap is not capped")
+            T.deepEqual(ClipboardPaste.chipLabel(counted("garbage")), null)
+        })
+
+        T.test("hover yields a read; leave, close and a change drop the text", function () {
+            var peek = ClipboardPaste.chipPeekStart(counted("7 7"))
+            T.equal(peek.action, "read")
+            var shown = ClipboardPaste.chipPeekRead(peek.state, peek.seq, 0, "hunter2")
+            T.equal(shown.state.peek, "hunter2")
+            var left = ClipboardPaste.chipPeekEnd(shown.state).state
+            T.equal(left.peek, "")
+            T.equal(carriesText(left, "hunter2"), false, "leave drops it")
+            // A read that lands after the pointer left is stale.
+            T.equal(ClipboardPaste.chipPeekRead(left, peek.seq, 0, "hunter2").state.peek, "")
+            var changed = ClipboardPaste.chipTypes(shown.state, "text").state
+            T.equal(carriesText(changed, "hunter2"), false, "a change drops it")
+            T.equal(changed.peeking, false)
+            // The panel closing ends the peek the same way.
+            T.equal(carriesText(ClipboardPaste.chipPeekEnd(shown.state).state, "hunter2"), false)
+        })
+
+        T.test("hidden content never yields a read, hover or not", function () {
+            var hidden = ClipboardPaste.chipTypes(ClipboardPaste.chipInitial(), "hidden")
+            T.equal(hidden.action, "none", "not even a count")
+            T.equal(ClipboardPaste.chipShown(hidden.state), "hidden")
+            T.deepEqual(ClipboardPaste.chipLabel(hidden.state), { id: "paste.hidden", args: [] })
+            T.equal(ClipboardPaste.chipPeekStart(hidden.state).action, "none")
+            // Marked secret between the listing and a read: hidden, text gone.
+            var t = ClipboardPaste.chipTypes(ClipboardPaste.chipInitial(), "text")
+            var late = ClipboardPaste.chipCounted(t.state, t.seq, 3, "")
+            T.equal(ClipboardPaste.chipShown(late.state), "hidden")
+            var peek = ClipboardPaste.chipPeekStart(counted("7 7"))
+            var turned = ClipboardPaste.chipPeekRead(peek.state, peek.seq, 3, "")
+            T.equal(ClipboardPaste.chipShown(turned.state), "hidden")
+            T.equal(turned.state.peek, "")
+            // Other content: the glyph, no read either.
+            var other = ClipboardPaste.chipTypes(ClipboardPaste.chipInitial(), "other")
+            T.equal(other.action, "none")
+            T.equal(ClipboardPaste.chipPeekStart(other.state).action, "none")
+        })
+
+        T.test("the count read never carries the payload", function () {
+            var script = ClipboardPaste.COUNT_SCRIPT
+            T.equal(script.indexOf("wc -mc") >= 0, true)
+            T.equal(script.indexOf("--list-types") < script.indexOf("--no-newline")
+                && script.lastIndexOf("--list-types") > script.indexOf("--no-newline"), true)
         })
 
         Qt.exit(T.report("clipboard-paste"))

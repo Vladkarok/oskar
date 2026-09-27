@@ -291,6 +291,12 @@ Item {
                 panel.customEditorField = ""
                 log("overlay-cleared")
                 break
+            case "chip":
+                // The paste chip's whole state: at rest it must carry the
+                // kind and the size, never clipboard text.
+                log("chip " + JSON.stringify({ shown: panel.clipboardKind,
+                    chip: panel.chip }))
+                break
             case "publish": {
                 // The one clipboard publisher a pick and a restore use.
                 var d = delivery()
@@ -732,6 +738,26 @@ def _run_leg(repo, window_start):
                               f"{facts['AD01']!r}, expected ['q', …]")
             print("ok    bounced-back helper answers us AD01 = "
                   + repr(facts["AD01"]))
+
+            # The paste chip at rest: a known string on the clipboard is
+            # counted, never read into the panel.
+            word = f"oskar-chip-{os.getpid()}-{int(time.time())}"
+            subprocess.run(["wl-copy", word], timeout=5, check=True)
+
+            def chip():
+                line = panel.command("chip", "chip ")
+                return json.loads(line[len("chip "):])
+
+            wait_for(lambda: chip()["chip"]["count"] == len(word), 10,
+                     "the paste chip to count the copied text")
+            at_rest = chip()
+            if word in json.dumps(at_rest) or at_rest["chip"]["peek"] != "":
+                raise Failure(f"the paste chip at rest carries clipboard text: {at_rest!r}")
+            shot = os.environ.get("OSK_CANARY_CHIP_SHOT", "")
+            if shot:
+                subprocess.run(["grim", shot], timeout=10)
+            print(f"ok    paste chip at rest: {at_rest['shown']}, "
+                  f"{at_rest['chip']['count']} characters, no text in its state")
 
             panel.command("close", "closed")
 

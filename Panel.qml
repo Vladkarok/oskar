@@ -613,10 +613,12 @@ Item {
     // stays empty/stale here).
     readonly property bool pasteEnabled: root.hexEditing || root.emojiOpen
         || keyboard.inputReady
-    // CLIPBOARD observation for the chip: empty / text / other. Refreshed
-    // on panel open, on paste click, and by wl-paste --watch — never polled.
-    property string clipboardKind: "empty"
-    property string clipboardPreview: ""
+    // CLIPBOARD observation for the chip: its kind and size at rest, the
+    // text only while a peek lasts (ClipboardPaste's chip machine).
+    // Refreshed on panel open, on paste click, and by wl-paste --watch —
+    // never polled.
+    property var chip: ClipboardPaste.chipInitial()
+    readonly property string clipboardKind: ClipboardPaste.chipShown(root.chip)
     property int clipboardSeq: 0
     property bool clipboardContentGone: false
     property var clipboardReadState: ClipboardPaste.readInitial()
@@ -731,8 +733,7 @@ Item {
         // describes the dead owner's old selection and must not resurrect
         // the chip after the failed pre-flight.
         root.clipboardSeq += 1
-        root.clipboardKind = "empty"
-        root.clipboardPreview = ""
+        root.chip = ClipboardPaste.chipTypes(root.chip, "empty").state
         root.clipboardContentGone = true
         clipboardGoneTimer.restart()
     }
@@ -774,65 +775,51 @@ Item {
             root.clipboardContentGone = false
             clipboardGoneTimer.stop()
         }
-        // Text stays hidden until wl-paste --no-newline returns a
-        // non-empty preview; empty/other/hidden apply immediately.
-        root.clipboardKind = ConfigFile.pasteChipKind(kind, "", false)
-        root.clipboardPreview = ""
-        // Only plain text is read. Content a password manager marked secret
-        // ("hidden") is decided from the type list and never read: the chip
-        // shows a neutral label and the chord still pastes it.
-        if (!ConfigFile.clipboardContentReadable(kind)) {
-            root.clipboardFullText = ""
-            root.clipboardFullTextSeq = -1
-            return
-        }
-        if (clipboardText.retiring) {
+        // A new listing is a changed clipboard: any peek text is dropped
+        // here. Only plain text gets a size read, and that read yields a
+        // count, never the text.
+        var step = ClipboardPaste.chipTypes(root.chip, kind)
+        root.chip = step.state
+        if (step.action !== "count") return
+        if (clipboardCount.retiring) {
             root.clipboardRefreshQueued = true
             return
         }
-        if (clipboardText.running) {
+        if (clipboardCount.running) {
             // Kill only — the retired exit re-drives (finding 6).
-            clipboardText.retiring = true
+            clipboardCount.retiring = true
             root.clipboardRefreshQueued = true
-            killProcessGroup(clipboardText)
+            killProcessGroup(clipboardCount)
             return
         }
-        clipboardText.seq = seq
-        clipboardText.running = true
+        clipboardCount.seq = step.seq
+        clipboardCount.running = true
     }
 
-    function applyClipboardText(text, seq, exitOk, secret) {
-        if (seq !== root.clipboardSeq) return
-        if (secret) {
-            // Marked secret between the type list and this read: the read
-            // stopped before the payload.
-            root.clipboardKind = "hidden"
-            root.clipboardPreview = ""
-            root.clipboardFullText = ""
-            root.clipboardFullTextSeq = -1
-            return
-        }
-        var preview = ConfigFile.pastePreviewText(text)
-        root.clipboardKind = ConfigFile.pasteChipKind("text", preview, exitOk)
-        root.clipboardPreview = root.clipboardKind === "text" ? preview : ""
-        // The whole text, not the preview: what a failed emoji pick puts
-        // back (clipboardRestoreSnapshot).
-        root.clipboardFullText = root.clipboardKind === "text" ? String(text) : ""
-        root.clipboardFullTextSeq = root.clipboardKind === "text" ? seq : -1
+    // The peek: the one moment the chip reads the text — the pointer at
+    // rest on it (mouse), or a touch holding it. Ending the peek drops the
+    // text from the state at once; a read still in flight lands stale.
+    function startClipboardPeek() {
+        var step = ClipboardPaste.chipPeekStart(root.chip)
+        root.chip = step.state
+        if (step.action !== "read") return
+        if (clipboardPeek.running) killProcessGroup(clipboardPeek)
+        clipboardPeek.seq = step.seq
+        clipboardPeek.running = true
+        clipboardPeekWatchdog.restart()
+    }
+    function endClipboardPeek() {
+        clipboardPeekWatchdog.stop()
+        if (clipboardPeek.running) killProcessGroup(clipboardPeek)
+        root.chip = ClipboardPaste.chipPeekEnd(root.chip).state
     }
 
-    // The chip's reading, as the snapshot a failed emoji pick may put
-    // back. Reused rather than read again: the watch re-reads on every
-    // clipboard change while the panel is open, so with no read in flight
-    // the newest reading is the clipboard as it stands.
-    property string clipboardFullText: ""
-    property int clipboardFullTextSeq: -1
-    function clipboardRestoreSnapshot() {
+    // What a pick gets for its snapshot: permission to read the clipboard
+    // once, at the pick, or the reason it gets none.
+    function clipboardSnapshotPlan() {
         var refreshing = clipboardTypes.running || clipboardTypes.retiring
-            || clipboardText.running || clipboardText.retiring
             || root.clipboardRefreshQueued
-        return ClipboardPaste.restoreSnapshot(root.clipboardKind, root.clipboardFullText,
-            root.clipboardFullTextSeq, root.clipboardSeq, refreshing)
+        return ClipboardPaste.snapshotPlan(root.chip.kind, refreshing)
     }
 
     // The local read's insert. Routing reads the live surfaces: the read's
@@ -1511,6 +1498,8 @@ Item {
         // The relayout nudge is needed in both directions: the zone leaving
         // is as lazy as the zone arriving.
         root.nudgeHyprlandRelayout()
+        // No clipboard text outlives the panel being open.
+        root.endClipboardPeek()
         // Locked Shift is genuinely held down at the device, so closing the
         // panel has to let go of it before the keyboard disappears.
         keyboard.releaseModifiers()
@@ -1639,24 +1628,20 @@ Item {
         }
     }
 
+    // The chip's size read: the shared type checks around a pipeline that
+    // emits only "<characters> <bytes>" (ClipboardPaste.COUNT_SCRIPT).
     Process {
-        id: clipboardText
+        id: clipboardCount
         property int seq: 0
         property bool retiring: false
-        // head caps the stream (the security audit): a malicious clipboard
-        // owner cannot balloon the shell's memory through the collector —
-        // SIGPIPE closes wl-paste past the bound. The shared reader
-        // (ClipboardPaste.READ_SCRIPT) lists the types before and after:
-        // content a password manager marks secret is never read or kept
-        // (exit 3, no bytes).
-        command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
+        command: ["setsid", "bash", "-c", ClipboardPaste.COUNT_SCRIPT]
         stdout: StdioCollector {
-            id: clipboardTextOut
+            id: clipboardCountOut
             waitForEnd: true
         }
         onExited: function (exitCode) {
-            var wasRetired = clipboardText.retiring
-            clipboardText.retiring = false
+            var wasRetired = clipboardCount.retiring
+            clipboardCount.retiring = false
             if (wasRetired) {
                 if (root.clipboardRefreshQueued) {
                     root.clipboardRefreshQueued = false
@@ -1664,9 +1649,33 @@ Item {
                 }
                 return
             }
-            root.applyClipboardText(clipboardTextOut.text, clipboardText.seq,
-                exitCode === 0, exitCode === ClipboardPaste.READ_SECRET_EXIT)
+            root.chip = ClipboardPaste.chipCounted(root.chip, clipboardCount.seq,
+                exitCode, clipboardCountOut.text).state
         }
+    }
+
+    // The peek read: the shared reader (types checked before and after),
+    // bounded like every read; its text goes into the chip state only
+    // while the peek lasts.
+    Process {
+        id: clipboardPeek
+        property int seq: 0
+        command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
+        stdout: StdioCollector {
+            id: clipboardPeekOut
+            waitForEnd: true
+        }
+        onExited: function (exitCode) {
+            clipboardPeekWatchdog.stop()
+            root.chip = ClipboardPaste.chipPeekRead(root.chip, clipboardPeek.seq,
+                exitCode, clipboardPeekOut.text).state
+        }
+    }
+    Timer {
+        id: clipboardPeekWatchdog
+        interval: 500
+        repeat: false
+        onTriggered: root.killProcessGroup(clipboardPeek)
     }
 
     Timer {
@@ -2801,6 +2810,8 @@ Item {
                     bottomMargin: keyboard.cellGap
                 }
                 visible: root.clipboardKind !== "empty"
+                // The rest label: kind and size, never content.
+                readonly property var restLabel: ClipboardPaste.chipLabel(root.chip)
                 width: root.clipboardKind === "text" || root.clipboardKind === "hidden"
                     ? Math.min(Math.max(tokens.space(30),
                         pasteLabel.implicitWidth + tokens.space(16)),
@@ -2823,9 +2834,12 @@ Item {
                     anchors { centerIn: parent }
                     width: Math.min(implicitWidth, parent.width - tokens.space(12))
                     // Content a password manager marked secret was never
-                    // read; the chip names it neutrally.
-                    text: root.clipboardKind === "hidden"
-                        ? UiStrings.tr("paste.hidden", root.uiLang) : root.clipboardPreview
+                    // read, and text is shown only in the peek (the
+                    // tooltip), so the chip's width never follows content.
+                    text: pasteButton.restLabel
+                        ? UiStrings.tr(pasteButton.restLabel.id, root.uiLang,
+                            pasteButton.restLabel.args)
+                        : ""
                     // PlainText, always (the security audit): AutoText
                     // renders rich clipboard content — a text/plain
                     // payload with a remote <img> made the preview issue
@@ -2888,17 +2902,35 @@ Item {
                     // The gear site's dedupe rule (Qt suppresses
                     // clicked after an accepted hold): flag unconditional,
                     // release-inside acts.
-                    onPressAndHold: touchHeld = true
+                    // A touch cannot hover: in the touch profile a hold is
+                    // the peek, and releasing it pastes nothing — a tap
+                    // pastes. The mouse profile keeps release-inside acting
+                    // and peeks on hover instead.
+                    readonly property bool holdPeeks: !root.inputAfford.tooltipHoverShows
+                    onPressAndHold: {
+                        touchHeld = true
+                        if (holdPeeks) root.startClipboardPeek()
+                    }
                     onReleased: function (mouse) {
-                        if (touchHeld
+                        if (touchHeld && !holdPeeks
                                 && mouse.x >= 0 && mouse.x <= width
                                 && mouse.y >= 0 && mouse.y <= height) {
                             root.observePointerSource(mouse.source)
                             root.pasteCurrentContent()
                         }
+                        if (touchHeld && holdPeeks) root.endClipboardPeek()
                         touchHeld = false
                     }
-                    onCanceled: touchHeld = false
+                    onCanceled: {
+                        if (touchHeld && holdPeeks) root.endClipboardPeek()
+                        touchHeld = false
+                    }
+                    // The mouse peek: while the pointer rests on the chip.
+                    onContainsMouseChanged: {
+                        if (!root.inputAfford.tooltipHoverShows) return
+                        if (containsMouse) root.startClipboardPeek()
+                        else root.endClipboardPeek()
+                    }
                     Accessible.role: Accessible.Button
                     Accessible.name: UiStrings.tr("access.paste", root.uiLang)
                     onClicked: function (mouse) {
@@ -2907,7 +2939,10 @@ Item {
                     }
                 }
                 HoverTooltip {
-                    text: UiStrings.tr("tooltip.paste", root.uiLang)
+                    // The peek's text while it lasts, the chip's name before
+                    // the read lands (and for every other kind).
+                    text: root.chip.peek !== "" ? root.chip.peek
+                        : UiStrings.tr("tooltip.paste", root.uiLang)
                     hovered: pasteArea.containsMouse
                         && root.inputAfford.tooltipHoverShows
                     held: pasteArea.touchHeld
@@ -3162,7 +3197,7 @@ Item {
                 // refresh of the same memory the event
                 // stream keeps.
                 emojiDelivery.request(delivered.emoji,
-                    root.focusedClientClass(), root.clipboardRestoreSnapshot())
+                    root.focusedClientClass(), root.clipboardSnapshotPlan())
             }
             onSkinToneChosen: function (tone) { root.chooseEmojiSkinTone(tone) }
             onDismissed: root.emojiOpen = false

@@ -109,7 +109,7 @@ function readTimedOut(state, seq, target) {
 //
 // `before` is the pick's snapshot: `{ text }` when the previous content
 // could be read as text, `{ none: why }` when it could not be put back
-// (see restoreSnapshot). The first pick of a burst brings it; a delivered
+// (see snapshotPlan). The first pick of a burst brings it; a delivered
 // pick makes its own emoji the next queued pick's `before`; a failed one
 // leaves `before` as it was. It lives only as long as the transaction:
 // the machine clears it when it goes idle with nothing queued, and a
@@ -190,17 +190,13 @@ function checkFor(state) {
     }
 }
 
-// The panel's clipboard reading, as a snapshot a failed pick could put
-// back. `kind` and `text` are the paste chip's reading (Panel.qml's
-// wl-paste probe), `textSeq` the sequence its text was read under and
-// `currentSeq` the newest one; `refreshing` says a read is in flight. The
-// reading is current only when no read is in flight and the text belongs
-// to the newest sequence — the chip's watch re-reads on every change, so
-// that is the moment it describes the clipboard as it is. Text past the
-// reading's own cap (a 65536-byte stream) may be cut short, so it is not
-// put back; neither is anything that is not text, nor content a password
-// manager marked secret (kind "hidden"): it was never read, and
-// republishing it would leave a secret as plain text owned by OSKar.
+// The pick's snapshot is taken by one bounded read at the moment of the
+// pick, before anything is published, and lives only in the transaction.
+// Whether that read may run is decided from the chip's type listing:
+// only plain text is read, never content a password manager marked secret
+// (kind "hidden") — republishing it would leave a secret as plain text
+// owned by OSKar — and never while a listing is in flight (the kind may
+// be stale).
 var SNAPSHOT_CAP = 65536
 
 function utf8Length(text) {
@@ -215,13 +211,23 @@ function utf8Length(text) {
     return bytes
 }
 
-function restoreSnapshot(kind, text, textSeq, currentSeq, refreshing) {
+/// "read" when the pick may read the clipboard for its snapshot, or the
+/// snapshot it gets without one.
+function snapshotPlan(kind, refreshing) {
     if (kind === "hidden") return { none: "secret" }
     if (refreshing) return { none: "stale" }
     if (kind === "empty") return { none: "empty" }
     if (kind !== "text") return { none: "not text" }
-    if (textSeq !== currentSeq) return { none: "stale" }
-    var value = String(text === null || text === undefined ? "" : text)
+    return "read"
+}
+
+/// The snapshot a completed read gives: the shared reader's exit code and
+/// output. Text at the reader's own cap may be cut short, so it is not put
+/// back.
+function snapshotFromRead(exitCode, text) {
+    if (exitCode === READ_SECRET_EXIT) return { none: "secret" }
+    if (exitCode !== 0 || text === null || text === undefined) return { none: "unread" }
+    var value = String(text)
     if (value === "") return { none: "empty" }
     if (value.indexOf("\u0000") >= 0) return { none: "not text" }
     if (utf8Length(value) >= SNAPSHOT_CAP) return { none: "too large" }
@@ -265,14 +271,28 @@ function txnPick(state, emoji, clientClass, before) {
         }
     }
     // A new burst: a restore still waiting for its check is abandoned — this
-    // pick owns the clipboard now.
+    // pick owns the clipboard now. With `before === "read"` the snapshot is
+    // read first ("snapshotting"); picks arriving meanwhile queue.
+    var reading = before === "read"
     return {
         state: txnWith(state, {
-            seq: state.seq + 1, phase: "publishing", pending: payload,
-            clientClass: cls, attempts: 0, before: snapshotOf(before),
+            seq: state.seq + 1, phase: reading ? "snapshotting" : "publishing",
+            pending: payload, clientClass: cls, attempts: 0,
+            before: reading ? NO_SNAPSHOT : snapshotOf(before),
             observed: "none", restoreCheck: null
         }),
-        action: "publish"
+        action: reading ? "snapshot" : "publish"
+    }
+}
+
+/// The snapshot read answered (or its bound ran out: pass { none: "unread" }).
+/// The pick publishes now, with whatever snapshot it got.
+function txnSnapshotted(state, seq, before) {
+    if (state.phase !== "snapshotting" || seq !== state.seq)
+        return { state: state, action: "stale" }
+    return {
+        state: txnWith(state, { phase: "publishing", before: snapshotOf(before) }),
+        action: "publish", emoji: state.pending
     }
 }
 
@@ -390,6 +410,113 @@ function txnCancel(state) {
         action: "dropped",
         restore: state.phase === "publishing" ? restoreFor(cleared) : null
     }
+}
+
+// The paste chip. At rest it shows only what KIND of content the
+// clipboard holds and how much — never the content: the type listing gives
+// the kind, and a count read (COUNT_SCRIPT) gives the size without the
+// text entering the panel. The text is read only to peek — while the
+// pointer rests on the chip (mouse) or a touch holds it — and dropped the
+// moment the peek ends, the panel closes or the clipboard changes. Content
+// a password manager marked secret (kind "hidden") is never read, peek or
+// not. Clicking pastes whatever the kind: the chord needs no text.
+//
+// State: { kind, count, capped, countSeq, peek, peeking, peekSeq }. Steps
+// return { state, action, seq? }; action "count" / "read" asks the host
+// to run that read tagged with `seq`, "none" asks nothing.
+function chipInitial() {
+    return { kind: "empty", count: -1, capped: false, countSeq: 0,
+        peek: "", peeking: false, peekSeq: 0 }
+}
+
+function chipWith(state, changes) {
+    var next = { kind: state.kind, count: state.count, capped: state.capped,
+        countSeq: state.countSeq, peek: state.peek, peeking: state.peeking,
+        peekSeq: state.peekSeq }
+    for (var key in changes) next[key] = changes[key]
+    return next
+}
+
+/// A new type listing (Config.clipboardKind's answer): the clipboard
+/// changed, so any peek is dropped and the size is asked for again.
+function chipTypes(state, kind) {
+    var next = chipWith(state, { kind: String(kind || "empty"), count: -1,
+        capped: false, countSeq: state.countSeq + 1, peek: "", peeking: false,
+        peekSeq: state.peekSeq + 1 })
+    return next.kind === "text"
+        ? { state: next, action: "count", seq: next.countSeq }
+        : { state: next, action: "none" }
+}
+
+// The count read: types checked before and after like every read, the
+// payload streamed through `wc` so only "<characters> <bytes>" comes out.
+// One byte past the cap tells a capped clipboard from one exactly at it.
+var COUNT_SCRIPT = "h=x-kde-passwordmanagerhint; "
+    + "wl-paste --list-types 2>/dev/null | grep -qix \"$h\" && exit 3; "
+    + "n=$(wl-paste --no-newline 2>/dev/null | head -c 65537 | LC_ALL=C.UTF-8 wc -mc); "
+    + "wl-paste --list-types 2>/dev/null | grep -qix \"$h\" && exit 3; "
+    + "printf %s \"$n\""
+
+/// The count read answered.
+function chipCounted(state, seq, exitCode, output) {
+    if (seq !== state.countSeq || state.kind !== "text") return { state: state, action: "none" }
+    if (exitCode === READ_SECRET_EXIT)
+        return { state: chipWith(state, { kind: "hidden", count: -1, peek: "",
+            peeking: false }), action: "none" }
+    var fields = String(output || "").trim().split(/\s+/)
+    var chars = parseInt(fields[0], 10)
+    var bytes = parseInt(fields[1], 10)
+    if (exitCode !== 0 || !isFinite(chars) || !isFinite(bytes))
+        return { state: chipWith(state, { count: 0 }), action: "none" }
+    var capped = bytes > SNAPSHOT_CAP
+    return { state: chipWith(state, { count: capped ? Math.max(0, chars - 1) : chars,
+        capped: capped }), action: "none" }
+}
+
+/// What the chip draws: "empty" (hidden), "text", "hidden" or "other".
+/// Text shows once its size is known and non-zero.
+function chipShown(state) {
+    if (state.kind === "hidden" || state.kind === "other") return state.kind
+    if (state.kind === "text" && state.count > 0) return "text"
+    return "empty"
+}
+
+/// The rest label as a UiStrings id and its arguments, or null (the glyph
+/// or nothing). Never content.
+function chipLabel(state) {
+    var shown = chipShown(state)
+    if (shown === "hidden") return { id: "paste.hidden", args: [] }
+    if (shown !== "text") return null
+    if (state.capped) return { id: "paste.textAtLeast", args: [String(state.count)] }
+    if (state.count === 1) return { id: "paste.textOne", args: [] }
+    return { id: "paste.textCount", args: [String(state.count)] }
+}
+
+/// The pointer came to rest on the chip, or a touch holds it: read the
+/// text to peek — plain text only, never hidden content.
+function chipPeekStart(state) {
+    if (state.peeking || chipShown(state) !== "text") return { state: state, action: "none" }
+    var next = chipWith(state, { peeking: true, peek: "", peekSeq: state.peekSeq + 1 })
+    return { state: next, action: "read", seq: next.peekSeq }
+}
+
+/// The peek read answered (the shared reader's exit code and output).
+function chipPeekRead(state, seq, exitCode, text) {
+    if (!state.peeking || seq !== state.peekSeq) return { state: state, action: "none" }
+    if (exitCode === READ_SECRET_EXIT)
+        return { state: chipWith(state, { kind: "hidden", peek: "", peeking: false }),
+            action: "none" }
+    if (exitCode !== 0) return { state: chipWith(state, { peek: "" }), action: "none" }
+    var flat = String(text === null || text === undefined ? "" : text)
+        .replace(/[\r\n\t]+/g, " ").replace(/^\s+|\s+$/g, "")
+    return { state: chipWith(state, { peek: flat.slice(0, 240) }), action: "none" }
+}
+
+/// The peek ended — the pointer left, the touch lifted, the panel closed:
+/// the text is gone from the state, and a read still in flight is stale.
+function chipPeekEnd(state) {
+    return { state: chipWith(state, { peek: "", peeking: false, peekSeq: state.peekSeq + 1 }),
+        action: "none" }
 }
 
 // What an interrupted paced chord owes the device: an "up" for every

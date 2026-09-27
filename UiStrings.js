@@ -46,6 +46,24 @@ var STRINGS = {
     },
     // The paste chip's label for content a password manager marked
     // secret: never read, so never previewed.
+    // The chip at rest names the kind and the size, never the content.
+    // "%1 characters" is phrased per language so one form serves every
+    // count (ru/uk "символов: %1").
+    "paste.textCount": {
+        en: "Paste text · %1 characters",
+        ru: "Вставить текст · символов: %1",
+        uk: "Вставити текст · символів: %1"
+    },
+    "paste.textOne": {
+        en: "Paste text · 1 character",
+        ru: "Вставить текст · 1 символ",
+        uk: "Вставити текст · 1 символ"
+    },
+    "paste.textAtLeast": {
+        en: "Paste text · %1+ characters",
+        ru: "Вставить текст · символов: %1+",
+        uk: "Вставити текст · символів: %1+"
+    },
     "paste.hidden": {
         en: "Hidden content",
         ru: "Скрытое содержимое",

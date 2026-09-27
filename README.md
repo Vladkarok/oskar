@@ -214,15 +214,21 @@ back. This list is the contract: a change that is not here is a bug.
   `kb_file` (`user-keymap-source`) and, with the click sound on,
   `keyclick.wav`. The directory goes away when your last session ends.
 - **What the panel reads.** While the panel is open it reads the
-  clipboard on every change, up to 64 KiB, to show the paste chip's
-  preview. Content a password manager marks secret is never read or
-  shown: the chip says "Hidden content" and still pastes it. Only content
-  offered with the `x-kde-passwordManagerHint` type is recognised as
-  secret; a manager that does not add it is read like any other text.
+  clipboard's type list and size on every change, for the paste chip,
+  which shows only the kind and the number of characters ("Paste text ·
+  24 characters"). The text itself is read only while you point at the
+  paste chip (or hold it, on touch), shown in its tooltip and dropped when
+  you move away; at the moment you paste into OSKar's own fields (the
+  emoji search, a colour field); and once at an emoji pick, to be able
+  to put it back if the pick fails. Content a password manager marks
+  secret is never read: the chip says "Hidden content" and still pastes
+  it. Only content offered with the `x-kde-passwordManagerHint` type is
+  recognised as secret; a manager that does not add it is treated like
+  any other text.
 - **The clipboard.** An emoji pick goes through the clipboard: the emoji
   replaces what the clipboard held, and a delivered pick leaves it there.
   A pick that fails puts back what was there before, as plain text, only
-  if it was text of up to 64 KiB that the panel had read and the
+  if it was text of up to 64 KiB that the pick could read and the
   clipboard still holds the pick; if anything else was copied during the
   pick, that stays. An image, other non-text content, or content marked
   secret is not put back; the clipboard then keeps the emoji. The emoji
@@ -295,11 +301,11 @@ One product, four languages, each with a job:
   generated emoji-data files) — every decision
   the panel makes: what each keycap types, which modifiers a
   hold-column pick needs, how the emoji search ranks, whether the panel
-  follows a layout-group change. Pure, stateless, and covered by 572
+  follows a layout-group change. Pure, stateless, and covered by 580
   offscreen test cases — the repo's main regression net.
 - **Rust** (the `oskar-daemon` helper) — everything at the seat: it
   compiles and mirrors the XKB keymap, owns the virtual keyboard, and
-  speaks the versioned socket protocol. 81 unit tests.
+  speaks the versioned socket protocol. 85 unit tests.
 - **Python and one C file** (`tools/integration/`) — not part of the
   product: the lab harness that drives a real panel with real pointer
   events inside a throwaway VM, and a tiny Wayland client that spies on

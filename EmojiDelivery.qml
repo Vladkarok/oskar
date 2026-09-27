@@ -173,8 +173,9 @@ Item {
         }
     }
 
-    // `before` is the panel's reading of the clipboard at the click
-    // (ClipboardPaste.restoreSnapshot): what a failed pick puts back.
+    // `before` is the panel's answer to "may this pick read the clipboard
+    // for its snapshot?" (ClipboardPaste.snapshotPlan): "read", or the
+    // snapshot it gets without one.
     function request(emoji, clientClass, before) {
         // The paste CHIP's own paced/awaiting chord owns the clipboard
         // right now (it is not a txn — the txn machine never saw it),
@@ -222,7 +223,55 @@ Item {
             emojiPickRefuseTimer.restart()
             return
         }
+        if (picked.action === "snapshot") {
+            startSnapshotRead(picked.state.seq)
+            return
+        }
         beginEmojiPublish(emoji)
+    }
+
+    // The pick's snapshot: one read by the shared reader, at the pick and
+    // before anything is published, bounded short. Its text lives in the
+    // transaction only, which drops it when it settles.
+    Process {
+        id: emojiSnapshotRead
+        property int seq: 0
+        command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
+        stdout: StdioCollector {
+            id: emojiSnapshotOut
+            waitForEnd: true
+        }
+        onExited: function (exitCode) {
+            if (!emojiSnapshotWatchdog.running) return
+            emojiSnapshotWatchdog.stop()
+            root.finishSnapshot(emojiSnapshotRead.seq,
+                ClipboardPaste.snapshotFromRead(exitCode, emojiSnapshotOut.text))
+        }
+    }
+    Timer {
+        id: emojiSnapshotWatchdog
+        interval: 400
+        repeat: false
+        onTriggered: {
+            killProcessGroup(emojiSnapshotRead)
+            console.log("[oskar] the clipboard did not answer in time; this pick"
+                + " goes on without a snapshot and a failure will not restore it")
+            root.finishSnapshot(emojiSnapshotRead.seq, { none: "unread" })
+        }
+    }
+    function startSnapshotRead(seq) {
+        emojiSnapshotRead.seq = seq
+        emojiSnapshotWatchdog.restart()
+        emojiSnapshotRead.running = true
+        if (!emojiSnapshotRead.running) {
+            emojiSnapshotWatchdog.stop()
+            root.finishSnapshot(seq, { none: "unread" })
+        }
+    }
+    function finishSnapshot(seq, before) {
+        var step = ClipboardPaste.txnSnapshotted(root.emojiTxnState, seq, before)
+        root.emojiTxnState = step.state
+        if (step.action === "publish") beginEmojiPublish(step.emoji)
     }
 
     // The visible refusal: an accent flash on the hint line, auto-cleared
