@@ -7,8 +7,9 @@ daemon and the observation live in the GUEST. This frame is the guest
 side: it boots the same CanaryDaemon + hosted Panel as the standing
 canary, opens the keyboard, and then serves a small command file so
 the host driver can force the overlay state (the mask-red lever),
-bounce the daemon (the pre-47 wedge lever), and read the daemon pid
-for strace. State goes to one append-only log; commands come from one
+bounce the daemon (the pre-47 wedge lever), read the daemon pid for
+strace, and read the paste chip's place, state and tooltip for the
+hover leg. State goes to one append-only log; commands come from one
 file whose mtime the frame polls.
 
 Launched by the host driver as:
@@ -143,6 +144,8 @@ def frame():
                     daemon.wait_socket()
                     note(f"daemon-pid {daemon.process.pid}")
                     note("bounced")
+                elif command in ("chip", "chipgeom", "tip"):
+                    note(panel.command(command, command + " "))
                 elif command == "state":
                     note("state " + " ".join(panel.marker_lines()[-2:]))
                 elif command == "quit":

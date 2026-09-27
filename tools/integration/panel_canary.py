@@ -152,6 +152,7 @@ SHELL_QML = """\
 import Quickshell
 import Quickshell.Io
 import QtQuick
+import QtQuick.Controls
 import "file:__TREE__" as Plugin
 
 Item {
@@ -210,6 +211,31 @@ Item {
     }
 
     function log(line) { console.log("[canary] " + line) }
+
+    // The first object under `obj` that answers `test`, across every
+    // window the panel owns (a window's scene is its contentItem).
+    function findObject(obj, test, depth) {
+        if (!obj || depth > 60) return null
+        if (test(obj)) return obj
+        var list = []
+        if (obj.contentItem !== undefined && obj.contentItem)
+            list.push(obj.contentItem)
+        var kids = obj.data !== undefined ? obj.data : obj.children
+        if (kids)
+            for (var i = 0; i < kids.length; i++) list.push(kids[i])
+        for (var j = 0; j < list.length; j++) {
+            var found = findObject(list[j], test, depth + 1)
+            if (found) return found
+        }
+        return null
+    }
+
+    // The paste chip: the one item carrying the chip's rest label.
+    function pasteChip() {
+        return findObject(panel, function (o) {
+            return o.restLabel !== undefined && o.mapToItem !== undefined
+        }, 0)
+    }
 
     // The emoji delivery seam (EmojiDelivery.qml), found by its own state.
     function delivery() {
@@ -301,6 +327,36 @@ Item {
                 log("chip " + JSON.stringify({ shown: panel.clipboardKind,
                     chip: panel.chip }))
                 break
+            case "chipgeom": {
+                // The chip's centre in its window, and that window's size
+                // (its scene root) — the host matches the size to a layer
+                // to place the point on screen.
+                var chipItem = pasteChip()
+                if (!chipItem) { log("chipgeom {}"); break }
+                var top = chipItem
+                while (top.parent) top = top.parent
+                var centre = chipItem.mapToItem(null, chipItem.width / 2,
+                    chipItem.height / 2)
+                log("chipgeom " + JSON.stringify({ x: centre.x, y: centre.y,
+                    w: top.width, h: top.height, visible: chipItem.visible }))
+                break
+            }
+            case "tip": {
+                // The tooltip actually on screen: the shared instance every
+                // HoverTooltip shows through, and the chip's own host.
+                var shared = ToolTip.toolTip
+                var chipNow = pasteChip()
+                var host = chipNow ? findObject(chipNow, function (o) {
+                    return o.held !== undefined && o.hovered !== undefined
+                        && o.refresh !== undefined
+                }, 0) : null
+                log("tip " + JSON.stringify({
+                    visible: shared ? shared.visible : null,
+                    text: shared ? shared.text : null,
+                    hostText: host ? host.text : null,
+                    hovered: host ? host.hovered : null }))
+                break
+            }
             case "unload":
                 root.kb = null
                 panelLoader.active = false
@@ -1048,6 +1104,15 @@ def _qmp_click(x, y):
     time.sleep(0.7)
 
 
+def _qmp_move(x, y):
+    """An absolute pointer move and nothing else: hover, never a click."""
+    width, height = _screen_size()
+    ax, ay = x * 32767 // width, y * 32767 // height
+    _qmp('{"execute":"input-send-event","arguments":{"events":['
+         f'{{"type":"abs","data":{{"axis":"x","value":{ax}}}}},'
+         f'{{"type":"abs","data":{{"axis":"y","value":{ay}}}}}]}}}}')
+
+
 def _frame_log():
     result = _guest("cat /run/user/1000/osk-qmp-log 2>/dev/null")
     return result.stdout.splitlines()
@@ -1065,6 +1130,22 @@ def _frame_cmd(word, expect, timeout=90):
             return
         time.sleep(0.3)
     raise Failure(f"guest frame never answered {word} with {expect}")
+
+
+def _frame_query(word, timeout=30):
+    """One frame command whose answer is `<word> {json}`: the JSON."""
+    seq = str(int(time.time() * 1000) % 100000)
+    started = len(_frame_log())
+    _guest(f"echo '{word} {seq}' > /run/user/1000/osk-qmp-cmd")
+    marker = f" {word} {{"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for line in _frame_log()[started:]:
+            at = line.find(marker)
+            if at != -1:
+                return json.loads(line[at + len(word) + 2:])
+        time.sleep(0.3)
+    raise Failure(f"guest frame never answered {word}")
 
 
 def _wait_frame(expect, timeout=300):
@@ -1288,6 +1369,76 @@ def real_click_leg(red=False):
           f"{result.stdout!r})")
 
 
+# The paste chip's tooltip waits this long before it opens (HoverTooltip's
+# ToolTip.delay); the clipboard peek it shows lands inside that wait.
+TOOLTIP_DELAY_S = 0.5
+
+
+def _chip_point():
+    """The paste chip's centre on screen: its window-relative centre, placed
+    by the layer of the panel's namespace whose size is that window's."""
+    geom = _frame_query("chipgeom")
+    if not geom or not geom.get("visible"):
+        raise Failure(f"the paste chip is not shown: {geom}")
+    result = _guest("hyprctl layers -j 2>/dev/null")
+    try:
+        for monitor in json.loads(result.stdout).values():
+            for level in monitor["levels"].values():
+                for layer in level:
+                    if layer.get("namespace") == PANEL_NAMESPACE \
+                            and abs(layer["w"] - geom["w"]) <= 1 \
+                            and abs(layer["h"] - geom["h"]) <= 1:
+                        return (layer["x"] + int(geom["x"]),
+                                layer["y"] + int(geom["y"]), layer["y"])
+    except (json.JSONDecodeError, KeyError, AttributeError):
+        pass
+    raise Failure(f"no {PANEL_NAMESPACE} layer of the chip window's size "
+                  f"{geom['w']}x{geom['h']}")
+
+
+def chip_hover_leg():
+    """A pointer resting on the paste chip shows the copied text: the peek
+    lands about 35 ms after the pointer, inside the tooltip's delay, and
+    the tooltip that opens must carry it rather than the chip's name. The
+    pointer leaving ends the peek: the chip's state holds no text."""
+    print("leg   paste chip hover")
+    phrase = f"oskar-hover-{os.getpid()}-{int(time.time())}"
+    copied = _guest(f"wl-copy -- '{phrase}' </dev/null >/dev/null 2>&1")
+    if copied.returncode != 0:
+        raise Failure(f"wl-copy failed in the guest: {copied.stderr.strip()}")
+    deadline = time.monotonic() + 10
+    while True:
+        chip = _frame_query("chip")
+        if chip["chip"].get("count") == len(phrase):
+            break
+        if time.monotonic() > deadline:
+            raise Failure(f"the chip never counted the copied text: {chip}")
+        time.sleep(0.3)
+    if phrase in json.dumps(chip):
+        raise Failure(f"the chip holds the text before any hover: {chip}")
+    x, y, band_top = _chip_point()
+    _qmp_move(x, y)
+    time.sleep(TOOLTIP_DELAY_S + 0.5)
+    tip = _frame_query("tip")
+    if tip.get("visible") is not True or tip.get("text") != phrase:
+        raise Failure(f"hovering the chip at ({x}, {y}) shows tooltip "
+                      f"{tip}, expected the copied {phrase!r} on screen")
+    print(f"ok    hover on the chip at ({x}, {y}): the tooltip on screen "
+          f"reads the copied text after the {TOOLTIP_DELAY_S:.1f} s delay")
+    _qmp_move(x, max(0, band_top - 120))
+    time.sleep(0.6)
+    chip = _frame_query("chip")
+    tip = _frame_query("tip")
+    if phrase in json.dumps(chip) or chip["chip"].get("peek") != "":
+        raise Failure(f"the chip still holds the text after the pointer "
+                      f"left: {chip}")
+    if tip.get("visible") and tip.get("text") == phrase:
+        raise Failure(f"the tooltip still shows the text after the pointer "
+                      f"left: {tip}")
+    print("ok    pointer away: the chip's state holds no text, the tooltip "
+          "is gone")
+
+
 def _start_frame(tree):
     _guest("rm -f /run/user/1000/osk-qmp-log /run/user/1000/osk-qmp-cmd")
     subprocess.Popen(
@@ -1308,7 +1459,7 @@ def _stop_frame():
 
 
 def run_qmp_legs():
-    """Host-side entry for ticket 48's two legs."""
+    """Host-side entry for ticket 48's two legs and the chip hover leg."""
     if not _host_guard():
         return False
     tree = os.environ.get("OSK_CANARY_TREE", "~/oskar")
@@ -1325,6 +1476,8 @@ def run_qmp_legs():
             _frame_cmd("bounce", "bounced", timeout=60)
             time.sleep(2)
         real_click_leg(red=red)
+        if not red:
+            chip_hover_leg()
     finally:
         _stop_frame()
     print("ok    qmp legs complete")
