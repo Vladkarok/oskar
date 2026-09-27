@@ -63,18 +63,16 @@ Item {
         })
     }
 
-    // Private by permission, not by hope: the documented 700/600 is
-    // enforced on create AND repaired on every save — umask-independent,
-    // and an existing 755/644 install is healed the first time the panel
-    // saves into it. Private at CREATION too, not after the fact:
-    // FileView's atomic rename would otherwise land at umask with a
-    // later chmod leaving a world-readable window, or a crash inside it
-    // leaving 644 forever. The dir is install -d -m 700; every save goes
-    // through one umask-077 temp+rename, 600 by construction.
+    // Private at creation, never re-moded after: a directory OSKar creates
+    // is made 0700 in one step (no world-readable window, umask
+    // notwithstanding), and one that already exists — the user's own, a
+    // dotfile manager's symlink — is left exactly as it is. Every save goes
+    // through one umask-077 temp+rename, so the file itself is 0600 by
+    // construction.
     Process {
         id: configDirMaker
         command: ["bash", "-c",
-            "install -d -m 700 \"$1\"", "oskar-config-dir",
+            "[[ -d \"$1\" ]] || mkdir -p -m 700 -- \"$1\"", "oskar-config-dir",
             root.configDir]
         onExited: (exitCode, exitStatus) => {
             if (root.configError) return
@@ -91,7 +89,7 @@ Item {
     Process {
         id: stateDirMaker
         command: ["bash", "-c",
-            "install -d -m 700 \"$1\"", "oskar-state-dir",
+            "[[ -d \"$1\" ]] || mkdir -p -m 700 -- \"$1\"", "oskar-state-dir",
             root.stateDir]
         onExited: (exitCode, exitStatus) => {
             if (root.stateError) return
@@ -174,14 +172,24 @@ Item {
         }
     }
 
+    // The write lands on the file the path RESOLVES to: a config.json or
+    // state.json that is a symlink (a dotfile manager's) is written
+    // through, and the link survives — the temp file sits beside the
+    // target and is renamed over the target, never over the link. A
+    // target whose directory cannot be written fails the save (the
+    // saveFailed hint) with nothing touched.
     function runPrivateWrite(path, payload, retried) {
         root.privateWriteInFlight = {
             path: path, payload: payload, retried: retried === true
         }
         privateWriter.command = ["bash", "-c",
-            "umask 077; t=\"$1.tmp.$$\"; "
-            + "trap 'rm -f \"$t\"' EXIT; "
-            + "printf %s \"$2\" > \"$t\" && chmod 600 \"$t\" && mv -f \"$t\" \"$1\"",
+            "umask 077; target=$(readlink -f -- \"$1\") || exit 5; "
+            + "[[ -n \"$target\" && ! -d \"$target\" ]] || exit 5; "
+            + "dir=$(dirname -- \"$target\"); "
+            + "[[ -d \"$dir\" && -w \"$dir\" ]] || exit 5; "
+            + "t=$(mktemp -p \"$dir\" \".$(basename -- \"$target\").XXXXXX\") || exit 5; "
+            + "trap 'rm -f -- \"$t\"' EXIT; "
+            + "printf %s \"$2\" > \"$t\" && chmod 600 -- \"$t\" && mv -fT -- \"$t\" \"$target\"",
             "oskar-private-write", path, payload]
         privateWriter.running = true
     }

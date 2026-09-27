@@ -378,7 +378,9 @@ Item {
             emojiUsage: root.emojiUsage,
             emojiSkinTone: root.emojiSkinTone,
             layoutGroup: root.rememberedLayoutGroup,
-            layoutDevice: root.rememberedLayoutDevice
+            layoutDevice: root.rememberedLayoutDevice,
+            // Another writer's keys, carried so a save does not drop them.
+            unknown: root.geometryState.unknown || {}
         }
         for (var key in overrides)
             if (Object.prototype.hasOwnProperty.call(overrides, key))
@@ -1818,14 +1820,22 @@ Item {
     // Resolves the freedesktop sound theme's file for the click and transcodes
     // it to PCM, exactly once, when the sound is on at startup — never per
     // keystroke. The theme ships Vorbis, and Qt's SoundEffect plays
-    // uncompressed WAV only, so the copy in XDG_RUNTIME_DIR (tmpfs, gone at
-    // logout) is what the effect actually plays: still the theme's sound, no
-    // asset shipped, no taste to defend. Looked up through
-    // XDG_DATA_HOME/XDG_DATA_DIRS like any theme consumer instead of
-    // hardcoding /usr/share, with the event id and the search paths passed as
-    // arguments so nothing from the environment is spliced into the command.
-    // The event is the theme's `bell` — the sound Unix already attaches to
-    // keys — chosen from the theme rather than defended as a taste.
+    // uncompressed WAV only, so the copy in OSKar's own runtime directory
+    // ($XDG_RUNTIME_DIR/oskar, tmpfs, gone at logout) is what the effect
+    // actually plays: still the theme's sound, no asset shipped, no taste to
+    // defend. Looked up through XDG_DATA_HOME/XDG_DATA_DIRS like any theme
+    // consumer instead of hardcoding /usr/share, with the event id and the
+    // search paths passed as arguments so nothing from the environment is
+    // spliced into the command. The event is the theme's `bell` — the sound
+    // Unix already attaches to keys — chosen from the theme rather than
+    // defended as a taste.
+    //
+    // The runtime directory is the helper's too: created 0700 here when the
+    // helper has not made it yet, and used only when it is a real directory
+    // of this user's with no group/other bits (the helper's own rule). The
+    // WAV is transcoded to a fresh temp name inside it and renamed over
+    // keyclick.wav: rename replaces whatever is at the name — a symlink
+    // included — and never writes through it.
     Process {
         id: soundResolve
         property string eventId: "bell"
@@ -1844,9 +1854,14 @@ Item {
             + "for base in \"${bases[@]}\"; do "
             + "file=$base/sounds/freedesktop/stereo/$1.oga; "
             + "if [ -f \"$file\" ]; then "
-            + "out=$4/oskar-keyclick.wav; "
-            + "ffmpeg -nostdin -v error -y -i \"$file\" \"$out\" || exit 3; "
-            + "printf '%s' \"$out\"; exit 0; "
+            + "dir=$4/oskar; "
+            + "[[ -e \"$dir\" || -L \"$dir\" ]] || mkdir -m 700 -- \"$dir\" 2>/dev/null; "
+            + "[[ -d \"$dir\" && ! -L \"$dir\" && -O \"$dir\" ]] || exit 4; "
+            + "[[ $(stat -c %a -- \"$dir\") == 700 ]] || exit 4; "
+            + "tmp=$(mktemp -p \"$dir\" .keyclick.XXXXXX) || exit 3; "
+            + "if ! ffmpeg -nostdin -v error -y -i \"$file\" -f wav \"$tmp\"; then rm -f -- \"$tmp\"; exit 3; fi; "
+            + "mv -fT -- \"$tmp\" \"$dir/keyclick.wav\" || { rm -f -- \"$tmp\"; exit 3; }; "
+            + "printf '%s' \"$dir/keyclick.wav\"; exit 0; "
             + "fi; "
             + "done; exit 1",
             "oskar-sound", soundResolve.eventId,
@@ -1865,6 +1880,12 @@ Item {
                 root.soundUnavailable = true
                 console.warn("[oskar] no '" + soundResolve.eventId
                     + "' event found in the freedesktop sound theme; the key click stays silent")
+                return
+            }
+            if (exitCode === 4) {
+                root.soundUnavailable = true
+                console.warn("[oskar] $XDG_RUNTIME_DIR/oskar is not a private"
+                    + " directory of this user's; the key click stays silent")
                 return
             }
             if (exitCode !== 0 || exitStatus !== 0) {

@@ -110,8 +110,14 @@ function maintainerDefaults() {
 
 function stateDefaults() {
     return { center: null, emojiCenter: null, emojiUsage: [],
-        emojiSkinTone: "", layoutGroup: 0, layoutDevice: "" }
+        emojiSkinTone: "", layoutGroup: 0, layoutDevice: "", unknown: {} }
 }
+
+// The state file's own key names. Every other key is someone else's — a
+// newer OSKar's, another writer's — and rides through a save verbatim
+// under `unknown`, the way config.json's unknown fields do.
+var STATE_FILE_KEYS = ["center", "emoji_center", "emoji_usage", "emoji_skin_tone",
+    "layout_group", "layout_device"]
 
 function owns(object, key) {
     return Object.prototype.hasOwnProperty.call(object, key)
@@ -339,6 +345,10 @@ function parseState(text) {
     var parsed = parseObject(text, "state")
     if (parsed.error) return parsed
     var state = stateDefaults()
+    for (var key in parsed.value) {
+        if (owns(parsed.value, key) && STATE_FILE_KEYS.indexOf(key) < 0)
+            storeUnknown(state.unknown, key, parsed.value[key])
+    }
     if (owns(parsed.value, "center")) {
         var center = parsePoint(parsed.value.center)
         if (center === undefined)
@@ -795,8 +805,11 @@ function fieldSelectAll(field) {
     if (field && field.selectAll) field.selectAll()
 }
 
+// The known fields come from the runtime object, validated; unknown keys
+// ride verbatim from `unknown` and never shadow a known one. A runtime
+// field that is not in the file form (a preference, say) has no path out.
 function serializeState(state) {
-    return JSON.stringify({
+    var out = {
         center: state.center
             ? { x: state.center.x, y: state.center.y }
             : null,
@@ -811,5 +824,10 @@ function serializeState(state) {
             ? Math.floor(state.layoutGroup) : 0,
         layout_device: typeof state.layoutDevice === "string"
             ? state.layoutDevice : ""
-    }, null, 2) + "\n"
+    }
+    var unknown = state.unknown && typeof state.unknown === "object" ? state.unknown : {}
+    for (var key in unknown) {
+        if (owns(unknown, key) && !owns(out, key)) storeUnknown(out, key, unknown[key])
+    }
+    return JSON.stringify(out, null, 2) + "\n"
 }

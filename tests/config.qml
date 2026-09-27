@@ -43,7 +43,7 @@ QtObject {
             })
             T.deepEqual(Config.stateDefaults(), {
                 center: null, emojiCenter: null, emojiUsage: [],
-                emojiSkinTone: "", layoutGroup: 0, layoutDevice: ""
+                emojiSkinTone: "", layoutGroup: 0, layoutDevice: "", unknown: {}
             })
         })
 
@@ -602,7 +602,7 @@ QtObject {
             T.deepEqual(first.value, {
                 center: { x: 12, y: 34 }, emojiCenter: null,
                 emojiUsage: [], emojiSkinTone: "",
-                layoutGroup: 0, layoutDevice: ""
+                layoutGroup: 0, layoutDevice: "", unknown: {}
             })
             var malformed = Config.reloadState(first.value, '{"center":{"x":12}}')
             T.equal(malformed.value, first.value)
@@ -610,13 +610,34 @@ QtObject {
             // An older state file stored the dragged top-left under
             // "position"; with no migration promised it reads as an absent
             // centre — the card simply falls back to docked placement rules
-            // instead of restoring a stale top-left.
+            // instead of restoring a stale top-left. The key itself is not
+            // ours to drop: it rides through as an unknown one.
             var legacy = Config.reloadState(Config.stateDefaults(), '{"position":{"x":12,"y":34}}')
             T.deepEqual(legacy.value, {
                 center: null, emojiCenter: null, emojiUsage: [],
-                emojiSkinTone: "", layoutGroup: 0, layoutDevice: ""
+                emojiSkinTone: "", layoutGroup: 0, layoutDevice: "",
+                unknown: { position: { x: 12, y: 34 } }
             })
             T.equal(legacy.error, "")
+        })
+
+        T.test("state keys another writer added survive the panel's own save", function () {
+            var text = '{"center":{"x":1,"y":2},"future_field":[1,"two"],'
+                + '"layout_group":1,"note":"kept","__proto__":{"polluted":true}}'
+            var parsed = Config.reloadState(Config.stateDefaults(), text)
+            T.equal(parsed.error, "")
+            T.deepEqual(parsed.value.unknown, { future_field: [1, "two"], note: "kept" })
+            T.equal(({}).polluted, undefined, "no prototype pollution")
+            var written = JSON.parse(Config.serializeState(parsed.value))
+            T.deepEqual(written.future_field, [1, "two"])
+            T.equal(written.note, "kept")
+            T.deepEqual(written.center, { x: 1, y: 2 })
+            T.equal(written.layout_group, 1)
+            // An unknown entry can never shadow a known field.
+            var shadow = Config.serializeState({ center: null,
+                unknown: { center: { x: 9, y: 9 }, extra: true } })
+            T.equal(JSON.parse(shadow).center, null)
+            T.equal(JSON.parse(shadow).extra, true)
         })
 
         T.test("state serialization cannot copy preferences into state", function () {
