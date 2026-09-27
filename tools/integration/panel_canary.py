@@ -159,10 +159,14 @@ Item {
 
     // The real panel: the same component the omarchy shell loads from the
     // plugin manifest's panel entry point. It brings its own PanelWindows,
-    // its config and state files, and the socket client.
-    Plugin.Panel {
-        id: panel
+    // its config and state files, and the socket client. Loaded, so the
+    // leg can destroy it the way a clean shell quit or a plugin disable
+    // does (every tracked child process dies with it).
+    Loader {
+        id: panelLoader
+        sourceComponent: Component { Plugin.Panel {} }
     }
+    property var panel: panelLoader.item
 
     property var kb: null
 
@@ -296,6 +300,11 @@ Item {
                 // kind and the size, never clipboard text.
                 log("chip " + JSON.stringify({ shown: panel.clipboardKind,
                     chip: panel.chip }))
+                break
+            case "unload":
+                root.kb = null
+                panelLoader.active = false
+                log("unloaded")
                 break
             case "publish": {
                 // The one clipboard publisher a pick and a restore use.
@@ -821,14 +830,16 @@ def _run_leg(repo, window_start):
             on_argv = [pid for pid, args in process_argv() if word in args]
             if on_argv:
                 raise Failure(f"the published text is on the argv of pid(s) {on_argv}")
-            panel.close()
-            panel = None
+            # Destroyed the way a clean shell quit (`omarchy restart shell`)
+            # or a plugin disable destroys it: every process the panel
+            # tracks dies with the component.
+            panel.command("unload", "unloaded")
             time.sleep(1.0)
             if wl_paste() != word:
                 raise Failure(f"the clipboard lost the published text when the "
-                              f"shell exited: it serves {wl_paste()!r}")
+                              f"panel was destroyed: it serves {wl_paste()!r}")
             print("ok    published text rides stdin (on no process's argv) and "
-                  "outlives the shell that published it")
+                  "outlives the panel that published it")
 
             print("ok    CANARY GREEN: the real panel opened, both groups "
                   "drew their keymaps, the journal stayed clean")
