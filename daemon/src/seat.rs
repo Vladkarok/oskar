@@ -896,13 +896,25 @@ pub(crate) fn share_reply(
     stopping: &dyn Fn() -> bool,
     observe: &dyn Fn(&str),
 ) -> String {
+    share_reply_in(backend, OwnFiles::from_env(), path, stopping, observe)
+}
+
+/// `share_reply` with the helper's own files named by the caller, so the
+/// reply does not depend on the environment it is asked in.
+pub(crate) fn share_reply_in(
+    backend: Option<&dyn SeatBackend>,
+    own: Option<OwnFiles>,
+    path: Option<&str>,
+    stopping: &dyn Fn() -> bool,
+    observe: &dyn Fn(&str),
+) -> String {
     let Some(backend) = backend else {
         return SeatError::NoBackend.reply();
     };
     if path.is_some_and(|path| !path.starts_with('/')) {
         return SeatError::NotAbsolute.reply();
     }
-    let Some(own) = OwnFiles::from_env() else {
+    let Some(own) = own else {
         return SeatError::Unreadable.reply();
     };
     let deadline = Instant::now() + SHARE_BOUND;
@@ -1336,9 +1348,12 @@ mod tests {
     fn the_seat_verbs_answer_one_line_each_way() {
         let never = || false;
         let ignore = |_: &str| {};
+        // The helper's own files are named here: a build environment has
+        // no user session and no `$XDG_RUNTIME_DIR`.
+        let own = || Some(OwnFiles::in_dir(&scratch("verbs")));
         assert_eq!(seat_reply(None, &ignore), "err no seat backend");
         assert_eq!(switch_reply(None, "kbd", 1), "err no seat backend");
-        assert_eq!(share_reply(None, None, &never, &ignore), "err no seat backend");
+        assert_eq!(share_reply_in(None, own(), None, &never, &ignore), "err no seat backend");
 
         let good = fake(
             Ok(vec![Keyboard {
@@ -1370,21 +1385,29 @@ mod tests {
         // namespace can see it (the compositor's read-back decides).
         for relative in ["keymap.xkb", "./keymap.xkb", "~/keymap.xkb", " /x"] {
             assert_eq!(
-                share_reply(Some(&good), Some(relative), &never, &ignore),
+                share_reply_in(Some(&good), own(), Some(relative), &never, &ignore),
                 "err share path must be absolute"
             );
         }
         assert_eq!(
-            share_reply(Some(&good), Some("/tmp/only-the-compositor-sees-this.xkb"), &never, &ignore),
+            share_reply_in(Some(&good), own(), Some("/tmp/only-the-compositor-sees-this.xkb"), &never, &ignore),
             "ok"
         );
-        assert_eq!(share_reply(Some(&good), None, &never, &ignore), "ok");
+        assert_eq!(share_reply_in(Some(&good), own(), None, &never, &ignore), "ok");
         assert_eq!(
             *good.shared.lock().unwrap(),
             ["/tmp/only-the-compositor-sees-this.xkb".to_string(), String::new()]
         );
         // Once shutdown has begun nothing more changes the compositor.
-        assert_eq!(share_reply(Some(&good), None, &|| true, &ignore), "err shutting down");
+        assert_eq!(
+            share_reply_in(Some(&good), own(), None, &|| true, &ignore),
+            "err shutting down"
+        );
+        // Without a runtime directory the helper has no files of its own.
+        assert_eq!(
+            share_reply_in(Some(&good), None, None, &never, &ignore),
+            "err seat unreadable"
+        );
         assert_eq!(good.shared.lock().unwrap().len(), 2);
     }
 

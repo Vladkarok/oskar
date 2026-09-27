@@ -111,6 +111,17 @@ check() {
   else echo "FAIL  $1: expected '$3', got '$2'"; echo "      output: $(tr '\n' '|' < "$sandbox/out" | cut -c1-300)"; failed=$((failed + 1)); fi
 }
 
+# Root ignores directory modes, so a read-only directory stops nothing
+# there and the cases that depend on one would report a false failure.
+dir_modes_bind() {
+  local probe="$sandbox/modeprobe"
+  mkdir -p "$probe"; chmod 555 "$probe"
+  if : 2>/dev/null > "$probe/x"; then chmod 755 "$probe"; rm -rf "$probe"; return 1; fi
+  chmod 755 "$probe"; rm -rf "$probe"
+}
+skipped=0
+skip() { echo "skip  $1"; skipped=$((skipped + 1)); }
+
 # ---- the record's primitive: matches ----
 reset; mkdir -p "$sandbox/r"; printf 'one\n' > "$sandbox/r/f"; ln -sfn /x/one "$sandbox/r/l"
 check "record write: a file and a link" "$(rec write "$sandbox/r/f" "$sandbox/r/l")" 0
@@ -302,6 +313,7 @@ for how in uninstall force teardown; do
 done
 
 # --force is all or nothing.
+if dir_modes_bind; then
 reset; run --prebuilt "$matching" >/dev/null; printf '# my tweak\n' >> "$unit"; printf 'someone elses\n' > "$helper"
 chmod 555 "$(dirname "$helper")"
 check "uninstall --force with the helper's directory read-only: exit 1" "$(sbx bash "$root/uninstall.sh" --force >"$sandbox/out" 2>&1; echo $?)" 1
@@ -310,6 +322,7 @@ check "  the unit is at its own name, edit kept" "$(grep -c '# my tweak' "$unit"
 check "  the helper too" "$(cat "$helper")" "someone elses"
 check "  the command too" "$([[ -L "$cli" ]] && echo kept)" kept
 check "  no aside anywhere" "$(find "$home" -name '*.uninstalled-*' | wc -l)" 0
+else skip "uninstall --force with the helper's directory read-only (directory modes do not bind this user)"; fi
 
 # ---- oskar start: the panel's Retry ----
 reset; run --prebuilt "$matching" >/dev/null; : > "$sandbox/systemctl.log"
@@ -365,6 +378,7 @@ check "  the user's ./oskar/install-record is untouched" "$(cat "$sandbox/cwd/os
 check "  the record went to the default place" "$(wc -l < "$record_file")" 3
 
 # ---- --force is all or nothing ----
+if dir_modes_bind; then
 reset; mkdir -p "$(dirname "$unit")" "$(dirname "$helper")"; printf 'their unit\n' > "$unit"; printf 'their helper\n' > "$helper"
 chmod 555 "$(dirname "$helper")"
 check "--force with the helper's directory read-only: exit 1" "$(run --prebuilt "$matching" --force)" 1
@@ -373,6 +387,7 @@ check "  the unit is at its own name, same bytes" "$(cat "$unit")" "their unit"
 check "  the helper too" "$(cat "$helper")" "their helper"
 check "  no aside anywhere" "$(anyaside)" 0
 check "  nothing written" "$([[ -L "$cli" || -e "$record_file" ]] && echo written || echo untouched)" untouched
+else skip "--force with the helper's directory read-only (directory modes do not bind this user)"; fi
 
 # ---- bin/oskar switches on or off only the unit that is OSKar's ----
 reset; mkdir -p "$(dirname "$unit")"; printf '[Service]\nExecStart=/usr/bin/something-else\n' > "$unit"
@@ -450,5 +465,5 @@ check "  nor did the shell calls" "$(grep -c -E 'omarchy-osk|vladkarok\.osk( |$)
 
 check "the whole run never asked systemctl to disable anything (it acts by name)" "$(grep -c 'disable' "$sandbox/systemctl.all.log")" 0
 
-echo "install-check: $passed passed, $failed failed"
+echo "install-check: $passed passed, $failed failed$( ((skipped)) && echo ", $skipped skipped")"
 ((failed == 0))
