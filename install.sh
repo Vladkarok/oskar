@@ -15,8 +15,9 @@
 # and unchanged since; anything else under those names is someone else's.
 # It is never overwritten: without consent the install stops and names it,
 # and `--force` moves it aside under a free dated name before writing.
-# Nothing outside the checkout is touched until a helper is in hand, so a
-# failed build or a missing tarball leaves the home directory as it was.
+# Nothing outside the checkout is touched until the install record is
+# known usable and a helper is in hand, so a failed build, a missing
+# tarball or an unusable record leaves the home directory as it was.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,6 +43,12 @@ done
 # reads as "not ours".
 record() { bash "$here/bin/oskar" record "$@"; }
 ours() { record matches "$1" >/dev/null 2>&1; }
+
+# ---- 0. the record must be writable before anything is decided by it ----
+if ! record usable; then
+  echo "install.sh: the install record cannot be kept (reason above); nothing was changed" >&2
+  exit 1
+fi
 
 # ---- 1. the helper, obtained before anything outside the checkout moves ----
 if [[ -z "$prebuilt" ]]; then
@@ -93,15 +100,45 @@ for path in "$unit" "$binary" "$cli"; do
   fi
 done
 if ((${#foreign[@]})) && [[ -z "$force" ]]; then
-  echo "install.sh: refusing to replace files OSKar did not install, or that changed since it did:" >&2
+  echo "install.sh: refusing to replace files that do not match OSKar's install record (OSKar did not install them, they changed since, or an OSKar version older than the record installed them):" >&2
   printf '  %s\n' "${foreign[@]}" >&2
   echo "Move them aside yourself, or rerun install.sh with --force: it moves each one aside under a dated name and deletes nothing." >&2
   echo "Files installed by an OSKar version older than its install record also need --force, once." >&2
   exit 3
 fi
+# --force is all or nothing: every move is checked possible first, and a
+# move that still fails puts the ones before it back (their names are
+# free — nothing has been written yet).
 for path in ${foreign[@]+"${foreign[@]}"}; do
-  aside="$(record aside "$path" replaced)" || { echo "install.sh: could not move $path aside; nothing more was changed" >&2; exit 1; }
-  echo "install.sh: --force: $path was not OSKar's (or changed since); moved aside as $aside" >&2
+  parent="$(dirname "$path")"
+  if [[ ! -w "$parent" || ! -x "$parent" ]]; then
+    echo "install.sh: --force cannot move $path aside: $parent is not writable; nothing was moved" >&2
+    exit 1
+  fi
+done
+moved_from=()
+moved_to=()
+for path in ${foreign[@]+"${foreign[@]}"}; do
+  if aside="$(record aside "$path" replaced)"; then
+    moved_from+=("$path")
+    moved_to+=("$aside")
+    continue
+  fi
+  echo "install.sh: could not move $path aside" >&2
+  for ((i = ${#moved_from[@]} - 1; i >= 0; i--)); do
+    if mv -T -n -- "${moved_to[i]}" "${moved_from[i]}" \
+        && [[ -e "${moved_from[i]}" || -L "${moved_from[i]}" ]] \
+        && ! [[ -e "${moved_to[i]}" || -L "${moved_to[i]}" ]]; then
+      echo "install.sh: moved ${moved_from[i]} back" >&2
+    else
+      echo "install.sh: could NOT move ${moved_to[i]} back to ${moved_from[i]}; it is still at ${moved_to[i]}" >&2
+    fi
+  done
+  echo "install.sh: nothing was installed" >&2
+  exit 1
+done
+for i in "${!moved_from[@]}"; do
+  echo "install.sh: --force: ${moved_from[i]} did not match OSKar's install record; moved aside as ${moved_to[i]}" >&2
 done
 
 # ---- 3. the writes, then the record of what was written ----

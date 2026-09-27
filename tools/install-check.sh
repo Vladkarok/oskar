@@ -31,7 +31,8 @@ case "\$*" in
     elif [ -e "\$HOME/.config/systemd/user/oskar.service" ]; then echo "\$HOME/.config/systemd/user/oskar.service"
     else echo; fi
     exit 0 ;;
-  *is-active*) exit "\$STUB_ACTIVE" ;;
+  *is-enabled*) echo enabled; exit 0 ;;
+  *is-active*) if [ "\$STUB_ACTIVE" = 0 ]; then echo active; else echo inactive; fi; exit "\$STUB_ACTIVE" ;;
 esac
 exit 0
 EOF
@@ -46,6 +47,8 @@ for tool in bash sh tar sed grep find install ln mkdir readlink dirname basename
 done
 printf '#!/bin/sh\necho "cargo must not run" >&2; exit 99\n' > "$sandbox/withcargo/cargo"; chmod +x "$sandbox/withcargo/cargo"
 printf '#!/bin/sh\necho 20260101-000000\n' > "$sandbox/datestub/date"; chmod +x "$sandbox/datestub/date"
+mkdir -p "$sandbox/nosha"
+for t in "$sandbox"/toolbox/*; do [[ "$(basename "$t")" == sha256sum ]] || ln -s "$(readlink "$t")" "$sandbox/nosha/$(basename "$t")"; done
 
 # A prebuilt tarball with the release's layout; its helper is a plain
 # script that says nothing about what it is.
@@ -62,6 +65,7 @@ tpath="$sandbox/bin:$sandbox/toolbox"
 sbx() {
   env -i HOME="$home" XDG_RUNTIME_DIR="$sandbox/run" XDG_STATE_HOME="$home/.local/state" \
     XDG_CONFIG_HOME="$home/.config" PATH="$tpath" STUB_ACTIVE="${STUB_ACTIVE:-1}" \
+    ${state_home_override:+XDG_STATE_HOME="$state_home_override"} \
     STUB_FRAGMENT="${STUB_FRAGMENT:-auto}" "$@"
 }
 run() { sbx bash "${installer:-$root/install.sh}" "$@" >"$sandbox/out" 2>&1; echo $?; }
@@ -69,6 +73,9 @@ unrun() { sbx bash "$root/uninstall.sh" >"$sandbox/out" 2>&1; echo $?; }
 oskar() { sbx bash "$root/bin/oskar" "$@" >"$sandbox/out" 2>&1; echo $?; }
 rec() { sbx bash "$root/bin/oskar" record "$@" >/dev/null 2>&1; echo $?; }
 sum() { sha256sum < "$1" | cut -c1-64; }
+# What a path is, without following a link: "link:<text>" or "file:<sha256>".
+what() { if [[ -L "$1" ]]; then echo "link:$(readlink "$1")"; else echo "file:$(sum "$1")"; fi; }
+anyaside() { find "$home" "$sandbox/run" \( -name '*.replaced-*' -o -name '*.migrated-*' \) 2>/dev/null | wc -l; }
 asides() { command ls -d "$1".replaced-* 2>/dev/null | wc -l; }
 calls() { grep -c -E "$1" "$sandbox/systemctl.log"; }
 written() { [[ -e "$unit" || -e "$helper" || -L "$cli" || -e "$record_file" ]] && echo written || echo untouched; }
@@ -95,9 +102,16 @@ check "matches: a recorded link whose text changed" "$(rec matches "$sandbox/r/l
 rm -f "$sandbox/r/f"; mkdir "$sandbox/r/f"
 check "matches: a recorded path that is now a directory" "$(rec matches "$sandbox/r/f")" 1
 check "write: a directory cannot be recorded" "$(rec write "$sandbox/r/f")" 1
-check "matches: a relative path" "$(cd "$sandbox" && rec matches r/other)" 1
+printf 'rel\n' > "$sandbox/r/rel"; rec write "$sandbox/r/rel" >/dev/null
+check "matches: a recorded file, by its absolute path" "$(rec matches "$sandbox/r/rel")" 0
+check "matches: the same recorded file by a relative spelling" "$(cd "$sandbox" && rec matches r/rel)" 1
+check "write: a path containing a tab is refused" "$(printf 'x\n' > "$sandbox/r/a$(printf '\t')b"; rec write "$sandbox/r/a$(printf '\t')b")" 1
+check "  and not recorded" "$(grep -c 'a.b$' "$record_file")" 0
+check "aside: an invalid word is refused" "$(rec aside "$sandbox/r/other" 'Bad-word')" 1
+check "  and the file did not move" "$(cat "$sandbox/r/other")" x
+check "usable: a normal home" "$(rec usable)" 0
 check "matches: no path at all" "$(rec matches)" 1
-check "forget: one path" "$(rec forget "$sandbox/r/f")" 0
+check "forget: one path" "$(rec forget "$sandbox/r/f" "$sandbox/r/rel")" 0
 check "  the other line stays" "$(grep -c "$sandbox/r/l" "$record_file")" 1
 check "forget: the last path removes the record" "$(rec forget "$sandbox/r/l" >/dev/null; [[ -e "$record_file" ]] && echo kept || echo gone)" gone
 
@@ -134,15 +148,15 @@ check "  and cargo never ran" "$(grep -c 'cargo must not run' "$sandbox/out")" 0
 # ---- each destination foreign: refused, untouched; --force moves it aside ----
 foreign_case() { # <name> <path> <maker>
   local name="$1" path="$2" maker="$3" before
-  reset; mkdir -p "$(dirname "$path")"; eval "$maker"; before="$(sum "$path" 2>/dev/null || readlink "$path")"
+  reset; mkdir -p "$(dirname "$path")"; eval "$maker"; before="$(what "$path")"
   check "foreign $name: refused, exit 3" "$(run --prebuilt "$matching")" 3
   check "  the message names it" "$(grep -c "^  $path\$" "$sandbox/out")" 1
   check "  and says --force deletes nothing" "$(grep -c 'deletes nothing' "$sandbox/out")" 1
-  check "  it is byte-identical" "$(sum "$path" 2>/dev/null || readlink "$path")" "$before"
+  check "  it is identical (a link keeps its text)" "$(what "$path")" "$before"
   check "  nothing else was written" "$(for p in "$unit" "$helper" "$cli" "$record_file"; do [[ "$p" == "$path" ]] && continue; [[ -e "$p" || -L "$p" ]] && echo "$p"; done | wc -l)" 0
   check "  and systemd was not called" "$(wc -l < "$sandbox/systemctl.log")" 0
   check "foreign $name with --force: installs" "$(run --prebuilt "$matching" --force)" 0
-  check "  it was moved aside with its content" "$(for a in "$path".replaced-*; do sum "$a" 2>/dev/null || readlink "$a"; done)" "$before"
+  check "  it was moved aside as it was (a link stays a link, same text)" "$(for a in "$path".replaced-*; do what "$a"; done)" "$before"
   check "  and the destination is recorded as ours" "$(rec matches "$path")" 0
 }
 foreign_case unit "$unit" 'printf "[Service]\nExecStart=/usr/bin/something-else\n" > "$unit"'
@@ -212,13 +226,66 @@ check "  the edited unit stays" "$(grep -c '# my tweak' "$unit")" 1
 check "  the replaced helper stays" "$(cat "$helper")" "someone elses program"
 check "  the command, ours, is gone" "$([[ -L "$cli" ]] && echo left || echo gone)" gone
 check "  the record forgot only the command" "$(grep -c -F "$cli" "$record_file"; wc -l < "$record_file")" "$(printf '0\n2')"
-check "  it names what it left" "$(grep -c 'left in place' "$sandbox/out")" 2
+check "  it lists what stays" "$(grep -c -x -F -e "  $unit" -e "  $helper" "$sandbox/out")" 2
+check "  as not matching, never as not OSKar's" "$(grep -c 'do not match what OSKar installed' "$sandbox/out")$(grep -c 'did not install' "$sandbox/out")" 10
+check "  and says what oskar.service is now" "$(grep -c 'oskar.service is now enabled and inactive' "$sandbox/out")" 1
+
+# ---- uninstall.sh over an install older than the record ----
+reset; run --prebuilt "$matching" >/dev/null; rm -f "$record_file"; ln -s "$root" "$reg" 2>/dev/null || { mkdir -p "$(dirname "$reg")"; ln -s "$root" "$reg"; }
+before="$(what "$unit") $(what "$helper") $(what "$cli")"; : > "$sandbox/systemctl.log"; : > "$sandbox/omarchy.log"
+check "uninstall with no file matching the record: exit 3" "$(unrun)" 3
+check "  the three are untouched" "$(what "$unit") $(what "$helper") $(what "$cli")" "$before"
+check "  no teardown: registration kept, plugin not disabled, unit not disabled" "$([[ -L "$reg" ]] && echo kept)$(wc -l < "$sandbox/omarchy.log")$(calls 'disable')" kept00
+check "  it says the truth and the way out" "$(grep -c 'older than its install record' "$sandbox/out")$(grep -c 'install.sh --force once' "$sandbox/out")" 11
+reset; run --prebuilt "$matching" >/dev/null
+for how in missing unreadable; do
+  other="$sandbox/other"; rm -rf "$other"; mkdir -p "$other"
+  command cp -r "$root/bin" "$root/systemd" "$root/install.sh" "$root/uninstall.sh" "$root/manifest.json" "$other/"
+  reset; installer="$other/install.sh" run --prebuilt "$matching" >/dev/null; mkdir -p "$(dirname "$reg")"; ln -s "$other" "$reg"
+  rsum="$(sum "$record_file")"; : > "$sandbox/systemctl.log"
+  if [[ "$how" == missing ]]; then rm -f "$other/bin/oskar"; else chmod 000 "$other/bin/oskar"; fi
+  check "uninstall with bin/oskar $how: refuses" "$(sbx bash "$other/uninstall.sh" >"$sandbox/out" 2>&1; echo $?)" 1
+  check "  removes nothing" "$([[ -e "$unit" && -e "$helper" && -L "$cli" && -L "$reg" ]] && echo kept)$(sum "$record_file")$(wc -l < "$sandbox/systemctl.log")" "kept${rsum}0"
+  chmod 644 "$other/bin/oskar" 2>/dev/null
+done
+
+# ---- the record file itself ----
+record_refusal() { # <name> <maker>
+  reset; mkdir -p "$(dirname "$unit")"; printf 'theirs\n' > "$unit"; eval "$2"
+  check "record $1: install refuses, exit 1" "$(run --prebuilt "$matching" --force)" 1
+  check "  the foreign unit did not move" "$(cat "$unit")$(anyaside)" theirs0
+  check "  nothing was written" "$([[ -e "$helper" || -L "$cli" ]] && echo written || echo untouched)" untouched
+}
+record_refusal "path is a directory" 'mkdir -p "$record_file"'
+check "  the directory is still empty" "$(command ls -A "$record_file" | wc -l)" 0
+record_refusal "path is a symlink" 'mkdir -p "$(dirname "$record_file")"; printf "mine\n" > "$sandbox/target"; ln -s "$sandbox/target" "$record_file"'
+check "  the symlink and its target are unchanged" "$(readlink "$record_file") $(cat "$sandbox/target")" "$sandbox/target mine"
+record_refusal "state dir is a file" 'mkdir -p "$home/.local/state"; printf "a file\n" > "$home/.local/state/oskar"'
+check "  the file is unchanged" "$(cat "$home/.local/state/oskar")" "a file"
+record_refusal "without sha256sum" 'tpath="$sandbox/bin:$sandbox/nosha"'
+tpath="$sandbox/bin:$sandbox/toolbox"
+check "usable: a directory at the record path is refused" "$(mkdir -p "$record_file"; rec usable)" 1
+check "write: a directory at the record path is refused, never moved into" "$(printf 'y\n' > "$sandbox/r/y"; rec write "$sandbox/r/y"; command ls -A "$record_file" | wc -l)" "$(printf '1\n0')"
+reset; mkdir -p "$sandbox/cwd/oskar"; printf 'the user file\n' > "$sandbox/cwd/oskar/install-record"
+check "a relative XDG_STATE_HOME is ignored: install succeeds" "$(cd "$sandbox/cwd" && state_home_override=. run --prebuilt "$matching")" 0
+check "  the user's ./oskar/install-record is untouched" "$(cat "$sandbox/cwd/oskar/install-record"; command ls -A "$sandbox/cwd/oskar" | wc -l)" "$(printf 'the user file\n1')"
+check "  the record went to the default place" "$(wc -l < "$record_file")" 3
+
+# ---- --force is all or nothing ----
+reset; mkdir -p "$(dirname "$unit")" "$(dirname "$helper")"; printf 'their unit\n' > "$unit"; printf 'their helper\n' > "$helper"
+chmod 555 "$(dirname "$helper")"
+check "--force with the helper's directory read-only: exit 1" "$(run --prebuilt "$matching" --force)" 1
+chmod 755 "$(dirname "$helper")"
+check "  the unit is at its own name, same bytes" "$(cat "$unit")" "their unit"
+check "  the helper too" "$(cat "$helper")" "their helper"
+check "  no aside anywhere" "$(anyaside)" 0
+check "  nothing written" "$([[ -L "$cli" || -e "$record_file" ]] && echo written || echo untouched)" untouched
 
 # ---- bin/oskar switches on or off only the unit that is OSKar's ----
 reset; mkdir -p "$(dirname "$unit")"; printf '[Service]\nExecStart=/usr/bin/something-else\n' > "$unit"
 check "teardown (source mode) with a foreign oskar.service" "$(oskar teardown)" 0
 check "  systemd was never told to disable or stop it" "$(calls '(disable|stop|restart|enable).*oskar.service')" 0
-check "  and teardown says why" "$(grep -c 'OSKar did not install' "$sandbox/out")" 1
+check "  and teardown says why" "$(grep -c "not proven OSKar's" "$sandbox/out")" 1
 check "  the foreign unit is byte-identical" "$(grep -c something-else "$unit")" 1
 reset; run --prebuilt "$matching" >/dev/null; : > "$sandbox/systemctl.log"
 check "teardown with our recorded unit" "$(oskar teardown)" 0
@@ -226,6 +293,22 @@ check "  disables it" "$(calls 'disable --now oskar.service')" 1
 reset; run --prebuilt "$matching" >/dev/null; : > "$sandbox/systemctl.log"
 check "teardown when systemd resolves another file" "$(STUB_FRAGMENT=/etc/systemd/user/oskar.service oskar teardown)" 0
 check "  leaves it alone" "$(calls '(disable|stop).*oskar.service')" 0
+
+# The packaged unit's path proves nothing from a checkout: another
+# package may ship oskar.service. Source mode never switches it.
+pk=/usr/lib/systemd/user/oskar.service
+reset; run --prebuilt "$matching" >/dev/null; : > "$sandbox/systemctl.log"
+check "source mode, systemd resolves $pk: teardown" "$(STUB_FRAGMENT=$pk oskar teardown)" 0
+check "  no disable or stop" "$(calls '(disable|stop).*oskar.service')" 0
+reset; check "  setup dies" "$(STUB_ACTIVE=0 STUB_FRAGMENT=$pk oskar setup --prebuilt "$matching")" 1
+check "  no enable or restart" "$(calls '(enable|start|restart).*oskar.service')" 0
+reset; STUB_ACTIVE=0 oskar setup --prebuilt "$matching" >/dev/null; : > "$sandbox/systemctl.log"
+check "  upgrade does not finish" "$(STUB_ACTIVE=0 STUB_FRAGMENT=$pk oskar upgrade --prebuilt "$matching")" 1
+check "  no enable, restart or disable" "$(calls '(enable|start|restart|disable|stop).*oskar.service')" 0
+mkdir -p "$sandbox/pacman"; printf '#!/bin/sh\n[ "$1 $2" = "-Qqo %s" ] && echo oskar\n' "$pk" > "$sandbox/pacman/pacman"; chmod +x "$sandbox/pacman/pacman"
+reset; : > "$sandbox/systemctl.log"
+check "source mode, pacman says the oskar package owns $pk: teardown" "$(tpath="$sandbox/pacman:$sandbox/bin:$sandbox/toolbox" STUB_FRAGMENT=$pk oskar teardown)" 0
+check "  disables it" "$(calls 'disable --now oskar.service')" 1
 
 reset; mkdir -p "$(dirname "$unit")"; printf '[Service]\nExecStart=/usr/bin/something-else\n' > "$unit"
 check "setup with a foreign unit present: dies" "$(oskar setup --prebuilt "$matching")" 1
@@ -252,6 +335,7 @@ check "omarchy-osk world: teardown" "$(oskar teardown)" 0
 check "  every omarchy-osk file is byte-identical" "$(for f in "${theirs[@]}"; do sum "$f"; done)" "$before"
 check "  and nothing was moved aside beside them" "$(command ls -d "$home"/.config/omarchy-osk* "$home"/.local/state/omarchy-osk* "$sandbox"/run/omarchy-osk* "$home"/.config/systemd/user/omarchy-osk* "$home"/.local/libexec/omarchy-osk* | wc -l)" 5
 check "  systemctl never named it" "$(calls 'omarchy-osk')" 0
+check "  the shell calls were logged (the check below is not vacuous)" "$(grep -c 'omarchy plugin enable io.github.vladkarok.oskar' "$sandbox/omarchy.log")" 1
 check "  nor did the shell calls" "$(grep -c -E 'omarchy-osk|vladkarok\.osk( |$)' "$sandbox/omarchy.log")" 0
 
 echo "install-check: $passed passed, $failed failed"

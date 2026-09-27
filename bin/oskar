@@ -28,8 +28,11 @@
 # REFUSES to touch a real directory: that is either a `git clone` made by
 # `omarchy plugin add` or a developer's checkout, not ours to manage.
 # Teardown unlinks the registration only when it resolves to the payload
-# this script owns. Config (~/.config/oskar) and state
-# (~/.local/state/oskar) are the user's and are never touched.
+# this script owns. Config (~/.config/oskar) and the panel's state are
+# the user's and are never touched. The one file of OSKar's own under the
+# state directory is the install record (~/.local/state/oskar/
+# install-record): written on install, updated as recorded paths go, and
+# removed when the last one does.
 
 set -euo pipefail
 
@@ -41,7 +44,11 @@ PACKAGED_UNIT="/usr/lib/systemd/user/$UNIT"
 SOURCE_HELPER="$HOME/.local/libexec/oskar-daemon"
 CLI_LINK="$HOME/.local/bin/oskar"
 SOCKET="${XDG_RUNTIME_DIR:-$HOME/.run}/oskar/control.sock"
-RECORD="${XDG_STATE_HOME:-$HOME/.local/state}/oskar/install-record"
+# The XDG spec says a relative XDG_STATE_HOME is invalid and is ignored,
+# so a relative value never lets the record land in the working directory.
+STATE_HOME="${XDG_STATE_HOME:-}"
+[[ "$STATE_HOME" == /* ]] || STATE_HOME="$HOME/.local/state"
+RECORD="$STATE_HOME/oskar/install-record"
 # The newest protocol the helper this tree builds speaks. The helper also
 # accepts the one before (a panel is allowed to lag its helper), so this
 # only has to match the helper, never the panel.
@@ -102,9 +109,10 @@ record_state() {
   fi
 }
 
-# "<kind>\t<digest>" the record holds for a normalised path.
+# "<kind>\t<digest>" the record holds for a normalised path. A record
+# that is not a regular file (a symlink, a directory) is no record.
 record_lookup() {
-  [[ -f "$RECORD" ]] || return 1
+  [[ -f "$RECORD" && ! -L "$RECORD" ]] || return 1
   local kind digest path
   while IFS=$'\t' read -r kind digest path || [[ -n "$kind" ]]; do
     if [[ "$path" == "$1" ]]; then
@@ -124,6 +132,34 @@ record_matches() {
   [[ "$have" == "$want" ]]
 }
 
+# Whether the record can be read and replaced, without changing
+# anything: sha256sum on PATH, the record path absent or a regular file,
+# its directory present and writable or creatable. The reason goes to
+# stderr. install.sh asks before it writes or moves anything.
+record_usable() {
+  local dir probe
+  command -v sha256sum >/dev/null 2>&1 \
+    || { printf 'oskar: record: sha256sum is not on PATH\n' >&2; return 1; }
+  if [[ -L "$RECORD" ]]; then
+    printf 'oskar: record: %s is a symlink, not the record file; move it away yourself\n' "$RECORD" >&2
+    return 1
+  fi
+  if [[ -e "$RECORD" && ! -f "$RECORD" ]]; then
+    printf 'oskar: record: %s is not a regular file; move it away yourself\n' "$RECORD" >&2
+    return 1
+  fi
+  dir="$(dirname "$RECORD")"
+  if [[ -e "$dir" || -L "$dir" ]]; then
+    [[ -d "$dir" ]] || { printf 'oskar: record: %s exists and is not a directory\n' "$dir" >&2; return 1; }
+    [[ -w "$dir" && -x "$dir" ]] || { printf 'oskar: record: %s is not writable\n' "$dir" >&2; return 1; }
+    return 0
+  fi
+  probe="$dir"
+  while [[ ! -e "$probe" && ! -L "$probe" ]]; do probe="$(dirname "$probe")"; done
+  [[ -d "$probe" ]] || { printf 'oskar: record: %s exists and is not a directory\n' "$probe" >&2; return 1; }
+  [[ -w "$probe" && -x "$probe" ]] || { printf 'oskar: record: %s is not writable, so %s cannot be created\n' "$probe" "$dir" >&2; return 1; }
+}
+
 # write: record what each path is now, replacing earlier lines for the
 # same paths. forget: drop their lines. The file goes when it is empty.
 record_update() {
@@ -141,7 +177,8 @@ record_update() {
       lines+=("$state"$'\t'"$path")
     fi
   done
-  [[ "$op" == write || -f "$RECORD" ]] || return 0
+  [[ "$op" == write || -e "$RECORD" || -L "$RECORD" ]] || return 0
+  record_usable || die "record: nothing was recorded"
   local dir tmp kind digest
   dir="$(dirname "$RECORD")"
   [[ -d "$dir" ]] || mkdir -p -m 0700 "$dir" || die "record: cannot create $dir"
@@ -163,7 +200,9 @@ record_update() {
     die "record: cannot write $tmp"
   fi
   if [[ -s "$tmp" ]]; then
-    chmod 0600 "$tmp" && mv -f -- "$tmp" "$RECORD" \
+    # -T: were a directory to appear at the record path, the temp file
+    # must not be moved into it.
+    chmod 0600 "$tmp" && mv -f -T -- "$tmp" "$RECORD" \
       || { rm -f -- "$tmp"; die "record: cannot replace $RECORD"; }
   else
     rm -f -- "$tmp" "$RECORD"
@@ -194,11 +233,12 @@ record_aside() {
 
 cmd_record() {
   local usage="usage: oskar record {matches <path> | write <path>... | \
-forget <path>... | aside <path> <word>}"
+forget <path>... | aside <path> <word> | usable}"
   case "${1:-}" in
     matches) [[ $# -eq 2 ]] || die "$usage"; record_matches "$2" ;;
     write|forget) [[ $# -ge 2 ]] || die "$usage"; record_update "$@" ;;
     aside) [[ $# -eq 3 ]] || die "$usage"; record_aside "$2" "$3" ;;
+    usable) [[ $# -eq 1 ]] || die "$usage"; record_usable ;;
     *) die "$usage" ;;
   esac
 }
@@ -207,15 +247,26 @@ forget <path>... | aside <path> <word>}"
 #
 # systemctl enable/restart/stop/disable act on whatever file systemd
 # resolves for oskar.service, which need not be the one OSKar wrote. It
-# is OSKar's when it is the package's (pacman owns /usr/lib) or the user
-# unit the install record proves unchanged. Anything else — a user unit
-# OSKar did not install or one edited since, an /etc override, a masked
-# unit, no unit at all — is not ours to switch on or off.
+# is OSKar's when it is the user unit the install record proves
+# unchanged, or /usr/lib/systemd/user/oskar.service where that path is
+# the oskar package's: in packaged mode, or when pacman says it owns it.
+# A checkout alone proves nothing about /usr/lib — another package may
+# ship a unit of the same name. Anything else (a user unit that does not
+# match the record, an /etc override, a masked unit, no unit at all) is
+# not ours to switch on or off.
 UNIT_FRAGMENT=""
+packaged_unit_is_ours() {
+  [[ "${MODE:-}" == packaged ]] && return 0
+  command -v pacman >/dev/null 2>&1 || return 1
+  [[ "$(pacman -Qqo "$PACKAGED_UNIT" 2>/dev/null)" == oskar ]]
+}
 unit_is_ours() {
   UNIT_FRAGMENT="$(systemctl --user show -p FragmentPath --value "$UNIT" 2>/dev/null || true)"
   [[ -n "$UNIT_FRAGMENT" ]] || return 1
-  [[ "$UNIT_FRAGMENT" == "$PACKAGED_UNIT" ]] && return 0
+  if [[ "$UNIT_FRAGMENT" == "$PACKAGED_UNIT" ]]; then
+    packaged_unit_is_ours
+    return
+  fi
   [[ -f "$USER_UNIT" ]] || return 1
   [[ "$(realpath -e -- "$UNIT_FRAGMENT" 2>/dev/null)" \
     == "$(realpath -e -- "$USER_UNIT" 2>/dev/null)" ]] || return 1
@@ -226,20 +277,30 @@ unit_not_ours_reason() {
   if [[ -z "$UNIT_FRAGMENT" ]]; then
     printf 'systemd has no %s unit' "$UNIT"
   else
-    printf 'systemd resolves %s to %s, which OSKar did not install (or which was changed since)' \
+    printf "systemd resolves %s to %s, which is not proven OSKar's (it does not match the install record, or it is not the oskar package's)" \
       "$UNIT" "$UNIT_FRAGMENT"
   fi
 }
 
 # A user unit named oskar.service overrides the packaged one. When the
-# record does not prove it OSKar's, nothing here moves it, flag or not.
+# record does not prove it OSKar's, nothing here moves it, flag or not:
+# the message says what is known and names what to move by hand.
 foreign_user_unit() {
   [[ -e "$USER_UNIT" || -L "$USER_UNIT" ]] && ! record_matches "$USER_UNIT"
 }
-FOREIGN_UNIT_MSG="$USER_UNIT is a user unit named $UNIT that OSKar did \
-not install (or that was edited since OSKar installed it), and it \
-overrides the packaged unit. OSKar will not touch it: rename or remove it \
-yourself, then rerun this command"
+foreign_unit_msg() {
+  local path paths=()
+  for path in "$USER_UNIT" "$SOURCE_HELPER" "$CLI_LINK"; do
+    if [[ -e "$path" || -L "$path" ]] && ! record_matches "$path"; then
+      paths+=("$path")
+    fi
+  done
+  printf "%s overrides the packaged unit and does not match OSKar's \
+install record: OSKar did not install it, it was edited since, or an OSKar \
+version older than the install record installed it. OSKar will not touch \
+it. Move these aside by hand, then rerun this command: %s" \
+    "$USER_UNIT" "${paths[*]}"
+}
 
 
 detect_mode() {
@@ -330,6 +391,12 @@ migrate_source() {
   # these names is left exactly where it is.
   local dest
   if record_matches "$USER_UNIT"; then
+    # Off before it moves: a unit renamed while enabled leaves a dangling
+    # wants link and a running helper that nothing will stop.
+    if unit_is_ours; then
+      systemctl --user disable --now "$UNIT" >/dev/null 2>&1 \
+        || warn "could not disable the source-install unit; it may still be enabled"
+    fi
     dest="$(record_aside "$USER_UNIT" migrated)" || exit 1
     record_update forget "$USER_UNIT"
     say "user unit moved aside: $dest"
@@ -339,7 +406,7 @@ migrate_source() {
     record_update forget "$SOURCE_HELPER"
     say "source helper binary removed (rebuild it any time from the checkout)"
   elif [[ -e "$SOURCE_HELPER" || -L "$SOURCE_HELPER" ]]; then
-    say "$SOURCE_HELPER left in place: OSKar did not install it, or it changed since"
+    say "$SOURCE_HELPER left in place: it does not match OSKar's install record"
   fi
   # The ~/.local/bin symlink shadows /usr/bin on default PATHs; left
   # behind, the next bare `oskar setup` resolves to the source
@@ -349,8 +416,7 @@ migrate_source() {
     record_update forget "$CLI_LINK"
     say "source lifecycle symlink removed from ~/.local/bin"
   elif [[ -e "$CLI_LINK" || -L "$CLI_LINK" ]]; then
-    warn "$CLI_LINK is not the command OSKar installed (or it changed \
-since); left in place (it shadows /usr/bin/oskar on your PATH — call the \
+    warn "$CLI_LINK does not match OSKar's install record; left in place (it shadows /usr/bin/oskar on your PATH — call the \
 packaged one by its full path, or move that file yourself)"
   fi
   systemctl --user daemon-reload
@@ -414,7 +480,9 @@ rerun: oskar setup"
 
 enable_unit() {
   require_own_unit
-  systemctl --user enable "$UNIT" >/dev/null 2>&1 || true
+  local err
+  err="$(systemctl --user enable "$UNIT" 2>&1 >/dev/null)" \
+    || die "systemctl --user enable $UNIT failed${err:+: $err}; the helper is not enabled"
   if graphical_session_active; then
     systemctl --user reset-failed "$UNIT" 2>/dev/null || true
     systemctl --user restart "$UNIT"
@@ -454,7 +522,7 @@ cmd_setup() {
   preflight
 
   if [[ "$MODE" == "packaged" ]]; then
-    foreign_user_unit && die "$FOREIGN_UNIT_MSG"
+    foreign_user_unit && die "$(foreign_unit_msg)"
     if report_legacy_source; then
       if ((migrate)); then
         migrate_source
@@ -498,7 +566,7 @@ cmd_upgrade() {
 $MODE payload (has: ${target:-none}); run: oskar setup"
   fi
   if [[ "$MODE" == "packaged" ]]; then
-    foreign_user_unit && die "$FOREIGN_UNIT_MSG"
+    foreign_user_unit && die "$(foreign_unit_msg)"
     if report_legacy_source; then
       die "a source install overrides the packaged unit; restart would load \
 incompatible halves; run: oskar setup --migrate-source"
@@ -595,7 +663,7 @@ cmd_status() {
   say "protocol:        $proto"
   if [[ "$MODE" == "packaged" ]]; then
     if foreign_user_unit; then
-      warn "$FOREIGN_UNIT_MSG"
+      warn "$(foreign_unit_msg)"
     elif report_legacy_source; then
       warn "a legacy source install overrides the packaged unit; \
 setup --migrate-source moves it aside"
@@ -802,9 +870,8 @@ command manages; try: oskar setup"
 bare oskar manages the source world instead of the package; try: \
 oskar setup --migrate-source (it removes the shadow)"
   elif [[ "$MODE" == "packaged" && -e "$DOCTOR_SHADOW" ]]; then
-    doc_fail "$shadow" "$DOCTOR_SHADOW shadows /usr/bin/oskar, and it is \
-not the command OSKar installed (or it changed since), so OSKar will not \
-remove it; try: move it yourself, or call /usr/bin/oskar by its full path"
+    doc_fail "$shadow" "$DOCTOR_SHADOW shadows /usr/bin/oskar, and it does \
+not match OSKar's install record, so OSKar will not remove it; try: move it yourself, or call /usr/bin/oskar by its full path"
   elif [[ "$MODE" == "packaged" ]]; then
     doc_ok "$shadow" "none ($DOCTOR_SHADOW absent; /usr/bin/oskar answers)"
   elif [[ -e "$DOCTOR_SHADOW" && "$points" != "$PAYLOAD/bin/oskar" ]]; then
@@ -822,9 +889,7 @@ install; try: oskar setup (install.sh re-points it)"
   if [[ "$MODE" == "packaged" ]]; then
     local override="legacy source override"
     if foreign_user_unit; then
-      doc_fail "$override" "$USER_UNIT is a user unit OSKar did not \
-install (or one edited since) and it OVERRIDES the packaged unit; OSKar \
-will not touch it; try: rename or remove it yourself"
+      doc_fail "$override" "$(foreign_unit_msg)"
     elif record_matches "$USER_UNIT" || record_matches "$SOURCE_HELPER"; then
       doc_fail "$override" "a source install still stands \
 ($USER_UNIT and/or $SOURCE_HELPER) and OVERRIDES the packaged unit; try: \
@@ -1176,7 +1241,7 @@ Usage: oskar <command>
   teardown                  Disable the plugin and unit, unlink the
                              registration if it is ours. Keeps config,
                              state and foreign directories.
-  record matches <path> | write <path>... | forget <path>... | aside <path> <word>
+  record matches <path> | write <path>... | forget <path>... | aside <path> <word> | usable
                             The install record install.sh and
                              uninstall.sh consult: what OSKar wrote
                              outside its checkout, by digest.

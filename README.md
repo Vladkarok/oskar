@@ -426,7 +426,7 @@ than the install record has no record yet, so it needs `--force` once.
 Another checkout's install is taken over without it. `uninstall.sh` and
 `oskar setup --migrate-source` follow the same rule, and `oskar` restarts,
 enables or disables `oskar.service` only when the unit systemd
-runs is the package's or the recorded one.
+runs is the oskar package's or the recorded one.
 
 A tarball placed beside `install.sh` is picked up without the flag, and
 `oskar setup --prebuilt <tarball>` / `oskar upgrade --prebuilt <tarball>`
