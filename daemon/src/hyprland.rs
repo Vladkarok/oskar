@@ -1099,19 +1099,70 @@ mod tests {
     }
 
     /// The bounds' invariant (seat.rs): the put-back fits a write and a
-    /// read-back; the share and its put-back stay under the 15 s hold cap;
-    /// the shutdown waits out a share's last step and put-back, and the
-    /// whole restore fits the exit watchdog, which fits systemd's default
-    /// stop timeout (the unit sets none).
+    /// read-back; the shutdown waits out a share's last step and put-back,
+    /// and the whole restore fits the exit watchdog, which fits systemd's
+    /// default stop timeout (the unit sets none). The hold cap is not in
+    /// this sum: the connection keeps it while a seat verb runs (see
+    /// a_held_key_is_lifted_at_the_cap_while_a_share_hangs).
     #[test]
     fn the_restore_bounds_fit_inside_each_other() {
         assert!(PUT_BACK_BOUND >= IO_BOUND * 2);
-        assert!(SHARE_BOUND + PUT_BACK_BOUND < Duration::from_secs(15));
         assert!(SHUTDOWN_GATE_WAIT >= IO_BOUND + PUT_BACK_BOUND);
         assert!(SHUTDOWN_GATE_WAIT + IO_BOUND + PUT_BACK_BOUND < crate::EXIT_WATCHDOG);
         assert!(crate::EXIT_WATCHDOG < Duration::from_secs(90));
         let unit = include_str!("../../systemd/oskar.service");
         assert!(!unit.contains("TimeoutStopSec"), "a stop timeout in the unit must be checked here");
+    }
+
+    /// A share against a compositor that does not answer must not hold a
+    /// key past the cap: the connection waits for the share's reply the
+    /// way server.rs does, and the key it holds is lifted when the cap
+    /// comes due, while the share is still waiting on the compositor.
+    #[test]
+    fn a_held_key_is_lifted_at_the_cap_while_a_share_hangs() {
+        let (own, own_dir) = own_files("cap", None);
+        let published = own.dir().join("keymap.xkb").to_string_lossy().to_string();
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        // The compositor answers nothing until the test says so.
+        let (hyprland, _, dir) = fake_compositor("cap", move |_| {
+            let _ = gate.lock().unwrap().recv();
+            "{\"str\": \"\"}".to_string()
+        });
+        let hyprland = Arc::new(hyprland);
+        let worker = Arc::clone(&hyprland);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let pressed = Instant::now();
+        let cap = Duration::from_millis(300);
+        thread::spawn(move || {
+            let reply = match share_transaction(&*worker, &own, Some(&published),
+                Instant::now() + SHARE_BOUND, &|| false, &|_| {}) {
+                Ok(()) => "ok".to_string(),
+                Err(error) => error.reply(),
+            };
+            let _ = tx.send(reply);
+        });
+        let lifted: std::cell::Cell<Option<Instant>> = std::cell::Cell::new(None);
+        let reply = crate::server::wait_serving_holds(
+            &rx,
+            || if lifted.get().is_none() { Some(pressed + cap) } else { None },
+            || {
+                if lifted.get().is_none() {
+                    lifted.set(Some(Instant::now()));
+                    // Only now may the compositor answer: the lift happened
+                    // while the share was still waiting on it.
+                    let _ = release.send(());
+                    let _ = release.send(());
+                }
+            },
+        );
+        let lifted = lifted.get().expect("the key was lifted while the share waited");
+        assert!(lifted >= pressed + cap, "not before the cap");
+        assert!(lifted < pressed + cap + IO_BOUND, "at the cap, not after the share");
+        assert!(reply.starts_with("ok") || reply.starts_with("err"), "{reply}");
+        drop(release);
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
     }
 
     #[test]

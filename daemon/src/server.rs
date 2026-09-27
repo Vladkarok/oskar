@@ -347,25 +347,12 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection, 
             } else {
                 None
             };
-            let stopping = || shared.lock().unwrap().shutting_down;
-            // What the compositor's kb_file was seen to be, for the
-            // configure path's record decision. Judged before the typing
-            // lock is taken: the judgement reads the filesystem.
-            let observe = |kb_file: &str| {
-                let seen = LastSeen::of(kb_file, OwnFiles::from_env().as_ref());
-                shared.lock().unwrap().compositor_kb_file = seen;
-            };
             let reply = match seat_command {
                 // Once shutdown has begun the seat verbs are refused, so
                 // nothing a connection asks can interleave with the restore
                 // the shutdown makes.
-                Some(_) if stopping() => SeatError::ShuttingDown.reply(),
-                Some(SeatCommand::Seat) => seat_reply(seat.as_deref(), &observe),
-                Some(SeatCommand::Switch { device, group }) => {
-                    switch_reply(seat.as_deref(), &device, group)
-                }
-                Some(SeatCommand::Share(path)) => {
-                    share_reply(seat.as_deref(), path.as_deref(), &stopping, &observe)
+                Some(_) if shared.lock().unwrap().shutting_down => {
+                    SeatError::ShuttingDown.reply()
                 }
                 Some(SeatCommand::Events(on)) => {
                     if on {
@@ -374,6 +361,35 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection, 
                         SUBSCRIBERS.unsubscribe(conn_id);
                     }
                     "ok".to_string()
+                }
+                // A seat verb can wait on the compositor for seconds (a
+                // share and its put-back: up to 11 s). It runs on a worker
+                // while this thread keeps the hold cap: a key this
+                // connection holds is lifted when the cap comes due, not
+                // after the compositor answers. No further line is read
+                // meanwhile, so replies stay one per command, in order.
+                Some(command) => {
+                    let work = seat_work(command, seat.clone(), Arc::clone(&shared));
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let spawned = thread::Builder::new()
+                        .name("osk-seat-verb".into())
+                        .spawn(move || {
+                            let _ = tx.send(work());
+                        })
+                        .is_ok();
+                    if spawned {
+                        wait_serving_holds(
+                            &rx,
+                            || hold_deadline(&shared, conn_id),
+                            || {
+                                for code in expire_stuck_keys(&shared, &connection) {
+                                    held.retain(|entry| *entry != code);
+                                }
+                            },
+                        )
+                    } else {
+                        SeatError::Unreachable.reply()
+                    }
                 }
                 None => match parse(line) {
                     Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
@@ -402,6 +418,60 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection, 
 
     SUBSCRIBERS.unsubscribe(conn_id);
     release_all(&shared, &connection, held, conn_id);
+}
+
+/// A seat verb as work a worker thread can run: everything it needs is
+/// owned, and its answer is the reply line.
+fn seat_work(
+    command: SeatCommand,
+    seat: Seat,
+    shared: SharedRef,
+) -> impl FnOnce() -> String + Send + 'static {
+    move || {
+        let stopping = || shared.lock().unwrap().shutting_down;
+        // What the compositor's kb_file was seen to be, for the configure
+        // path's record decision. Judged before the typing lock is taken:
+        // the judgement reads the filesystem.
+        let observe = |kb_file: &str| {
+            let seen = LastSeen::of(kb_file, OwnFiles::from_env().as_ref());
+            shared.lock().unwrap().compositor_kb_file = seen;
+        };
+        match command {
+            SeatCommand::Seat => seat_reply(seat.as_deref(), &observe),
+            SeatCommand::Switch { device, group } => switch_reply(seat.as_deref(), &device, group),
+            SeatCommand::Share(path) => {
+                share_reply(seat.as_deref(), path.as_deref(), &stopping, &observe)
+            }
+            SeatCommand::Events(_) => "ok".to_string(),
+        }
+    }
+}
+
+/// Waits for a seat verb's reply while keeping this connection's hold cap:
+/// each time the earliest hold comes due (`deadline`), `expire` lifts what
+/// is due, then the wait resumes. With nothing held the wait is plain.
+pub(crate) fn wait_serving_holds(
+    reply: &std::sync::mpsc::Receiver<String>,
+    mut deadline: impl FnMut() -> Option<Instant>,
+    mut expire: impl FnMut(),
+) -> String {
+    use std::sync::mpsc::RecvTimeoutError;
+    loop {
+        let answer = match deadline() {
+            None => reply.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            Some(at) => reply.recv_timeout(
+                at.saturating_duration_since(Instant::now())
+                    .max(Duration::from_millis(1)),
+            ),
+        };
+        match answer {
+            Ok(line) => return line,
+            Err(RecvTimeoutError::Timeout) => expire(),
+            // The worker died without answering (a panic): a reply is
+            // still owed, and it is a refusal.
+            Err(RecvTimeoutError::Disconnected) => return SeatError::Unreachable.reply(),
+        }
+    }
 }
 
 #[cfg(test)]

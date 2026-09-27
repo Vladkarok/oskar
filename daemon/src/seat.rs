@@ -591,8 +591,11 @@ fn gate_by(gate: &Mutex<()>, deadline: Instant) -> Option<std::sync::MutexGuard<
 //   compositor applies the value. Nothing the failed operation did can
 //   starve it.
 // - On the share's connection (the panel's typing connection) the two add
-//   up to 11 s, below the 15 s hold cap that lifts a key it holds between
-//   lines.
+//   up to 11 s. That is NOT bounded by the 15 s hold cap — the cap counts
+//   from the press, and a key pressed shortly before the share would
+//   outlast it — so the seat verbs run on a worker while the connection
+//   keeps lifting keys as the cap comes due (server.rs,
+//   wait_serving_holds).
 // - At shutdown the restore waits for the gate at most SHUTDOWN_GATE_WAIT:
 //   a share in flight sees the stop at its next step boundary (at most one
 //   request, IO_BOUND) and then runs its own put-back (PUT_BACK_BOUND).
