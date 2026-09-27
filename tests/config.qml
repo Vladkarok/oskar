@@ -621,6 +621,23 @@ QtObject {
             T.equal(legacy.error, "")
         })
 
+        T.test("foreign keys past 64 KiB are refused, not carried", function () {
+            var blob = new Array(66000).join("x")
+            var state = Config.reloadState(Config.stateDefaults(),
+                '{"center":null,"foreign":"' + blob + '"}')
+            T.equal(state.error, "Invalid state: more than 64 KiB of unknown keys")
+            var config = Config.reloadOverrides({}, '{"foreign":"' + blob + '"}')
+            T.equal(config.error, "Invalid configuration: more than 64 KiB of unknown keys")
+            // Under the cap they ride as before; multi-byte text counts bytes.
+            var wide = new Array(30000).join("€")
+            T.equal(Config.reloadState(Config.stateDefaults(),
+                '{"foreign":"' + wide + '"}').error, "Invalid state: more than 64 KiB of unknown keys")
+            T.equal(Config.reloadState(Config.stateDefaults(),
+                '{"foreign":"' + new Array(1000).join("x") + '"}').error, "")
+            // Known fields do not count against the cap.
+            T.equal(Config.reloadOverrides({}, '{"mode":"floating"}').error, "")
+        })
+
         T.test("state keys another writer added survive the panel's own save", function () {
             var text = '{"center":{"x":1,"y":2},"future_field":[1,"two"],'
                 + '"layout_group":1,"note":"kept","__proto__":{"polluted":true}}'

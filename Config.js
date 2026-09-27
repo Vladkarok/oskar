@@ -250,6 +250,23 @@ function storeUnknown(map, key, value) {
     map[key] = value
 }
 
+// Keys another writer added ride through a save, up to this many bytes of
+// their JSON: a file carrying more is refused as malformed (the error state
+// stops every write), so a runaway foreign writer cannot make the panel's
+// own saves grow without bound.
+var UNKNOWN_KEYS_CAP = 65536
+
+function unknownTooLarge(unknown) {
+    var text = JSON.stringify(unknown)
+    var bytes = 0
+    for (var i = 0; i < text.length; i++) {
+        var code = text.charCodeAt(i)
+        bytes += code < 0x80 ? 1 : code < 0x800 ? 2
+            : (code >= 0xd800 && code <= 0xdbff) ? (i++, 4) : 3
+    }
+    return bytes > UNKNOWN_KEYS_CAP
+}
+
 function parseOverrides(text) {
     var parsed = parseObject(text, "configuration")
     if (parsed.error) return parsed
@@ -311,6 +328,12 @@ function parseOverrides(text) {
         overrides[field.value] = value
         if (!isAlias) canonicalSeen[field.value] = true
     }
+    var foreign = {}
+    for (var name in overrides) {
+        if (owns(overrides, name) && !configFieldByValue(name)) foreign[name] = overrides[name]
+    }
+    if (unknownTooLarge(foreign))
+        return { value: null, error: "Invalid configuration: more than 64 KiB of unknown keys" }
     return { value: overrides, error: "" }
 }
 
@@ -349,6 +372,8 @@ function parseState(text) {
         if (owns(parsed.value, key) && STATE_FILE_KEYS.indexOf(key) < 0)
             storeUnknown(state.unknown, key, parsed.value[key])
     }
+    if (unknownTooLarge(state.unknown))
+        return { value: null, error: "Invalid state: more than 64 KiB of unknown keys" }
     if (owns(parsed.value, "center")) {
         var center = parsePoint(parsed.value.center)
         if (center === undefined)
