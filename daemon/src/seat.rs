@@ -517,22 +517,26 @@ pub(crate) trait SeatBackend: Send + Sync {
     /// Sets the compositor's `kb_file` to `value` (empty clears it), without
     /// verifying: `Ok` is the compositor accepting the request.
     fn write_kb_file(&self, value: &str, deadline: Instant) -> Result<(), SeatError>;
-    /// Reads `kb_file` back until it is `value` or `deadline` passes.
-    fn confirm_kb_file(&self, value: &str, deadline: Instant) -> Result<(), SeatError>;
+    /// Reads `kb_file` back until it is `value` or `deadline` passes, and
+    /// stops early with `ShuttingDown` once `stopping` says so.
+    fn confirm_kb_file(
+        &self,
+        value: &str,
+        deadline: Instant,
+        stopping: &dyn Fn() -> bool,
+    ) -> Result<(), SeatError>;
+    /// The gate every change to this compositor's `kb_file` runs under, so a
+    /// `share` from one connection never interleaves with another's, or with
+    /// the restore on shutdown. One per compositor, not per process.
+    fn kb_file_gate(&self) -> &Mutex<()>;
     /// Starts delivering events to `sink` on threads of the backend's own.
     /// Their failure ends the events, never the helper.
     fn watch(self: std::sync::Arc<Self>, sink: std::sync::Arc<dyn EventSink>);
 }
 
-/// Every change to the compositor's `kb_file` runs under this, so a `share`
-/// from one connection never interleaves with another's, or with the
-/// restore on shutdown. Waiting for it counts against the waiter's own
-/// deadline.
-static KB_FILE_GATE: Mutex<()> = Mutex::new(());
-
-fn gate_by(deadline: Instant) -> Option<std::sync::MutexGuard<'static, ()>> {
+fn gate_by(gate: &Mutex<()>, deadline: Instant) -> Option<std::sync::MutexGuard<'_, ()>> {
     loop {
-        match KB_FILE_GATE.try_lock() {
+        match gate.try_lock() {
             Ok(guard) => return Some(guard),
             // A panicked holder changed nothing this waiter relies on: the
             // gate orders writes, it guards no data.
@@ -545,37 +549,55 @@ fn gate_by(deadline: Instant) -> Option<std::sync::MutexGuard<'static, ()>> {
     }
 }
 
-/// The whole `share` — waiting for the gate, the capture, the change and
-/// every read-back — finishes inside this. It must stay below the helper's
-/// hold cap (15 s) with the restore's grace added: the connection asking is
-/// the panel's typing connection, and a key it holds is only lifted by the
-/// cap between its lines.
+// The time bounds, as one invariant. Every compositor request is bounded by
+// IO_BOUND on its own.
+//
+// - SHARE_BOUND covers a whole `share` — the gate wait, the capture, the
+//   change and its read-backs.
+// - PUT_BACK_BOUND is the put-back's OWN budget, started fresh when it
+//   begins, whatever the failed change consumed: one write and one
+//   read-back of IO_BOUND each, plus a second for re-reads while the
+//   compositor applies the value. Nothing the failed operation did can
+//   starve it.
+// - On the share's connection (the panel's typing connection) the two add
+//   up to 11 s, below the 15 s hold cap that lifts a key it holds between
+//   lines.
+// - At shutdown the restore waits for the gate at most SHUTDOWN_GATE_WAIT:
+//   a share in flight sees the stop at its next step boundary (at most one
+//   request, IO_BOUND) and then runs its own put-back (PUT_BACK_BOUND).
+//   The restore itself then reads the setting (IO_BOUND) and puts it back
+//   (PUT_BACK_BOUND): 14 s in all, inside the 20 s exit watchdog
+//   (main.rs) and systemd's 90 s default stop timeout (the unit sets no
+//   TimeoutStopSec). A compositor that answers takes milliseconds; the
+//   bounds only matter for one that does not.
+pub(crate) const IO_BOUND: Duration = Duration::from_secs(2);
 pub(crate) const SHARE_BOUND: Duration = Duration::from_secs(6);
-/// How far past a failed share's deadline its restore may run.
-pub(crate) const RESTORE_GRACE: Duration = Duration::from_millis(1500);
-/// How long the shutdown restore may take, gate included. It runs after the
-/// key release, never before it.
-pub(crate) const SHUTDOWN_RESTORE_BOUND: Duration = Duration::from_secs(2);
+pub(crate) const PUT_BACK_BOUND: Duration = Duration::from_secs(5);
+pub(crate) const SHUTDOWN_GATE_WAIT: Duration = Duration::from_secs(7);
 
-/// Puts `value` back as the compositor's `kb_file`, verified, by `deadline`.
-/// No clear first: the value differs from what the compositor holds, or
-/// setting it is a no-op that leaves it in place either way.
-fn put_back(backend: &dyn SeatBackend, value: &str, deadline: Instant) -> Result<(), SeatError> {
+/// Puts `value` back as the compositor's `kb_file`, verified, inside its
+/// own `PUT_BACK_BOUND` from now. No clear first: the value differs from
+/// what the compositor holds, or setting it is a no-op that leaves it in
+/// place either way. Never interrupted by shutdown: this is the step the
+/// shutdown exists to complete.
+fn put_back(backend: &dyn SeatBackend, value: &str) -> Result<(), SeatError> {
+    let deadline = Instant::now() + PUT_BACK_BOUND;
     backend.write_kb_file(value, deadline)?;
-    backend.confirm_kb_file(value, deadline)
+    backend.confirm_kb_file(value, deadline, &|| false)
 }
 
 /// `share` as one transaction: the compositor's `kb_file` is captured before
 /// anything changes, changed and read back, and on any failure put back to
-/// what was captured (best effort, inside `deadline` plus `RESTORE_GRACE`).
-/// The compositor is never left empty unless it was empty, or the put-back
-/// itself failed — which is logged.
+/// what was captured, inside the put-back's own bound. The compositor is
+/// never left empty unless it was empty, or the put-back itself failed —
+/// which is logged with the value, so the user can set it by hand.
 ///
 /// Taking the compositor over — pointing it at the published keymap — is
 /// refused while it carries a `kb_file` the helper could not put back.
-/// `stopping` is asked between the steps: once shutdown has begun, a share
-/// in flight puts the capture back and ends. `observe` hears every value the
-/// compositor was seen to hold.
+/// `stopping` is asked between every two steps: once shutdown has begun, a
+/// share in flight puts the capture back (if it changed anything) and
+/// releases the gate for the shutdown restore. `observe` hears every value
+/// the compositor was seen to hold.
 pub(crate) fn share_transaction(
     backend: &dyn SeatBackend,
     own: &OwnFiles,
@@ -584,7 +606,7 @@ pub(crate) fn share_transaction(
     stopping: &dyn Fn() -> bool,
     observe: &dyn Fn(&str),
 ) -> Result<(), SeatError> {
-    let Some(_gate) = gate_by(deadline) else {
+    let Some(_gate) = gate_by(backend.kb_file_gate(), deadline) else {
         return Err(SeatError::TimedOut);
     };
     if stopping() {
@@ -602,6 +624,14 @@ pub(crate) fn share_transaction(
         );
         return Err(SeatError::NotRestorable);
     }
+    let step = || {
+        if stopping() {
+            Err(SeatError::ShuttingDown)
+        } else {
+            Ok(())
+        }
+    };
+    step()?;
     let changed = (|| {
         // Cleared first only when the setting already names the target:
         // assigning the value it holds is a no-op, and a keymap republished
@@ -610,12 +640,11 @@ pub(crate) fn share_transaction(
         // there is no moment at which the compositor holds nothing.
         if !wanted.is_empty() && current == wanted {
             backend.write_kb_file("", deadline)?;
-            if stopping() {
-                return Err(SeatError::ShuttingDown);
-            }
+            step()?;
         }
         backend.write_kb_file(wanted, deadline)?;
-        backend.confirm_kb_file(wanted, deadline)
+        step()?;
+        backend.confirm_kb_file(wanted, deadline, stopping)
     })();
     match changed {
         Ok(()) => {
@@ -625,17 +654,17 @@ pub(crate) fn share_transaction(
         Err(error) => {
             if !restorable(&captured) {
                 eprintln!(
-                    "[oskar] share failed ({}); the previous kb_file {captured:?} cannot be put back",
+                    "[oskar] share failed ({}); the previous kb_file {captured:?} cannot be put \
+                     back; set input:kb_file to it by hand",
                     error.reply()
                 );
                 return Err(error);
             }
-            let grace = deadline.max(Instant::now()) + RESTORE_GRACE;
-            match put_back(backend, &captured, grace) {
+            match put_back(backend, &captured) {
                 Ok(()) => observe(&captured),
                 Err(restore) => eprintln!(
-                    "[oskar] share failed ({}) and putting kb_file back to {captured:?} failed \
-                     too ({})",
+                    "[oskar] share failed ({}) and putting kb_file back failed too ({}); set \
+                     input:kb_file to {captured:?} by hand, or reload Hyprland",
                     error.reply(),
                     restore.reply()
                 ),
@@ -657,32 +686,38 @@ pub(crate) enum ShutdownRestore {
     Failed(SeatError),
 }
 
+/// What the user's `kb_file` should be once the helper is gone: the
+/// recorded source, or empty (unset) when none is recorded or it cannot be
+/// put back.
+pub(crate) fn shutdown_value(own: &OwnFiles) -> String {
+    let value = own.recorded_source();
+    if restorable(&value) {
+        value
+    } else {
+        eprintln!("[oskar] the recorded kb_file {value:?} is not absolute; clearing instead");
+        String::new()
+    }
+}
+
 /// On the helper's own shutdown, after its keys are released: a compositor
 /// still compiling the published keymap is put back to the user's recorded
 /// source, or cleared when none is recorded. The published file dies with
-/// the runtime directory at logout, and a `kb_file` naming it must not
-/// outlive the process that keeps it current.
-pub(crate) fn restore_on_shutdown(
-    backend: &dyn SeatBackend,
-    own: &OwnFiles,
-    deadline: Instant,
-) -> ShutdownRestore {
-    let Some(_gate) = gate_by(deadline) else {
+/// the runtime directory, and a `kb_file` naming it must not outlive the
+/// process that keeps it current. Bounded as the invariant above states:
+/// the gate wait, one read and the put-back, each on its own budget.
+pub(crate) fn restore_on_shutdown(backend: &dyn SeatBackend, own: &OwnFiles) -> ShutdownRestore {
+    let Some(_gate) = gate_by(backend.kb_file_gate(), Instant::now() + SHUTDOWN_GATE_WAIT) else {
         return ShutdownRestore::Failed(SeatError::TimedOut);
     };
-    let current = match backend.kb_file_by(deadline) {
+    let current = match backend.kb_file_by(Instant::now() + IO_BOUND) {
         Ok(current) => current,
         Err(error) => return ShutdownRestore::Failed(error),
     };
     if !own.is_published(&current) {
         return ShutdownRestore::NotOurs;
     }
-    let mut value = own.recorded_source();
-    if !restorable(&value) {
-        eprintln!("[oskar] the recorded kb_file {value:?} is not absolute; clearing instead");
-        value.clear();
-    }
-    match put_back(backend, &value, deadline) {
+    let value = shutdown_value(own);
+    match put_back(backend, &value) {
         Ok(()) => ShutdownRestore::Restored(value),
         Err(error) => ShutdownRestore::Failed(error),
     }
@@ -1144,6 +1179,7 @@ mod tests {
         keyboards: Result<Vec<Keyboard>, SeatError>,
         kb_file: Result<String, SeatError>,
         shared: std::sync::Mutex<Vec<String>>,
+        gate: Mutex<()>,
     }
 
     impl SeatBackend for FakeSeat {
@@ -1167,8 +1203,16 @@ mod tests {
             self.shared.lock().unwrap().push(value.to_string());
             Ok(())
         }
-        fn confirm_kb_file(&self, _value: &str, _deadline: Instant) -> Result<(), SeatError> {
+        fn confirm_kb_file(
+            &self,
+            _value: &str,
+            _deadline: Instant,
+            _stopping: &dyn Fn() -> bool,
+        ) -> Result<(), SeatError> {
             Ok(())
+        }
+        fn kb_file_gate(&self) -> &Mutex<()> {
+            &self.gate
         }
         fn watch(self: std::sync::Arc<Self>, _sink: std::sync::Arc<dyn EventSink>) {}
     }
@@ -1178,6 +1222,7 @@ mod tests {
             keyboards,
             kb_file,
             shared: std::sync::Mutex::new(Vec::new()),
+            gate: Mutex::new(()),
         }
     }
 

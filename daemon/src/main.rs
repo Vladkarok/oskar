@@ -85,9 +85,14 @@ use crate::apply::release_everything;
 use crate::events::SUBSCRIBERS;
 use crate::hyprland::Hyprland;
 use crate::seat::{
-    claim_runtime_dir, restore_on_shutdown, EventSink, OwnFiles, SeatBackend, ShutdownRestore,
-    SHUTDOWN_RESTORE_BOUND,
+    claim_runtime_dir, restore_on_shutdown, shutdown_value, EventSink, OwnFiles, SeatBackend,
+    ShutdownRestore,
 };
+
+/// How long the shutdown may take before the process leaves anyway: the
+/// key release's round-trip plus the kb_file restore's own bounds (14 s at
+/// most, see seat.rs), inside systemd's 90 s default stop timeout.
+pub(crate) const EXIT_WATCHDOG: Duration = Duration::from_secs(20);
 use crate::server::{serve, Seat};
 use crate::state::{Shared, SharedRef, State};
 
@@ -228,11 +233,16 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         // timeout for it, so leaving is bounded either way.
         thread::spawn(|| {
             // Generous against the release's own compositor round-trips
-            // and the kb_file restore after it (bounded by
-            // SHUTDOWN_RESTORE_BOUND): an exit that raced a live round-trip
-            // could strand the very keys the release exists to lift.
-            thread::sleep(Duration::from_secs(8));
-            eprintln!("compositor did not acknowledge the shutdown release; leaving anyway");
+            // and the kb_file restore after it: an exit that raced a live
+            // round-trip could strand the very keys the release exists to
+            // lift.
+            thread::sleep(EXIT_WATCHDOG);
+            eprintln!(
+                "shutdown did not finish in {}s; leaving anyway. If input:kb_file still names \
+                 the published keymap, set it to {:?} by hand or reload Hyprland",
+                EXIT_WATCHDOG.as_secs(),
+                OwnFiles::from_env().map(|own| shutdown_value(&own)).unwrap_or_default()
+            );
             std::process::exit(0);
         });
         // The keys first: the restore below waits on the compositor, and
@@ -245,8 +255,7 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("signal {received}; released held keys {lifted:?}");
         }
         if let (Some(backend), Some(own)) = (signal_seat.as_deref(), OwnFiles::from_env()) {
-            let deadline = std::time::Instant::now() + SHUTDOWN_RESTORE_BOUND;
-            match restore_on_shutdown(backend, &own, deadline) {
+            match restore_on_shutdown(backend, &own) {
                 ShutdownRestore::NotOurs => {}
                 ShutdownRestore::Restored(value) if value.is_empty() => {
                     eprintln!("kb_file cleared: it named the published keymap")
@@ -255,8 +264,10 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("kb_file restored to the user's {value:?}")
                 }
                 ShutdownRestore::Failed(error) => eprintln!(
-                    "could not restore kb_file on shutdown ({}); a config reload resets it",
-                    error.reply()
+                    "could not restore kb_file on shutdown ({}); if input:kb_file still names \
+                     the published keymap, set it to {:?} by hand or reload Hyprland",
+                    error.reply(),
+                    shutdown_value(&own)
                 ),
             }
         }

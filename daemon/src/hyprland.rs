@@ -18,9 +18,10 @@ use std::time::{Duration, Instant};
 use crate::json;
 use crate::seat::{EventSink, InputNodeWatch, Keyboard, SeatBackend, SeatError, SeatEvent};
 
-/// Every socket1 exchange — connect, write, read to EOF — finishes inside
-/// this, measured absolutely: a compositor trickling bytes cannot stretch it.
-const IO_BOUND: Duration = Duration::from_secs(2);
+// Every socket1 exchange — connect, write, read to EOF — finishes inside
+// IO_BOUND (seat.rs, where the bounds built on it are stated together),
+// measured absolutely: a compositor trickling bytes cannot stretch it.
+use crate::seat::IO_BOUND;
 /// A `j/devices` answer is a few KiB per dozen devices; anything past this
 /// is not an answer the seat verbs can use.
 const MAX_REPLY: usize = 1024 * 1024;
@@ -38,6 +39,7 @@ const READBACK_GAP: Duration = Duration::from_millis(50);
 pub(crate) struct Hyprland {
     socket1: PathBuf,
     socket2: PathBuf,
+    kb_file_gate: std::sync::Mutex<()>,
 }
 
 impl Hyprland {
@@ -58,6 +60,7 @@ impl Hyprland {
         Hyprland {
             socket1: dir.join(".socket.sock"),
             socket2: dir.join(".socket2.sock"),
+            kb_file_gate: std::sync::Mutex::new(()),
         }
     }
 
@@ -238,11 +241,23 @@ impl SeatBackend for Hyprland {
         Self::timed(self.command_by(&body, deadline), deadline)
     }
 
-    fn confirm_kb_file(&self, value: &str, deadline: Instant) -> Result<(), SeatError> {
+    fn kb_file_gate(&self) -> &std::sync::Mutex<()> {
+        &self.kb_file_gate
+    }
+
+    fn confirm_kb_file(
+        &self,
+        value: &str,
+        deadline: Instant,
+        stopping: &dyn Fn() -> bool,
+    ) -> Result<(), SeatError> {
         // Read back rather than trust: `eval` answers `ok` for a call the
         // parser accepted, which is not the value being in place.
         let mut last = Err(SeatError::NotApplied);
         for attempt in 0..READBACK_TRIES {
+            if stopping() {
+                return Err(SeatError::ShuttingDown);
+            }
             if attempt > 0 {
                 if deadline.saturating_duration_since(Instant::now()) <= READBACK_GAP {
                     return Err(SeatError::TimedOut);
@@ -530,8 +545,8 @@ fn connect_nonblocking(path: &Path) -> std::io::Result<UnixStream> {
 mod tests {
     use super::*;
     use crate::seat::{
-        restore_on_shutdown, share_transaction, OwnFiles, ShutdownRestore, RESTORE_GRACE,
-        SHARE_BOUND, SHUTDOWN_RESTORE_BOUND,
+        restore_on_shutdown, share_transaction, OwnFiles, ShutdownRestore, PUT_BACK_BOUND,
+        SHARE_BOUND, SHUTDOWN_GATE_WAIT,
     };
     use std::os::unix::net::UnixListener;
     use std::sync::Mutex;
@@ -914,10 +929,10 @@ mod tests {
         let target = published.clone();
         let (hyprland, _, dir, current) = stateful_compositor("putback", "/home/u/custom.xkb",
             move |value| (value == target).then(|| "<drop>".to_string()));
-        assert_eq!(
-            share(&hyprland, &own, Some(&published), Duration::from_millis(1200)),
-            Err(SeatError::NotApplied)
-        );
+        // The compositor, not a timer, decides the failure: it never holds
+        // the published path. Whether the read-backs run out of tries or
+        // out of time, the answer is an error and the user's file is back.
+        assert!(share(&hyprland, &own, Some(&published), SHARE_BOUND).is_err());
         assert_eq!(*current.lock().unwrap(), "/home/u/custom.xkb");
         let _ = std::fs::remove_dir_all(dir);
 
@@ -947,9 +962,9 @@ mod tests {
         let published = own.dir().join("keymap.xkb").to_string_lossy().to_string();
         let (hyprland, _, dir, current) = stateful_compositor("stop", &published, |_| None);
         let asked = std::sync::atomic::AtomicU32::new(0);
-        // The first ask is before anything changes; the second is after
-        // the clear.
-        let stopping = || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 1;
+        // Asked after the gate and before the change; the third ask is
+        // after the clear.
+        let stopping = || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 2;
         assert_eq!(
             share_transaction(&hyprland, &own, Some(&published),
                 Instant::now() + SHARE_BOUND, &stopping, &|_| {}),
@@ -986,7 +1001,7 @@ mod tests {
         let published = own.dir().join("keymap.xkb").to_string_lossy().to_string();
         let (hyprland, _, dir, current) = stateful_compositor("down", &published, |_| None);
         assert_eq!(
-            restore_on_shutdown(&hyprland, &own, Instant::now() + SHUTDOWN_RESTORE_BOUND),
+            restore_on_shutdown(&hyprland, &own),
             ShutdownRestore::Restored("/home/u/custom.xkb".into())
         );
         assert_eq!(*current.lock().unwrap(), "/home/u/custom.xkb");
@@ -995,7 +1010,7 @@ mod tests {
         crate::seat::persist_user_source(own.dir(), None).unwrap();
         let (hyprland, _, dir, current) = stateful_compositor("down-clear", &published, |_| None);
         assert_eq!(
-            restore_on_shutdown(&hyprland, &own, Instant::now() + SHUTDOWN_RESTORE_BOUND),
+            restore_on_shutdown(&hyprland, &own),
             ShutdownRestore::Restored(String::new())
         );
         assert_eq!(*current.lock().unwrap(), "");
@@ -1009,13 +1024,94 @@ mod tests {
         let (hyprland, asked, dir, current) =
             stateful_compositor("foreign", "/home/u/other.xkb", |_| None);
         assert_eq!(
-            restore_on_shutdown(&hyprland, &own, Instant::now() + SHUTDOWN_RESTORE_BOUND),
+            restore_on_shutdown(&hyprland, &own),
             ShutdownRestore::NotOurs
         );
         assert_eq!(*current.lock().unwrap(), "/home/u/other.xkb");
         assert!(asked.lock().unwrap().iter().all(|request| !request.starts_with("/eval")));
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(own_dir);
+    }
+
+    /// The put-back has its own budget. The share's read-back hangs past
+    /// the share's deadline, so the share fails with its deadline spent,
+    /// and the fake compositor serves one request at a time, so the
+    /// put-back's first request also waits for that hang to end. The value
+    /// is back regardless. (The size of the budget is pinned by
+    /// the_restore_bounds_fit_inside_each_other; this pins that it is
+    /// spent on the put-back, not on what the share left over.)
+    #[test]
+    fn a_share_that_used_its_whole_deadline_still_puts_the_value_back() {
+        let (own, own_dir) = own_files("starve", None);
+        let published = own.dir().join("keymap.xkb").to_string_lossy().to_string();
+        let current = Arc::new(Mutex::new(String::from("/home/u/custom.xkb")));
+        let state = Arc::clone(&current);
+        let reads = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let (hyprland, _, dir) = fake_compositor("starve", move |request| {
+            if let Some(lua) = request.strip_prefix("/eval hl.config({input = {kb_file = ") {
+                let literal = lua.strip_suffix("}})").unwrap();
+                *state.lock().unwrap() = String::from_utf8(lua_unquote(literal)).unwrap();
+                return "ok".to_string();
+            }
+            // The capture answers; the first read-back hangs past the
+            // share's deadline; everything after answers.
+            if reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                thread::sleep(Duration::from_millis(1000));
+            }
+            format!("{{\"str\": {}}}", json::quote(&state.lock().unwrap()))
+        });
+        let result = share(&hyprland, &own, Some(&published), Duration::from_millis(300));
+        assert_eq!(result, Err(SeatError::TimedOut));
+        assert_eq!(*current.lock().unwrap(), "/home/u/custom.xkb");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
+    }
+
+    /// A share in flight when shutdown begins stops at its next step — here
+    /// between the write and its read-back — puts its capture back and
+    /// frees the gate for the shutdown restore.
+    #[test]
+    fn a_share_sees_shutdown_between_every_step() {
+        let (own, own_dir) = own_files("steps", None);
+        let published = own.dir().join("keymap.xkb").to_string_lossy().to_string();
+        let (hyprland, asked, dir, current) =
+            stateful_compositor("steps", "/home/u/custom.xkb", |_| None);
+        let asked_stop = std::sync::atomic::AtomicU32::new(0);
+        // Asked after the gate, before the change and after the write.
+        let stopping = || asked_stop.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 2;
+        assert_eq!(
+            share_transaction(&hyprland, &own, Some(&published),
+                Instant::now() + SHARE_BOUND, &stopping, &|_| {}),
+            Err(SeatError::ShuttingDown)
+        );
+        assert_eq!(*current.lock().unwrap(), "/home/u/custom.xkb");
+        assert!(hyprland.kb_file_gate().try_lock().is_ok(), "the gate is free again");
+        // A stop seen before anything changed writes nothing at all.
+        asked.lock().unwrap().clear();
+        assert_eq!(
+            share_transaction(&hyprland, &own, Some(&published),
+                Instant::now() + SHARE_BOUND, &|| true, &|_| {}),
+            Err(SeatError::ShuttingDown)
+        );
+        assert!(asked.lock().unwrap().iter().all(|request| !request.starts_with("/eval")));
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(own_dir);
+    }
+
+    /// The bounds' invariant (seat.rs): the put-back fits a write and a
+    /// read-back; the share and its put-back stay under the 15 s hold cap;
+    /// the shutdown waits out a share's last step and put-back, and the
+    /// whole restore fits the exit watchdog, which fits systemd's default
+    /// stop timeout (the unit sets none).
+    #[test]
+    fn the_restore_bounds_fit_inside_each_other() {
+        assert!(PUT_BACK_BOUND >= IO_BOUND * 2);
+        assert!(SHARE_BOUND + PUT_BACK_BOUND < Duration::from_secs(15));
+        assert!(SHUTDOWN_GATE_WAIT >= IO_BOUND + PUT_BACK_BOUND);
+        assert!(SHUTDOWN_GATE_WAIT + IO_BOUND + PUT_BACK_BOUND < crate::EXIT_WATCHDOG);
+        assert!(crate::EXIT_WATCHDOG < Duration::from_secs(90));
+        let unit = include_str!("../../systemd/oskar.service");
+        assert!(!unit.contains("TimeoutStopSec"), "a stop timeout in the unit must be checked here");
     }
 
     #[test]
@@ -1035,11 +1131,10 @@ mod tests {
         let started = Instant::now();
         let bound = Duration::from_millis(1500);
         assert_eq!(share(&wedged, &own, Some("/x"), bound), Err(SeatError::TimedOut));
-        assert!(started.elapsed() < bound + Duration::from_millis(300), "{:?}", started.elapsed());
+        // One deadline over the whole share, not one per request: well
+        // under the twenty seconds ten bounded read-backs would take.
+        assert!(started.elapsed() < bound + IO_BOUND, "{:?}", started.elapsed());
         assert_eq!(SeatError::TimedOut.reply(), "err share timed out");
-        // The shipped bound, with the restore's grace, sits below the hold
-        // cap.
-        assert!(SHARE_BOUND + RESTORE_GRACE < Duration::from_secs(15));
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(own_dir);
     }
