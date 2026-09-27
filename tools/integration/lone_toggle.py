@@ -11,14 +11,17 @@ moves, never re-anchor it or flip it.
 
 The lab cannot press physical keys, but `hyprctl switchxkblayout <device>
 next` on ONE keyboard produces the same lone layout event a physical
-toggle does, and the lab runs fcitx5, so `main` stays off the keyboard
-that moves exactly as on the owner's seat. The leg:
+toggle does. The lab runs fcitx5 too, and while a text client has focus
+its virtual keyboard keeps `main` through the toggle exactly as on the
+owner's seat (measured: with no text client focused, the toggle hands
+`main` to the keyboard it moved). The leg:
 
 1. hosts the real panel (the settle leg's isolated venue: a private
    runtime, its own helper, the packaged service stopped), brings the
    switch set to group 0 with the panel's own click, and waits out the
    post-reconnect settle window so every follow is a first-sight follow;
-2. seeds a diverged seat: one keyboard of the set moved alone to group 1,
+2. opens and focuses a terminal so fcitx5 holds `main`, then seeds a
+   diverged seat: one keyboard of the set moved alone to group 1,
    so the anchor is a keyboard that is NOT the one about to move;
 3. toggles the mover four times with `switchxkblayout <mover> next`
    (four layouts: every step is a new group), asserting after each that
@@ -76,6 +79,24 @@ def main_holders():
     return [k.get("name", "") for k in keyboards if k.get("main")]
 
 
+FCITX = "hl-virtual-keyboard-fcitx5"
+TARGET = "osk-lone-target"
+
+
+def focus_text_client():
+    """A focused text client: fcitx5 takes `main` and keeps it."""
+    subprocess.run(["pkill", "-f", f"title={TARGET}"], capture_output=True)
+    subprocess.Popen(["kitty", f"--title={TARGET}", "sh", "-c", "sleep 600"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+    wait_for(lambda: TARGET in hyprctl("clients", "-j"), 15,
+             "the text client to map")
+    hyprctl("dispatch", "focuswindow", f"title:{TARGET}")
+    wait_for(lambda: main_holders() == [FCITX], 10,
+             f"fcitx5 to hold `main` (now {main_holders()}); the leg needs "
+             "the owner's input-method seat")
+
+
 def converge(panel, group, switch_set, note):
     panel.command(f"group {group}", "grouped")
     wait_for(lambda: all(keyboard_groups().get(n) == group
@@ -121,6 +142,7 @@ def run(repo, rt):
         if remaining > 0:
             time.sleep(remaining)
 
+        focus_text_client()
         holders = main_holders()
         if any(name in switch_set for name in holders):
             raise Failure(f"`main` sits on {holders}, a safe keyboard; the "
@@ -200,6 +222,7 @@ def run(repo, rt):
         print(f"ok    LONE TOGGLE LEG GREEN: four lone toggles followed "
               f"{followed}, the click reunited the seat without a flip")
     finally:
+        subprocess.run(["pkill", "-f", f"title={TARGET}"], capture_output=True)
         if panel:
             try:
                 panel.command("close", "closed", timeout=10)
