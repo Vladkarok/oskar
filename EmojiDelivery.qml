@@ -69,6 +69,19 @@ Item {
     // `restore`).
     property var emojiTxnState: ClipboardPaste.txnInitial()
 
+    // Clipboard text read by a Process lingers in its collector until the
+    // next run. A collector's text cannot be cleared, so once a read has
+    // been used its collector is replaced by an empty one.
+    Component {
+        id: collectorFactory
+        StdioCollector { waitForEnd: true }
+    }
+    function freshCollector(proc) {
+        var old = proc.stdout
+        proc.stdout = collectorFactory.createObject(proc)
+        if (old) old.destroy()
+    }
+
     // The one way OSKar puts text on the clipboard, for a pick and for a
     // restore alike. The text rides wl-copy's stdin, never its argv (argv
     // is readable by every local user for as long as the owner lives).
@@ -85,6 +98,8 @@ Item {
         onStarted: {
             write(payload)
             stdinEnabled = false
+            // Handed to wl-copy; no copy of it stays here.
+            payload = ""
         }
     }
 
@@ -104,15 +119,17 @@ Item {
         // content marked secret is never read — its empty answer is a
         // mismatch.
         command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                if (emojiClipboardVerify.retiring) return
-                root.finishEmojiPublishVerify(
-                    emojiClipboardVerify.seq, this.text)
-            }
-        }
+        stdout: StdioCollector { waitForEnd: true }
+        // The collector's stream lands before exited, so its text is this
+        // run's answer; a retired (killed) run's answer is not.
         onExited: {
+            if (!emojiClipboardVerify.retiring) {
+                var served = emojiClipboardVerify.stdout.text
+                root.freshCollector(emojiClipboardVerify)
+                root.finishEmojiPublishVerify(emojiClipboardVerify.seq, served)
+                return
+            }
+            root.freshCollector(emojiClipboardVerify)
             if (emojiClipboardVerify.retiring) {
                 emojiClipboardVerify.retiring = false
                 // The kill's requester re-arms through us — but only for
@@ -237,15 +254,14 @@ Item {
         id: emojiSnapshotRead
         property int seq: 0
         command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
-        stdout: StdioCollector {
-            id: emojiSnapshotOut
-            waitForEnd: true
-        }
+        stdout: StdioCollector { waitForEnd: true }
         onExited: function (exitCode) {
+            var text = emojiSnapshotRead.stdout.text
+            root.freshCollector(emojiSnapshotRead)
             if (!emojiSnapshotWatchdog.running) return
             emojiSnapshotWatchdog.stop()
             root.finishSnapshot(emojiSnapshotRead.seq,
-                ClipboardPaste.snapshotFromRead(exitCode, emojiSnapshotOut.text))
+                ClipboardPaste.snapshotFromRead(exitCode, text))
         }
     }
     Timer {
@@ -395,10 +411,7 @@ Item {
         id: emojiRestoreCheck
         property int checkId: 0
         command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
-        stdout: StdioCollector {
-            id: emojiRestoreCheckOut
-            waitForEnd: true
-        }
+        stdout: StdioCollector { waitForEnd: true }
         // A check that must wait for a killed run's exit before the
         // Process can start again.
         property int queuedId: 0
@@ -406,8 +419,9 @@ Item {
             emojiRestoreCheckWatchdog.stop()
             // A killed run answers null for its own id, which the machine
             // has already moved past: stale, and nothing is written.
-            root.finishRestoreCheck(emojiRestoreCheck.checkId,
-                exitCode === 0 ? emojiRestoreCheckOut.text : null,
+            var served = exitCode === 0 ? emojiRestoreCheck.stdout.text : null
+            root.freshCollector(emojiRestoreCheck)
+            root.finishRestoreCheck(emojiRestoreCheck.checkId, served,
                 exitCode === ClipboardPaste.READ_SECRET_EXIT)
             if (emojiRestoreCheck.queuedId !== 0) {
                 var id = emojiRestoreCheck.queuedId

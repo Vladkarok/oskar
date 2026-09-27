@@ -126,13 +126,15 @@ function readTimedOut(state, seq, target) {
 // A failure with a queued pick behind it carries `restore: null`: the next
 // pick replaces the clipboard anyway, and its own outcome decides.
 //
-// The rule, per failure: the verify's last read (mismatch exhausted) was
-// not the pick, so the clipboard holds either the snapshot already or
-// someone else's content — nothing is written. The verify watchdog saw no
-// answer, so it restores unless something foreign was seen earlier. A
-// refused chord or a cancellation during the paste happens after the
-// verify saw the pick, so the clipboard is read once more and restored
-// only if it still serves the pick.
+// The rule, on every failure path: the previous text is written only
+// after a read shows the clipboard still serves the pick. The verify's
+// last read (mismatch exhausted) was not the pick, so the clipboard holds
+// either the snapshot already or someone else's content — nothing is
+// written. Every other failure — the verify watchdog, a refused chord, a
+// cancellation — reads the clipboard once more (`{ check }`), unless
+// something foreign was already seen, and restores only if that read
+// serves the pick; a check that stalls or serves anything else writes
+// nothing.
 function txnInitial() {
     return { seq: 0, phase: "idle", pending: "", clientClass: "",
         attempts: 0, queue: [], before: { none: "unread" }, observed: "none",
@@ -173,10 +175,7 @@ function restoreFor(state, served) {
     if (state.queue.length > 0) return null
     var before = snapshotOf(state.before)
     if (before.text === undefined) return before
-    if (served !== undefined)
-        return String(served) === before.text ? { none: "unchanged" } : { none: "foreign" }
-    if (state.observed === "foreign") return { none: "foreign" }
-    return before
+    return String(served) === before.text ? { none: "unchanged" } : { none: "foreign" }
 }
 
 // A failure after the verify saw the pick: ask for one more read.
@@ -184,6 +183,7 @@ function checkFor(state) {
     if (state.queue.length > 0) return { restore: null, check: null }
     var before = snapshotOf(state.before)
     if (before.text === undefined) return { restore: before, check: null }
+    if (state.observed === "foreign") return { restore: { none: "foreign" }, check: null }
     return {
         restore: { check: state.seq },
         check: { id: state.seq, emoji: state.pending, before: before }
@@ -305,7 +305,12 @@ function txnVerifyTimedOut(state, seq) {
     if (state.phase !== "publishing" || state.pending === ""
             || seq !== state.seq)
         return { state: state, action: "ignore" }
-    return { state: txnIdle(state), action: "drop", restore: restoreFor(state) }
+    // A stalled read is itself a sign the owner is not OSKar's wl-copy
+    // (it answers at once): someone may have copied from a slow app. The
+    // clipboard is read again before anything is written.
+    var owed = checkFor(state)
+    return { state: txnIdle(state, { restoreCheck: owed.check }), action: "drop",
+        restore: owed.restore }
 }
 
 function txnServed(state, seq, served) {
@@ -400,16 +405,13 @@ function txnCancel(state) {
     if (state.phase === "idle" && state.queue.length === 0)
         return { state: state, action: "ignore" }
     var cleared = txnWith(state, { queue: [] })
-    if (state.phase === "pasting") {
+    if (state.phase === "pasting" || state.phase === "publishing") {
         var owed = checkFor(cleared)
         return { state: txnIdle(cleared, { restoreCheck: owed.check }), action: "dropped",
             restore: owed.restore }
     }
-    return {
-        state: txnIdle(cleared),
-        action: "dropped",
-        restore: state.phase === "publishing" ? restoreFor(cleared) : null
-    }
+    // Nothing was published yet (snapshotting, or only queued picks).
+    return { state: txnIdle(cleared), action: "dropped", restore: null }
 }
 
 // The paste chip. At rest it shows only what KIND of content the

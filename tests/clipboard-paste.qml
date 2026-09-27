@@ -580,22 +580,53 @@ QtObject {
             T.deepEqual(back.restore, { none: "unchanged" })
         })
 
-        T.test("the verify watchdog restores only when nothing foreign was seen", function () {
+        T.test("the verify watchdog reads the clipboard before it restores anything", function () {
             var started = pickWith({ text: "line one\nline two" })
             var timedOut = ClipboardPaste.txnVerifyTimedOut(started.state, started.state.seq)
             T.equal(timedOut.action, "drop")
-            T.deepEqual(timedOut.restore, { text: "line one\nline two" })
+            T.equal(typeof timedOut.restore.check, "number", "a check read, never a blind write")
             T.deepEqual(timedOut.state.before, { none: "unread" }, "handed out once, not kept")
-            // The pick had not landed yet: the snapshot is not foreign.
-            var early = pickWith({ text: "user text" })
-            var prev = ClipboardPaste.txnServed(early.state, early.state.seq, "user text")
-            T.deepEqual(ClipboardPaste.txnVerifyTimedOut(prev.state, prev.state.seq).restore,
-                { text: "user text" })
-            // A foreign copy seen before the stall is the user's.
+            // The clipboard still serves the pick: the previous text goes back.
+            T.deepEqual(ClipboardPaste.txnRestoreChecked(timedOut.state,
+                timedOut.restore.check, "😀", false).restore, { text: "line one\nline two" })
+            // A slow foreign owner: its copy stays.
+            var slow = ClipboardPaste.txnVerifyTimedOut(started.state, started.state.seq)
+            T.deepEqual(ClipboardPaste.txnRestoreChecked(slow.state, slow.restore.check,
+                "copied from a slow app", false).restore, { none: "foreign" })
+            // The check stalls too: nothing is written.
+            var stalled = ClipboardPaste.txnVerifyTimedOut(started.state, started.state.seq)
+            T.deepEqual(ClipboardPaste.txnRestoreChecked(stalled.state, stalled.restore.check,
+                null, false).restore, { none: "unread" })
+            // A foreign copy seen before the stall is the user's: no read needed.
             var raced = pickWith({ text: "user text" })
             var theirs = ClipboardPaste.txnServed(raced.state, raced.state.seq, "their copy")
             T.deepEqual(ClipboardPaste.txnVerifyTimedOut(theirs.state, theirs.state.seq).restore,
                 { none: "foreign" })
+        })
+
+        T.test("no failure path writes the previous text without a read that serves the pick", function () {
+            // Every path's restore is a check, or a refusal to write.
+            function kind(restore) {
+                if (restore === null) return "handover"
+                if (restore.check !== undefined) return "check"
+                if (restore.text !== undefined) return "WRITE"
+                return "none"
+            }
+            var s0 = pickWith({ text: "user text" }).state
+            var paths = []
+            var exhausted = s0
+            var out
+            for (var i = 0; i < 5; i++) {
+                out = ClipboardPaste.txnServed(exhausted, exhausted.seq, "their copy")
+                exhausted = out.state
+            }
+            paths.push(kind(out.restore))
+            paths.push(kind(ClipboardPaste.txnVerifyTimedOut(s0, s0.seq).restore))
+            var pasting = ClipboardPaste.txnServed(s0, s0.seq, "😀").state
+            paths.push(kind(ClipboardPaste.txnChordDone(pasting, pasting.seq, false).restore))
+            paths.push(kind(ClipboardPaste.txnCancel(s0).restore))
+            paths.push(kind(ClipboardPaste.txnCancel(pasting).restore))
+            T.equal(paths.indexOf("WRITE"), -1, JSON.stringify(paths))
         })
 
         T.test("a refused chord reads the clipboard first and restores only the pick", function () {
@@ -629,7 +660,10 @@ QtObject {
         T.test("a cancellation follows the same rule as the phase it interrupts", function () {
             var publishing = pickWith({ text: "user text" })
             var queued = ClipboardPaste.txnPick(publishing.state, "🔥", "foot")
-            T.deepEqual(ClipboardPaste.txnCancel(queued.state).restore, { text: "user text" })
+            var early = ClipboardPaste.txnCancel(queued.state)
+            T.equal(typeof early.restore.check, "number")
+            T.deepEqual(ClipboardPaste.txnRestoreChecked(early.state, early.restore.check,
+                "😀", false).restore, { text: "user text" })
             var raced = ClipboardPaste.txnServed(publishing.state, publishing.state.seq, "their copy")
             T.deepEqual(ClipboardPaste.txnCancel(raced.state).restore, { none: "foreign" })
             var pasting = ClipboardPaste.txnServed(publishing.state, publishing.state.seq, "😀")
@@ -663,7 +697,8 @@ QtObject {
             // behind a pick that owned the clipboard.
             T.deepEqual(next.state.before, { text: "user text" })
             var failed = ClipboardPaste.txnVerifyTimedOut(next.state, next.state.seq)
-            T.deepEqual(failed.restore, { text: "user text" })
+            T.deepEqual(ClipboardPaste.txnRestoreChecked(failed.state, failed.restore.check,
+                "🔥", false).restore, { text: "user text" })
             // After a delivered first pick the second's before is the emoji.
             var a = pickWith({ text: "user text" })
             var b = ClipboardPaste.txnPick(a.state, "🔥", "foot")
@@ -671,7 +706,8 @@ QtObject {
             var done = ClipboardPaste.txnChordDone(served.state, served.state.seq, true)
             var second = ClipboardPaste.txnNext(done.state)
             var lost = ClipboardPaste.txnVerifyTimedOut(second.state, second.state.seq)
-            T.deepEqual(lost.restore, { text: "😀" })
+            T.deepEqual(ClipboardPaste.txnRestoreChecked(lost.state, lost.restore.check,
+                "🔥", false).restore, { text: "😀" })
         })
 
         T.test("every payload read lists the types before and after reading", function () {

@@ -618,6 +618,19 @@ Item {
     // Refreshed on panel open, on paste click, and by wl-paste --watch —
     // never polled.
     property var chip: ClipboardPaste.chipInitial()
+
+    // Clipboard text read by a Process lingers in its collector until the
+    // next run. A collector's text cannot be cleared, so once a read has
+    // been used its collector is replaced by an empty one.
+    Component {
+        id: collectorFactory
+        StdioCollector { waitForEnd: true }
+    }
+    function freshCollector(proc) {
+        var old = proc.stdout
+        proc.stdout = collectorFactory.createObject(proc)
+        if (old) old.destroy()
+    }
     readonly property string clipboardKind: ClipboardPaste.chipShown(root.chip)
     property int clipboardSeq: 0
     property bool clipboardContentGone: false
@@ -1548,13 +1561,14 @@ Item {
         // content a password manager marks secret is never read or kept
         // (exit 3, no bytes).
         command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: root.finishLocalClipboardRead(
-                localClipboardRead.seq, this.text)
-        }
+        stdout: StdioCollector { waitForEnd: true }
         onStarted: didStart = true
+        // The collector's stream lands before exited; the read machine
+        // refuses an answer it no longer waits for.
         onExited: {
+            var text = localClipboardRead.stdout.text
+            root.freshCollector(localClipboardRead)
+            root.finishLocalClipboardRead(localClipboardRead.seq, text)
             localClipboardRead.didStart = false
             localClipboardRead.retiring = false
             if (root.localReadQueuedTarget !== "") {
@@ -1661,14 +1675,13 @@ Item {
         id: clipboardPeek
         property int seq: 0
         command: ["setsid", "bash", "-c", ClipboardPaste.READ_SCRIPT]
-        stdout: StdioCollector {
-            id: clipboardPeekOut
-            waitForEnd: true
-        }
+        stdout: StdioCollector { waitForEnd: true }
         onExited: function (exitCode) {
             clipboardPeekWatchdog.stop()
+            var text = clipboardPeek.stdout.text
+            root.freshCollector(clipboardPeek)
             root.chip = ClipboardPaste.chipPeekRead(root.chip, clipboardPeek.seq,
-                exitCode, clipboardPeekOut.text).state
+                exitCode, text).state
         }
     }
     Timer {
