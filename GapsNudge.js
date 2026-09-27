@@ -18,13 +18,21 @@
 //   a guess written back as the "original" would flatten the user's gaps.
 // - Only the first number moves, by one; the restore writes the original
 //   string exactly as it was read.
-// - A nudge the compositor refused changed nothing and needs no restore.
-// - A failed restore is retried once; a value still nudged after that is an
-//   error naming the original, so the user can put it back by hand.
+// - Every write is judged by reading the value back, never by hyprctl's
+//   reply: a write that landed but answered something other than `ok`
+//   must still be restored. A nudge that reads back as the original
+//   changed nothing and needs no restore.
+// - A restore that does not read back as the original is retried once;
+//   a value still wrong after that is an error naming the original, so
+//   the user can put it back by hand.
 //
-// State: { phase: "idle" | "nudging" | "restoring", original, nudged,
-// retried }. Each step returns { state, action, log? }:
+// State: { phase, original, nudged, retried }; phase is "idle",
+// "nudging" (the nudge write is out), "nudge-check" (its read-back is out),
+// "waiting" (the restore timer runs), "restoring" (the restore write is
+// out), "restore-check" (its read-back is out). Each step returns
+// { state, action, value?, log? }:
 //   action "write"  write `value` to general:gaps_out
+//   action "read"   read general:gaps_out back (readBack follows)
 //   action "wait"   arm the restore timer (restoreDue follows)
 //   action "done"   the chain is over; the caller may start a queued one
 //   log            { level: "log" | "warn" | "error", text } — one journal line
@@ -33,11 +41,17 @@ function initial() {
     return { phase: "idle", original: "", nudged: "", retried: false }
 }
 
+function withPhase(state, phase, retried) {
+    return { phase: phase, original: state.original, nudged: state.nudged,
+        retried: retried === undefined ? state.retried : retried }
+}
+
 var NUMBERS = /^\s*-?\d+(\s+-?\d+){0,3}\s*$/
 
-/// The original and the nudged value for a `hyprctl getoption -j
-/// general:gaps_out` answer, or null when the answer is not understood.
-function plan(replyText) {
+/// The value a `hyprctl getoption -j general:gaps_out` answer carries, as
+/// the text a restore would write, or null when the answer is not
+/// understood.
+function valueOf(replyText) {
     var doc
     try {
         doc = JSON.parse(String(replyText || ""))
@@ -47,22 +61,23 @@ function plan(replyText) {
     if (!doc || typeof doc !== "object") return null
     if (typeof doc.int === "number" && isFinite(doc.int)
             && doc.int === Math.floor(doc.int))
-        return { original: String(doc.int), nudged: String(doc.int + 1) }
+        return String(doc.int)
     var text = typeof doc.css === "string" ? doc.css
         : typeof doc.custom === "string" ? doc.custom : null
     if (text === null || !NUMBERS.test(text)) return null
+    return text
+}
+
+/// The original and the nudged value for an answer, or null.
+function plan(replyText) {
+    var original = valueOf(replyText)
+    if (original === null) return null
     return {
-        original: text,
-        nudged: text.replace(/-?\d+/, function (first) {
+        original: original,
+        nudged: original.replace(/-?\d+/, function (first) {
             return String(Number(first) + 1)
         })
     }
-}
-
-/// Whether a `hyprctl keyword` write landed: exit 0 and the compositor's
-/// own `ok`. hyprctl exits 0 on a refusal too, so the answer decides.
-function writeLanded(exitCode, stdout) {
-    return exitCode === 0 && String(stdout || "").trim() === "ok"
 }
 
 /// The probe answered: start the chain, or write nothing at all.
@@ -85,40 +100,42 @@ function start(replyText) {
     }
 }
 
-/// A write finished; `landed` is writeLanded's verdict.
-function written(state, landed) {
-    if (state.phase === "nudging") {
-        if (!landed) {
+/// A write finished, whatever hyprctl answered: read the value back.
+function written(state) {
+    if (state.phase === "nudging")
+        return { state: withPhase(state, "nudge-check"), action: "read" }
+    if (state.phase === "restoring")
+        return { state: withPhase(state, "restore-check"), action: "read" }
+    return { state: state, action: "done" }
+}
+
+/// A read-back answered. An unreadable answer counts as "not the
+/// original": writing the original back is always safe.
+function readBack(state, replyText) {
+    var value = valueOf(replyText)
+    if (state.phase === "nudge-check") {
+        if (value === state.original) {
             return {
                 state: initial(),
                 action: "done",
                 // Expected under the Lua config parser, which refuses
                 // `keyword`: nothing changed, so a journal line, no warning.
-                log: { level: "log", text: "[oskar] the relayout nudge was refused;"
-                    + " general:gaps_out is unchanged" }
+                log: { level: "log", text: "[oskar] the relayout nudge did not change"
+                    + " general:gaps_out; nothing to restore" }
             }
         }
-        return {
-            state: { phase: "restoring", original: state.original,
-                nudged: state.nudged, retried: false },
-            action: "wait"
-        }
+        return { state: withPhase(state, "waiting"), action: "wait" }
     }
-    if (state.phase === "restoring") {
-        if (landed) return { state: initial(), action: "done" }
-        if (!state.retried) {
-            return {
-                state: { phase: "restoring", original: state.original,
-                    nudged: state.nudged, retried: true },
-                action: "write",
-                value: state.original
-            }
-        }
+    if (state.phase === "restore-check") {
+        if (value === state.original) return { state: initial(), action: "done" }
+        if (!state.retried)
+            return { state: withPhase(state, "restoring", true), action: "write",
+                value: state.original }
         return {
             state: initial(),
             action: "done",
             log: { level: "error", text: "[oskar] could not restore general:gaps_out:"
-                + " it is left at \"" + state.nudged + "\", the original was \""
+                + " it reads \"" + (value === null ? "?" : value) + "\", the original was \""
                 + state.original + "\"" }
         }
     }
@@ -127,6 +144,6 @@ function written(state, landed) {
 
 /// The restore timer fired: write the original back.
 function restoreDue(state) {
-    if (state.phase !== "restoring") return { state: state, action: "done" }
-    return { state: state, action: "write", value: state.original }
+    if (state.phase !== "waiting") return { state: state, action: "done" }
+    return { state: withPhase(state, "restoring"), action: "write", value: state.original }
 }

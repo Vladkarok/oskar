@@ -997,7 +997,8 @@ Item {
     // layout. One config keyword write forces it: GapsNudge.js reads
     // general:gaps_out in whatever form Hyprland answers, moves one number
     // by one, and the restore on the next tick writes the exact original
-    // text back. An answer it does not understand writes nothing.
+    // text back; every write is judged by reading the value back. An
+    // answer it does not understand writes nothing.
     //
     // One chain at a time: a nudge arriving while the chain is busy is
     // QUEUED and re-runs from the chain's end (a rapid open-close-open
@@ -1024,15 +1025,16 @@ Item {
     Process {
         id: relayoutSet
         command: []
+        // Whatever hyprctl answered, the chain reads the value back.
+        onExited: root.runRelayoutStep(GapsNudge.written(root.relayoutNudge))
+    }
+    Process {
+        id: relayoutCheck
+        command: ["hyprctl", "getoption", "-j", "general:gaps_out"]
         stdout: StdioCollector {
-            id: relayoutSetOut
             waitForEnd: true
-        }
-        // The collector's streamFinished lands before exited, so its text
-        // is this write's answer.
-        onExited: function (exitCode) {
-            root.runRelayoutStep(GapsNudge.written(root.relayoutNudge,
-                GapsNudge.writeLanded(exitCode, relayoutSetOut.text)))
+            onStreamFinished: root.runRelayoutStep(
+                GapsNudge.readBack(root.relayoutNudge, this.text))
         }
     }
     Timer {
@@ -1051,6 +1053,8 @@ Item {
         if (step.action === "write") {
             relayoutSet.command = ["hyprctl", "keyword", "general:gaps_out", step.value]
             relayoutSet.running = true
+        } else if (step.action === "read") {
+            relayoutCheck.running = true
         } else if (step.action === "wait") {
             relayoutRestore.restart()
         } else {
