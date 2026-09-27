@@ -67,7 +67,8 @@ spawns nothing for devices, switches, hotplug or the share. `share` reads
 the compositor's `input:kb_file` first, sets it (clearing first only to
 re-read a republished file under the same name) and verifies it by reading
 it back, all inside one 6 s deadline; on any failure it puts the value it
-read back (1.5 s more, still below the 15 s hold cap). It will not take the
+read back on a fresh 5 s bound of its own (11 s in all, below the 15 s hold
+cap; `daemon/src/seat.rs` states the bounds together). It will not take the
 compositor over from a relative `kb_file` it could not put back. The helper
 never checks the file itself — its `/tmp` is private — so the read-back is
 the verification. On its own shutdown the helper puts a `kb_file` that
