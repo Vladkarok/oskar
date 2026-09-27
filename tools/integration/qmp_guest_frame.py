@@ -19,8 +19,8 @@ Launched by the host driver as:
       python3 tools/integration/qmp_guest_frame.py <tree>'
 
 Never run it by hand against a session you care about: it stops the
-packaged OSK service for its whole lifetime (LiveSession semantics,
-restored in its finally).
+packaged OSK service for its whole lifetime and starts it again on the
+way out, whatever the outcome.
 """
 
 import os
@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hold_column import Failure, LiveSession, wait_for  # noqa: E402
 from panel_canary import (  # noqa: E402
-    CanaryDaemon, Panel, own_socket_or_die, service_active,
+    CanaryDaemon, Panel, own_socket_or_die, restore_service, service_active,
 )
 
 CMD_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", ""),
@@ -48,13 +48,18 @@ def note(line):
         handle.write(f"{time.time():.3f} {line}\n")
 
 
+# The command text last served. It outlives each wait: a text the frame
+# already ran is not a new command, or the frame would run it again every
+# poll until the driver wrote the next one.
+served = {"text": None}
+
+
 def wait_cmd(deadline_s=600):
     """Return the next command word, or None when the deadline hits.
 
     The driver writes "word seq" with a fresh seq every time, so the
     raw file text changing IS the signal — no mtime tricks.
     """
-    last = None
     deadline = time.monotonic() + deadline_s
     while time.monotonic() < deadline:
         try:
@@ -63,14 +68,23 @@ def wait_cmd(deadline_s=600):
         except OSError:
             time.sleep(0.1)
             continue
-        if text and text != last:
-            last = text
+        if text and text != served["text"]:
+            served["text"] = text
             return text.rsplit(" ", 1)[0]
         time.sleep(0.1)
     return None
 
 
 def main():
+    # LiveSession starts nothing unless the hold leg's own opt-in is set,
+    # and this frame stops the service itself: the start is ours.
+    try:
+        frame()
+    finally:
+        restore_service()
+
+
+def frame():
     repo = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.getcwd())
     for path in (LOG_PATH, CMD_PATH):
         if os.path.exists(path):

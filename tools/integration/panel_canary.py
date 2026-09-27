@@ -1055,8 +1055,9 @@ def _frame_log():
 
 def _frame_cmd(word, expect, timeout=90):
     seq = str(int(time.time() * 1000) % 100000)
-    _guest(f"echo '{word} {seq}' > /run/user/1000/osk-qmp-cmd")
+    # Counted before the write: the frame can answer before the next read.
     started = len(_frame_log())
+    _guest(f"echo '{word} {seq}' > /run/user/1000/osk-qmp-cmd")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         lines = _frame_log()
