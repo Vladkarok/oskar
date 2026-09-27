@@ -10,6 +10,49 @@ from the Omarchy theme.
   <img src="assets/screenshots/hero-floating.png" alt="OSKar floating over the desktop, English layout" width="720">
 </p>
 
+**[Install](#install)** · [Configuration](#modes-and-configuration) ·
+[Known problems](#known-problems) · [Troubleshooting](#troubleshooting) ·
+[What OSKar changes on your system](#what-oskar-changes-on-your-system)
+
+## Install
+
+OSKar needs Omarchy (its shell hosts the panel) and, for the helper,
+either a Rust toolchain to build it once (`omarchy pkg add rust`) or the
+prebuilt helper from the release page (see
+[Without a Rust toolchain](#without-a-rust-toolchain)).
+
+### With Omarchy's plugin manager
+
+```sh
+omarchy plugin add https://github.com/Vladkarok/oskar --enable
+bash ~/.config/omarchy/plugins/io.github.vladkarok.oskar/install.sh
+omarchy restart shell
+```
+
+The first command puts the keyboard's icon in the bar. Until the helper is
+installed the panel says `oskar.service is not installed`, and its **Copy**
+button hands over the second command. `install.sh` builds the helper,
+installs it with its user unit and the `oskar` command, and starts it.
+
+To update: `omarchy plugin update io.github.vladkarok.oskar`, then rerun
+`install.sh`, or `oskar upgrade`, the same rerun (a panel newer than its
+helper says it needs updating, and its Copy button hands over the command
+that reinstalls it). To remove everything but your settings:
+
+```sh
+bash ~/.config/omarchy/plugins/io.github.vladkarok.oskar/uninstall.sh
+omarchy plugin remove io.github.vladkarok.oskar
+```
+
+`uninstall.sh` removes only the files the install record proves
+unchanged, and keeps the helper while a unit you edited still runs it, so
+no enabled service is left pointing at a missing program. `uninstall.sh
+--force` finishes anyway by moving the files that do not match the
+record aside under a dated name; it deletes nothing of yours.
+
+A source checkout, the release's pacman package and the prebuilt helper
+are under [Other ways to install](#other-ways-to-install).
+
 ## Screenshots
 
 | | |
@@ -19,46 +62,6 @@ from the Omarchy theme.
 | <img src="assets/screenshots/symbols-ukrainian.png" width="480" alt="Symbols page"> <br>**?123 symbols** — currency and punctuation on every layout | <img src="assets/screenshots/emoji-page.png" width="480" alt="Emoji page"> <br>**Emoji page** — categories, recents, the panel's own grid |
 | <img src="assets/screenshots/emoji-search.png" width="480" alt="Emoji search"> <br>**Emoji search** — type a query, pick from the matches | <img src="assets/screenshots/settings.png" width="480" alt="Settings popover"> <br>**Settings** — mode, size, interface language, input profile |
 | <img src="assets/screenshots/appearance-theme.png" width="480" alt="Appearance editor with a custom red theme"> <br>**Appearance** — radius and colours, applied live | |
-
-## Status
-
-Alpha, daily-driven by its author on his own machine — that is how most
-of it was found and fixed. **0.1.0 is the first release.** It installs
-through Omarchy's plugin manager, from a source checkout, or from the
-release with its `PKGBUILD` and a prebuilt helper (all below).
-[CHANGELOG.md](CHANGELOG.md) lists what works; `docs/decisions.md`
-explains why it works that way.
-
-## Layout
-
-| path | what it is |
-|---|---|
-| `manifest.json` | plugin manifest (`io.github.vladkarok.oskar`) |
-| `Panel.qml` | the keyboard window: a docked full-width strip or a floating overlay |
-| `Keyboard.qml` + the extracted seams (`HelperLink.qml`, `PasteChords.qml`, `HoldMenu.qml`) | key grid, layout tracking, reply dispatch, keycap pipeline; the socket client and paste chords live in their seams (§105–§106) |
-| `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
-| `EmojiPage.qml`, `EmojiCatalog.js` | the panel's own emoji page over the keys; catalogue generated from vendored Unicode data (`third_party/emoji/`) |
-| `ClipboardPaste.js` | the emoji delivery transaction (a failed pick puts the previous text back) and the paste chip's target rule (colour field, emoji search, external client) |
-| `ChordAcks.js` | reply correlation: every command one queue slot, every reply pops it — the paste chord's verdict is its own final line's ack |
-| `PasteFlow.js` | the paste lifecycle: busy-gate, dispatch region, ordered cancellation |
-| `ShareQueue.js` | the keymap-share scheduler: one share run at a time, the pending generation consumed on success |
-| `GapsNudge.js` | the docked relayout nudge: reads `general:gaps_out` in any form Hyprland answers, writes the exact value back |
-| `LanguageControl.js` | the language control's shapes and the chooser's entries; languages named in their own language |
-| `LayoutDevices.js` | which keyboard the panel reads its layout from, and which ones the language button moves |
-| `SettleGuard.js` | the post-reconnect echo window: which uncommanded group flips to follow |
-| `SeatMotion.js` | who moved on the seat over time: a keyboard toggled alone, told from a burst and from the panel's own click |
-| `HoverTooltip.qml` | one shared hover tooltip for ambiguous icon controls |
-| `ModifierReducer.js` | the modifier state machine (pure, tested) |
-| `Config.js` | maintained defaults plus override/state validation and serialization |
-| `Theme.qml` | the panel's one reader of Omarchy's shared style tokens |
-| `BarWidget.qml` | bar icon that toggles the panel |
-| `daemon/` | Rust helper holding one virtual keyboard |
-| `tools/nested-session.sh` | runs a command against a throwaway nested Hyprland |
-| `tools/smoke-daemon.sh` | end-to-end check of the helper |
-| `tools/integration/` | the assertions that check runs, and their plumbing |
-| `docs/orientation.md` | what this is and how the pieces fit — read first |
-| `docs/decisions.md` | why the design looks like this, and the dead ends |
-| `docs/vm-handoff.md` | the dogfooding VM: operating manual and queue |
 
 ## Modes and configuration
 
@@ -162,6 +165,204 @@ libinput → the compositor's wl_touch) and Qt's own touch synthesis on
 the shipping Qt version; real-finger hardware has not been in our
 hands yet.
 
+## Languages
+
+One product, four languages, each with a job:
+
+- **QML** (the Quickshell panel) — what the panel is and where it draws.
+- **JavaScript** (twenty-three pure modules beside the QML, plus three
+  generated emoji-data files) — every decision
+  the panel makes: what each keycap types, which modifiers a
+  hold-column pick needs, how the emoji search ranks, whether the panel
+  follows a layout-group change. Pure, stateless, and covered by 580
+  offscreen test cases — the repo's main regression net.
+- **Rust** (the `oskar-daemon` helper) — everything at the seat: it
+  compiles and mirrors the XKB keymap, owns the virtual keyboard, and
+  speaks the versioned socket protocol. 85 unit tests.
+- **Python and one C file** (`tools/integration/`) — not part of the
+  product: the lab harness that drives a real panel with real pointer
+  events inside a throwaway VM, and a tiny Wayland client that spies on
+  keymap deliveries. Development-only.
+
+## Compatibility
+
+- **Desktop**: Omarchy (tested against Omarchy 4.0.x with its own
+  `omarchy`/`omarchy-dev` packages; the shell's plugin surface is a
+  moving target — current as of Quickshell 0.3.1 and Hyprland 0.56.2,
+  both pinned by nothing more than Omarchy's own versions). Wayland
+  only; there is no Xorg, GNOME or KDE host, and GTK/KDE portability is
+  explicitly post-release.
+- **Typed-into consumers, verified**: native Wayland clients (foot),
+  XWayland windows (wine/Proton get the paced plain Ctrl+V paste), and
+  Chromium-family editors (Electron receives supplementary-plane emoji
+  byte-exact through the clipboard transaction — the one channel, §91).
+  Other toolkits are
+  untested.
+- **Language coupling**: any number of configured XKB layouts; typing
+  and the caps follow the compositor's layout state in both directions.
+  The UI ships in English, Russian and Ukrainian, following the active
+  layout (a settings override pins one); the emoji search understands
+  English, Russian and Ukrainian keywords.
+- **Not tested**: real-hardware sleep/wake (the lab VM cannot suspend);
+  real touchscreen hardware (the touch profile is emulator- and
+  Qt-synthesis-proven; see
+  [Input profile](#input-profile-mouse-and-touch)).
+
+## Known problems
+
+1. ~~**The helper's keymap becomes the seat's.**~~ **Closed by design.** Hyprland
+   re-points the seat at the typing device before forwarding input, but a client
+   is only told about a keymap change when the bytes differ
+   (`CWLKeyboardResource::sendKeymap`, `src/protocols/core/Seat.cpp`). The helper
+   compiles the identical RMLVO the compositor uses, so switching between the
+   physical keyboard and the helper is invisible to clients. The churn storm that
+   motivated this (56 rebuilds a minute, 56,547 in five minutes once it fed back)
+   only happened because the old keymaps differed. Remaining work is proof, not
+   design: the nested-session harness bounds compositor rebuilds by threshold,
+   and the claim still needs daily-use confirmation.
+2. ~~**The compiled keymap is incomplete.**~~ **Closed.** The `configure` command
+   carries rules, model, layouts, variants, options and a keymap file, and the
+   panel sends it with the full set read from the compositor.
+3. **Device selection is imperfect.** The helper serves the seat's facts
+   over its socket — every keyboard with its layouts and live group, which
+   devices it positively identifies as physical, and a pushed event whenever
+   a keyboard's group moves or the device set changes — and the panel reads
+   layouts from the most convincing typed keyboard among them: the
+   compositor's active-keyboard flag (`main`, the seat's current keyboard) if
+   a filtered device holds it; else a filtered keyboard that moved by itself
+   (a toggle such as Alt+Shift moves only the keyboard it was pressed on:
+   one keyboard moved, nothing else moved within 150 ms of it, and the
+   panel's own click did not move it); else the keyboard learned that way
+   before; else layout progress. That second tier is what keeps the caps
+   right when an input method such as fcitx5 holds `main` for good. With no
+   positive evidence the language button does nothing rather than guess.
+   What remains, in plain words:
+   - With two real keyboards, the caps show the group of the keyboard you
+     toggled last. Typing on the other one types its own group, which may
+     differ, until you press the language button: it moves both keyboards to
+     one group.
+   - Two keyboards toggled within the same instant (150 ms) read as one
+     burst; the panel then falls back to the group it remembers.
+   - A keyboard holding the compositor's current-keyboard flag outranks a
+     keyboard that moved by itself.
+   - A script that moves one idle keyboard alone is followed as if you had
+     switched on it.
+   - A toggle made in the first ten seconds after the helper restarts (the
+     settle window) is not learned unless the panel already reads that
+     keyboard; the next toggle is.
+   - Hotplug and mouse media keys can move the flag until the next physical
+     keypress, and tied-at-zero devices are assumed to share the seat's
+     RMLVO.
+
+   The root cause is upstream: layout state lives per device (including
+   power buttons and gaming mice), and nothing announces a change of the
+   seat's current keyboard. An upstream discussion with Sway's
+   keyboard-group semantics as prior art is planned.
+4. ~~**Held keys are tracked per connection**~~ **Closed.** The device is
+   shared, so held keys carry per-connection claims: the press belongs to the
+   first claim, the release to the last, a release from a connection that
+   never claimed the code is refused, a tap cannot lift another connection's
+   hold, and a disconnect releases only that connection's claims (smoke
+   covered, including two clients sharing one hold).
+
+5. ~~**Multi-monitor summon flash.**~~ **Closed.** The panel's windows map
+   only once the summon has resolved the pointer's output, so the first
+   frame is on the right monitor; a probe that never answers shows the
+   panel where it was after a short fallback. The lab's summon-output leg
+   pins it with a headless second output.
+
+## Troubleshooting
+
+Run `oskar doctor` — it checks the service, socket and protocol,
+registration, the keymap share, keycap-fallback journal lines, layouts
+and theme dependencies, and names the one fix to try for each failure
+(exit 0 is healthy).
+
+## Other ways to install
+
+### From a source checkout
+
+```sh
+git clone https://github.com/Vladkarok/oskar.git oskar && cd oskar
+./install.sh           # builds the helper, installs it + its unit + the
+                       # oskar command, enables and starts the service
+oskar setup            # registers the checkout under the stable plugin id,
+                       # enables the plugin in Omarchy, re-checks the service
+omarchy restart shell  # the running shell only picks up a newly registered
+                       # plugin at restart (or log out and back in)
+```
+
+After updating the checkout, rerun `./install.sh` (or `oskar upgrade`, the
+same rerun under one name): the panel and the helper share a protocol
+version, and a panel updated without its helper says so rather than
+typing nothing.
+
+### From a release, with pacman
+
+Each release carries a `PKGBUILD`: download it with the release tarball,
+run `makepkg -si`, then `oskar setup` and `omarchy restart shell`. The
+package installs files only; `oskar setup` activates them. An AUR package
+follows when AUR account registration reopens.
+
+### Without a Rust toolchain
+
+Each release also carries `oskar-daemon-<version>-x86_64.tar.gz` (the
+helper, its unit and the `oskar` command) with a `.sha256` beside it.
+Any `install.sh` above takes it in place of the build:
+
+```sh
+bash install.sh --prebuilt ~/Downloads/oskar-daemon-0.1.0-x86_64.tar.gz
+```
+
+`install.sh` writes three files outside the checkout: the user unit
+`~/.config/systemd/user/oskar.service`, the helper
+`~/.local/libexec/oskar-daemon` and the command `~/.local/bin/oskar`.
+It notes what it wrote in an install record
+(`~/.local/state/oskar/install-record`). OSKar replaces or removes one
+of these files only when the record lists it and it is unchanged since
+OSKar wrote it, so a file you edited or one that belongs to something
+else stays as it is. If the install finds such a file, it stops and
+names it. `--force` moves it aside under a dated name and then
+installs; nothing is deleted. An install made by an OSKar version older
+than the install record has no record yet, so it needs `--force` once.
+Another checkout's install is taken over without it. `uninstall.sh` and
+`oskar setup --migrate-source` follow the same rule, and `oskar` starts,
+restarts, enables or stops `oskar.service` only when the unit systemd
+runs is the oskar package's or the recorded one. Switching it off removes
+only the enablement links that point at OSKar's own unit, and
+`install.sh` will not shadow another program's `oskar.service` without
+`--force`.
+
+A tarball placed beside `install.sh` is picked up without the flag, and
+`oskar setup --prebuilt <tarball>` / `oskar upgrade --prebuilt <tarball>`
+thread it through the lifecycle command. Without cargo and without a
+tarball, a rerun keeps the helper already installed and says how to
+update it. The version in the file name must match the plugin's; a
+mismatch is warned about, and the panel says so if the two speak
+different protocols.
+
+The panel can be toggled from a keybinding too:
+
+```sh
+omarchy-shell shell toggle io.github.vladkarok.oskar
+```
+
+`oskar setup` is idempotent and also owns `status` and `teardown`
+(full removal: registration, plugin enable, unit, state). For reference,
+the manual equivalent of `install.sh`:
+
+```sh
+cd daemon && cargo build --release
+install -Dm755 target/release/oskar-daemon ~/.local/libexec/oskar-daemon
+install -Dm644 ../systemd/oskar.service ~/.config/systemd/user/oskar.service
+systemctl --user daemon-reload
+systemctl --user enable oskar.service
+systemctl --user --quiet is-active graphical-session.target \
+  && systemctl --user restart oskar.service
+```
+
+The panel alone can be enabled with `omarchy plugin enable io.github.vladkarok.oskar`.
+
 ## Security posture
 
 One sentence: OSKar is a **same-user** tool. What it keeps lives in
@@ -190,7 +391,8 @@ back. This list is the contract: a change that is not here is a bug.
   helper `~/.local/libexec/oskar-daemon` and the command
   `~/.local/bin/oskar`, and lists them in
   `~/.local/state/oskar/install-record`. It replaces or removes only
-  files that record lists unchanged (see Install). `oskar setup`
+  files that record lists unchanged (see
+  [Other ways to install](#other-ways-to-install)). `oskar setup`
   registers the plugin under `~/.config/omarchy/plugins/` (a link to the
   checkout or the package's copy), enables it with `omarchy plugin
   enable`, and enables `oskar.service`, which adds systemd's link under
@@ -302,25 +504,6 @@ back. This list is the contract: a change that is not here is a bug.
   a config reload. A key the helper holds at the moment it is killed
   stays pressed for the application that has focus.
 
-## Languages
-
-One product, four languages, each with a job:
-
-- **QML** (the Quickshell panel) — what the panel is and where it draws.
-- **JavaScript** (twenty-three pure modules beside the QML, plus three
-  generated emoji-data files) — every decision
-  the panel makes: what each keycap types, which modifiers a
-  hold-column pick needs, how the emoji search ranks, whether the panel
-  follows a layout-group change. Pure, stateless, and covered by 580
-  offscreen test cases — the repo's main regression net.
-- **Rust** (the `oskar-daemon` helper) — everything at the seat: it
-  compiles and mirrors the XKB keymap, owns the virtual keyboard, and
-  speaks the versioned socket protocol. 85 unit tests.
-- **Python and one C file** (`tools/integration/`) — not part of the
-  product: the lab harness that drives a real panel with real pointer
-  events inside a throwaway VM, and a tiny Wayland client that spies on
-  keymap deliveries. Development-only.
-
 ## Why there is a helper at all
 
 QML cannot drive `zwp_virtual_keyboard`, so typing has to go through a separate
@@ -337,7 +520,7 @@ layout; most ship their own layout lists that only their own key switches.
 
 | | This keyboard | GNOME OSK | plasma-keyboard (6.6) | squeekboard / Stevia | wvkbd | onboard |
 |---|---|---|---|---|---|---|
-| Mouse-driven desktop use | yes — the design centre (a touch profile ships; see below) | touch activation only | touch-first (mouse use still a known gap) | touch-first | touch-first | yes (its niche) |
+| Mouse-driven desktop use | yes — the design centre (a touch profile ships; see [Input profile](#input-profile-mouse-and-touch)) | touch activation only | touch-first (mouse use still a known gap) | touch-first | touch-first | yes (its niche) |
 | Caps follow the system layout | both directions — switch with the physical shortcut and the caps follow; switch from the panel and the physical keyboard follows | partial, one-way, ibus-coupled | Qt Virtual Keyboard's own layout lists | its own layout files | static keycap sets | own definitions |
 | What is drawn is what is typed | yes, including non-Latin and per-group variants, proven byte-exact | within GNOME's input stack | within Qt's stack | within Phosh | — | X11 only |
 | XWayland / wine-Proton | proven (paced paste chord) | — | — | — | types, no layout coupling | X11 only |
@@ -363,98 +546,46 @@ Notes from the survey:
   skip virtual keyboards); that is the model for the eventual Hyprland
   upstream work.
 
-## Compatibility
+## Status
 
-- **Desktop**: Omarchy (tested against Omarchy 4.0.x with its own
-  `omarchy`/`omarchy-dev` packages; the shell's plugin surface is a
-  moving target — current as of Quickshell 0.3.1 and Hyprland 0.56.2,
-  both pinned by nothing more than Omarchy's own versions). Wayland
-  only; there is no Xorg, GNOME or KDE host, and GTK/KDE portability is
-  explicitly post-release.
-- **Typed-into consumers, verified**: native Wayland clients (foot),
-  XWayland windows (wine/Proton get the paced plain Ctrl+V paste), and
-  Chromium-family editors (Electron receives supplementary-plane emoji
-  byte-exact through the clipboard transaction — the one channel, §91).
-  Other toolkits are
-  untested.
-- **Language coupling**: any number of configured XKB layouts; typing
-  and the caps follow the compositor's layout state in both directions.
-  The UI ships in English, Russian and Ukrainian, following the active
-  layout (a settings override pins one); the emoji search understands
-  English, Russian and Ukrainian keywords.
-- **Not tested**: real-hardware sleep/wake (the lab VM cannot suspend);
-  real touchscreen hardware (the touch profile is emulator- and
-  Qt-synthesis-proven; see Input profile below).
+Alpha, daily-driven by its author on his own machine — that is how most
+of it was found and fixed. **0.1.0 is the first release.** It installs
+through Omarchy's plugin manager, from a source checkout, or from the
+release with its `PKGBUILD` and a prebuilt helper (see [Install](#install)
+and [Other ways to install](#other-ways-to-install)).
+[CHANGELOG.md](CHANGELOG.md) lists what works; `docs/decisions.md`
+explains why it works that way.
 
-## Known problems
+## Layout
 
-1. ~~**The helper's keymap becomes the seat's.**~~ **Closed by design.** Hyprland
-   re-points the seat at the typing device before forwarding input, but a client
-   is only told about a keymap change when the bytes differ
-   (`CWLKeyboardResource::sendKeymap`, `src/protocols/core/Seat.cpp`). The helper
-   compiles the identical RMLVO the compositor uses, so switching between the
-   physical keyboard and the helper is invisible to clients. The churn storm that
-   motivated this (56 rebuilds a minute, 56,547 in five minutes once it fed back)
-   only happened because the old keymaps differed. Remaining work is proof, not
-   design: the nested-session harness bounds compositor rebuilds by threshold,
-   and the claim still needs daily-use confirmation.
-2. ~~**The compiled keymap is incomplete.**~~ **Closed.** The `configure` command
-   carries rules, model, layouts, variants, options and a keymap file, and the
-   panel sends it with the full set read from the compositor.
-3. **Device selection is imperfect.** The helper serves the seat's facts
-   over its socket — every keyboard with its layouts and live group, which
-   devices it positively identifies as physical, and a pushed event whenever
-   a keyboard's group moves or the device set changes — and the panel reads
-   layouts from the most convincing typed keyboard among them: the
-   compositor's active-keyboard flag (`main`, the seat's current keyboard) if
-   a filtered device holds it; else a filtered keyboard that moved by itself
-   (a toggle such as Alt+Shift moves only the keyboard it was pressed on:
-   one keyboard moved, nothing else moved within 150 ms of it, and the
-   panel's own click did not move it); else the keyboard learned that way
-   before; else layout progress. That second tier is what keeps the caps
-   right when an input method such as fcitx5 holds `main` for good. With no
-   positive evidence the language button does nothing rather than guess.
-   What remains, in plain words:
-   - With two real keyboards, the caps show the group of the keyboard you
-     toggled last. Typing on the other one types its own group, which may
-     differ, until you press the language button: it moves both keyboards to
-     one group.
-   - Two keyboards toggled within the same instant (150 ms) read as one
-     burst; the panel then falls back to the group it remembers.
-   - A keyboard holding the compositor's current-keyboard flag outranks a
-     keyboard that moved by itself.
-   - A script that moves one idle keyboard alone is followed as if you had
-     switched on it.
-   - A toggle made in the first ten seconds after the helper restarts (the
-     settle window) is not learned unless the panel already reads that
-     keyboard; the next toggle is.
-   - Hotplug and mouse media keys can move the flag until the next physical
-     keypress, and tied-at-zero devices are assumed to share the seat's
-     RMLVO.
-
-   The root cause is upstream: layout state lives per device (including
-   power buttons and gaming mice), and nothing announces a change of the
-   seat's current keyboard. An upstream discussion with Sway's
-   keyboard-group semantics as prior art is planned.
-4. ~~**Held keys are tracked per connection**~~ **Closed.** The device is
-   shared, so held keys carry per-connection claims: the press belongs to the
-   first claim, the release to the last, a release from a connection that
-   never claimed the code is refused, a tap cannot lift another connection's
-   hold, and a disconnect releases only that connection's claims (smoke
-   covered, including two clients sharing one hold).
-
-5. ~~**Multi-monitor summon flash.**~~ **Closed.** The panel's windows map
-   only once the summon has resolved the pointer's output, so the first
-   frame is on the right monitor; a probe that never answers shows the
-   panel where it was after a short fallback. The lab's summon-output leg
-   pins it with a headless second output.
-
-## Troubleshooting
-
-Run `oskar doctor` — it checks the service, socket and protocol,
-registration, the keymap share, keycap-fallback journal lines, layouts
-and theme dependencies, and names the one fix to try for each failure
-(exit 0 is healthy).
+| path | what it is |
+|---|---|
+| `manifest.json` | plugin manifest (`io.github.vladkarok.oskar`) |
+| `Panel.qml` | the keyboard window: a docked full-width strip or a floating overlay |
+| `Keyboard.qml` + the extracted seams (`HelperLink.qml`, `PasteChords.qml`, `HoldMenu.qml`) | key grid, layout tracking, reply dispatch, keycap pipeline; the socket client and paste chords live in their seams (§105–§106) |
+| `KeyboardLayout.js` | key rows, keysym tables, xkb position mapping |
+| `EmojiPage.qml`, `EmojiCatalog.js` | the panel's own emoji page over the keys; catalogue generated from vendored Unicode data (`third_party/emoji/`) |
+| `ClipboardPaste.js` | the emoji delivery transaction (a failed pick puts the previous text back) and the paste chip's target rule (colour field, emoji search, external client) |
+| `ChordAcks.js` | reply correlation: every command one queue slot, every reply pops it — the paste chord's verdict is its own final line's ack |
+| `PasteFlow.js` | the paste lifecycle: busy-gate, dispatch region, ordered cancellation |
+| `ShareQueue.js` | the keymap-share scheduler: one share run at a time, the pending generation consumed on success |
+| `GapsNudge.js` | the docked relayout nudge: reads `general:gaps_out` in any form Hyprland answers, writes the exact value back |
+| `LanguageControl.js` | the language control's shapes and the chooser's entries; languages named in their own language |
+| `LayoutDevices.js` | which keyboard the panel reads its layout from, and which ones the language button moves |
+| `SettleGuard.js` | the post-reconnect echo window: which uncommanded group flips to follow |
+| `SeatMotion.js` | who moved on the seat over time: a keyboard toggled alone, told from a burst and from the panel's own click |
+| `HoverTooltip.qml` | one shared hover tooltip for ambiguous icon controls |
+| `ModifierReducer.js` | the modifier state machine (pure, tested) |
+| `Config.js` | maintained defaults plus override/state validation and serialization |
+| `Theme.qml` | the panel's one reader of Omarchy's shared style tokens |
+| `BarWidget.qml` | bar icon that toggles the panel |
+| `daemon/` | Rust helper holding one virtual keyboard |
+| `tools/nested-session.sh` | runs a command against a throwaway nested Hyprland |
+| `tools/smoke-daemon.sh` | end-to-end check of the helper |
+| `tools/integration/` | the assertions that check runs, and their plumbing |
+| `docs/orientation.md` | what this is and how the pieces fit — read first |
+| `docs/decisions.md` | why the design looks like this, and the dead ends |
+| `docs/vm-handoff.md` | the dogfooding VM: operating manual and queue |
 
 ## Testing
 
@@ -494,121 +625,3 @@ behavior remain owner-acceptance work.
 ```sh
 cd daemon && cargo test
 ```
-
-## Install
-
-OSKar needs Omarchy (its shell hosts the panel) and, for the helper,
-either a Rust toolchain to build it once (`omarchy pkg add rust`) or the
-prebuilt helper from the release page (see below).
-
-### With Omarchy's plugin manager
-
-```sh
-omarchy plugin add https://github.com/Vladkarok/oskar --enable
-bash ~/.config/omarchy/plugins/io.github.vladkarok.oskar/install.sh
-omarchy restart shell
-```
-
-The first command puts the keyboard's icon in the bar. Until the helper is
-installed the panel says `oskar.service is not installed`, and its **Copy**
-button hands over the second command. `install.sh` builds the helper,
-installs it with its user unit and the `oskar` command, and starts it.
-
-To update: `omarchy plugin update io.github.vladkarok.oskar`, then rerun
-`install.sh`, or `oskar upgrade`, the same rerun (a panel newer than its
-helper says it needs updating, and its Copy button hands over the command
-that reinstalls it). To remove everything but your settings:
-
-```sh
-bash ~/.config/omarchy/plugins/io.github.vladkarok.oskar/uninstall.sh
-omarchy plugin remove io.github.vladkarok.oskar
-```
-
-`uninstall.sh` removes only the files the install record proves
-unchanged, and keeps the helper while a unit you edited still runs it, so
-no enabled service is left pointing at a missing program. `uninstall.sh
---force` finishes anyway by moving the files that do not match the
-record aside under a dated name; it deletes nothing of yours.
-
-### From a source checkout
-
-```sh
-git clone https://github.com/Vladkarok/oskar.git oskar && cd oskar
-./install.sh           # builds the helper, installs it + its unit + the
-                       # oskar command, enables and starts the service
-oskar setup            # registers the checkout under the stable plugin id,
-                       # enables the plugin in Omarchy, re-checks the service
-omarchy restart shell  # the running shell only picks up a newly registered
-                       # plugin at restart (or log out and back in)
-```
-
-After updating the checkout, rerun `./install.sh` (or `oskar upgrade`, the
-same rerun under one name): the panel and the helper share a protocol
-version, and a panel updated without its helper says so rather than
-typing nothing.
-
-### From a release, with pacman
-
-Each release carries a `PKGBUILD`: download it with the release tarball,
-run `makepkg -si`, then `oskar setup` and `omarchy restart shell`. The
-package installs files only; `oskar setup` activates them. An AUR package
-follows when AUR account registration reopens.
-
-### Without a Rust toolchain
-
-Each release also carries `oskar-daemon-<version>-x86_64.tar.gz` (the
-helper, its unit and the `oskar` command) with a `.sha256` beside it.
-Any `install.sh` above takes it in place of the build:
-
-```sh
-bash install.sh --prebuilt ~/Downloads/oskar-daemon-0.1.0-x86_64.tar.gz
-```
-
-`install.sh` writes three files outside the checkout: the user unit
-`~/.config/systemd/user/oskar.service`, the helper
-`~/.local/libexec/oskar-daemon` and the command `~/.local/bin/oskar`.
-It notes what it wrote in an install record
-(`~/.local/state/oskar/install-record`). OSKar replaces or removes one
-of these files only when the record lists it and it is unchanged since
-OSKar wrote it, so a file you edited or one that belongs to something
-else stays as it is. If the install finds such a file, it stops and
-names it. `--force` moves it aside under a dated name and then
-installs; nothing is deleted. An install made by an OSKar version older
-than the install record has no record yet, so it needs `--force` once.
-Another checkout's install is taken over without it. `uninstall.sh` and
-`oskar setup --migrate-source` follow the same rule, and `oskar` starts,
-restarts, enables or stops `oskar.service` only when the unit systemd
-runs is the oskar package's or the recorded one. Switching it off removes
-only the enablement links that point at OSKar's own unit, and
-`install.sh` will not shadow another program's `oskar.service` without
-`--force`.
-
-A tarball placed beside `install.sh` is picked up without the flag, and
-`oskar setup --prebuilt <tarball>` / `oskar upgrade --prebuilt <tarball>`
-thread it through the lifecycle command. Without cargo and without a
-tarball, a rerun keeps the helper already installed and says how to
-update it. The version in the file name must match the plugin's; a
-mismatch is warned about, and the panel says so if the two speak
-different protocols.
-
-The panel can be toggled from a keybinding too:
-
-```sh
-omarchy-shell shell toggle io.github.vladkarok.oskar
-```
-
-`oskar setup` is idempotent and also owns `status` and `teardown`
-(full removal: registration, plugin enable, unit, state). For reference,
-the manual equivalent of `install.sh`:
-
-```sh
-cd daemon && cargo build --release
-install -Dm755 target/release/oskar-daemon ~/.local/libexec/oskar-daemon
-install -Dm644 ../systemd/oskar.service ~/.config/systemd/user/oskar.service
-systemctl --user daemon-reload
-systemctl --user enable oskar.service
-systemctl --user --quiet is-active graphical-session.target \
-  && systemctl --user restart oskar.service
-```
-
-The panel alone can be enabled with `omarchy plugin enable io.github.vladkarok.oskar`.
