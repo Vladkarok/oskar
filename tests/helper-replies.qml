@@ -528,6 +528,48 @@ QtObject {
             T.deepEqual(sends(feed(s, ["event\tlayout\trazer-razer-deathadder-v3\t1"]).actions), ["seat"])
         })
 
+        T.test("a layout event is judged the click's echo at arrival, and the reading carries the one before", function () {
+            var s = with_(readyAt(3), {
+                settleGuard: SettleGuard.commanded(SettleGuard.initial(), 1, 1000,
+                    ["kbd-a", "kbd-b"]) })
+            var at = function (now) {
+                return { groupCount: 2, capsPositions: "AD01", now: now }
+            }
+            var r = feed(s, ["event\tlayout\tkbd-a\t1"], at(1100))
+            T.equal(r.state.lastLayoutEventCommanded, true, "the click's own move")
+            r = feed(s, ["event\tlayout\tkbd-a\t0"], at(1100))
+            T.equal(r.state.lastLayoutEventCommanded, false, "another group is not the click's")
+            r = feed(s, ["event\tlayout\tkbd-a\t1"], at(1000 + SettleGuard.ECHO_MS))
+            T.equal(r.state.lastLayoutEventCommanded, false, "too late to be the click's")
+            r = feed(s, ["event\tlayout\tkbd-c\t1"], at(1100))
+            T.equal(r.state.lastLayoutEventCommanded, false, "not a device the click moved")
+            // A pseudo-device's event changes neither field.
+            var echo = feed(s, ["event\tlayout\tkbd-a\t1"], at(1100)).state
+            r = feed(echo, ["event\tlayout\thl-virtual-keyboard-oskar-daemon\t0"], at(1200))
+            T.equal(r.state.lastLayoutEventDevice, "kbd-a")
+            T.equal(r.state.lastLayoutEventCommanded, true)
+
+            // Each reading carries the one before it on this connection.
+            var first = [kbd("kbd-a", false, 0), kbd("kbd-b", false, 0)]
+            var second = [kbd("kbd-a", false, 1), kbd("kbd-b", false, 0)]
+            r = feed(with_(readyAt(3), { lastSeatDevices: null }),
+                [seatLine(first, ["kbd-a", "kbd-b"])])
+            T.equal(opsNamed(r.actions, "seatFacts")[0].previous, null)
+            r = feed(r.state, [seatLine(second, ["kbd-a", "kbd-b"])])
+            var facts = opsNamed(r.actions, "seatFacts")[0]
+            T.deepEqual(facts.previous.map(function (d) { return d.active_layout_index }), [0, 0])
+            T.deepEqual(r.state.lastSeatDevices.map(function (d) { return d.active_layout_index }), [1, 0])
+            // A fresh connection forgets it: the gap may hide any move.
+            var fresh = panelSends(with_(r.state, { socketReconnected: true }),
+                "hello " + Session.PROTOCOL_VERSION)
+            fresh = feed(fresh, ["hello " + Session.PROTOCOL_VERSION]).state
+            T.equal(fresh.lastSeatDevices, null)
+            // The repair timer's re-hello of a live socket keeps it.
+            var live = panelSends(r.state, "hello " + Session.PROTOCOL_VERSION)
+            live = feed(live, ["hello " + Session.PROTOCOL_VERSION]).state
+            T.equal(Array.isArray(live.lastSeatDevices), true)
+        })
+
         T.test("event devices asks the seat, and the facts reach the ingest", function () {
             var r = feed(readyAt(3), ["event\tdevices"])
             T.deepEqual(sends(r.actions), ["seat"])

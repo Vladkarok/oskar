@@ -87,19 +87,78 @@ function layoutCount(device) {
         .filter(function (code) { return String(code || "").trim() !== "" }).length
 }
 
-/// (devices, anchor, safeNames, fallbackGroup, movedDevice)
+/// The safe keyboards of one reading, by name → group.
+function safeGroups(devices, safeNames) {
+    var out = {}
+    var all = Array.isArray(devices) ? devices : []
+    for (var i = 0; i < all.length; i++) {
+        var device = all[i]
+        if (device && isTyped(device.name) && isSafe(device.name, safeNames))
+            out[String(device.name)] = groupOf(device)
+    }
+    return out
+}
+
+/// The keyboard that moved BY ITSELF between two readings, or "".
+///
+/// A group toggle is per device: Alt+Shift moves the one keyboard its keys
+/// came from and nothing else. So a layout event that names a positively
+/// identified keyboard, followed by a reading in which that keyboard is the
+/// ONLY safe one whose group differs from the previous reading, is the user
+/// switching layout on the keyboard under their hands. Anything else is not
+/// that evidence: no previous reading (a cold start, a fresh helper
+/// connection whose gap may hide other moves), a safe set that gained or
+/// lost a member (hotplug), several keyboards changed together (a reload,
+/// a keymap share, a tool moving the seat), or the named device did not
+/// change at all. The caller rules out the panel's own echo first
+/// (SettleGuard.isEcho): its click moves the set one device at a time, and
+/// the reading between two of those moves looks exactly like this.
+function loneMover(previous, devices, safeNames, movedDevice) {
+    var moved = String(movedDevice || "")
+    var names = Array.isArray(safeNames) ? safeNames : []
+    if (!Array.isArray(previous) || previous.length === 0) return ""
+    if (!isTyped(moved) || !isSafe(moved, names)) return ""
+    var before = safeGroups(previous, names)
+    var after = safeGroups(devices, names)
+    var changed = []
+    for (var name in after) {
+        if (!(name in before)) return ""
+        if (after[name] !== before[name]) changed.push(name)
+    }
+    for (var gone in before) {
+        if (!(gone in after)) return ""
+    }
+    return changed.length === 1 && changed[0] === moved ? moved : ""
+}
+
+/// (devices, anchor, safeNames, fallbackGroup, movedDevice, motion)
 ///   -> { reading, typing, switchSet, group }
 ///
-/// `anchor` is the keyboard the caller last saw the seat produce a key on.
-/// It is NOT a device name taken from a layout event: every `switch` this
-/// panel issues emits one, so an anchor fed from events points at
-/// whichever device the panel itself moved last — the panel reading its own
-/// echo, and then rearranging the seat around it.
+/// `anchor` is the keyboard the caller believes is typed on. It is learned
+/// from two kinds of evidence and nothing else: the seat's `main` flag on a
+/// safe keyboard, and a keyboard that moved by itself (loneMover). A bare
+/// layout event is not evidence: every `switch` this panel issues emits
+/// one, so an anchor fed from every event points at whichever device the
+/// panel itself moved last — the panel reading its own echo, and then
+/// rearranging the seat around it.
 ///
 /// `movedDevice` is the keyboard the most recent compositor layout event
-/// named — the one that just moved, whatever moved it. It is evidence about
-/// MOTION, not about typing, and it only ever breaks a diverged seat open;
-/// the anchor stays learned from the seat's own flag and nowhere else.
+/// named — the one that just moved, whatever moved it. On its own it is
+/// evidence about MOTION, not about typing, and it only breaks a diverged
+/// seat open when it names the anchor.
+///
+/// `motion` is what makes the mover evidence about typing: { previous,
+/// commanded } — the seat reading the caller held before this one, and
+/// whether the newest layout event was the echo of the panel's own click.
+/// An uncommanded mover that is the only safe keyboard to change since
+/// `previous` becomes the anchor and its live group is the reading, exactly
+/// as for a keyboard holding `main`. A safe keyboard holding `main`
+/// outranks it: the flag moves on every key press, so a safe `main` that is
+/// not the mover says the mover is not under the user's hands (a script
+/// moved it). The flag only ever sits off the typed keyboard when an IME's
+/// virtual keyboard re-emits the keys (fcitx5 holds it on the owner's seat
+/// for good) or right after this panel types — which is exactly when the
+/// lone mover is the only evidence left.
 ///
 /// `reading` is the device whose group, layout list and RMLVO the panel
 /// follows, or null when nothing can answer — at startup, before the helper's
@@ -109,10 +168,11 @@ function layoutCount(device) {
 /// `reading` and `switchSet` come from the SAME set. That is the invariant
 /// this module exists to hold: a group read off a device the language button
 /// never moves is a group the keyboard will not be typing in.
-function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice) {
+function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, motion) {
     var all = Array.isArray(devices) ? devices : []
     var names = Array.isArray(safeNames) ? safeNames : []
     var named = String(namedDevice || "")
+    var moved = String(movedDevice || "")
 
     var safe = all.filter(function (device) {
         return device && isTyped(device.name) && isSafe(device.name, names)
@@ -123,10 +183,13 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice) {
 
     // The seat's current keyboard first — HyprCtl prints IKeyboard::m_active
     // as `main`, and it is literally "where the next physical key comes from".
-    // Then the device the last layout event named, which is what a deliberate
-    // switch produces. Then the remembered group, then the set's own
-    // consensus.
+    // Then the named anchor — the keyboard that just moved by itself when
+    // there is one (loneMover), else the one learned before. Then the
+    // remembered group, then the set's own consensus.
     var current = safe.filter(function (device) { return device.main === true })[0]
+    var lone = !current && motion && motion.commanded !== true
+        ? loneMover(motion.previous, all, names, moved) : ""
+    if (lone !== "") named = lone
     var namedMatch = safe.filter(function (device) { return device.name === named })[0]
     var reading = current || namedMatch || null
 
@@ -145,12 +208,12 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice) {
     //   Ukrainian, resyncing only on the next Alt+Shift.
     //
     // - The mover is NOT the anchor, or there is no mover at all: the
-    //   anchor may itself name a sleeper (seeded by enumeration or an old
-    //   layout event, not typing evidence), or a sleeping twin is the one
-    //   that moved. Its live index is not trustworthy either way, so
-    //   consensus device + remembered group answer — the same tie-break
-    //   the cold-start arm uses.
-    var moved = String(movedDevice || "")
+    //   anchor may itself name a sleeper (seeded by enumeration, not
+    //   typing evidence), and the mover did not move alone — it moved in
+    //   a burst with others, it was the panel's own echo, or there is no
+    //   reading before it to tell. Neither live index is trustworthy
+    //   then, so consensus device + remembered group answer — the same
+    //   tie-break the cold-start arm uses.
     var moverIsAnchor = moved !== "" && moved === named
     var divergedWithAnchor = !moverIsAnchor && reading && !current
         && safe.length > 1 && safe.some(function (device) {
@@ -204,12 +267,13 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice) {
 
     return {
         reading: reading,
-        // The keyboard the seat says produced the last key, when it is one
-        // this panel may act on. Empty means "no evidence right now" — the
-        // helper's own virtual keyboard holds the flag for a moment after
-        // every OSK keystroke — and the caller keeps what it last knew rather
-        // than adopting a guess.
-        typing: String((current || {}).name || ""),
+        // The keyboard the evidence says is typed on: the seat's flag on a
+        // keyboard this panel may act on, or the keyboard that just moved
+        // by itself. Empty means "no evidence right now" — the helper's own
+        // virtual keyboard holds the flag for a moment after every OSK
+        // keystroke, and most readings follow no lone move — and the caller
+        // keeps what it last knew rather than adopting a guess.
+        typing: String((current || {}).name || lone || ""),
         switchSet: switchSet,
         group: groupOf(reading)
     }

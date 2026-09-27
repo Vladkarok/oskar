@@ -382,16 +382,149 @@ QtObject {
             T.equal(mouseMover.switchSet.indexOf(mouse), -1)
         })
 
-        T.test("a flip on a sleeping twin still loses to consensus and memory", function () {
-            // The other half of the gate: the mover is NOT the anchor — a
-            // sleeper moved — and the panel must not be dragged off what
-            // the seat remembers by a device that cannot type.
+        T.test("a non-anchor mover with no evidence it moved alone loses to consensus and memory", function () {
+            // The other half of the gate: the mover is NOT the anchor and
+            // nothing says it moved by itself — no reading before this one
+            // to compare with. Its live index is no better evidence than
+            // the anchor's, so consensus and memory answer.
             var desync = zoo(0, "hl-virtual-keyboard-oskar-daemon")
             desync[1].active_layout_index = 1
             var picked = Devices.select(desync,
                 "ite-tech.-inc.-ite-device(8176)-keyboard", safeNames, 0,
                 "ite-tech.-inc.-ite-device(8295)-keyboard")
             T.equal(picked.group, 0, "consensus + remembered still answer")
+            T.equal(picked.typing, "")
+            // The same mover, shown to have moved alone and uncommanded
+            // since the reading before, is a toggle on the keyboard under
+            // the user's hands: it becomes the anchor and answers.
+            var alone = Devices.select(desync,
+                "ite-tech.-inc.-ite-device(8176)-keyboard", safeNames, 0,
+                "ite-tech.-inc.-ite-device(8295)-keyboard",
+                { previous: zoo(0, "hl-virtual-keyboard-oskar-daemon"), commanded: false })
+            T.equal(alone.group, 1)
+            T.equal(alone.reading.name, "ite-tech.-inc.-ite-device(8295)-keyboard")
+            T.equal(alone.typing, "ite-tech.-inc.-ite-device(8295)-keyboard")
+        })
+
+        // ---- a keyboard that moved by itself ----
+        //
+        // The owner's seat (captured 2026-09-27): fcitx5's virtual keyboard
+        // re-emits every key, so `main` never lands on the keyboard typed
+        // on, and the anchor seeded at startup names at-translated.
+        // Alt+Shift moves the ITE (8176) keyboard alone.
+        function owner(groups) {
+            var devices = zoo(0, "hl-virtual-keyboard-fcitx5")
+            devices.push({ name: "hl-virtual-keyboard-fcitx5", main: true,
+                active_layout_index: 0, layout: "us,ua" })
+            for (var i = 0; i < devices.length; i++) {
+                if (groups[devices[i].name] !== undefined)
+                    devices[i].active_layout_index = groups[devices[i].name]
+            }
+            return devices
+        }
+        var at = "at-translated-set-2-keyboard"
+        var ite76 = "ite-tech.-inc.-ite-device(8176)-keyboard"
+        var ite95 = "ite-tech.-inc.-ite-device(8295)-keyboard"
+        function groups(g95, g76, gat) {
+            var out = {}
+            out[ite95] = g95
+            out[ite76] = g76
+            out[at] = gat
+            return out
+        }
+
+        T.test("a keyboard that moved alone becomes the anchor and its live group the reading", function () {
+            var before = owner(groups(1, 1, 1))
+            var after = owner(groups(1, 0, 1))
+            T.equal(Devices.loneMover(before, after, safeNames, ite76), ite76)
+            var picked = Devices.select(after, at, safeNames, 1, ite76,
+                { previous: before, commanded: false })
+            T.equal(picked.reading.name, ite76)
+            T.equal(picked.group, 0, "the toggled keyboard answers, not the two that did not move")
+            T.equal(picked.typing, ite76, "the caller adopts it as the anchor")
+            T.equal(picked.switchSet.length, 3)
+            // Without the motion facts the same seat answers the old way —
+            // the consensus device and the remembered group — which is the
+            // live defect: the panel stayed on 1 while the keyboard typed 0.
+            T.equal(Devices.select(after, at, safeNames, 1, ite76).group, 1)
+        })
+
+        T.test("the panel's own echo never re-anchors, however alone it arrives", function () {
+            // The click's loop moves one device at a time; the reading
+            // between two of its moves shows one keyboard changed.
+            var before = owner(groups(1, 1, 1))
+            var after = owner(groups(0, 1, 1))
+            var picked = Devices.select(after, ite76, safeNames, 1, ite95,
+                { previous: before, commanded: true })
+            T.equal(picked.typing, "")
+        })
+
+        T.test("a lone mover the helper did not identify is ignored", function () {
+            var before = owner(groups(0, 0, 0))
+            var pseudo = ["power-button", "video-bus", "hl-virtual-keyboard-fcitx5",
+                "hl-virtual-keyboard-oskar-daemon", "razer-razer-deathadder-v3-keyboard",
+                "ideapad-extra-buttons"]
+            for (var i = 0; i < pseudo.length; i++) {
+                var after = owner(groups(0, 0, 0))
+                for (var j = 0; j < after.length; j++)
+                    if (after[j].name === pseudo[i]) after[j].active_layout_index =
+                        1 - after[j].active_layout_index
+                T.equal(Devices.loneMover(before, after, safeNames, pseudo[i]), "",
+                    pseudo[i] + " was taken for a lone mover")
+                var picked = Devices.select(after, at, safeNames, 0, pseudo[i],
+                    { previous: before, commanded: false })
+                T.equal(picked.typing, "", pseudo[i] + " became the anchor")
+                T.equal(picked.group, 0, pseudo[i] + " moved the reading")
+            }
+        })
+
+        T.test("a burst that moved a sleeping twin with the real keyboard is not a lone move", function () {
+            var before = owner(groups(0, 0, 0))
+            var burst = owner(groups(1, 1, 0))
+            T.equal(Devices.loneMover(before, burst, safeNames, ite76), "")
+            var picked = Devices.select(burst, at, safeNames, 0, ite76,
+                { previous: before, commanded: false })
+            T.equal(picked.typing, "", "not re-anchored")
+            T.equal(picked.group, 0, "the existing tiers answer: consensus + remembered")
+            // A burst that left every keyboard on one group answers that
+            // group, whoever the anchor is.
+            var together = owner(groups(1, 1, 1))
+            var same = Devices.select(together, at, safeNames, 0, ite76,
+                { previous: before, commanded: false })
+            T.equal(same.typing, "")
+            T.equal(same.group, 1)
+        })
+
+        T.test("no reading before, or a safe set that changed, proves nothing about who moved", function () {
+            var after = owner(groups(1, 0, 1))
+            T.equal(Devices.loneMover(null, after, safeNames, ite76), "")
+            T.equal(Devices.loneMover([], after, safeNames, ite76), "")
+            // Hotplug: a second keyboard appeared between the readings.
+            var plugged = owner(groups(1, 0, 1))
+            plugged.push({ name: at + "-2", main: false, active_layout_index: 0,
+                layout: "us,ua" })
+            T.equal(Devices.loneMover(owner(groups(1, 1, 1)), plugged, safeNames, ite76), "")
+            var unplugged = owner(groups(1, 0, 1)).filter(function (d) { return d.name !== ite95 })
+            T.equal(Devices.loneMover(owner(groups(1, 1, 1)), unplugged, safeNames, ite76), "")
+            // The named keyboard did not change: another one did.
+            T.equal(Devices.loneMover(owner(groups(1, 1, 1)), owner(groups(0, 1, 1)),
+                safeNames, ite76), "")
+            // Nothing changed at all (a re-read).
+            T.equal(Devices.loneMover(after, after, safeNames, ite76), "")
+        })
+
+        T.test("a safe keyboard holding main outranks a lone mover", function () {
+            // The flag moves on every key press: a safe keyboard holding it
+            // says where the hands are, and a lone move elsewhere was not
+            // made by them.
+            var before = zoo(0, at)
+            var after = zoo(0, at)
+            after[3].active_layout_index = 1
+            var picked = Devices.select(after, at, safeNames, 0, ite76,
+                { previous: before, commanded: false })
+            T.equal(picked.reading.name, at)
+            T.equal(picked.group, 0)
+            T.equal(picked.typing, at)
         })
 
         Qt.exit(T.report("layout devices"))

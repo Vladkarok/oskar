@@ -50,6 +50,17 @@ var WINDOW_MS = 10000
 /// one re-read after this interval supplies the second agreeing reading.
 var QUIESCE_MS = 1000
 
+/// How long after the panel's own click a layout event can still be that
+/// click's echo. Measured on the owner's seat (2026-09-27): the burst that
+/// followed a language click spanned ~125 ms from its first announcement
+/// to its last (18:48:48.121 to 18:48:48.244, the helper's own virtual
+/// keyboard last). Four times that absorbs a loaded compositor.
+/// The length costs nothing at the other end: after a click every device
+/// in the set sits ON the commanded group, so a user's toggle made right
+/// after it moves a keyboard OFF that group and never matches the echo's
+/// group clause.
+var ECHO_MS = 500
+
 function initial() {
     return {
         // Whether the post-establishment window stands.
@@ -70,7 +81,13 @@ function initial() {
         // An uncommanded flip's first sighting, awaiting persistence; -1
         // when nothing is held.
         candidate: -1,
-        candidateAt: 0
+        candidateAt: 0,
+        // The click's own switches, for telling their layout events from a
+        // keyboard that moved by itself: the group, the devices the loop
+        // moved, and when. Consulted by isEcho whatever the window says.
+        echoGroup: -1,
+        echoSet: [],
+        echoAt: 0
     }
 }
 
@@ -81,7 +98,10 @@ function copy(state) {
         followed: state.followed,
         commanded: state.commanded,
         candidate: state.candidate,
-        candidateAt: state.candidateAt
+        candidateAt: state.candidateAt,
+        echoGroup: typeof state.echoGroup === "number" ? state.echoGroup : -1,
+        echoSet: Array.isArray(state.echoSet) ? state.echoSet : [],
+        echoAt: typeof state.echoAt === "number" ? state.echoAt : 0
     }
 }
 
@@ -93,7 +113,8 @@ function copy(state) {
 /// window disarms until the next establishing configure arms it fresh —
 /// the establishing configure after a reconnect is the compositor's own
 /// current answer and must be followed, exactly as it was before this
-/// guard existed.
+/// guard existed. The echo record is not part of that world: it describes
+/// switches the compositor already carried out, and ECHO_MS bounds it.
 function connected(state) {
     var out = copy(state)
     out.armed = false
@@ -114,14 +135,34 @@ function connected(state) {
 /// re-anchors the window around the click, because the loop re-races
 /// whatever re-application churn remains after the fresh registration; a
 /// command outside the window re-arms nothing — that is today's steady
-/// state and stays exactly as it was.
-function commanded(state, group, now) {
+/// state and stays exactly as it was. `devices` is the switch set the loop
+/// moves; it and `now` are what isEcho judges the loop's layout events by.
+function commanded(state, group, now, devices) {
     var out = copy(state)
     out.commanded = group
     out.candidate = -1
     out.candidateAt = 0
     if (out.armed) out.openedAt = now
+    out.echoGroup = group
+    out.echoSet = Array.isArray(devices)
+        ? devices.map(function (name) { return String(name) }) : []
+    out.echoAt = now
     return out
+}
+
+/// Whether a layout event is the echo of the panel's own click: it names
+/// a device the click's loop moved, it reports the group the click
+/// commanded, and it arrived within ECHO_MS of the click. An echo says
+/// nothing about which keyboard is under the user's hands, however alone
+/// it arrives.
+function isEcho(state, device, group, now) {
+    if (!state || typeof now !== "number" || !isFinite(now)) return false
+    if (typeof group !== "number" || group < 0 || group !== state.echoGroup)
+        return false
+    if (!Array.isArray(state.echoSet)
+            || state.echoSet.indexOf(String(device || "")) === -1)
+        return false
+    return now >= state.echoAt && now - state.echoAt < ECHO_MS
 }
 
 /// May the panel follow this observed reading — configure the helper with

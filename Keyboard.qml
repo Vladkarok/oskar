@@ -317,10 +317,15 @@ Item {
     // The keyboard the most recent `event\tlayout` from the helper named —
     // the device that just MOVED, whatever moved it (a deliberate toggle,
     // the panel's own switch, or the compositor flipping a group on its
-    // own). Motion evidence only: it breaks a diverged seat open in
-    // LayoutDevices.select and is never fed to the anchor. Written by
-    // HelperReplies (its `lastLayoutEventDevice` state field).
+    // own) — and whether that event was the echo of the panel's own click.
+    // LayoutDevices.select adopts the mover as the anchor only when it
+    // moved alone and uncommanded. Written by HelperReplies (its
+    // `lastLayoutEventDevice` and `lastLayoutEventCommanded` state fields).
     property string lastLayoutEventDevice: ""
+    property bool lastLayoutEventCommanded: false
+    // The keyboards of the last seat reading on this connection, or null:
+    // HelperReplies hands it to the ingest beside the next reading.
+    property var lastSeatDevices: null
     // HelperReplies' seat request coalescer: one `seat` in flight at a time.
     property string seatAsk: "idle"
     // Every device carrying the same layout list. A language-button click
@@ -816,14 +821,16 @@ Item {
     /// Two selections, deliberately different. The reading (group, layout
     /// list, RMLVO) comes from whichever typed keyboard the evidence
     /// favours: the seat's active keyboard if a filtered device holds it,
-    /// then the device the last switch named, then layout progress. The
+    /// then a filtered keyboard that just moved by itself (the only one to
+    /// change since the previous reading, and not the panel's own click),
+    /// then the anchor learned before, then layout progress. The
     /// compositor keeps XKB group state per device and announces a layout
     /// move not only for deliberate switches but also for hotplug, keymap
     /// (re)application and input-config reloads, so an event's device is
-    /// weaker evidence than the flag — and the flag is what "which device
-    /// will the next physical key come from" actually means. It moves on
-    /// every real keypress, which keeps the reading from going stale after
-    /// the user switches devices.
+    /// evidence only when it moved alone — and the flag is what "which
+    /// device will the next physical key come from" actually means. It
+    /// moves on every real keypress, which keeps the reading from going
+    /// stale after the user switches devices.
     ///
     /// The switch target (the devices the language button advances) comes
     /// from those same two tiers. At startup the named tier is seeded by the
@@ -835,12 +842,14 @@ Item {
     ///
     /// The active-keyboard flag (`main`) is literally the seat's current
     /// keyboard. It only counts inside the filtered list: with an IME
-    /// running, fcitx5's virtual keyboard holds it whenever the user has not
-    /// typed since the IME last connected, and it lands on this helper's own
-    /// device right after typing. Residual windows no reading can close:
-    /// hotplug or a mouse's media keys can take the flag until the next
-    /// physical keypress, and the flag alone does not prove the device was
-    /// typed on rather than merely plugged in. The upstream fix is an event
+    /// running, fcitx5's virtual keyboard re-emits the keys and holds it
+    /// (on the owner's seat it never leaves), and it lands on this helper's
+    /// own device right after typing — which is why a keyboard that moved
+    /// by itself is the other way the anchor is learned. Residual windows
+    /// no reading can close: hotplug or a mouse's media keys can take the
+    /// flag until the next physical keypress, and the flag alone does not
+    /// prove the device was typed on rather than merely plugged in. The
+    /// upstream fix is an event
     /// when the seat's current keyboard changes, or a seat-level layout
     /// concept; Sway's keyboard groups are the prior art.
     ///
@@ -850,7 +859,7 @@ Item {
     /// device answers and which ones the button moves is decided in
     /// LayoutDevices.js, where it is tested (tests/layout-devices.qml
     /// carries the zoo).
-    function ingestSeatFacts(devices, kbFile, discoveredTitles) {
+    function ingestSeatFacts(devices, kbFile, discoveredTitles, previousDevices) {
         // Merge any newly discovered names into the map. Done before the
         // selection can bail out: the names are a property of the machine's
         // xkb rules, not of which keyboard answers today.
@@ -858,14 +867,17 @@ Item {
 
         var picked = LayoutDevices.select(devices, anchorKeyboardName,
             startupKeyboards, root.rememberedLayoutGroup,
-            root.lastLayoutEventDevice)
+            root.lastLayoutEventDevice,
+            { previous: previousDevices, commanded: root.lastLayoutEventCommanded })
         // Cleared unconditionally: a refresh that finds no safe target must
         // not leave the language button aiming at a device that has gone
         // missing or was never safe to advance.
         switchKeyboards = picked.switchSet
-        // Sticky, and only from the seat's own flag. The flag lands on the
-        // helper's virtual keyboard for a moment after every OSK keystroke,
-        // so "no answer" has to mean "keep what we knew", not "forget".
+        // Sticky, and only from typing evidence: the seat's own flag on a
+        // safe keyboard, or a safe keyboard that just moved by itself. The
+        // flag lands on the helper's virtual keyboard for a moment after
+        // every OSK keystroke, so "no answer" has to mean "keep what we
+        // knew", not "forget".
         if (picked.typing) {
             if (picked.typing !== anchorKeyboardName)
                 root.layoutDeviceNamed(picked.typing)
@@ -1054,7 +1066,7 @@ Item {
         // untouched — the guard only gates the panel's FOLLOW of what the
         // seat then reads.
         root.settleGuard = SettleGuard.commanded(root.settleGuard, next,
-            Date.now())
+            Date.now(), switchKeyboards)
         // The compositor stores the group per device. Move every device
         // with this layout list to one absolute index; switching one guessed
         // physical keyboard changed the panel while another keyboard kept
@@ -1467,12 +1479,15 @@ Item {
             startupKeyboardName: root.startupKeyboardName,
             anchorKeyboardName: root.anchorKeyboardName,
             lastLayoutEventDevice: root.lastLayoutEventDevice,
+            lastLayoutEventCommanded: root.lastLayoutEventCommanded,
+            lastSeatDevices: root.lastSeatDevices,
             seatAsk: root.seatAsk
         }
     }
 
     function replyContext() {
-        return { groupCount: root.groupCount, capsPositions: root.capsPositions }
+        return { groupCount: root.groupCount, capsPositions: root.capsPositions,
+            now: Date.now() }
     }
 
     /// Runs a HelperReplies program verbatim, in order. Every transition
@@ -1517,7 +1532,7 @@ Item {
                 root.groupConfirmed(a.group)
                 break
             case "seatFacts":
-                root.ingestSeatFacts(a.devices, a.kbFile, a.titles)
+                root.ingestSeatFacts(a.devices, a.kbFile, a.titles, a.previous)
                 break
             case "configureUnseated":
                 root.configureUnseated()
@@ -1564,6 +1579,8 @@ Item {
         case "startupKeyboardName": root.startupKeyboardName = value; break
         case "anchorKeyboardName": root.anchorKeyboardName = value; break
         case "lastLayoutEventDevice": root.lastLayoutEventDevice = value; break
+        case "lastLayoutEventCommanded": root.lastLayoutEventCommanded = value; break
+        case "lastSeatDevices": root.lastSeatDevices = value; break
         case "seatAsk": root.seatAsk = value; break
         default: console.error("[oskar] unknown reply state field:", key)
         }

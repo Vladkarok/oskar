@@ -215,6 +215,43 @@ QtObject {
             T.equal(junk.follow, false)
         })
 
+        // ---- the click's echo ----
+
+        T.test("a layout event is the click's echo only for its devices, its group, its moment", function () {
+            var set = ["kbd-a", "kbd-b"]
+            var s = SettleGuard.commanded(SettleGuard.initial(), 1, 5000, set)
+            T.equal(SettleGuard.isEcho(s, "kbd-a", 1, 5000), true)
+            T.equal(SettleGuard.isEcho(s, "kbd-b", 1, 5000 + SettleGuard.ECHO_MS - 1), true)
+            // Another group: a keyboard moved OFF the commanded group, which
+            // is what a toggle right after the click does.
+            T.equal(SettleGuard.isEcho(s, "kbd-a", 0, 5100), false)
+            // A device the loop did not move.
+            T.equal(SettleGuard.isEcho(s, "kbd-c", 1, 5100), false)
+            // Too late to be the loop's.
+            T.equal(SettleGuard.isEcho(s, "kbd-a", 1, 5000 + SettleGuard.ECHO_MS), false)
+            // Nothing commanded, or no clock: never an echo.
+            T.equal(SettleGuard.isEcho(SettleGuard.initial(), "kbd-a", 1, 5000), false)
+            T.equal(SettleGuard.isEcho(s, "kbd-a", 1, undefined), false)
+            T.equal(SettleGuard.isEcho(s, "kbd-a", NaN, 5000), false)
+            // A command recorded without its devices names no echo.
+            T.equal(SettleGuard.isEcho(SettleGuard.commanded(SettleGuard.initial(), 1, 5000),
+                "kbd-a", 1, 5000), false)
+        })
+
+        T.test("the echo record outlives the decisions and a reconnect, bounded by its own window", function () {
+            var s = SettleGuard.decide(SettleGuard.initial(), 0, 0).state
+            s = SettleGuard.commanded(s, 1, 3000, ["kbd-a"])
+            s = SettleGuard.decide(s, 1, 3050).state
+            T.equal(SettleGuard.isEcho(s, "kbd-a", 1, 3100), true)
+            s = SettleGuard.connected(s)
+            T.equal(SettleGuard.isEcho(s, "kbd-a", 1, 3150), true)
+            // The establishing reading of the new world clears `commanded`,
+            // not the echo record.
+            s = SettleGuard.decide(s, 1, 3200).state
+            T.equal(s.commanded, -1)
+            T.equal(SettleGuard.isEcho(s, "kbd-a", 1, 3250), true)
+        })
+
         Qt.exit(T.report("settle guard"))
     }
 }
