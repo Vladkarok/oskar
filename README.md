@@ -247,9 +247,12 @@ One product, four languages, each with a job:
      keyboard that moved by itself.
    - A script that moves one idle keyboard alone is followed as if you had
      switched on it.
-   - A toggle made in the first ten seconds after the helper restarts (the
-     settle window) is not learned unless the panel already reads that
-     keyboard; the next toggle is.
+   - In the first ten seconds after the helper restarts (the settle
+     window), a toggle on the keyboard the panel already reads is followed
+     as usual. A toggle on another keyboard, or any toggle made after you
+     pressed the language button in those seconds, is followed only once
+     it has stayed for a second, and each press of the button starts the
+     ten seconds again.
    - Hotplug and mouse media keys can move the flag until the next physical
      keypress, and tied-at-zero devices are assumed to share the seat's
      RMLVO.

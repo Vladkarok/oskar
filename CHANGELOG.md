@@ -3,6 +3,16 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
+## 0.1.2 (not released)
+
+### Fixed
+
+- Right after an install or a restart of the helper, Alt+Shift was
+  ignored for ten seconds or more when pressed quickly: the caps stayed on
+  the old layout while the system typed the new one. A toggle on the
+  keyboard the panel reads is now followed as at any other time, a
+  moment (150 ms) after the press.
+
 ## 0.1.1
 
 The keyboard behaves as it did in 0.1.0. This release is about reading

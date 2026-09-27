@@ -2597,7 +2597,8 @@ is the reading.** By itself means three things, judged in
 The group follows at once when every identified keyboard agrees, and
 otherwise after the quiet. The anchor is learned only when the move is
 FOLLOWED (`LayoutDevices.anchorAfter`): inside the settle guard's window
-a lone move is a held flip like any other, and a flip the guard then
+a lone move is a held flip like any other (but see "Amended" below for
+the keyboard the panel already reads), and a flip the guard then
 judges as churn leaves the anchor where it was — the §53 incident shape (a
 click, then the compositor putting at-translated alone back on 0) stays
 on the clicked group. A new helper connection forgets every event of the
@@ -2621,3 +2622,40 @@ within the quiet read as a burst and fall back to the remembered group; a
 safe `main` outranks a lone mover; a script that moves one idle keyboard
 alone is followed as if the user had switched; a toggle inside the settle
 window is not learned unless the panel already reads that keyboard.
+
+**Amended 2026-09-27 (0.1.2): inside the settle window, a lone move of
+the keyboard the panel already reads is followed, while no click was made
+in that window.** Seen on the owner's desk the evening 0.1.1 shipped:
+`./install.sh`, a shell restart, then Alt+Shift every 140–500 ms. No flip
+stayed for the guard's one-second quiesce, so all eleven were held; seven
+clicks on the language button then moved the window's start each time
+(§53), and the caps stood still for 20 s. The first thing anyone does
+after installing is restart and press the toggle.
+
+The guard's two kinds of churn do not look like that move. Re-application
+around a fresh registration moves the devices in a burst, which
+`SeatMotion` does not call lone. The keyboard the compositor puts back
+alone after a click (§53) is excluded by the command on record: once a
+click was made in the window, a lone move is held like any flip, because
+on a two-layout seat the user's toggle and the put-back land on the same
+group. The window is neither closed nor moved by a followed toggle.
+Following this keyboard's group is what the panel does outside the window
+at first sight, so nothing is followed here that would not be followed
+eleven seconds after the restart.
+
+The keyboard "the panel already reads" is the anchor from before the
+reading, and the mover has to answer the reading: as the lone mover
+(`lone`, the owner's seat, where fcitx5 holds `main`), or as the safe
+keyboard holding `main` (a seat without an input method). Both are
+`movedAlone` in `LayoutDevices.select`; `lone` keeps its meaning, since
+it is what re-anchors.
+
+Rejected: following every lone move in the window. A lone move of a
+keyboard the panel does not read re-anchors the panel (the rule above),
+and nothing in the window vouches for a keyboard the panel has not read
+yet; it stays held, and a held move still teaches no anchor. Shortening
+the window or the quiesce: both were sized by the incident they closed.
+
+Known and accepted: after a click inside the window the user's toggles
+are held until one stays for a second, and every click starts the ten
+seconds again.

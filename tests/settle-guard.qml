@@ -50,6 +50,43 @@ QtObject {
             T.equal(v.state.followed, 1)
         })
 
+        T.test("a lone move of the keyboard the panel reads is followed inside the window", function () {
+            var s = SettleGuard.decide(SettleGuard.initial(), 0, 0).state
+            var v = SettleGuard.decide(s, 1, 3000, true)
+            T.equal(v.follow, true)
+            T.equal(v.state.followed, 1)
+            T.equal(v.state.armed, true, "the window stands: churn may still come")
+            T.equal(v.state.openedAt, 0, "and is not moved")
+            T.equal(SettleGuard.decide(v.state, 0, 3100).follow, false,
+                "the next flip without that evidence is held")
+        })
+
+        T.test("a lone move retires the candidate a held flip left", function () {
+            var s = SettleGuard.decide(SettleGuard.initial(), 0, 0).state
+            s = SettleGuard.decide(s, 1, 1000).state
+            T.equal(s.candidate, 1)
+            var v = SettleGuard.decide(s, 1, 1150, true)
+            T.equal(v.follow, true)
+            T.equal(v.state.candidate, -1)
+        })
+
+        T.test("after a click in the window a lone move is held like any flip", function () {
+            var s = SettleGuard.decide(SettleGuard.initial(), 0, 0).state
+            s = SettleGuard.commanded(s, 1, 500)
+            s = SettleGuard.decide(s, 1, 600).state
+            var v = SettleGuard.decide(s, 0, 800, true)
+            T.equal(v.follow, false)
+            T.equal(v.held, 1)
+        })
+
+        T.test("only `true` is that evidence", function () {
+            var s = SettleGuard.decide(SettleGuard.initial(), 0, 0).state
+            var values = [undefined, null, false, 1, "true", "kbd"]
+            for (var i = 0; i < values.length; i++)
+                T.equal(SettleGuard.decide(s, 1, 3000, values[i]).follow, false,
+                    String(values[i]))
+        })
+
         T.test("an early second sighting of the flip is still ignored", function () {
             var s = SettleGuard.decide(SettleGuard.initial(), 0, 0).state
             s = SettleGuard.decide(s, 0, 900).state

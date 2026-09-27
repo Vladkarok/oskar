@@ -897,9 +897,11 @@ Item {
         // reading a genuine external switch deserves to be followed on.
         // The establishing configure itself is never held, which keeps
         // the remembered tie-breaker answering on a cold start
-        // (SettleGuard.decide's first arm).
+        // (SettleGuard.decide's first arm). Nor is a lone move of the
+        // keyboard the panel already reads, while no click was made in the
+        // window: that is the user's own toggle.
         var settle = SettleGuard.decide(root.settleGuard, configGroup,
-            root.clock())
+            root.clock(), LayoutDevices.loneAnchor(picked, anchorKeyboardName))
         root.settleGuard = settle.state
         if (!settle.follow) {
             console.log("[oskar] settle guard: holding group", settle.held,

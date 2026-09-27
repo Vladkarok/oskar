@@ -169,12 +169,16 @@ function isEcho(state, device, group, now) {
 /// May the panel follow this observed reading — configure the helper with
 /// it, draw it, and let the ack persist it into `remembered`?
 ///
+/// `loneAnchor` is true when the reading is a lone move of the keyboard the
+/// panel already reads (LayoutDevices.loneAnchor): uncommanded, a quiet
+/// clear of every other device, the only keyboard changed.
+///
 /// Returns { state, follow, held }: `follow` says the reading may move the
 /// panel; when false, `held` names the group to keep configuring (the
 /// last followed one), which is also why `remembered` can never be dragged
 /// into a held reading — it is persisted from configure acks, and the
 /// panel never sends the held-out group while the hold stands.
-function decide(state, observed, now) {
+function decide(state, observed, now, loneAnchor) {
     var valid = typeof observed === "number" && isFinite(observed)
         && observed >= 0 && observed === Math.floor(observed)
     if (!valid) return { state: copy(state), follow: false, held: state.followed }
@@ -221,6 +225,21 @@ function decide(state, observed, now) {
     // The click's own echo: user intent, followed immediately even though
     // it flips the group inside the window.
     if (out.commanded >= 0 && observed === out.commanded) {
+        out.followed = observed
+        out.candidate = -1
+        out.candidateAt = 0
+        return { state: out, follow: true, held: observed }
+    }
+
+    // The user's own toggle: the keyboard the panel reads moved by itself,
+    // and no click was made in this window. Re-application moves the
+    // devices in a burst, which is not a lone move, and the keyboard a
+    // click's churn puts back is excluded by the command on record. The
+    // panel follows this keyboard's group outside the window anyway; the
+    // window stands, because churn may still come. Measured on the owner's
+    // desk (2026-09-27): toggling every 140-500 ms right after a restart
+    // never let a flip persist, and the caps stood still for 20 s.
+    if (loneAnchor === true && out.commanded < 0) {
         out.followed = observed
         out.candidate = -1
         out.candidateAt = 0

@@ -132,7 +132,7 @@ function loneMover(previous, devices, safeNames, movedDevice) {
 }
 
 /// (devices, anchor, safeNames, fallbackGroup, movedDevice, motion)
-///   -> { reading, typing, lone, switchSet, group }
+///   -> { reading, typing, lone, movedAlone, switchSet, group }
 ///
 /// `anchor` is the keyboard the caller believes is typed on. It is learned
 /// from two kinds of evidence and nothing else: the seat's `main` flag on a
@@ -180,7 +180,8 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, mot
         return device && isTyped(device.name) && isSafe(device.name, names)
     })
     if (safe.length === 0) {
-        return { reading: null, typing: "", lone: "", switchSet: [], group: 0 }
+        return { reading: null, typing: "", lone: "", movedAlone: "",
+            switchSet: [], group: 0 }
     }
 
     // The seat's current keyboard first — HyprCtl prints IKeyboard::m_active
@@ -189,9 +190,10 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, mot
     // there is one (loneMover), else the one learned before. Then the
     // remembered group, then the set's own consensus.
     var current = safe.filter(function (device) { return device.main === true })[0]
-    var lone = !current && motion
+    var alone = motion
         ? loneMover(motion.base, all, names,
             motion.gap === true ? "" : String(motion.candidate || "")) : ""
+    var lone = current ? "" : alone
     if (lone !== "") named = lone
     var namedMatch = safe.filter(function (device) { return device.name === named })[0]
     var reading = current || namedMatch || null
@@ -254,6 +256,7 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, mot
                 reading: facts,
                 typing: "",
                 lone: "",
+                movedAlone: "",
                 switchSet: switchSetFor(facts, safe),
                 group: remembered
             }
@@ -279,6 +282,9 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, mot
         typing: String((current || {}).name || ""),
         // The keyboard that moved by itself and answers this reading, or "".
         lone: lone,
+        // The same keyboard when it answers this reading for either reason:
+        // as the lone mover, or because it is the one holding the flag.
+        movedAlone: alone !== "" && alone === reading.name ? alone : "",
         switchSet: switchSet,
         group: groupOf(reading)
     }
@@ -294,6 +300,19 @@ function anchorAfter(picked, followed) {
     if (!picked) return ""
     if (picked.typing) return picked.typing
     return followed === true ? String(picked.lone || "") : ""
+}
+
+/// Whether the reading is a lone move of the keyboard the caller already
+/// reads: `anchor` is the anchor from BEFORE this reading, and the mover
+/// answers this reading, as the lone mover or as the holder of the seat's
+/// flag (a seat without an input method keeps it on the typed keyboard).
+/// That keyboard's
+/// group is what the panel draws whether or not it moved, so its move tells
+/// the settle guard about the user's hands and nothing about which keyboard
+/// to read.
+function loneAnchor(picked, anchor) {
+    var mover = picked ? String(picked.movedAlone || "") : ""
+    return mover !== "" && mover === String(anchor || "")
 }
 
 /// The layout code the reading device is currently on, by index into its own

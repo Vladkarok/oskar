@@ -189,7 +189,8 @@ QtObject {
                 m.remembered, facts.moved, facts.motion)
             m.switchSet = picked.switchSet
             if (!picked.reading) return
-            var settle = SettleGuard.decide(m.state.settleGuard, picked.group, now)
+            var settle = SettleGuard.decide(m.state.settleGuard, picked.group, now,
+                LayoutDevices.loneAnchor(picked, m.state.anchorKeyboardName))
             m.state.settleGuard = settle.state
             if (!settle.follow) {
                 m.holds += 1
@@ -436,15 +437,108 @@ QtObject {
             T.equal(m.group, 1, "the re-read answers from the anchor the panel had")
         })
 
-        T.test("a toggle of the anchor itself inside the window is held, then followed", function () {
+        T.test("a toggle of the anchor itself inside the window is followed after the quiet", function () {
             var m = panel(seat({}), ite76, 0)
             establish(m, 0)
             move(m, ite76, 1, 2000)
+            T.equal(m.group, 0, "not before the seat stayed quiet around it")
             advance(m, 2200)
-            T.equal(m.holds >= 1, true, "held inside the post-reconnect window")
+            T.equal(m.group, 1, "followed inside the post-reconnect window")
+            T.equal(m.state.settleGuard.armed, true, "and the window stands")
+            move(m, ite76, 0, 2500)
+            advance(m, 2700)
+            T.equal(m.group, 0, "and back")
+        })
+
+        T.test("with the seat's flag on the typed keyboard, its toggle inside the window is followed", function () {
+            // A seat without an input method: `main` sits on the keyboard
+            // the user types on, and that keyboard is the anchor.
+            var m = panel(seat({}, ite76), ite76, 0)
+            establish(m, 0)
+            lose(m)
+            reconnect(m, 7330)
+            T.equal(m.group, 0)
+            move(m, ite76, 1, 10223)
+            advance(m, 10700)
+            T.equal(m.group, 1, "followed after the quiet")
+            T.equal(m.state.settleGuard.armed, true)
+            T.equal(m.state.anchorKeyboardName, ite76)
+        })
+
+        T.test("with the flag on the typed keyboard, a burst over it inside the window is held", function () {
+            var m = panel(seat({}, ite76), ite76, 0)
+            establish(m, 0)
+            lose(m)
+            reconnect(m, 7330)
+            move(m, ite95, 1, 10000)
+            move(m, ite76, 1, 10004)
+            move(m, at, 1, 10009)
+            advance(m, 10700)
+            T.equal(m.group, 0, "held: nothing moved alone")
+            T.equal(m.holds >= 1, true)
+        })
+
+        T.test("a toggle of another keyboard inside the window is held", function () {
+            var m = panel(seat({}), ite76, 0)
+            establish(m, 0)
+            move(m, at, 1, 2000)
+            advance(m, 2200)
+            T.equal(m.holds >= 1, true, "held: the panel does not read that keyboard")
             T.equal(m.group, 0)
             advance(m, 5000)
-            T.equal(m.group, 1, "followed once the flip persisted")
+            T.equal(m.state.anchorKeyboardName, ite76, "a held move teaches no anchor")
+            T.equal(m.group, 0, "the re-read answers from the keyboard the panel reads")
+        })
+
+        T.test("the owner's desk after install and a shell restart: every Alt+Shift is followed", function () {
+            // .scratch/dev-ease/evidence/settle-window-after-restart-2026-09-27.log,
+            // ms past 21:37:00. The helper restarted at 5058 and the panel
+            // established at 7330; the owner then toggled 8176, the keyboard
+            // the panel reads, every 140-500 ms. fcitx5 mirrors each toggle
+            // 3 ms later, as in the capture above. The toggles are the
+            // log's, to the millisecond. The start is approximated: on the
+            // desk a new shell took the first reading, here a live panel
+            // meets a new helper. The guard starts from the same state
+            // either way (nothing followed, then the establishing reading).
+            var TOGGLES = [[10223, 1], [10715, 0], [10940, 1], [11340, 0],
+                [11531, 1], [11930, 0], [12135, 1], [12274, 0], [12441, 1],
+                [12631, 0], [12791, 1]]
+            var m = panel(seat({}), ite76, 0)
+            establish(m, 0)
+            lose(m)
+            reconnect(m, 7330)
+            T.equal(m.group, 0, "the establishing reading")
+            var followed = 0
+            for (var i = 0; i < TOGGLES.length; i++) {
+                var t = TOGGLES[i][0], g = TOGGLES[i][1]
+                move(m, ite76, g, t)
+                m.seat.groups[fcitx] = g
+                line(m, "event\tlayout\t" + fcitx + "\t" + g, t + 3)
+                var until = i + 1 < TOGGLES.length ? TOGGLES[i + 1][0] - 1 : t + 1000
+                advance(m, until)
+                // A toggle the next one follows inside the quiet is not
+                // judged alone; every other one is drawn before the next.
+                if (until - t >= SeatMotion.QUIET_MS + 10) {
+                    T.equal(m.group, g, "toggle at " + t)
+                    followed += 1
+                }
+            }
+            T.equal(followed, 9, "two of the eleven had the next one inside the quiet")
+            T.equal(m.group, 1, "the caps end where the keyboard is")
+            T.equal(m.state.anchorKeyboardName, ite76)
+        })
+
+        T.test("after a click inside the window a lone toggle is held: the click's churn looks the same", function () {
+            var m = panel(seat({}), ite76, 0)
+            establish(m, 0)
+            click(m, 1, 2000)
+            advance(m, 2300)
+            T.equal(m.group, 1)
+            move(m, ite76, 0, 3000)
+            advance(m, 3300)
+            T.equal(m.group, 1, "held")
+            advance(m, 6000)
+            T.equal(m.group, 0, "followed once it persisted")
         })
 
         T.test("a keyboard toggled while the helper was away is found by the first reading after it", function () {

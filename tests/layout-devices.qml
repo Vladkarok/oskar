@@ -447,6 +447,11 @@ QtObject {
             T.equal(picked.lone, ite76)
             T.equal(Devices.anchorAfter(picked, true), ite76, "adopted once followed")
             T.equal(Devices.anchorAfter(picked, false), "", "never while the guard holds it")
+            T.equal(Devices.loneAnchor(picked, ite76), true, "the keyboard the panel reads")
+            T.equal(Devices.loneAnchor(picked, at), false, "another anchor")
+            T.equal(Devices.loneAnchor(picked, ""), false, "no anchor")
+            T.equal(Devices.loneAnchor(null, ite76), false)
+            T.equal(picked.movedAlone, ite76)
             T.equal(picked.switchSet.length, 3)
             // Without the motion facts the same seat answers the old way —
             // the consensus device and the remembered group — which is the
