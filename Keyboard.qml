@@ -249,8 +249,8 @@ Item {
     readonly property color lockedFill: root.theme.accent
     readonly property color lockedText: root.theme.background
     // Glyph colour: the facade's resolved text token (override, else the
-    // theme's foreground). The theme's muted stays the secondary text colour —
-    // "dim" is a relation to the theme's palette, not to a pinned colour.
+    // theme's foreground); the dim text is the facade's muted, which steps
+    // a custom text colour toward the panel.
     readonly property color inkMain: root.theme.textColor
     readonly property color textDim: root.theme.muted
     readonly property color textHighlightColor: root.theme.textColor
@@ -2808,7 +2808,9 @@ Item {
         capRowHeight: root.capRowHeight
         capCorner: root.capCorner
         keyBorderWidth: root.keyBorderWidth
-        popupsBackground: root.theme.popupsBackground
+        // The menu is the held cap lifted: the caps' own fill, so the
+        // text colour chosen for the keys reads on it the same way.
+        popupsBackground: root.theme.keyFill
         capEdge: root.capEdge
         hoverFill: root.hoverFill
         textDim: root.textDim

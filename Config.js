@@ -59,11 +59,17 @@ var CONFIG_FIELDS = [
     { file: "panel_background", value: "panelBackground" },
     { file: "text_color", value: "textColor" },
     { file: "accent_color", value: "accentColor" },
-    { file: "border_color", value: "borderColor" }
+    { file: "border_color", value: "borderColor" },
+    // The card's border on or off. Following the theme, it is shown
+    // exactly when Hyprland draws window borders (general:border_size).
+    { file: "panel_border", value: "panelBorder" }
 ]
 
+// The fields the Omarchy theme can answer. While following is on the theme
+// answers every one of them and a stored override is dormant; setting one
+// through the panel turns following off (withOverride).
 var APPEARANCE_FIELDS = ["capCorner", "panelRadius", "keyBackground",
-    "panelBackground", "textColor", "accentColor", "borderColor"]
+    "panelBackground", "textColor", "accentColor", "borderColor", "panelBorder"]
 
 function maintainerDefaults() {
     return {
@@ -104,7 +110,8 @@ function maintainerDefaults() {
         panelBackground: "#202020",
         textColor: "#f5f5f5",
         accentColor: "#7aa2f7",
-        borderColor: "#5a5a5a"
+        borderColor: "#5a5a5a",
+        panelBorder: true
     }
 }
 
@@ -193,7 +200,7 @@ function validFieldValue(field, value) {
         return value === "medium" || value === "large" || value === "x-large"
     if (field.file === "sound" || field.file === "follow_theme"
         || field.file === "emoji_close_after_pick"
-        || field.file === "emoji_drag")
+        || field.file === "emoji_drag" || field.file === "panel_border")
         return typeof value === "boolean"
     if (field.file === "emoji_page_size")
         return value === "medium" || value === "large" || value === "x-large"
@@ -491,11 +498,66 @@ function reloadState(previous, text) {
     return parsed.error ? { value: previous, error: parsed.error } : parsed
 }
 
-// Non-appearance settings are override then maintained default. Appearance is
-// override, then a live shared-theme token while following, then shipped fallback.
-// The map form below is the configuration fact the host suite pins; the live,
-// reactive application of the same rule is Theme.qml's, which reads the user
-// overrides over the tokens it already holds.
+function isAppearanceField(name) {
+    return APPEARANCE_FIELDS.indexOf(name) >= 0
+}
+
+// Whether a stored override is in force. Following the theme means the theme
+// answers every appearance field: an appearance override is kept in the file
+// but dormant, and comes back when following is turned off. Every other
+// setting's override is in force whenever it is stored.
+function overrideApplies(overrides, name, following) {
+    if (!overrides || !owns(overrides, name)) return false
+    return !(following && isAppearanceField(name))
+}
+
+// Whether a row's reset is worth offering: only when clearing the override
+// would change something. An ordinary setting falls back to the shipped
+// default, so an override equal to it resets to itself. An appearance field
+// falls back to the (possibly frozen) theme token, which this module cannot
+// see, so an override in force is enough.
+function resetOffered(overrides, name, following, defaults) {
+    if (!overrideApplies(overrides, name, following)) return false
+    if (isAppearanceField(name)) return true
+    return !defaults || !owns(defaults, name) || overrides[name] !== defaults[name]
+}
+
+// The next sparse map after the user sets one field. Setting an appearance
+// field while following turns following off in the same write: the value
+// just chosen must show, and it cannot while the theme answers every
+// appearance field. The other stored appearance overrides come back with it
+// — following off is the user's own look, all of it.
+function withOverride(overrides, name, value, following) {
+    var next = copyObject(overrides || {})
+    next[name] = value
+    if (following && isAppearanceField(name)) next.followTheme = false
+    return next
+}
+
+// Whether Hyprland draws window borders, from `hyprctl -j getoption
+// general:border_size`: true for a width above zero, false for zero, null
+// when the answer is not understood (hyprctl missing, a form this parser
+// does not know). Null keeps the border: a guess must not hide it.
+function hyprBorderShown(text) {
+    var answer
+    try {
+        answer = JSON.parse(text)
+    } catch (error) {
+        return null
+    }
+    if (!answer || typeof answer !== "object") return null
+    var raw = answer.int
+    if (raw === undefined && typeof answer.custom === "string") raw = Number(answer.custom.trim().split(/\s+/)[0])
+    if (typeof raw !== "number" || !isFinite(raw)) return null
+    return raw > 0
+}
+
+// Non-appearance settings are override then maintained default. Appearance,
+// while following, is the theme's answer, then the shipped fallback — a
+// stored override is dormant; with following off it is the override, then
+// the shipped fallback. The map form below is the configuration fact the
+// host suite pins; the live, reactive application of the same rule is
+// Theme.qml's, which reads the frozen tokens where this reads shipped values.
 function merge(defaults, overrides, theme) {
     var effective = copyObject(defaults)
     var follows = owns(overrides, "followTheme") ? overrides.followTheme : defaults.followTheme
@@ -507,7 +569,7 @@ function merge(defaults, overrides, theme) {
     }
     for (var j = 0; j < CONFIG_FIELDS.length; j++) {
         var valueName = CONFIG_FIELDS[j].value
-        if (owns(overrides, valueName)) effective[valueName] = overrides[valueName]
+        if (overrideApplies(overrides, valueName, follows)) effective[valueName] = overrides[valueName]
     }
     return effective
 }
@@ -667,6 +729,20 @@ function hexToRgb(hex) {
     if (n === 6)
         return { r: pair(0), g: pair(2), b: pair(4), a: 1 }
     return { a: pair(0), r: pair(2), g: pair(4), b: pair(6) }
+}
+
+// What a colour row shows when no draft stands: `text` for its hex field and
+// `square` for its indicator. While an override is in force the field shows
+// the stored value as written (a translucent key background stays
+// translucent; the drawn cap is an opaque blend), and the square shows that
+// value as #AARRGGBB, a form Qt paints (#RGBA is not). Otherwise both are the
+// colour drawn, `drawnHex`.
+function rowHex(overrides, field, following, drawnHex) {
+    var drawn = String(drawnHex || "").toLowerCase()
+    if (!overrideApplies(overrides, field, following)) return { text: drawn, square: drawn }
+    var stored = String(overrides[field]).trim().toLowerCase()
+    var channels = hexToRgb(stored)
+    return { text: stored, square: channels ? toHex(channels).toLowerCase() : drawn }
 }
 
 function colorChannels(value) {

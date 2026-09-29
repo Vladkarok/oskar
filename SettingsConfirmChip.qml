@@ -1,7 +1,8 @@
 import QtQuick
 import qs.Commons
 
-// Compact mouse-only confirm chip beside the hex field.
+// Compact mouse-only confirm chip beside a hex field: a borderless accent
+// check, the one control on a colour row that commits a draft.
 Rectangle {
     id: chip
 
@@ -15,15 +16,13 @@ Rectangle {
     radius: tokens.cornerRadius
     color: chipArea.pressed ? tokens.accent
         : chipArea.containsMouse ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
-        : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-    border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-    border.width: tokens.normalBorderWidth
+        : "transparent"
     opacity: enabled ? 1 : 0.55
 
     Text {
         anchors.centerIn: parent
         text: "\u2713"
-        color: chipArea.pressed ? tokens.background : tokens.foreground
+        color: chipArea.pressed ? tokens.background : tokens.accent
         font.family: tokens.fontFamily
         font.pixelSize: tokens.fontBodySmall
         font.bold: true
@@ -33,6 +32,7 @@ Rectangle {
         id: chipArea
         anchors.fill: parent
         hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
         enabled: chip.enabled
         preventStealing: true
         Accessible.role: Accessible.Button

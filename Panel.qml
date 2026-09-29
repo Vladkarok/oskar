@@ -50,6 +50,7 @@ Item {
     onUserOverridesChanged: {
         if (Object.keys(root.userOverrides).length === 0)
             settingsLayerHost.disarmResetAll()
+        settingsLayerHost.syncColourRows()
     }
     property var geometryState: ConfigFile.stateDefaults()
     property string configurationError: ""
@@ -88,17 +89,17 @@ Item {
     readonly property var sizePresetLabels: ({ "medium": "M", "large": "L", "x-large": "XL" })
     readonly property real sizeScale: root.sizePresetScales[root.sizePreset] || 1.0
 
-    // The colour rows' recommended swatches: up to four theme-derived
+    // The custom editor's suggestions: up to four theme-derived
     // colours — background, foreground,
     // accent, muted — with maintained fallbacks and duplicates removed,
-    // resolved through Config.js. A swatch click writes its resolved colour
-    // as an explicit override, so a later theme change never silently
-    // rewrites a choice made here.
+    // resolved through Config.js. A suggestion fills the editor's draft;
+    // Apply writes the resolved colour as an explicit override, so a later
+    // theme change never silently rewrites a choice made here.
     readonly property var colorSwatches: ConfigFile.recommendedSwatches({
-        background: tokens.background,
-        foreground: tokens.foreground,
-        accent: tokens.themeAccent,
-        muted: tokens.muted
+        background: chromeTokens.background,
+        foreground: chromeTokens.foreground,
+        accent: chromeTokens.themeAccent,
+        muted: chromeTokens.muted
     })
 
     // The colour now in force for each appearance field — override, or the
@@ -112,9 +113,11 @@ Item {
     readonly property color effectivePanelBackground: tokens.panelBackground
     readonly property color effectiveTextColor: tokens.textColor
     readonly property color effectiveAccentColor: tokens.accent
-    readonly property color effectiveBorderColor: tokens.cardBorderSpec
-        && tokens.cardBorderSpec.color
-        ? tokens.cardBorderSpec.color : "transparent"
+    // The colour the border has, or would have while it is switched off:
+    // the row shows it dimmed rather than a transparent square.
+    readonly property color effectiveBorderColor: tokens.cardBorderColorSpec
+        && tokens.cardBorderColorSpec.color
+        ? tokens.cardBorderColorSpec.color : "transparent"
     QtObject {
         id: effectiveColors
         readonly property color keyBackground: root.effectiveKeyBackground
@@ -424,6 +427,13 @@ Item {
         root.saveState()
     }
 
+    // What a colour row shows when no draft stands ({ text, square }):
+    // Config.rowHex owns the rule.
+    function rowHexForField(field) {
+        return ConfigFile.rowHex(root.userOverrides, field, root.followTheme,
+            ConfigFile.toHex(root.colorForField(field)))
+    }
+
     function colorForField(field) {
         if (field === "keyBackground") return root.effectiveKeyBackground
         if (field === "panelBackground") return root.effectivePanelBackground
@@ -522,10 +532,14 @@ Item {
     // default — the stated use case is watching a film, and the mouse already
     // makes a click.
     property bool sound: maintainedDefaults.sound
-    // Escape hatch for the independent colour schema; it follows the
-    // theme and does nothing else yet, but is persisted so the key exists
-    // from the start.
+    // On, the Omarchy theme answers every appearance field and stored
+    // appearance overrides are dormant; off, they apply (Theme.qml).
     property bool followTheme: maintainedDefaults.followTheme
+    // Whether Hyprland draws window borders (Config.hyprBorderShown), read
+    // on every open and after every config reload; null until answered.
+    property var hyprBorderShown: null
+    // A flip moves every colour at once; the rows' hex fields follow.
+    onFollowThemeChanged: settingsLayerHost.syncColourRows()
     // Absolute path of the PCM copy the click effect plays; empty until
     // resolved or when the theme has no such event.
     property string soundFile: ""
@@ -550,6 +564,40 @@ Item {
         id: tokens
         follow: root.followTheme
         overrides: root.userOverrides
+        hyprBorderShown: root.hyprBorderShown
+    }
+
+    // The settings surfaces' own chrome: the live Omarchy theme, always.
+    // The popover and the custom editor are shell chrome, not the keyboard,
+    // so they never take the keyboard's overrides or its frozen snapshot;
+    // the values their rows show still come from `tokens` and the panel.
+    Theme {
+        id: chromeTokens
+        follow: true
+        overrides: ({})
+    }
+
+    Process {
+        id: borderSizeRead
+        command: ["hyprctl", "-j", "getoption", "general:border_size"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: root.hyprBorderShown = ConfigFile.hyprBorderShown(this.text)
+        }
+    }
+
+    function readHyprBorder() {
+        borderSizeRead.running = false
+        borderSizeRead.running = true
+    }
+
+    // An edit to the Hyprland config (border_size) reaches an open panel
+    // without a reopen.
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            if (event && String(event.name) === "configreloaded") root.readHyprBorder()
+        }
     }
 
     function probeDependencies() {
@@ -1398,10 +1446,8 @@ Item {
         // exactly as clearOverride does, instead of drifting the runtime
         // map away from a file every write would refuse to touch.
         if (!root.configHealthy) return
-        var next = {}
-        for (var key in root.userOverrides) next[key] = root.userOverrides[key]
-        next[name] = value
-        root.commitOverrides(next)
+        root.commitOverrides(ConfigFile.withOverride(root.userOverrides,
+            name, value, root.followTheme))
     }
 
     // Custom colour Apply: persist the override and put that hex in the
@@ -1412,9 +1458,11 @@ Item {
     }
 
     // The sparse override map stays behind the panel API: the popover's
-    // views ask whether an override exists, they never inspect the map.
-    function hasOverride(name) {
-        return ConfigFile.owns(root.userOverrides, name)
+    // reset chips ask whether a reset would change anything, they never
+    // inspect the map. The rule is Config.resetOffered's.
+    function resetOffered(name) {
+        return ConfigFile.resetOffered(root.userOverrides, name, root.followTheme,
+            root.maintainedDefaults)
     }
 
     // Per-override reset: removing an override drops its key
@@ -1485,6 +1533,7 @@ Item {
             // the why of here-not-at-load). freeze() no-ops while a snapshot
             // is already held, and no-ops entirely while following.
             if (!root.followTheme) tokens.freeze()
+            root.readHyprBorder()
             root.refreshClipboardPreview()
             root.placed = false
             placementFallback.restart()
@@ -1800,6 +1849,9 @@ Item {
     // parsed overrides and state are already applied by the time this runs.
     Component.onCompleted: {
         root.probeDependencies()
+        // Answered before the first open, so that open draws the border
+        // Hyprland's setting says rather than dropping it a frame later.
+        root.readHyprBorder()
     }
 
     // Blocking, atomic writes leave either the old file or the complete new
@@ -3128,6 +3180,7 @@ Item {
             z: 0
             panel: root
             tokens: tokens
+            chrome: chromeTokens
             card: card
             emojiPage: emojiPage
         }

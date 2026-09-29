@@ -5,9 +5,10 @@ import "Config.js" as ConfigFile
 import "UiStrings.js" as UiStrings
 
 // WinUI-style custom colour editor: large hue×saturation square, thin
-// value slider, hex + RGB/HSV fields. Preview only until confirm. No hex
-// pad — the main OSK types into the focused field. Confirm/Cancel are
-// mouse-only.
+// value slider, hex + RGB/HSV fields, and the theme's own colours as
+// suggestions. Preview only until confirm: a suggestion fills the draft,
+// it does not write. No hex pad — the main OSK types into the focused
+// field. Confirm/Cancel are mouse-only.
 Rectangle {
     id: editor
 
@@ -646,6 +647,62 @@ Rectangle {
             }
         }
 
+        // The theme's colours (Panel.colorSwatches, up to four): a click
+        // takes one into the draft, exactly as dragging to it would.
+        Row {
+            spacing: tokens.space(6)
+
+            Text {
+                height: tokens.space(18)
+                verticalAlignment: Text.AlignVCenter
+                text: UiStrings.tr("color.editor.suggestions",
+                    editor.panel && editor.panel.uiLang)
+                color: tokens.muted
+                font.family: tokens.fontFamily
+                font.pixelSize: tokens.fontBodySmall
+            }
+
+            Repeater {
+                model: editor.panel ? editor.panel.colorSwatches : []
+
+                Rectangle {
+                    property string hex: modelData
+                    width: tokens.space(18)
+                    height: tokens.space(18)
+                    radius: tokens.space(4)
+                    color: hex
+                    border.color: suggestionArea.containsMouse ? tokens.accent
+                        : Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
+                    border.width: suggestionArea.containsMouse
+                        ? tokens.focusBorderWidth : tokens.normalBorderWidth
+
+                    MouseArea {
+                        id: suggestionArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        Accessible.role: Accessible.Button
+                        Accessible.name: UiStrings.tr("color.editor.suggestion",
+                            editor.panel && editor.panel.uiLang, [parent.hex])
+                        onClicked: {
+                            editor.syncFromColor(Qt.color(parent.hex))
+                            editor.invalid = false
+                            editor.markDraftDirty()
+                            editor.pushFields()
+                        }
+                    }
+                    HoverTooltip {
+                        text: UiStrings.tr("color.editor.suggestion",
+                            editor.panel && editor.panel.uiLang, [parent.hex])
+                        hovered: panel && panel.inputAfford
+                            ? suggestionArea.containsMouse
+                                && panel.inputAfford.tooltipHoverShows
+                            : suggestionArea.containsMouse
+                    }
+                }
+            }
+        }
+
         Row {
             spacing: tokens.space(6)
 
@@ -664,14 +721,12 @@ Rectangle {
                 radius: tokens.cornerRadius
                 color: cancelArea.pressed ? tokens.accent
                     : cancelArea.containsMouse ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha)
-                    : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-                border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-                border.width: tokens.normalBorderWidth
+                    : "transparent"
 
                 Text {
                     anchors.centerIn: parent
                     text: "\u2715"
-                    color: cancelArea.pressed ? tokens.background : tokens.foreground
+                    color: cancelArea.pressed ? tokens.background : tokens.muted
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBodySmall
                 }
@@ -680,6 +735,7 @@ Rectangle {
                     id: cancelArea
                     anchors.fill: parent
                     hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
                     Accessible.role: Accessible.Button
                     Accessible.name: UiStrings.tr("color.editor.cancelDraft", editor.panel && editor.panel.uiLang)
                     onClicked: {

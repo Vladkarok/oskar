@@ -1,16 +1,18 @@
 import QtQuick
 import QtQuick.Controls
 import qs.Commons
+import qs.Ui
 import "Config.js" as ConfigFile
 import "Dwell.js" as Dwell
 import "UiStrings.js" as UiStrings
 
 // The settings popover. Lives on its own overlay window,
 // not on the key grid: leftover-centre placement is the panel's, exclusive
-// zone stays the keyboard band. Colour rows group swatches with hex and a
-// compact confirm; Custom opens the WinUI editor. The panel is the one
-// persistence authority — this surface only reads effective values and
-// issues changes. Scrolling changes height only.
+// zone stays the keyboard band. Four sections — General, Emoji page, Dwell,
+// Appearance — each under one separator and one header, drawn with the
+// shell's own panel parts. The panel is the one persistence authority —
+// this surface only reads effective values and issues changes. Scrolling
+// changes height only.
 Rectangle {
     id: popoverRoot
 
@@ -18,10 +20,14 @@ Rectangle {
     // both key off this flag.
     visible: false
 
-    // The panel (root) and its live Theme facade. The panel is the one
-    // home of config state and writes; this file is presentation.
+    // The panel (root), the chrome this card draws with (the live Omarchy
+    // theme, whatever the keyboard's look), and the keyboard's own Theme
+    // facade, read only for the values the rows show (radii, border on/off).
+    // The panel is the one home of config state and writes; this file is
+    // presentation.
     property var panel
     property var tokens
+    property var keyTokens
 
     // Overlay size the popover may occupy. Placement (leftover centre) is
     // applied by the panel as x/y; this only clamps to the output.
@@ -48,16 +54,30 @@ Rectangle {
     // A fresh open never shows a stale hex draft — the focus exception
     // and the confirmation state die with the surface.
     function resetRowDrafts() {
-        keyBackgroundRow.resetDraft()
-        panelBackgroundRow.resetDraft()
-        textColorRow.resetDraft()
-        accentColorRow.resetDraft()
-        borderColorRow.resetDraft()
+        var rows = colourRows()
+        for (var i = 0; i < rows.length; i++) rows[i].resetDraft()
     }
 
     function colourRows() {
         return [keyBackgroundRow, panelBackgroundRow, textColorRow,
             accentColorRow, borderColorRow]
+    }
+
+    // Every row not being typed into takes the colour now in force. Called
+    // on a follow flip and on any override change (reset-all, an external
+    // edit), after the change settles. The rows write their hex fields
+    // imperatively, so this does not rely on their effective-colour binding
+    // notifying (SettingsColorRow.showCommitted).
+    function syncColourRows() {
+        Qt.callLater(popoverRoot.syncColourRowsNow)
+    }
+    function syncColourRowsNow() {
+        var rows = colourRows()
+        for (var i = 0; i < rows.length; i++) {
+            // A draft the user typed and has not applied is theirs.
+            if (rows[i].editingThis || rows[i].draftDirty) continue
+            rows[i].showCommitted()
+        }
     }
 
     function adoptAppliedColour(fieldName, hex) {
@@ -73,8 +93,7 @@ Rectangle {
     // Current-content paste into the active hex draft: insert locally
     // into the focused row field; never ask the helper to type.
     function insertHexText(text) {
-        var rows = [keyBackgroundRow, panelBackgroundRow, textColorRow,
-            accentColorRow, borderColorRow]
+        var rows = colourRows()
         for (var i = 0; i < rows.length; i++) {
             var row = rows[i]
             if (panel.hexEditing && panel.hexEditField === row.fieldName) {
@@ -114,8 +133,8 @@ Rectangle {
             }
         }
     }
-    // The row labels in the UI's language: this array feeds the width
-    // probe below, so the column sizes itself to the WIDEST
+    // The row labels in the UI's language, one per row that exists: this
+    // array feeds the width probe, so the column sizes itself to the WIDEST
     // TRANSLATION while the language stands — a Cyrillic label must not
     // clip against a column measured in English.
     readonly property var settingsRowLabels:
@@ -123,21 +142,21 @@ Rectangle {
          UiStrings.tr("settings.row.size", panel.uiLang),
          UiStrings.tr("settings.row.language", panel.uiLang),
          UiStrings.tr("settings.row.inputProfile", panel.uiLang),
+         UiStrings.tr("settings.row.superMark", panel.uiLang),
+         UiStrings.tr("settings.row.sound", panel.uiLang),
          UiStrings.tr("settings.row.emojiPicking", panel.uiLang),
          UiStrings.tr("settings.row.emojiPageSize", panel.uiLang),
          UiStrings.tr("settings.row.emojiDrag", panel.uiLang),
-         UiStrings.tr("settings.row.superMark", panel.uiLang),
-         UiStrings.tr("settings.row.sound", panel.uiLang),
-         UiStrings.tr("settings.row.followTheme", panel.uiLang),
          UiStrings.tr("settings.row.dwellTyping", panel.uiLang),
          UiStrings.tr("settings.row.dwellDelay", panel.uiLang),
+         UiStrings.tr("settings.row.look", panel.uiLang),
          UiStrings.tr("settings.row.keyRadius", panel.uiLang),
          UiStrings.tr("settings.row.panelRadius", panel.uiLang),
          UiStrings.tr("settings.row.keyBackground", panel.uiLang),
          UiStrings.tr("settings.row.panelBackground", panel.uiLang),
          UiStrings.tr("settings.row.textColor", panel.uiLang),
          UiStrings.tr("settings.row.accentColor", panel.uiLang),
-         UiStrings.tr("settings.row.borderColor", panel.uiLang)]
+         UiStrings.tr("settings.row.panelBorder", panel.uiLang)]
     readonly property real labelColumnWidth: {
         var widest = 0
         for (var i = 0; i < labelProbe.children.length; i++) {
@@ -160,56 +179,42 @@ Rectangle {
         return panel.colorForField(fieldName)
     }
 
-    // The widest control block any row lays down, measured from the same
-    // compact pieces the colour rows draw — the committed-colour indicator
-    // square, swatches, hex, confirm chip and Custom. The emoji chooser
-    // sits inside it.
+    // The widest non-choice control line: the border row — its switch, the
+    // switch's reset, then the colour group (square, hex, check slot,
+    // reset). The other colour rows are that line without the switch.
     Row {
         id: controlProbe
         visible: false
         spacing: tokens.space(6)
 
+        Rectangle { width: probeSwitch.trackWidth; height: 1 }
+        ToggleSwitch { id: probeSwitch; visible: false }
         Rectangle { width: tokens.space(24); height: 1 }
-
-        Repeater {
-            model: 4
-            Rectangle { width: tokens.space(18); height: 1 }
-        }
-
+        Rectangle { width: tokens.space(24); height: 1 }
         Rectangle { width: tokens.space(76); height: 1 }
         Rectangle { width: tokens.space(24); height: 1 }
-
-        Rectangle {
-            width: customProbeLabel.implicitWidth + tokens.space(10) * 2
-            height: 1
-            Text {
-                id: customProbeLabel
-                text: UiStrings.tr("common.custom", panel.uiLang)
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-            }
-        }
-
         Rectangle { width: tokens.space(24); height: 1 }
     }
-    // The widest segmented row (the Super mark's five segments) plus its
-    // reset chip must fit the zone too, or the chip is cut off at the
-    // popover's edge.
-    readonly property real widestSegmented: Math.max(tokens.space(320),
-        languageControl.neededWidth, superMarkControl.neededWidth)
+    // The widest choice row plus its reset chip must fit the zone too, or
+    // the chip is cut off at the popover's edge. The shell's chips size to
+    // their labels (in the theme's mono face a bold selected label is the
+    // same width as a plain one, so choosing never reflows the row).
+    readonly property real widestChoice: Math.max(modeControl.implicitWidth,
+        sizeControl.implicitWidth, languageControl.implicitWidth,
+        inputProfileControl.implicitWidth, superMarkControl.implicitWidth,
+        emojiPickingControl.implicitWidth, emojiPageSizeControl.implicitWidth,
+        emojiDragControl.implicitWidth, lookControl.implicitWidth)
     readonly property real controlZoneWidth: Math.max(controlProbe.implicitWidth,
-        widestSegmented + tokens.space(6) + tokens.space(24))
+        widestChoice + tokens.space(6) + tokens.space(24))
 
     // Fixed compact width — fixed by CONTENT: the control column x plus the
     // widest control block any row lays down, plus the popover's own
     // margins. Scaled by the theme's spacing scale, the same ui scale the
     // fonts and paddings inside derive from, rather than tracked to the
-    // keyboard's size preset, which scales keys, not text. The emoji
-    // chooser's closed control fits inside the zone, so no PATH answer can
-    // widen the popover. Clamped to the card so a long label or large
-    // theme font cannot overflow the keyboard.
+    // keyboard's size preset, which scales keys, not text. Clamped to the
+    // card so a long label or large theme font cannot overflow the keyboard.
     readonly property real naturalWidth: tokens.space(10) * 2 + controlColumnX
-        + Math.max(controlZoneWidth, tokens.space(150) + tokens.space(30))
+        + Math.max(controlZoneWidth, tokens.space(180))
     readonly property real maxPopoverWidth: hostWidth > 0
         ? Math.max(0, hostWidth - tokens.space(6) * 2) : naturalWidth
     width: maxPopoverWidth > 0 ? Math.min(naturalWidth, maxPopoverWidth)
@@ -218,8 +223,6 @@ Rectangle {
         ? Math.max(0, hostHeight - tokens.space(6) * 2) : tokens.space(120)
     height: Math.min(Math.max(contentColumn.implicitHeight + tokens.space(10) * 2,
         tokens.space(120)), maxPopoverHeight)
-    // The card's own panel-radius token — an override on panelRadius is
-    // honoured here exactly as on the keyboard.
     radius: tokens.panelRadius
     // One step distinct from the card beneath.
     color: tokens.tintTowardForeground(tokens.panelBackground, tokens.hoverFillAlpha)
@@ -242,43 +245,104 @@ Rectangle {
 
     // ---- shared row parts ----
 
-    component SettingsSwitch: Rectangle {
-        id: switchTrack
-        property bool checked: false
-        signal toggled()
-        width: tokens.space(40)
-        height: tokens.space(22)
-        radius: height / 2
-        color: switchTrack.checked ? tokens.accent
-            : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-        border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-        border.width: tokens.normalBorderWidth
+    // A section's head: the shell's separator and section header, the pair
+    // every Omarchy panel opens a section with.
+    component SettingsSection: Column {
+        property string title: ""
+        width: parent ? parent.width : 0
+        spacing: tokens.space(6)
+        topPadding: tokens.space(3)
 
-        Rectangle {
-            anchors.verticalCenter: parent.verticalCenter
-            x: switchTrack.checked ? parent.width - width - 2 : 2
-            width: parent.height - 4
-            height: parent.height - 4
-            radius: width / 2
-            color: switchTrack.checked ? tokens.background : tokens.foreground
+        PanelSeparator {
+            foreground: tokens.foreground
         }
-
-        MouseArea {
-            anchors.fill: parent
-            enabled: panel.configHealthy
-            onClicked: switchTrack.toggled()
+        PanelSectionHeader {
+            text: parent.title
+            foreground: tokens.foreground
+            fontFamily: tokens.fontFamily
         }
     }
 
-    // Radius rows: a compact integer stepper. The ends refuse to step past
-    // themselves. One click, one override, one atomic write. `step` is the
-    // increment (radii step by one; the dwell delay steps by 100 ms).
+    component SettingsRowLabel: Text {
+        anchors {
+            left: parent.left
+            verticalCenter: parent.verticalCenter
+        }
+        color: tokens.foreground
+        font.family: tokens.fontFamily
+        font.pixelSize: tokens.fontBody
+    }
+
+    // The shell's switch, track aligned with every other row's control
+    // column (its hover ring pads outside the track, so the switch sits
+    // one pad left of the column). Refuses clicks while a malformed file
+    // stands.
+    component SettingsSwitch: ToggleSwitch {
+        x: popoverRoot.controlColumnX - cursorPad
+        foreground: tokens.foreground
+        accent: tokens.accent
+        interactive: panel.configHealthy
+        // The ring's pad is part of the geometry above; it stays while the
+        // switch refuses clicks.
+        cursorRing: true
+    }
+
+    // The shell's pick-one chips. Never a Tab stop: this surface takes no
+    // keyboard focus. The group emits on every click; the rows write only
+    // a change. Rows handle `picked`, relayed from the group's `changed`:
+    // qmllint cannot match an `onChanged` handler to a declared signal,
+    // and the static check gates on exactly that message.
+    component SettingsChoice: ButtonGroup {
+        id: choice
+        signal picked(string value)
+        Component.onCompleted: choice.changed.connect(choice.picked)
+        x: popoverRoot.controlColumnX
+        focusable: false
+        spacing: tokens.space(4)
+        foreground: tokens.foreground
+        accent: tokens.accent
+        fontFamily: tokens.fontFamily
+        fontSize: tokens.fontBody
+        enabled: panel.configHealthy
+    }
+
+    // One step button of the stepper: the shell's bordered button, dimmed
+    // at the end it cannot pass.
+    component StepButton: Button {
+        id: stepButton
+        property bool canStep: true
+        property string accessName: ""
+        property string tipText: ""
+        width: tokens.space(24)
+        height: tokens.space(24)
+        horizontalPadding: 0
+        verticalPadding: 0
+        bordered: true
+        foreground: tokens.foreground
+        accent: tokens.accent
+        fontFamily: tokens.fontFamily
+        fontSize: tokens.fontBodySmall
+        opacity: canStep ? 1 : 0.4
+        Accessible.role: Accessible.Button
+        Accessible.name: accessName
+        HoverTooltip {
+            text: stepButton.tipText
+            hovered: popoverRoot.panel.inputAfford.tooltipHoverShows
+                ? stepButton.hot : false
+        }
+    }
+
+    // Radius and delay rows: a compact integer stepper. The ends refuse to
+    // step past themselves. One click, one override, one atomic write.
+    // `step` is the increment (radii step by one; the dwell delay steps by
+    // 100 ms). `writable` false keeps the value shown and takes no clicks.
     component SettingsStepper: Item {
         id: stepper
         property int value: 0
         property int minimum: 0
         property int maximum: 24
         property int step: 1
+        property bool writable: true
         signal stepped(int value)
         width: stepRow.width
         height: tokens.space(24)
@@ -294,38 +358,13 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             spacing: tokens.space(6)
 
-            Rectangle {
-                width: tokens.space(24)
-                height: tokens.space(24)
-                radius: tokens.cornerRadius
-                color: stepDownArea.pressed ? tokens.accent
-                    : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-                border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-                border.width: tokens.normalBorderWidth
-                opacity: stepper.value > stepper.minimum ? 1 : 0.4
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "\u2212"
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBodySmall
-                }
-
-                MouseArea {
-                    id: stepDownArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    Accessible.role: Accessible.Button
-                    Accessible.name: UiStrings.tr("access.decreaseValue", panel.uiLang)
-                    enabled: panel.configHealthy
-                    onClicked: stepper.bump(-1)
-                }
-                HoverTooltip {
-                    text: UiStrings.tr("settings.decrease", panel.uiLang)
-                    hovered: popoverRoot.panel.inputAfford.tooltipHoverShows
-                        ? stepDownArea.containsMouse : false
-                }
+            StepButton {
+                text: "−"
+                canStep: stepper.value > stepper.minimum
+                enabled: panel.configHealthy && stepper.writable
+                accessName: UiStrings.tr("access.decreaseValue", panel.uiLang)
+                tipText: UiStrings.tr("settings.decrease", panel.uiLang)
+                onClicked: stepper.bump(-1)
             }
 
             Item {
@@ -346,134 +385,23 @@ Rectangle {
                 }
             }
 
-            Rectangle {
-                width: tokens.space(24)
-                height: tokens.space(24)
-                radius: tokens.cornerRadius
-                color: stepUpArea.pressed ? tokens.accent
-                    : Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-                border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-                border.width: tokens.normalBorderWidth
-                opacity: stepper.value < stepper.maximum ? 1 : 0.4
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "+"
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBodySmall
-                }
-
-                MouseArea {
-                    id: stepUpArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    Accessible.role: Accessible.Button
-                    Accessible.name: UiStrings.tr("access.increaseValue", panel.uiLang)
-                    enabled: panel.configHealthy
-                    onClicked: stepper.bump(1)
-                }
-                HoverTooltip {
-                    text: UiStrings.tr("settings.increase", panel.uiLang)
-                    hovered: popoverRoot.panel.inputAfford.tooltipHoverShows
-                        ? stepUpArea.containsMouse : false
-                }
+            StepButton {
+                text: "+"
+                canStep: stepper.value < stepper.maximum
+                enabled: panel.configHealthy && stepper.writable
+                accessName: UiStrings.tr("access.increaseValue", panel.uiLang)
+                tipText: UiStrings.tr("settings.increase", panel.uiLang)
+                onClicked: stepper.bump(1)
             }
         }
     }
 
-    // Section hairline: the one separator inside the settings card.
-    component SettingsHairline: Rectangle {
+    component SettingsHint: Text {
         width: parent ? parent.width : 0
-        height: 1
-        color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-    }
-
-    // Segmented chip group — picking one of a few values (mode, size). One
-    // bordered container; the active segment is accent-OUTLINED with accent
-    // text, never solid-filled: a settings surface reports what is in
-    // force, not what is pressed. Fixed-width groups slice the container
-    // equally, so choosing never reflows the row. `neededWidth` is the
-    // width at which every slice fits its label (bold, as the active one
-    // draws it); a row whose labels vary with the seat grows to it.
-    component SettingsSegmented: Item {
-        id: segmented
-        property var segments: [] // [{ value, label }]
-        property string current: ""
-        signal picked(string value)
-        width: tokens.space(150)
-        height: tokens.space(26)
-
-        Row {
-            id: labelWidths
-            visible: false
-            Repeater {
-                model: segmented.segments
-                Text {
-                    text: modelData.label
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
-                    font.bold: true
-                }
-            }
-        }
-        readonly property real neededWidth: {
-            var widest = 0
-            for (var i = 0; i < labelWidths.children.length; i++)
-                widest = Math.max(widest, labelWidths.children[i].implicitWidth || 0)
-            var n = segmented.segments.length
-            return n * (widest + tokens.space(12)) + 4 + 2 * Math.max(0, n - 1)
-        }
-
-        Rectangle {
-            anchors.fill: parent
-            radius: tokens.cornerRadius
-            color: Util.alpha(tokens.foreground, tokens.normalFillAlpha)
-            border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-            border.width: tokens.normalBorderWidth
-        }
-
-        Row {
-            id: contentRow
-            anchors.fill: parent
-            anchors.margins: 2
-            spacing: 2
-
-            Repeater {
-                model: segmented.segments
-
-                Rectangle {
-                    property string segmentValue: modelData.value
-                    property string segmentText: modelData.label
-                    property bool active: segmentValue === segmented.current
-                    width: (segmented.width - 4 - 2 * (segmented.segments.length - 1))
-                        / segmented.segments.length
-                    height: parent.height
-                    radius: Math.max(0, (tokens.cornerRadius || 0) - 2)
-                    color: segmentedArea.containsMouse && !active
-                        ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha) : "transparent"
-                    border.color: active ? tokens.accent : "transparent"
-                    border.width: active ? tokens.normalBorderWidth : 0
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: parent.segmentText
-                        color: parent.active ? tokens.accent : tokens.foreground
-                        font.family: tokens.fontFamily
-                        font.pixelSize: tokens.fontBody
-                        font.bold: parent.active
-                    }
-
-                    MouseArea {
-                        id: segmentedArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        enabled: panel.configHealthy
-                        onClicked: segmented.picked(parent.segmentValue)
-                    }
-                }
-            }
-        }
+        color: tokens.muted
+        font.family: tokens.fontFamily
+        font.pixelSize: tokens.fontBodySmall
+        wrapMode: Text.Wrap
     }
 
     // ---- content ----
@@ -509,57 +437,42 @@ Rectangle {
             Text {
                 width: parent.width
                 text: UiStrings.tr("settings.title", panel.uiLang)
-                color: tokens.muted
+                color: tokens.foreground
                 font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
+                font.pixelSize: tokens.fontBody
+                font.bold: true
             }
 
-            SettingsHairline {}
+            // ---- GENERAL ----
 
-            // MODE. The chips name the STATE, unlike the bar's button which
+            SettingsSection {
+                title: UiStrings.tr("settings.section.general", panel.uiLang)
+            }
+
+            // Mode. The chips name the STATE, unlike the bar's button which
             // names the action.
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.section.mode", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-            }
-
             Item {
                 width: parent.width
                 height: tokens.space(28)
                 opacity: panel.configHealthy ? 1 : 0.55
 
-                Text {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
+                SettingsRowLabel {
                     text: UiStrings.tr("settings.row.mode", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
                 }
 
-                SettingsSegmented {
+                SettingsChoice {
                     id: modeControl
-                    x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
-                    }
-                    // 160 (not the 150 default) — the localized state
-                    // words ("Закреплена" measures 72px at fontBody)
-                    // need the 75px segments this gives.
-                    width: tokens.space(160)
-                    segments: [
+                    anchors.verticalCenter: parent.verticalCenter
+                    options: [
                         { value: ConfigFile.MODE_DOCKED,
                           label: UiStrings.tr("settings.mode.docked", panel.uiLang) },
                         { value: ConfigFile.MODE_FLOATING,
                           label: UiStrings.tr("settings.mode.floating", panel.uiLang) }
                     ]
-                    current: panel.mode
-                    onPicked: function (value) { panel.setMode(value) }
+                    value: panel.mode
+                    onPicked: function (picked) {
+                        if (picked !== modeControl.value) panel.setMode(picked)
+                    }
                 }
 
                 SettingsResetChip {
@@ -574,46 +487,26 @@ Rectangle {
                 }
             }
 
-            SettingsHairline {}
-
-            // SIZE: the direct chooser. Choosing the active preset is a
+            // Size: the direct chooser. Choosing the active preset is a
             // no-op; a different one re-derives the floating anchor exactly
             // once, through chooseSizePreset.
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.section.size", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-            }
-
             Item {
                 width: parent.width
                 height: tokens.space(28)
                 opacity: panel.configHealthy ? 1 : 0.55
 
-                Text {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
+                SettingsRowLabel {
                     text: UiStrings.tr("settings.row.size", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
                 }
 
-                SettingsSegmented {
+                SettingsChoice {
                     id: sizeControl
-                    x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
-                    }
-                    segments: panel.sizePresetOrder.map(function (preset) {
+                    anchors.verticalCenter: parent.verticalCenter
+                    options: panel.sizePresetOrder.map(function (preset) {
                         return { value: preset, label: panel.sizePresetLabels[preset] }
                     })
-                    current: panel.sizePreset
-                    onPicked: function (value) { panel.chooseSizePreset(value) }
+                    value: panel.sizePreset
+                    onPicked: function (picked) { panel.chooseSizePreset(picked) }
                 }
 
                 SettingsResetChip {
@@ -628,58 +521,25 @@ Rectangle {
                 }
             }
 
-            SettingsHairline {}
-
-            // ---- LANGUAGE ----
-            //
-            // The override every word on this card hangs off: "auto"
-            // follows the active layout (ua -> Ukrainian, ru -> Russian,
-            // anything else English — the shipped searchPlaceholder
-            // mapping), en/ru/uk pin the UI regardless of the layout.
-            // The three pinned choices are endonyms — a chooser's
-            // entries name themselves in their own language, whatever
-            // the rest of the card is speaking — so only "Auto"
-            // translates. Four labels need the wider control the Super
-            // mark row already uses.
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.section.language", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-            }
-
+            // Interface language: the override every word on this card
+            // hangs off. "auto" follows the active layout (ua -> Ukrainian,
+            // ru -> Russian, anything else English — the shipped
+            // searchPlaceholder mapping), en/ru/uk pin the UI regardless of
+            // the layout. The pinned choices are endonyms — a chooser's
+            // entries name themselves in their own language, whatever the
+            // rest of the card is speaking — so only "Auto" translates.
             Item {
                 width: parent.width
                 height: tokens.space(28)
                 opacity: panel.configHealthy ? 1 : 0.55
 
-                Text {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
+                SettingsRowLabel {
                     text: UiStrings.tr("settings.row.language", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
                 }
 
-                SettingsSegmented {
+                SettingsChoice {
                     id: languageControl
-                    x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
-                    }
-                    // Four labels incl. the 72px "Українська" (measured
-                    // at fontBody in the mono face): 300 space units
-                    // slice 72.5px segments, and control+reset chip
-                    // stay inside the measured control zone even when the
-                    // UI language narrows the "Custom" probe that sizes
-                    // it — the superMark row's own arithmetic. More
-                    // languages than that fits widen the row to their
-                    // labels, and the popover's zone with it.
-                    width: Math.max(tokens.space(300), neededWidth)
+                    anchors.verticalCenter: parent.verticalCenter
                     readonly property var languageLabels: ({
                         auto: UiStrings.tr("settings.lang.auto", panel.uiLang),
                         en: "English", ru: "Русский", uk: "Українська"
@@ -688,14 +548,15 @@ Rectangle {
                     // Auto and English always, plus each translation
                     // whose layout is installed — a us,ua seat never
                     // sees a Русский segment it cannot type.
-                    segments: UiStrings.languageChoices(panel.seatLayoutCodes)
+                    options: UiStrings.languageChoices(panel.seatLayoutCodes)
                         .map(function (code) {
                             return { value: code,
                                 label: languageControl.languageLabels[code] }
                         })
-                    current: panel.uiLanguageDisplay
-                    onPicked: function (value) {
-                        panel.setOverride("uiLanguage", value)
+                    value: panel.uiLanguageDisplay
+                    onPicked: function (picked) {
+                        if (picked !== languageControl.value)
+                            panel.setOverride("uiLanguage", picked)
                     }
                 }
 
@@ -711,69 +572,35 @@ Rectangle {
                 }
             }
 
-            SettingsHairline {}
-
-            // ---- INPUT ----
-            //
-            // Which pointer world the panel answers as: auto (the
-            // default) activates the touch affordances when the panel
-            // observes touch events — a 2-in-1 flipping modes never
+            // Pointer profile: which pointer world the panel answers as.
+            // auto (the default) activates the touch affordances when the
+            // panel observes touch events — a 2-in-1 flipping modes never
             // visits Settings — and mouse/touch pin the world over the
             // observation. The effective behaviour (release-typing, no
             // dwell, grown chrome targets) is InputProfile.js's table;
             // this row only writes the setting.
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.section.input", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-            }
-
             Item {
                 width: parent.width
                 height: tokens.space(28)
                 opacity: panel.configHealthy ? 1 : 0.55
 
-                Text {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
+                SettingsRowLabel {
                     text: UiStrings.tr("settings.row.inputProfile", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
                 }
 
-                SettingsSegmented {
+                SettingsChoice {
                     id: inputProfileControl
-                    x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
-                    }
-                    // Three segments of ~47px; the widest plain label
-                    // ("Сенсор") measures 43px at fontBody. While auto has
-                    // flipped to touch, the Auto segment carries the
-                    // "Auto+touch" notice (72px) and the row widens to give
-                    // it a slice — the wide row rides the SAME observation
-                    // fact the label keys on, so notice and width cannot
-                    // disagree. 180 (not 150): the widest shipped label is
-                    // Italian "Tattile" (measured 50.3px mono at fontBody).
-                    width: panel.touchObserved
-                        && panel.inputProfile === "auto"
-                        && !panel.dwellEnabled
-                        ? tokens.space(240) : tokens.space(180)
+                    anchors.verticalCenter: parent.verticalCenter
                     readonly property var profileLabels: ({
                         auto: UiStrings.tr("settings.profile.auto", panel.uiLang),
                         mouse: UiStrings.tr("settings.profile.mouse", panel.uiLang),
                         touch: UiStrings.tr("settings.profile.touch", panel.uiLang)
                     })
-                    segments: ConfigFile.INPUT_PROFILES.map(function (value) {
+                    options: ConfigFile.INPUT_PROFILES.map(function (value) {
                         var label = inputProfileControl.profileLabels[value]
                         // The flip made visible: when the OBSERVATION
-                        // flipped auto to touch, the AUTO segment says so
-                        // — typing semantics changed and the user deserves
+                        // flipped auto to touch, the AUTO chip says so —
+                        // typing semantics changed and the user deserves
                         // the one-word notice where the escape lives. The
                         // fact is the OBSERVATION (a synthesized press
                         // arrived), not the effective profile: a
@@ -790,9 +617,10 @@ Rectangle {
                                 panel.uiLang)
                         return { value: value, label: label }
                     })
-                    current: panel.inputProfile
-                    onPicked: function (value) {
-                        panel.setOverride("inputProfile", value)
+                    value: panel.inputProfile
+                    onPicked: function (picked) {
+                        if (picked !== inputProfileControl.value)
+                            panel.setOverride("inputProfile", picked)
                     }
                 }
 
@@ -808,181 +636,21 @@ Rectangle {
                 }
             }
 
-            SettingsHairline {}
-
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.section.emoji", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-            }
-
-            Item {
-                width: parent.width
-                height: tokens.space(28)
-                opacity: panel.configHealthy ? 1 : 0.55
-                Text {
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: UiStrings.tr("settings.row.emojiPicking", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
-                }
-                SettingsSegmented {
-                    id: emojiPickingControl
-                    x: popoverRoot.controlColumnX
-                    anchors.verticalCenter: parent.verticalCenter
-                    segments: [
-                        { value: false,
-                          label: UiStrings.tr("settings.emoji.keepOpen", panel.uiLang) },
-                        { value: true,
-                          label: UiStrings.tr("settings.emoji.close", panel.uiLang) }
-                    ]
-                    current: panel.emojiCloseAfterPick
-                    onPicked: function (value) {
-                        // The segmented control's signal carries strings;
-                        // this row is the one boolean among the segments,
-                        // and writing "true"/"false" to config.json
-                        // resurrects exactly the legacy string form the
-                        // loader's heal exists to cure — every other
-                        // boolean saves as a real boolean.
-                        panel.setOverride("emojiCloseAfterPick",
-                            value === "true")
-                    }
-                }
-                SettingsResetChip {
-                    anchors.left: emojiPickingControl.right
-                    anchors.leftMargin: tokens.space(6)
-                    anchors.verticalCenter: parent.verticalCenter
-                    tokens: popoverRoot.tokens
-                    panel: popoverRoot.panel
-                    overrideName: "emojiCloseAfterPick"
-                }
-            }
-
-            Item {
-                width: parent.width
-                height: tokens.space(28)
-                opacity: panel.configHealthy ? 1 : 0.55
-                Text {
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: UiStrings.tr("settings.row.emojiPageSize", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
-                }
-                SettingsSegmented {
-                    id: emojiPageSizeControl
-                    x: popoverRoot.controlColumnX
-                    anchors.verticalCenter: parent.verticalCenter
-                    segments: [
-                        { value: "medium", label: "M" },
-                        { value: "large", label: "L" },
-                        { value: "x-large", label: "XL" }
-                    ]
-                    current: panel.emojiPageSize
-                    onPicked: function (value) {
-                        panel.setOverride("emojiPageSize", value)
-                    }
-                }
-                SettingsResetChip {
-                    anchors.left: emojiPageSizeControl.right
-                    anchors.leftMargin: tokens.space(6)
-                    anchors.verticalCenter: parent.verticalCenter
-                    tokens: popoverRoot.tokens
-                    panel: popoverRoot.panel
-                    overrideName: "emojiPageSize"
-                }
-            }
-
-            // Whether the emoji page grows its drag strip. The picking
-            // row's own shape — two boolean segments naming the
-            // behaviour, a reset chip — and the same string-carrying
-            // signal rule (the value arrives as "true"/"false" and must
-            // be written a real boolean).
-            Item {
-                width: parent.width
-                height: tokens.space(28)
-                opacity: panel.configHealthy ? 1 : 0.55
-                Text {
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: UiStrings.tr("settings.row.emojiDrag", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
-                }
-                SettingsSegmented {
-                    id: emojiDragControl
-                    x: popoverRoot.controlColumnX
-                    anchors.verticalCenter: parent.verticalCenter
-                    segments: [
-                        { value: false,
-                          label: UiStrings.tr("settings.emojiDrag.inPlace", panel.uiLang) },
-                        { value: true,
-                          label: UiStrings.tr("settings.emojiDrag.movable", panel.uiLang) }
-                    ]
-                    current: panel.emojiDrag
-                    onPicked: function (value) {
-                        panel.setOverride("emojiDrag", value === "true")
-                    }
-                }
-                SettingsResetChip {
-                    anchors.left: emojiDragControl.right
-                    anchors.leftMargin: tokens.space(6)
-                    anchors.verticalCenter: parent.verticalCenter
-                    tokens: popoverRoot.tokens
-                    panel: popoverRoot.panel
-                    overrideName: "emojiDrag"
-                }
-            }
-
-            SettingsHairline {}
-
-            // SUPER MARK: what the Super cap draws — the word by
-            // default, a mark by choice. Five segments on the same
-            // SettingsSegmented the Mode and Size rows use; the instance is
-            // wider because five labels cannot fit the two-row width
-            // ("Omarchy", "Windows" and "Penguin" each measure ~50px against
-            // the default's ~28px segment), and the card's measured control
-            // zone (~328 space units) holds the wider control plus its reset
-            // chip with room to spare. Choosing the standing mark is a no-op
-            // — no movement, no config write — like choosing the active
-            // preset.
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.section.superMark", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-            }
-
+            // Super mark: what the Super cap draws — the word by default, a
+            // mark by choice. Choosing the standing mark is a no-op — no
+            // movement, no config write — like choosing the active preset.
             Item {
                 width: parent.width
                 height: tokens.space(28)
                 opacity: panel.configHealthy ? 1 : 0.55
 
-                Text {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
+                SettingsRowLabel {
                     text: UiStrings.tr("settings.row.superMark", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
                 }
 
-                SettingsSegmented {
+                SettingsChoice {
                     id: superMarkControl
-                    x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
-                    }
-                    width: popoverRoot.widestSegmented
+                    anchors.verticalCenter: parent.verticalCenter
                     // Omarchy, Windows and macOS are names and stay; the
                     // word and the penguin translate.
                     readonly property var superMarkLabels:
@@ -990,11 +658,11 @@ Rectangle {
                            omarchy: "Omarchy", windows: "Windows",
                            macos: "macOS",
                            penguin: UiStrings.tr("settings.superMark.penguin", panel.uiLang) })
-                    segments: ConfigFile.SUPER_MARKS.map(function (mark) {
+                    options: ConfigFile.SUPER_MARKS.map(function (mark) {
                         return { value: mark, label: superMarkControl.superMarkLabels[mark] }
                     })
-                    current: panel.superMark
-                    onPicked: function (value) { panel.setSuperMark(value) }
+                    value: panel.superMark
+                    onPicked: function (picked) { panel.setSuperMark(picked) }
                 }
 
                 SettingsResetChip {
@@ -1009,18 +677,8 @@ Rectangle {
                 }
             }
 
-            SettingsHairline {}
-
-            // SOUND: the compact pill switch, whose on state is the accent —
-            // the same immediate setOverride path every other control uses.
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.section.sound", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-            }
-
+            // Sound: the same immediate setOverride path every other control
+            // uses.
             Item {
                 width: parent.width
                 // The unavailable note takes a line of its own: the row
@@ -1030,19 +688,12 @@ Rectangle {
                     ? tokens.space(44) : tokens.space(28)
                 opacity: panel.configHealthy ? 1 : 0.55
 
-                Text {
+                SettingsRowLabel {
                     id: soundRowLabel
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                        verticalCenterOffset:
-                            panel.sound && panel.soundUnavailable
-                                ? -tokens.space(7) : 0
-                    }
+                    anchors.verticalCenterOffset:
+                        panel.sound && panel.soundUnavailable
+                            ? -tokens.space(7) : 0
                     text: UiStrings.tr("settings.row.sound", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
                 }
 
                 Text {
@@ -1060,18 +711,17 @@ Rectangle {
 
                 SettingsSwitch {
                     id: soundSwitch
-                    x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
-                    }
+                    anchors.verticalCenter: parent.verticalCenter
                     checked: panel.sound
+                    Accessible.role: Accessible.CheckBox
+                    Accessible.name: soundRowLabel.text
+                    Accessible.checked: panel.sound
                     onToggled: panel.setOverride("sound", !panel.sound)
                 }
 
                 SettingsResetChip {
                     anchors {
                         left: soundSwitch.right
-                        leftMargin: tokens.space(6)
                         verticalCenter: parent.verticalCenter
                     }
                     tokens: popoverRoot.tokens
@@ -1080,55 +730,115 @@ Rectangle {
                 }
             }
 
-            SettingsHairline {}
+            // ---- EMOJI PAGE ----
 
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.section.theme", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
+            SettingsSection {
+                title: UiStrings.tr("settings.section.emoji", panel.uiLang)
             }
 
             Item {
                 width: parent.width
                 height: tokens.space(28)
                 opacity: panel.configHealthy ? 1 : 0.55
-
-                Text {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
-                    text: UiStrings.tr("settings.row.followTheme", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
+                SettingsRowLabel {
+                    text: UiStrings.tr("settings.row.emojiPicking", panel.uiLang)
                 }
-
-                SettingsSwitch {
-                    id: followSwitch
-                    x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
+                SettingsChoice {
+                    id: emojiPickingControl
+                    anchors.verticalCenter: parent.verticalCenter
+                    options: [
+                        { value: "false",
+                          label: UiStrings.tr("settings.emoji.keepOpen", panel.uiLang) },
+                        { value: "true",
+                          label: UiStrings.tr("settings.emoji.close", panel.uiLang) }
+                    ]
+                    value: String(panel.emojiCloseAfterPick)
+                    onPicked: function (picked) {
+                        // The chips carry strings; this row is a boolean,
+                        // and writing "true"/"false" to config.json
+                        // resurrects exactly the legacy string form the
+                        // loader's heal exists to cure — every other
+                        // boolean saves as a real boolean.
+                        if (picked !== emojiPickingControl.value)
+                            panel.setOverride("emojiCloseAfterPick",
+                                picked === "true")
                     }
-                    checked: panel.followTheme
-                    onToggled: panel.setOverride("followTheme", !panel.followTheme)
                 }
-
                 SettingsResetChip {
-                    anchors {
-                        left: followSwitch.right
-                        leftMargin: tokens.space(6)
-                        verticalCenter: parent.verticalCenter
-                    }
+                    anchors.left: emojiPickingControl.right
+                    anchors.leftMargin: tokens.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
                     tokens: popoverRoot.tokens
                     panel: popoverRoot.panel
-                    overrideName: "followTheme"
+                    overrideName: "emojiCloseAfterPick"
                 }
             }
 
-            SettingsHairline {}
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+                SettingsRowLabel {
+                    text: UiStrings.tr("settings.row.emojiPageSize", panel.uiLang)
+                }
+                SettingsChoice {
+                    id: emojiPageSizeControl
+                    anchors.verticalCenter: parent.verticalCenter
+                    options: [
+                        { value: "medium", label: "M" },
+                        { value: "large", label: "L" },
+                        { value: "x-large", label: "XL" }
+                    ]
+                    value: panel.emojiPageSize
+                    onPicked: function (picked) {
+                        if (picked !== emojiPageSizeControl.value)
+                            panel.setOverride("emojiPageSize", picked)
+                    }
+                }
+                SettingsResetChip {
+                    anchors.left: emojiPageSizeControl.right
+                    anchors.leftMargin: tokens.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "emojiPageSize"
+                }
+            }
+
+            // Whether the emoji page grows its drag strip. The picking
+            // row's own shape and the same string-carrying rule (the value
+            // arrives as "true"/"false" and must be written a real boolean).
+            Item {
+                width: parent.width
+                height: tokens.space(28)
+                opacity: panel.configHealthy ? 1 : 0.55
+                SettingsRowLabel {
+                    text: UiStrings.tr("settings.row.emojiDrag", panel.uiLang)
+                }
+                SettingsChoice {
+                    id: emojiDragControl
+                    anchors.verticalCenter: parent.verticalCenter
+                    options: [
+                        { value: "false",
+                          label: UiStrings.tr("settings.emojiDrag.inPlace", panel.uiLang) },
+                        { value: "true",
+                          label: UiStrings.tr("settings.emojiDrag.movable", panel.uiLang) }
+                    ]
+                    value: String(panel.emojiDrag)
+                    onPicked: function (picked) {
+                        if (picked !== emojiDragControl.value)
+                            panel.setOverride("emojiDrag", picked === "true")
+                    }
+                }
+                SettingsResetChip {
+                    anchors.left: emojiDragControl.right
+                    anchors.leftMargin: tokens.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    overrideName: "emojiDrag"
+                }
+            }
 
             // ---- DWELL ----
             //
@@ -1138,12 +848,9 @@ Rectangle {
             // clamps the timer into exactly this range, and the file
             // validates to it, so the stepper cannot offer a value the
             // keyboard would refuse.
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.section.dwell", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
+
+            SettingsSection {
+                title: UiStrings.tr("settings.section.dwell", panel.uiLang)
             }
 
             Item {
@@ -1151,24 +858,18 @@ Rectangle {
                 height: tokens.space(28)
                 opacity: panel.configHealthy ? 1 : 0.55
 
-                Text {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
+                SettingsRowLabel {
+                    id: dwellRowLabel
                     text: UiStrings.tr("settings.row.dwellTyping", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
                 }
 
                 SettingsSwitch {
                     id: dwellSwitch
-                    x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
-                    }
+                    anchors.verticalCenter: parent.verticalCenter
                     checked: panel.dwellEnabled
+                    Accessible.role: Accessible.CheckBox
+                    Accessible.name: dwellRowLabel.text
+                    Accessible.checked: panel.dwellEnabled
                     onToggled: panel.setOverride("dwellEnabled",
                         !panel.dwellEnabled)
                 }
@@ -1176,7 +877,6 @@ Rectangle {
                 SettingsResetChip {
                     anchors {
                         left: dwellSwitch.right
-                        leftMargin: tokens.space(6)
                         verticalCenter: parent.verticalCenter
                     }
                     tokens: popoverRoot.tokens
@@ -1185,32 +885,27 @@ Rectangle {
                 }
             }
 
+            // The delay means nothing while dwell typing is off: the row
+            // dims and takes no writes, like the border colour with the
+            // border off.
             Item {
                 width: parent.width
                 height: tokens.space(28)
-                opacity: panel.configHealthy ? 1 : 0.55
+                opacity: panel.configHealthy && panel.dwellEnabled ? 1 : 0.55
 
-                Text {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
+                SettingsRowLabel {
                     text: UiStrings.tr("settings.row.dwellDelay", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
                 }
 
                 SettingsStepper {
                     id: dwellDelayStepper
                     x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
-                    }
+                    anchors.verticalCenter: parent.verticalCenter
                     value: panel.dwellDelayMs
                     minimum: Dwell.DELAY_MIN_MS
                     maximum: Dwell.DELAY_MAX_MS
                     step: 100
+                    writable: panel.dwellEnabled
                     onStepped: function (value) {
                         panel.setOverride("dwellDelayMs", value)
                     }
@@ -1225,209 +920,223 @@ Rectangle {
                     tokens: popoverRoot.tokens
                     panel: popoverRoot.panel
                     overrideName: "dwellDelayMs"
+                    active: panel.dwellEnabled
                 }
             }
 
-            Text {
-                width: parent.width
+            SettingsHint {
                 text: UiStrings.tr("settings.hint.dwellDelay", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-                wrapMode: Text.Wrap
             }
-
-            SettingsHairline {}
 
             // ---- APPEARANCE ----
             //
-            // Two radii, five colours. Every control applies through
+            // The Look choice heads the fields it governs (decisions §116):
+            // "Omarchy theme" hands all eight to the theme and hides the
+            // rows; "Custom" shows them. Every control applies through
             // setOverride — immediate, atomic, sparse — except the hex
-            // fields' drafts, which wait for their Apply. The caption is
-            // the one thing the values cannot show by themselves: with
-            // following on, every unoverridden field tracks the theme live
-            // and an override pins exactly its own field.
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.section.appearance", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
+            // fields' drafts, which wait for their check or Return.
+
+            SettingsSection {
+                title: UiStrings.tr("settings.section.appearance", panel.uiLang)
             }
 
-            Text {
-                width: parent.width
-                text: panel.followTheme
-                    ? UiStrings.tr("settings.hint.followingOn", panel.uiLang)
-                    : UiStrings.tr("settings.hint.followingOff", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-                wrapMode: Text.Wrap
-            }
-
+            // The choice writes followTheme exactly as a switch would, and
+            // carries no reset: each segment is itself the way back.
             Item {
                 width: parent.width
                 height: tokens.space(28)
                 opacity: panel.configHealthy ? 1 : 0.55
 
-                Text {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
-                    text: UiStrings.tr("settings.row.keyRadius", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
+                SettingsRowLabel {
+                    text: UiStrings.tr("settings.row.look", panel.uiLang)
                 }
 
-                SettingsStepper {
-                    id: keyRadiusStepper
-                    x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
+                SettingsChoice {
+                    id: lookControl
+                    anchors.verticalCenter: parent.verticalCenter
+                    options: [
+                        { value: "theme",
+                          label: UiStrings.tr("settings.look.theme", panel.uiLang) },
+                        { value: "custom",
+                          label: UiStrings.tr("settings.look.custom", panel.uiLang) }
+                    ]
+                    value: panel.followTheme ? "theme" : "custom"
+                    onPicked: function (picked) {
+                        var follow = picked === "theme"
+                        if (follow === panel.followTheme) return
+                        // An editor left open would apply a custom colour
+                        // onto a look that has just been handed back.
+                        if (follow) panel.closeCustomEditor()
+                        panel.setOverride("followTheme", follow)
                     }
-                    value: tokens.capCorner
-                    minimum: 0
-                    maximum: 24
-                    onStepped: function (value) {
-                        panel.setOverride("capCorner", value)
+                }
+            }
+
+            SettingsHint {
+                visible: panel.followTheme
+                text: UiStrings.tr("settings.hint.lookTheme", panel.uiLang)
+            }
+
+            // The user's own look. Hidden while the theme answers: a stored
+            // override is dormant then (Config.overrideApplies), and the
+            // rows would only show the theme's values back.
+            Column {
+                id: customRows
+                width: parent.width
+                spacing: parent.spacing
+                visible: !panel.followTheme
+
+                Item {
+                    width: parent.width
+                    height: tokens.space(28)
+                    opacity: panel.configHealthy ? 1 : 0.55
+
+                    SettingsRowLabel {
+                        text: UiStrings.tr("settings.row.keyRadius", panel.uiLang)
+                    }
+
+                    SettingsStepper {
+                        id: keyRadiusStepper
+                        x: popoverRoot.controlColumnX
+                        anchors.verticalCenter: parent.verticalCenter
+                        value: keyTokens.capCorner
+                        minimum: 0
+                        maximum: 24
+                        onStepped: function (value) {
+                            panel.setOverride("capCorner", value)
+                        }
+                    }
+
+                    SettingsResetChip {
+                        anchors {
+                            left: keyRadiusStepper.right
+                            leftMargin: tokens.space(6)
+                            verticalCenter: parent.verticalCenter
+                        }
+                        tokens: popoverRoot.tokens
+                        panel: popoverRoot.panel
+                        overrideName: "capCorner"
                     }
                 }
 
-                SettingsResetChip {
-                    anchors {
-                        left: keyRadiusStepper.right
-                        leftMargin: tokens.space(6)
-                        verticalCenter: parent.verticalCenter
+                SettingsHint {
+                    text: UiStrings.tr("settings.hint.keyRadius", panel.uiLang)
+                }
+
+                // The docked card is always square, so the panel radius
+                // means nothing while docked: the row dims and takes no
+                // writes, like the border colour with the border off.
+                Item {
+                    width: parent.width
+                    height: tokens.space(28)
+                    readonly property bool applies:
+                        panel.mode !== ConfigFile.MODE_DOCKED
+                    opacity: panel.configHealthy && applies ? 1 : 0.55
+
+                    SettingsRowLabel {
+                        text: UiStrings.tr("settings.row.panelRadius", panel.uiLang)
                     }
+
+                    SettingsStepper {
+                        id: panelRadiusStepper
+                        x: popoverRoot.controlColumnX
+                        anchors.verticalCenter: parent.verticalCenter
+                        value: keyTokens.panelRadius
+                        minimum: 0
+                        maximum: 32
+                        writable: parent.applies
+                        onStepped: function (value) {
+                            panel.setOverride("panelRadius", value)
+                        }
+                    }
+
+                    SettingsResetChip {
+                        anchors {
+                            left: panelRadiusStepper.right
+                            leftMargin: tokens.space(6)
+                            verticalCenter: parent.verticalCenter
+                        }
+                        tokens: popoverRoot.tokens
+                        panel: popoverRoot.panel
+                        overrideName: "panelRadius"
+                        active: parent.applies
+                    }
+                }
+
+                // The colour rows: square (opens the custom editor), hex,
+                // check while a draft is dirty, reset — each feeding the
+                // same panel API.
+                SettingsColorRow {
+                    id: keyBackgroundRow
                     tokens: popoverRoot.tokens
                     panel: popoverRoot.panel
-                    overrideName: "capCorner"
-                }
-            }
-
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.hint.keyRadius", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-                wrapMode: Text.Wrap
-            }
-
-            Item {
-                width: parent.width
-                height: tokens.space(28)
-                opacity: panel.configHealthy ? 1 : 0.55
-
-                Text {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
-                    text: UiStrings.tr("settings.row.panelRadius", panel.uiLang)
-                    color: tokens.foreground
-                    font.family: tokens.fontFamily
-                    font.pixelSize: tokens.fontBody
+                    controlX: popoverRoot.controlColumnX
+                    fieldName: "keyBackground"
+                    labelText: UiStrings.tr("settings.row.keyBackground", panel.uiLang)
+                    effectiveColor: panel.effectiveKeyBackground
+                    onCustomRequested: popoverRoot.customColourRequested(
+                        keyBackgroundRow.fieldName, keyBackgroundRow.labelText)
                 }
 
-                SettingsStepper {
-                    id: panelRadiusStepper
-                    x: popoverRoot.controlColumnX
-                    anchors {
-                        verticalCenter: parent.verticalCenter
-                    }
-                    value: tokens.panelRadius
-                    minimum: 0
-                    maximum: 32
-                    onStepped: function (value) {
-                        panel.setOverride("panelRadius", value)
-                    }
-                }
-
-                SettingsResetChip {
-                    anchors {
-                        left: panelRadiusStepper.right
-                        leftMargin: tokens.space(6)
-                        verticalCenter: parent.verticalCenter
-                    }
+                SettingsColorRow {
+                    id: panelBackgroundRow
                     tokens: popoverRoot.tokens
                     panel: popoverRoot.panel
-                    overrideName: "panelRadius"
+                    controlX: popoverRoot.controlColumnX
+                    fieldName: "panelBackground"
+                    labelText: UiStrings.tr("settings.row.panelBackground", panel.uiLang)
+                    effectiveColor: panel.effectivePanelBackground
+                    onCustomRequested: popoverRoot.customColourRequested(
+                        panelBackgroundRow.fieldName, panelBackgroundRow.labelText)
                 }
-            }
 
-            // The five colour rows: swatches grouped with hex, compact
-            // confirm, Custom, reset — each feeding the same panel API.
-            SettingsColorRow {
-                id: keyBackgroundRow
-                tokens: popoverRoot.tokens
-                panel: popoverRoot.panel
-                controlX: popoverRoot.controlColumnX
-                fieldName: "keyBackground"
-                labelText: UiStrings.tr("settings.row.keyBackground", panel.uiLang)
-                effectiveColor: panel.effectiveKeyBackground
-                onCustomRequested: popoverRoot.customColourRequested(
-                    keyBackgroundRow.fieldName, keyBackgroundRow.labelText)
-            }
+                SettingsColorRow {
+                    id: textColorRow
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    controlX: popoverRoot.controlColumnX
+                    fieldName: "textColor"
+                    labelText: UiStrings.tr("settings.row.textColor", panel.uiLang)
+                    effectiveColor: panel.effectiveTextColor
+                    onCustomRequested: popoverRoot.customColourRequested(
+                        textColorRow.fieldName, textColorRow.labelText)
+                }
 
-            SettingsColorRow {
-                id: panelBackgroundRow
-                tokens: popoverRoot.tokens
-                panel: popoverRoot.panel
-                controlX: popoverRoot.controlColumnX
-                fieldName: "panelBackground"
-                labelText: UiStrings.tr("settings.row.panelBackground", panel.uiLang)
-                effectiveColor: panel.effectivePanelBackground
-                onCustomRequested: popoverRoot.customColourRequested(
-                    panelBackgroundRow.fieldName, panelBackgroundRow.labelText)
-            }
+                SettingsColorRow {
+                    id: accentColorRow
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    controlX: popoverRoot.controlColumnX
+                    fieldName: "accentColor"
+                    labelText: UiStrings.tr("settings.row.accentColor", panel.uiLang)
+                    effectiveColor: panel.effectiveAccentColor
+                    onCustomRequested: popoverRoot.customColourRequested(
+                        accentColorRow.fieldName, accentColorRow.labelText)
+                }
 
-            SettingsColorRow {
-                id: textColorRow
-                tokens: popoverRoot.tokens
-                panel: popoverRoot.panel
-                controlX: popoverRoot.controlColumnX
-                fieldName: "textColor"
-                labelText: UiStrings.tr("settings.row.textColor", panel.uiLang)
-                effectiveColor: panel.effectiveTextColor
-                onCustomRequested: popoverRoot.customColourRequested(
-                    textColorRow.fieldName, textColorRow.labelText)
-            }
+                // The border: its switch, and only while the border is
+                // drawn, its colour beside it.
+                SettingsColorRow {
+                    id: borderColorRow
+                    tokens: popoverRoot.tokens
+                    panel: popoverRoot.panel
+                    controlX: popoverRoot.controlColumnX
+                    fieldName: "borderColor"
+                    labelText: UiStrings.tr("settings.row.borderColor", panel.uiLang)
+                    effectiveColor: panel.effectiveBorderColor
+                    active: keyTokens.borderShown
+                    hasSwitch: true
+                    switchLabel: UiStrings.tr("settings.row.panelBorder", panel.uiLang)
+                    switchChecked: keyTokens.borderShown
+                    switchOverrideName: "panelBorder"
+                    onSwitchToggled: panel.setOverride("panelBorder", !keyTokens.borderShown)
+                    onCustomRequested: popoverRoot.customColourRequested(
+                        borderColorRow.fieldName, borderColorRow.labelText)
+                }
 
-            SettingsColorRow {
-                id: accentColorRow
-                tokens: popoverRoot.tokens
-                panel: popoverRoot.panel
-                controlX: popoverRoot.controlColumnX
-                fieldName: "accentColor"
-                labelText: UiStrings.tr("settings.row.accentColor", panel.uiLang)
-                effectiveColor: panel.effectiveAccentColor
-                onCustomRequested: popoverRoot.customColourRequested(
-                    accentColorRow.fieldName, accentColorRow.labelText)
-            }
-
-            SettingsColorRow {
-                id: borderColorRow
-                tokens: popoverRoot.tokens
-                panel: popoverRoot.panel
-                controlX: popoverRoot.controlColumnX
-                fieldName: "borderColor"
-                labelText: UiStrings.tr("settings.row.borderColor", panel.uiLang)
-                effectiveColor: panel.effectiveBorderColor
-                onCustomRequested: popoverRoot.customColourRequested(
-                    borderColorRow.fieldName, borderColorRow.labelText)
-            }
-
-            Text {
-                width: parent.width
-                text: UiStrings.tr("settings.hint.hex", panel.uiLang)
-                color: tokens.muted
-                font.family: tokens.fontFamily
-                font.pixelSize: tokens.fontBodySmall
-                wrapMode: Text.Wrap
+                SettingsHint {
+                    text: UiStrings.tr("settings.hint.hex", panel.uiLang)
+                }
             }
 
             // The malformed-file notice. While it stands, the rows above
@@ -1454,7 +1163,10 @@ Rectangle {
                 wrapMode: Text.Wrap
             }
 
-            SettingsHairline { visible: resetAllRow.visible }
+            PanelSeparator {
+                visible: resetAllRow.visible
+                foreground: tokens.foreground
+            }
 
             // Reset-all, the card's footer row: a bordered ghost button
             // — the quietest voice on the card, because it is
@@ -1467,35 +1179,24 @@ Rectangle {
                 height: tokens.space(28)
                 visible: Object.keys(panel.userOverrides).length > 0
 
-                Rectangle {
+                Button {
                     anchors {
                         left: parent.left
                         verticalCenter: parent.verticalCenter
                     }
                     visible: !popoverRoot.resetAllArmed
-                    width: resetAllLabel.implicitWidth + tokens.space(10) * 2
+                    enabled: panel.configHealthy
                     height: tokens.space(24)
-                    radius: tokens.cornerRadius
-                    color: resetAllArea.pressed
-                        ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha) : "transparent"
-                    border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-                    border.width: tokens.normalBorderWidth
-
-                    Text {
-                        id: resetAllLabel
-                        anchors.centerIn: parent
-                        text: UiStrings.tr("settings.resetAll", panel.uiLang)
-                        color: tokens.foreground
-                        font.family: tokens.fontFamily
-                        font.pixelSize: tokens.fontBodySmall
-                    }
-
-                    MouseArea {
-                        id: resetAllArea
-                        anchors.fill: parent
-                        enabled: panel.configHealthy
-                        onClicked: popoverRoot.resetAllArmed = true
-                    }
+                    verticalPadding: 0
+                    bordered: true
+                    text: UiStrings.tr("settings.resetAll", panel.uiLang)
+                    foreground: tokens.foreground
+                    accent: tokens.accent
+                    fontFamily: tokens.fontFamily
+                    fontSize: tokens.fontBodySmall
+                    Accessible.role: Accessible.Button
+                    Accessible.name: text
+                    onClicked: popoverRoot.resetAllArmed = true
                 }
 
                 Row {
@@ -1524,12 +1225,13 @@ Rectangle {
                         }
                     }
 
+                    // The shell's Button has no urgent state; the card's
+                    // one destructive action reads as the urgent colour,
+                    // the close button's own.
                     Rectangle {
                         width: confirmResetLabel.implicitWidth + tokens.space(8) * 2
                         height: tokens.space(24)
                         radius: tokens.cornerRadius
-                        // The popover's one destructive action reads as the
-                        // urgent colour, the close button's own.
                         color: tokens.urgent
 
                         Text {
@@ -1545,6 +1247,9 @@ Rectangle {
                         MouseArea {
                             id: confirmResetArea
                             anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            Accessible.role: Accessible.Button
+                            Accessible.name: confirmResetLabel.text
                             onClicked: {
                                 popoverRoot.resetAllArmed = false
                                 panel.clearAllOverrides()
@@ -1552,29 +1257,18 @@ Rectangle {
                         }
                     }
 
-                    Rectangle {
-                        width: cancelResetLabel.implicitWidth + tokens.space(8) * 2
+                    Button {
                         height: tokens.space(24)
-                        radius: tokens.cornerRadius
-                        color: cancelResetArea.pressed
-                            ? Util.alpha(tokens.foreground, tokens.hoverFillAlpha) : "transparent"
-                        border.color: Util.alpha(tokens.foreground, tokens.pressedFillAlpha)
-                        border.width: tokens.normalBorderWidth
-
-                        Text {
-                            id: cancelResetLabel
-                            anchors.centerIn: parent
-                            text: UiStrings.tr("settings.keep", panel.uiLang)
-                            color: tokens.foreground
-                            font.family: tokens.fontFamily
-                            font.pixelSize: tokens.fontBodySmall
-                        }
-
-                        MouseArea {
-                            id: cancelResetArea
-                            anchors.fill: parent
-                            onClicked: popoverRoot.resetAllArmed = false
-                        }
+                        verticalPadding: 0
+                        bordered: true
+                        text: UiStrings.tr("settings.keep", panel.uiLang)
+                        foreground: tokens.foreground
+                        accent: tokens.accent
+                        fontFamily: tokens.fontFamily
+                        fontSize: tokens.fontBodySmall
+                        Accessible.role: Accessible.Button
+                        Accessible.name: text
+                        onClicked: popoverRoot.resetAllArmed = false
                     }
                 }
             }

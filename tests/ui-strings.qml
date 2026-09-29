@@ -80,12 +80,12 @@ QtObject {
         })
 
         T.test("substitution fills %1..%n in order", function () {
-            T.equal(UiStrings.tr("color.setTo", "en", ["Text colour", "#fff"]),
-                "Set Text colour to #fff")
-            T.equal(UiStrings.tr("color.setTo", "ru", ["Текст", "#fff"]).length
+            T.equal(UiStrings.tr("color.currently", "en", ["Text colour", "#fff"]),
+                "Text colour is currently #fff")
+            T.equal(UiStrings.tr("color.currently", "ru", ["Текст", "#fff"]).length
                 > "#fff".length, true)
             // No args leaves the template alone — the sweep resolves bare.
-            T.equal(UiStrings.tr("color.setTo", "en").indexOf("%1") !== -1,
+            T.equal(UiStrings.tr("color.currently", "en").indexOf("%1") !== -1,
                 true)
         })
 
@@ -199,9 +199,24 @@ QtObject {
             "SettingsConfirmChip.qml", "SettingsResetChip.qml",
             "SettingsLayer.qml"]
         var index = 0
+        var allSources = ""
+
+        // The settings card's and the colour surfaces' ids are chrome only
+        // those files draw: an id no swept file names as a literal is dead
+        // table data, and the label-width probe would keep measuring it.
+        function checkSettingsIdsUsed() {
+            T.test("every settings and colour id is named by a swept file", function () {
+                for (var id in UiStrings.STRINGS) {
+                    if (!/^(settings|color|access)\./.test(id)) continue
+                    if (allSources.indexOf('"' + id + '"') === -1)
+                        T.fail(id + " is in the table but no swept file names it")
+                }
+            })
+        }
 
         function sweepNext() {
             if (index >= files.length) {
+                checkSettingsIdsUsed()
                 Qt.exit(T.report("ui strings"))
                 return
             }
@@ -211,6 +226,7 @@ QtObject {
             xhr.onreadystatechange = function () {
                 if (xhr.readyState !== XMLHttpRequest.DONE) return
                 var source = xhr.responseText || ""
+                allSources += source
                 T.test("every tr call site in " + name + " resolves", function () {
                     T.equal(xhr.status === 200 && source.length > 0, true,
                         name + " did not load")

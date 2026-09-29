@@ -218,10 +218,11 @@ var STRINGS = {
         ru: "Настройки",
         uk: "Налаштування"
     },
-    "settings.section.mode": {
-        en: "MODE",
-        ru: "РЕЖИМ",
-        uk: "РЕЖИМ"
+    // The four sections' headers; a row's label is never repeated as one.
+    "settings.section.general": {
+        en: "GENERAL",
+        ru: "ОБЩИЕ",
+        uk: "ЗАГАЛЬНІ"
     },
     "settings.row.mode": {
         en: "Mode",
@@ -243,11 +244,6 @@ var STRINGS = {
         ru: "Плавающая",
         uk: "Плаваюча"
     },
-    "settings.section.size": {
-        en: "SIZE",
-        ru: "РАЗМЕР",
-        uk: "РОЗМІР"
-    },
     "settings.row.size": {
         en: "Size",
         ru: "Размер",
@@ -257,11 +253,6 @@ var STRINGS = {
     // The segment labels beside it are language endonyms (English,
     // Русский, Українська) and stay fixed — a chooser's entries name
     // themselves, whatever the UI is speaking.
-    "settings.section.language": {
-        en: "LANGUAGE",
-        ru: "ЯЗЫК",
-        uk: "МОВА"
-    },
     "settings.row.language": {
         en: "Interface language",
         ru: "Язык интерфейса",
@@ -274,16 +265,6 @@ var STRINGS = {
     },
 
     // ---- the input profile ----
-    //
-    // The row's three segments share the language row's fixed-width
-    // discipline: the widest translated label ("Сенсор") measures 43px at
-    // fontBody in the mono face, inside the 43.3px slice a 150-unit
-    // three-way control gives (pinned offscreen in tests/input-profile.qml).
-    "settings.section.input": {
-        en: "INPUT",
-        ru: "ВВОД",
-        uk: "ВВЕДЕННЯ"
-    },
     "settings.row.inputProfile": {
         en: "Pointer profile",
         ru: "Профиль ввода",
@@ -355,11 +336,6 @@ var STRINGS = {
         ru: "Подвижна",
         uk: "Рухома"
     },
-    "settings.section.superMark": {
-        en: "SUPER MARK",
-        ru: "МЕТКА SUPER",
-        uk: "МІТКА SUPER"
-    },
     "settings.row.superMark": {
         en: "Super mark",
         ru: "Метка Super",
@@ -377,11 +353,6 @@ var STRINGS = {
         ru: "Пингвин",
         uk: "Пінгвін"
     },
-    "settings.section.sound": {
-        en: "SOUND",
-        ru: "ЗВУК",
-        uk: "ЗВУК"
-    },
     "settings.row.sound": {
         en: "Key click sound",
         ru: "Звук нажатия",
@@ -391,16 +362,6 @@ var STRINGS = {
         en: "unavailable",
         ru: "недоступен",
         uk: "недоступний"
-    },
-    "settings.section.theme": {
-        en: "THEME",
-        ru: "ТЕМА",
-        uk: "ТЕМА"
-    },
-    "settings.row.followTheme": {
-        en: "Follow Omarchy theme",
-        ru: "Следовать теме Omarchy",
-        uk: "Слідувати темі Omarchy"
     },
     "settings.section.dwell": {
         en: "DWELL",
@@ -418,24 +379,35 @@ var STRINGS = {
         uk: "Затримка вводу"
     },
     "settings.hint.dwellDelay": {
-        en: "Rest a key this long to type it; resting past the type opens its hold-column menu",
-        ru: "Сколько указатель должен покоиться на клавише, чтобы нажать её; дальнейший покой открывает меню удержания",
-        uk: "Скільки вказівник має спокоюватися на клавіші, щоб натиснутися; триваліший спокій відкриває меню утримання"
+        en: "Hold the pointer over a key for this long (ms) and it types. Keep holding to open the key's extra characters",
+        ru: "Задержите указатель на клавише на это время (мс), и она нажмётся. Держите дольше, чтобы открыть дополнительные символы",
+        uk: "Затримайте вказівник на клавіші на цей час (мс), і вона натиснеться. Тримайте довше, щоб відкрити додаткові символи"
     },
     "settings.section.appearance": {
         en: "APPEARANCE",
         ru: "ВНЕШНИЙ ВИД",
         uk: "ВИГЛЯД"
     },
-    "settings.hint.followingOn": {
-        en: "Following the Omarchy theme — an override pins its own field",
-        ru: "Следует теме Omarchy — переопределение закрепляет только своё поле",
-        uk: "Слідує темі Omarchy — перевизначення закріплює лише своє поле"
+    // The appearance section's first row: who answers the eight fields.
+    "settings.row.look": {
+        en: "Look",
+        ru: "Вид",
+        uk: "Вигляд"
     },
-    "settings.hint.followingOff": {
-        en: "Theme following is off — appearance holds the look it had",
-        ru: "Следование теме отключено — вид остаётся прежним",
-        uk: "Слідування темі вимкнено — вигляд лишається незмінним"
+    "settings.look.theme": {
+        en: "Omarchy theme",
+        ru: "Тема Omarchy",
+        uk: "Тема Omarchy"
+    },
+    "settings.look.custom": {
+        en: "Custom",
+        ru: "Свой",
+        uk: "Власний"
+    },
+    "settings.hint.lookTheme": {
+        en: "Colours, radii and the border come from the Omarchy theme",
+        ru: "Цвета, радиусы и рамка берутся из темы Omarchy",
+        uk: "Кольори, радіуси й рамка беруться з теми Omarchy"
     },
     "settings.row.keyRadius": {
         en: "Key radius",
@@ -468,9 +440,14 @@ var STRINGS = {
         uk: "Колір тексту"
     },
     "settings.row.accentColor": {
-        en: "Accent colour",
-        ru: "Акцентный цвет",
-        uk: "Акцентний колір"
+        en: "Active colour",
+        ru: "Цвет активных элементов",
+        uk: "Колір активних елементів"
+    },
+    "settings.row.panelBorder": {
+        en: "Border",
+        ru: "Рамка",
+        uk: "Рамка"
     },
     "settings.row.borderColor": {
         en: "Border colour",
@@ -478,9 +455,9 @@ var STRINGS = {
         uk: "Колір рамки"
     },
     "settings.hint.hex": {
-        en: "Hex fields accept #RGB / #RRGGBB (an alpha form too); the check commits the draft. Type with the keyboard.",
-        ru: "Поля принимают #RGB / #RRGGBB (и с альфа-каналом); галочка применяет черновик. Вводите с клавиатуры.",
-        uk: "Поля приймають #RGB / #RRGGBB (також із альфа-каналом); галочка застосовує чернетку. Уводьте з клавіатури."
+        en: "Hex fields accept #RGB / #RRGGBB (an alpha form too); the check or Enter commits the draft. Type with the keyboard; the square opens the colour editor.",
+        ru: "Поля принимают #RGB / #RRGGBB (и с альфа-каналом); галочка или Enter применяет черновик. Вводите с клавиатуры; квадрат открывает редактор цвета.",
+        uk: "Поля приймають #RGB / #RRGGBB (також із альфа-каналом); галочка або Enter застосовує чернетку. Уводьте з клавіатури; квадрат відкриває редактор кольору."
     },
     // %1 is the store's own diagnostic (Config.js's parse error, English
     // by contract — it names the file and the bad key, near-technical
@@ -540,11 +517,6 @@ var STRINGS = {
         ru: "Сбросить этот параметр",
         uk: "Скинути цей параметр"
     },
-    "common.custom": {
-        en: "Custom",
-        ru: "Другой",
-        uk: "Інший"
-    },
 
     // ---- the colour rows and the custom editor ----
     // %1 is the row's own label, %2 a hex value.
@@ -552,11 +524,6 @@ var STRINGS = {
         en: "%1 is currently %2",
         ru: "%1 сейчас: %2",
         uk: "%1 зараз: %2"
-    },
-    "color.setTo": {
-        en: "Set %1 to %2",
-        ru: "Установить %1: %2",
-        uk: "Встановити %1: %2"
     },
     "color.openEditor": {
         en: "Open the custom colour editor for %1",
@@ -597,6 +564,18 @@ var STRINGS = {
         en: "invalid",
         ru: "неверно",
         uk: "хибно"
+    },
+    // The theme's colours offered inside the editor; a click fills the
+    // draft, Apply still commits. %1 is a hex value.
+    "color.editor.suggestions": {
+        en: "Theme",
+        ru: "Тема",
+        uk: "Тема"
+    },
+    "color.editor.suggestion": {
+        en: "Use %1",
+        ru: "Взять %1",
+        uk: "Узяти %1"
     },
 
     // ---- the emoji page ----
@@ -713,7 +692,7 @@ function languageFor(layoutCode, override, layoutCodes) {
     return "en"
 }
 
-/// The languages the LANGUAGE row may offer: Auto and English always
+/// The languages the Interface language row may offer: Auto and English always
 /// (English is the product's fallback), plus each translation whose
 /// layout code the seat carries. `layoutCodes` is the seat's installed
 /// xkb list (Keyboard.layoutCodes); junk, case and duplicates cost

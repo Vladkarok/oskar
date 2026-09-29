@@ -174,16 +174,20 @@ While settings is open, OSK keys stay clickable and type into the
 previously focused client, or into a focused colour field. Changes apply
 immediately; there is no Save or rollback-on-close. The one exception is
 colour text entry (below): a field's unapplied text is a local draft, not
-an applied setting. Each override can be reset. Reset-all requires
-confirmation. Choosing the already-active size preset inside the settings
+an applied setting. An override can be reset wherever resetting would
+change something: an ordinary setting whose stored value differs from the
+shipped default, an appearance field whose override is in force
+(`Config.resetOffered`). Reset-all requires confirmation. Choosing the already-active size preset inside the settings
 popover deliberately leaves the popover open — a settings surface persists
 through use — while the size change itself still preserves §4's
 no-movement guarantee.
 
 Approved fields are: docked/floating mode, M/L/XL size, sound on/off,
-follow Omarchy theme, key radius, panel radius, key
-background, panel background, text colour, accent/active colour and border
-colour — and, since the 2026-09-09 amendment (ticket 22), the Super cap's
+follow Omarchy theme (the popover's Look choice), key radius, panel radius, key
+background, panel background, text colour, active colour (the `accent_color` key: latched and locked
+modifiers, the selected tab, the current language), border
+colour and (since 0.2.0, decisions §116) the card's border on/off, with
+follow-theme owning all eight appearance fields while on — and, since the 2026-09-09 amendment (ticket 22), the Super cap's
 mark `super_mark`: the word `Super` by default, or a chosen mark of Omarchy,
 Windows, macOS or penguin. A value outside those five is a malformed edit
 with the preservation semantics above; whatever the setting says, the cap
@@ -196,37 +200,43 @@ foreground — never a replacement fill that is the foreground itself —
 so follow-theme caps stay keys of the current theme. Custom sound
 files, volume, fonts, spacing and opacity are out of scope.
 
-(2026-09-06 amendment, owner-requested — replaces the always-visible
-embedded colour pickers and their immediate writes while dragging.) Each
-colour row shows up to four theme-derived quick swatches — the current
-theme's background, foreground, accent and muted colour, with maintained
-fallbacks when a token is unanswered and duplicate resolved colours removed —
-and clicking one immediately writes that resolved colour as an override. A
-later theme change must not silently rewrite a colour chosen this way.
-Each row also leads its control group with a small square showing the colour
-currently in effect (2026-09-09 amendment, ticket 23): a colour first, not
-six hex characters — checkerboard-backed so an alpha-carrying value reads as
-such, and edged in both the theme's foreground and background so very light
-and very dark fills stay visible against either theme's card. It is an
-indicator, not a control, and it follows every commit: hex Apply, Custom
-Apply, a swatch press, a reset.
-Besides the swatches, each row carries an editable hex field with a compact
-mouse-only confirm control next to it, a Custom colour control, and the
-per-override reset. Swatches sit on the same control group as that row's
-label and hex field; they are not a shared strip across rows. There is no
-full-width Apply word-button.
+(2026-09-29 amendment, decisions §117.) The popover reads as an Omarchy
+panel: four sections — General (mode, size, interface language, pointer
+profile, Super mark, sound), Emoji page, Dwell, Appearance — each under one
+separator and one header, drawn with the shell's own separator, header,
+switch, chip group and button, in the live Omarchy theme whatever look the
+keyboard has. Appearance opens with **Look: Omarchy theme | Custom**, which
+writes `follow_theme`; under Omarchy theme the appearance rows are hidden
+behind one line saying the theme supplies them. Panel radius is dimmed and
+takes no writes while docked (the docked card is square); dwell delay
+likewise while dwell typing is off; the border colour shows beside the
+Border switch only while the border is on.
 
-The hex field's text is a local draft until confirm: invalid or incomplete
-text stays editable, shows an inline error, and writes nothing; confirm
-captures the current draft before any focus-loss dismissal can drop it.
-Confirm and Cancel are mouse-only. Custom colour opens one larger editor
-for the selected setting, still in leftover-centre, never as a key-grid
-overlay: a large hue×saturation square, a thin value/brightness slider that
-does not duplicate the square, an optional solid swatch, a hex field, and
-an RGB/HSV mode switch with three numeric fields. Local preview; explicit
+Each colour row is the square showing the colour in force, the hex field and
+the reset. The square is checkerboard-backed so an alpha-carrying value reads
+as such, edged in both the theme's foreground and background so very light
+and very dark fills stay visible, and it is the button that opens the custom
+editor. It follows every commit: hex confirm, editor Apply, a reset. A
+confirm check stands beside the hex field from the first edit of its draft
+until the draft is applied or dropped. A row that is hidden or switched off
+(the look handed back to the theme, the border turned off) drops its draft
+and gives up keyboard focus. There is no full-width Apply word-button.
+
+The hex field's text is a local draft until confirm (the check, or Return in
+the field): invalid or incomplete text stays editable, shows an inline error,
+and writes nothing; confirm captures the current draft before any focus-loss
+dismissal can drop it. The editor's Confirm and Cancel are mouse-only. The
+custom editor edits the selected setting, still in leftover-centre, never as
+a key-grid overlay: a large hue×saturation square, a thin value/brightness
+slider that does not duplicate the square, an optional solid swatch, a hex
+field, an RGB/HSV mode switch with three numeric fields, and up to four
+theme-derived suggestions — the current theme's background, foreground,
+accent and muted colour, with maintained fallbacks when a token is unanswered
+and duplicates removed — which fill the draft. Local preview; explicit
 confirm and Cancel; Cancel or dismissal drops only that editor's
-uncommitted draft; previously applied settings survive. No hex pad, no
-saved palettes, colour history or extra opacity controls.
+uncommitted draft; previously applied settings survive. A colour confirmed
+here is stored as a value, so a later theme change never silently rewrites
+it. No hex pad, no saved palettes, colour history or extra opacity controls.
 
 The typed colour-field entry is the panel's ONE sanctioned keyboard-focus
 exception (2026-09-04 amendment, owner-requested; extended 2026-09-06 to

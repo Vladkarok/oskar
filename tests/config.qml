@@ -39,7 +39,9 @@ QtObject {
                 panelBackground: "#202020",
                 textColor: "#f5f5f5",
                 accentColor: "#7aa2f7",
-                borderColor: "#5a5a5a"
+                borderColor: "#5a5a5a",
+                // Shown unless Hyprland draws no window borders.
+                panelBorder: true
             })
             T.deepEqual(Config.stateDefaults(), {
                 center: null, emojiCenter: null, emojiUsage: [],
@@ -353,7 +355,7 @@ QtObject {
             T.equal(unk.value.emoji_app, "true")
         })
 
-        T.test("sparse overrides merge over theme tokens and shipped fallbacks", function () {
+        T.test("following the theme leaves appearance overrides dormant", function () {
             var parsed = Config.reloadOverrides({}, '{"sound":true,"accent_color":"#ff0000"}')
             var effective = Config.merge(Config.maintainerDefaults(), parsed.value, {
                 capCorner: 4,
@@ -367,7 +369,108 @@ QtObject {
             T.equal(parsed.error, "")
             T.equal(effective.sound, true)
             T.equal(effective.capCorner, 4)
+            // Following on: the theme answers, the stored accent waits.
+            T.equal(effective.accentColor, "#00ff00")
+            T.equal(parsed.value.accentColor, "#ff0000")
+        })
+
+        T.test("with following off appearance overrides apply", function () {
+            var parsed = Config.reloadOverrides({},
+                '{"follow_theme":false,"accent_color":"#ff0000","panel_border":false}')
+            T.equal(parsed.error, "")
+            var effective = Config.merge(Config.maintainerDefaults(), parsed.value, {
+                accentColor: "#00ff00", panelBorder: true
+            })
             T.equal(effective.accentColor, "#ff0000")
+            T.equal(effective.panelBorder, false)
+        })
+
+        T.test("an override is in force unless it is appearance under following", function () {
+            var stored = { accentColor: "#ff0000", sound: true, panelBorder: false }
+            T.equal(Config.overrideApplies(stored, "accentColor", true), false)
+            T.equal(Config.overrideApplies(stored, "panelBorder", true), false)
+            T.equal(Config.overrideApplies(stored, "sound", true), true)
+            T.equal(Config.overrideApplies(stored, "accentColor", false), true)
+            T.equal(Config.overrideApplies(stored, "panelBorder", false), true)
+            T.equal(Config.overrideApplies(stored, "capCorner", false), false)
+            T.equal(Config.overrideApplies(stored, "followTheme", true), false)
+        })
+
+        T.test("a reset is offered only where resetting would change something", function () {
+            var defaults = Config.maintainerDefaults()
+            // An ordinary setting: stored AND different from the shipped default.
+            T.equal(Config.resetOffered({ sound: true }, "sound", true, defaults), true)
+            T.equal(Config.resetOffered({ sound: false }, "sound", true, defaults), false)
+            T.equal(Config.resetOffered({ mode: "docked" }, "mode", true, defaults), false)
+            T.equal(Config.resetOffered({ mode: "floating" }, "mode", false, defaults), true)
+            T.equal(Config.resetOffered({}, "sound", true, defaults), false)
+            T.equal(Config.resetOffered({ dwellDelayMs: 800 }, "dwellDelayMs", true, defaults), false)
+            T.equal(Config.resetOffered({ dwellDelayMs: 900 }, "dwellDelayMs", true, defaults), true)
+            // An appearance field: in force is enough, even at the shipped value
+            // (clearing it hands the field back to the frozen theme token).
+            T.equal(Config.resetOffered({ capCorner: 8 }, "capCorner", false, defaults), true)
+            T.equal(Config.resetOffered({ panelBorder: true }, "panelBorder", false, defaults), true)
+            // Dormant while following: nothing to reset.
+            T.equal(Config.resetOffered({ capCorner: 3 }, "capCorner", true, defaults), false)
+            T.equal(Config.resetOffered({}, "accentColor", false, defaults), false)
+        })
+
+        T.test("setting an appearance field while following turns following off", function () {
+            var before = { followTheme: true, borderColor: "#111111", mode: "floating" }
+            var after = Config.withOverride(before, "capCorner", 0, true)
+            T.deepEqual(after, { followTheme: false, borderColor: "#111111",
+                mode: "floating", capCorner: 0 })
+            // The input map is not mutated.
+            T.deepEqual(before, { followTheme: true, borderColor: "#111111", mode: "floating" })
+            // Every appearance field, the border switch included.
+            for (var i = 0; i < Config.APPEARANCE_FIELDS.length; i++) {
+                var name = Config.APPEARANCE_FIELDS[i]
+                T.equal(Config.withOverride({}, name, 1, true).followTheme, false, name)
+            }
+            // A non-appearance field leaves following alone.
+            T.deepEqual(Config.withOverride({}, "sound", true, true), { sound: true })
+            // Already off: nothing added.
+            T.deepEqual(Config.withOverride({ followTheme: false }, "textColor", "#fff", false),
+                { followTheme: false, textColor: "#fff" })
+            // Turning following on writes exactly that and keeps the dormant set.
+            T.deepEqual(Config.withOverride({ followTheme: false, capCorner: 0 },
+                "followTheme", true, false), { followTheme: true, capCorner: 0 })
+        })
+
+        T.test("a colour row shows the stored override as written, else the drawn colour", function () {
+            var stored = { keyBackground: "#0AD4D4D4", textColor: "#dddd", followTheme: false }
+            // Translucent 8-digit: the field keeps it, not the opaque cap.
+            T.deepEqual(Config.rowHex(stored, "keyBackground", false, "#2A2A2A"),
+                { text: "#0ad4d4d4", square: "#0ad4d4d4" })
+            // #RGBA: the field keeps it; the square gets a form Qt paints.
+            T.deepEqual(Config.rowHex(stored, "textColor", false, "#ffffff"),
+                { text: "#dddd", square: "#dddddddd" })
+            // No override, or a dormant one while following: the drawn colour.
+            T.deepEqual(Config.rowHex(stored, "accentColor", false, "#7AA2F7"),
+                { text: "#7aa2f7", square: "#7aa2f7" })
+            T.deepEqual(Config.rowHex(stored, "keyBackground", true, "#303030"),
+                { text: "#303030", square: "#303030" })
+        })
+
+        T.test("the card border follows Hyprland's general:border_size", function () {
+            T.equal(Config.hyprBorderShown('{"option": "general:border_size", "int": 0, "set": true }'), false)
+            T.equal(Config.hyprBorderShown('{"option": "general:border_size", "int": 2, "set": false }'), true)
+            T.equal(Config.hyprBorderShown('{"option":"general:border_size","custom":"3 3"}'), true)
+            T.equal(Config.hyprBorderShown('{"option":"general:border_size","custom":"0"}'), false)
+            // Not understood: unknown, and the border stays.
+            T.equal(Config.hyprBorderShown(""), null)
+            T.equal(Config.hyprBorderShown("no such option"), null)
+            T.equal(Config.hyprBorderShown('{"option":"general:border_size"}'), null)
+            T.equal(Config.hyprBorderShown('{"int":"2"}'), null)
+        })
+
+        T.test("panel_border validates as a boolean", function () {
+            T.equal(Config.reloadOverrides({}, '{"panel_border":false}').value.panelBorder, false)
+            T.equal(Config.reloadOverrides({}, '{"panel_border":"false"}').value.panelBorder, false)
+            T.equal(Config.reloadOverrides({}, '{"panel_border":0}').error,
+                "Invalid value for panel_border")
+            T.equal(Config.serializeOverrides({ panelBorder: false }),
+                '{\n  "panel_border": false\n}\n')
         })
 
         T.test("turning theme following off exposes shipped appearance fallbacks", function () {
@@ -556,6 +659,8 @@ QtObject {
                 + '\n  "oddCamelName": -3,\n  "panel_radius": 10\n}\n')
             // The approved field the panel read back is still the validated
             // canonical value, not a second spelling with its own life.
+            // (Following off: under following the theme answers it.)
+            overrides.followTheme = false
             T.deepEqual(Config.merge(Config.maintainerDefaults(), overrides, null).panelRadius, 10)
         })
 

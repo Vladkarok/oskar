@@ -2659,3 +2659,103 @@ the window or the quiesce: both were sized by the incident they closed.
 Known and accepted: after a click inside the window the user's toggles
 are held until one stays for a second, and every click starts the ten
 seconds again.
+
+## 116. Following the theme owns every appearance field
+
+**2026-09-29 (0.2.0).** Until now `follow_theme` only decided whether the
+fields without an override tracked theme changes: an override always won,
+so with the switch on a pinned colour still showed and the switch looked
+dead. The owner: make the switch mean something.
+
+On, the theme answers all eight appearance fields (two radii, five
+colours, the card's border on/off). A stored appearance override is kept
+but dormant, and offers no reset chip. Setting any of those fields from the
+popover writes the value and `follow_theme: false` in one write
+(`Config.withOverride`): the value just chosen has to show, and it cannot
+while the theme answers. Off, the overrides apply and the rest stay frozen
+at the moment following stopped (Theme.qml's snapshot). The rule lives in
+`Config.overrideApplies`; `Theme.hasOverride`, the panel's reset chips and
+`Config.merge` all ask it.
+
+The card's border has its own switch, `panel_border`. Following the theme,
+it is shown exactly when Hyprland draws window borders
+(`general:border_size` above 0, read with `hyprctl getoption` on every open
+and after `configreloaded`; an answer that is not understood keeps the
+border). The border colour row is dimmed and takes no writes while the
+border is off. The width stays the card's own 2 px; only on/off follows.
+
+Rejected: clearing the overrides when following is turned on. Keeping them
+dormant makes the switch a choice between two looks, the theme's and the
+user's, and loses nothing. Rejected: treating a file that holds appearance
+overrides with `follow_theme` true as off, to keep upgraders' colours. The
+switch then would not mean what it says; an upgrader turns following off
+and gets their stored values back. A field they never stored keeps what the
+theme had: on a seat whose Hyprland draws no borders, the card's border
+stays hidden until the Border switch is turned on.
+
+**Amended the same day, after the owner's desk test.** A custom colour
+moves its own field and everything that must stay readable with it, and
+nothing else. The text colour is the card's foreground: the header chips,
+the hold menu's entries, key edges and the hover mixes read it, and the dim
+text is that colour stepped toward the panel. Before, only the glyphs took
+it, and black text on a white panel left white chip labels. The hold
+menu is the held cap lifted and takes the key background, where the text
+colour is chosen to read; the language menu belongs to the header and
+takes the panel's. The key background with no override is
+the theme's key (the theme's panel washed with the theme's foreground),
+not a wash of the custom panel: changing the panel alone used to repaint
+the keys, and the key row showed a value nobody had set.
+
+Known: an edit made while following brings back every dormant override
+with it, not only the field edited. The border is re-read on open and on
+`configreloaded`; a runtime `hyprctl keyword general:border_size` reaches
+an open panel at its next open.
+
+## 117. The settings popover reads as an Omarchy panel
+
+**2026-09-29 (0.2.0).** The owner: the popover works but looks like a
+Windows dialog — headers repeating their one row's label, a bordered
+"refresh" square on every row, four swatches repeated on every colour row,
+and two hint lines under the follow switch. §116's behaviour stands; this is
+how it is presented.
+
+- **Four sections** (General, Emoji page, Dwell, Appearance), each opened by
+  the shell's `PanelSeparator` and `PanelSectionHeader`.
+- **Shell controls where they fit**: `ToggleSwitch` for the switches,
+  `ButtonGroup` (never a Tab stop) for every pick-one row, `Button` for the
+  steppers' ends and the reset-all footer. Kept as our own, restyled: the
+  hex fields (the only focus-taking control, bound to the hex-edit
+  exception), the stepper's value (the shell's `NumberField` is an editable
+  spin box that would take focus on a surface that has none), the reset and
+  confirm glyphs and the colour square (their tooltips obey the input
+  profile's `tooltipHoverShows`; the shell's `Button` tooltip does not), and
+  the urgent Reset (the shell's `Button` has no urgent state).
+- **Reset offered only where it changes something**
+  (`Config.resetOffered`): an ordinary setting stored AND different from the
+  shipped default; an appearance field whose override is in force (its
+  fallback is the theme token, possibly frozen, which the pure module cannot
+  compare). Storage is unchanged: an override equal to the default stays in
+  the file until reset-all.
+- **Look: Omarchy theme | Custom** replaces the follow switch and its two
+  hints; it carries no reset (each segment is the way back). Under Omarchy
+  theme the appearance rows are hidden behind one line.
+- **Inert rows** dim and refuse writes: panel radius while docked, dwell
+  delay while dwell typing is off, the border colour while the border is off
+  (there it is hidden beside the switch, which shares its row).
+- **Colour rows** are square, hex, reset. The square opens the custom
+  editor; the theme's four colours moved into the editor as suggestions that
+  fill the draft; the check shows only while a draft is dirty, and Return
+  in the field commits too.
+- **The chrome follows Omarchy always**: a second `Theme` (following, no
+  overrides) draws the popover and the editor. The rows still show the
+  keyboard's values.
+
+Rejected: keeping swatches on the rows (four identical squares per row read
+as noise, and a one-click write of a theme colour is one click more inside
+the editor). Hiding the reset glyph only on hover (touch has no hover).
+Drawing the popover in the keyboard's own look (a user's unreadable colour
+experiment would lock them out of the controls that undo it). Giving Look a
+reset chip (it would only duplicate the Omarchy theme segment).
+
+Known: the popover's width follows the chip groups' labels, so the
+auto-flipped "Auto+touch" notice or a longer translation widens it.

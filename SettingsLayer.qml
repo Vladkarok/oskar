@@ -24,7 +24,8 @@ Item {
     // single `panel` reference — the only correct path for emojiOpen,
     // which the dismiss area WRITES (a mirrored IN property would fork
     // that write off a copy). Ids that are not panel-root properties —
-    // tokens, card, the emoji page itself — ride their own IN properties.
+    // tokens, the chrome theme, card, the emoji page itself — ride their
+    // own IN properties.
 
     // ---- IN from the panel ----
     //
@@ -32,8 +33,12 @@ Item {
     // every panel-root fact the geometry engine and the dismiss area
     // read (and the one they write).
     property var panel: null
-    // The theme facade the popover and the editor draw with.
+    // The keyboard's theme facade: the values the popover's rows show
+    // (radii, whether the border is drawn).
     property var tokens: null
+    // The chrome the popover and the editor draw with: the live Omarchy
+    // theme, never the keyboard's overrides.
+    property var chrome: null
     // The keyboard card — the band the leftover is computed around
     // (SettingsPlacement.overlayBand's second argument, live).
     property var card: null
@@ -154,7 +159,8 @@ Item {
     SettingsPopover {
         id: settingsPopover
         panel: root.panel
-        tokens: root.tokens
+        tokens: root.chrome
+        keyTokens: root.tokens
         hostWidth: root.leftoverBox.w
         hostHeight: root.leftoverBox.h
         x: root.popoverPlace.x
@@ -168,7 +174,7 @@ Item {
     SettingsColorEditor {
         id: customColorEditor
         panel: root.panel
-        tokens: root.tokens
+        tokens: root.chrome
         fieldName: root.panel.customEditorField
         labelText: root.panel.customEditorLabel
         visible: root.panel.customEditorField !== ""
@@ -191,6 +197,7 @@ Item {
     function openPopover() { settingsPopover.visible = true }
     function closePopover() { settingsPopover.visible = false }
     function disarmResetAll() { settingsPopover.resetAllArmed = false }
+    function syncColourRows() { settingsPopover.syncColourRows() }
     function adoptAppliedColour(name, value) {
         settingsPopover.adoptAppliedColour(name, value)
     }

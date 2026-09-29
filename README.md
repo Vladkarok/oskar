@@ -95,6 +95,7 @@ untouched while the panel keeps the last valid runtime value.
 | `text_color` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#f5f5f5` |
 | `accent_color` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#7aa2f7` |
 | `border_color` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#5a5a5a` |
+| `panel_border` | `true` \| `false` | `true`; following the theme, shown exactly when Hyprland draws window borders (`general:border_size` above 0) |
 
 `state.json` contains the floating placement as `center` — the card centre in
 output-local coordinates — or `null`, the emoji page's dragged position as
@@ -116,15 +117,19 @@ once at startup (SoundEffect plays uncompressed WAV only), into
 stays silent.
 Colours, fonts and corner radius all come from the shared Omarchy style tokens,
 so switching the theme redraws the keyboard where it stands — no restart of the
-shell or the plugin, and nothing on the typing path is touched. `follow_theme:
-false` stops it tracking theme changes: the keyboard keeps the theme that was in
-force when it was first opened. Each of the seven appearance fields in the table
-above can also be pinned on its own — the settings popover's Appearance section,
-or a sparse entry in `config.json`: an explicit override wins over the theme for
-that field alone, with precedence override → live (or frozen) token → shipped
-default, while every unpinned field keeps following or staying frozen as
-`follow_theme` says. Overrides are the whole of the v1.1 appearance surface, not
-an independent colour schema — that remains v2.
+shell or the plugin, and nothing on the typing path is touched. The card's
+border shows when Hyprland draws window borders and hides when
+`general:border_size` is 0.
+
+`follow_theme` decides who owns the eight appearance fields in the table above
+(the two radii, the five colours, `panel_border`). On, the theme answers all of
+them and any of those keys in `config.json` is kept but ignored. Off, your
+values apply, and every field you have not set keeps the theme as it was when
+following stopped. Turning following back on hands every field to the theme
+again; turning it off once more brings your values back. In the popover this
+is the **Look** choice under Appearance: *Omarchy theme* hides the appearance
+rows, *Custom* shows them. The popover itself always draws in the live Omarchy
+theme, whatever look the keyboard has.
 
 ## Input profile (mouse and touch)
 
