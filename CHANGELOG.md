@@ -3,6 +3,48 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
+## 0.2.0
+
+### Changed
+
+- **Look: Omarchy theme or Custom.** The "Follow Omarchy theme" switch is
+  now a choice at the top of Appearance. With "Omarchy theme" the theme
+  sets every appearance setting: both radii, all colours and the border.
+  With "Custom" your own values apply, and the settings you have not
+  changed keep the theme as it was.
+- **If you set colours or radii before:** with `follow_theme: true` in
+  `config.json` (the default) they are kept in the file but no longer
+  applied. Choose "Custom" to get them back.
+- The settings were redrawn with Omarchy's own controls, in four sections:
+  General, Emoji page, Dwell, Appearance. The reset mark shows only where
+  a reset would change something. A colour row is a square and a hex
+  field; the square opens the colour editor, which now holds the theme's
+  suggested colours. Enter applies a typed hex.
+- The settings and the colour editor always use the Omarchy theme for
+  their own look. Custom colours apply to the keyboard.
+- A custom text colour also reaches the header buttons and the key edges.
+  The menu of a held key takes the key background. Changing the panel
+  background no longer changes the keys.
+- "Accent colour" is named "Active colour": it marks what is on, such as
+  a latched Shift, Caps Lock, the selected emoji tab. The `accent_color`
+  key keeps its name.
+- Panel radius is greyed out while docked (the docked panel is always
+  square), and dwell delay while dwell typing is off.
+
+### Added
+
+- **Border** switch (`panel_border`). With "Omarchy theme" the panel has a
+  border exactly when Hyprland draws window borders: `general:border_size`
+  0 means no border. OSKar reads that value with `hyprctl getoption` when
+  it loads, on each open and after a Hyprland config reload; it changes
+  nothing in Hyprland.
+
+### Fixed
+
+- A translucent key background (`#AARRGGBB`) showed in its hex field as
+  the solid colour the keys paint, and confirming the field saved the
+  solid colour.
+
 ## 0.1.2
 
 ### Fixed

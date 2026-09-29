@@ -27,7 +27,7 @@
 # this one never resolves a moving branch.
 
 pkgname=oskar
-pkgver=0.1.2
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='OSKar — mouse-driven on-screen keyboard for Omarchy (Hyprland + Quickshell)'
 arch=(x86_64)

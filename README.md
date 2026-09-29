@@ -319,7 +319,7 @@ helper, its unit and the `oskar` command) with a `.sha256` beside it.
 Any `install.sh` above takes it in place of the build:
 
 ```sh
-bash install.sh --prebuilt ~/Downloads/oskar-daemon-0.1.2-x86_64.tar.gz
+bash install.sh --prebuilt ~/Downloads/oskar-daemon-0.2.0-x86_64.tar.gz
 ```
 
 `install.sh` writes three files outside the checkout: the user unit
@@ -557,7 +557,7 @@ Notes from the survey:
 ## Status
 
 Alpha, daily-driven by its author on his own machine — that is how most
-of it was found and fixed. **0.1.2 is the current release**; 0.1.0 was the first. It installs
+of it was found and fixed. **0.2.0 is the current release**; 0.1.0 was the first. It installs
 through Omarchy's plugin manager, from a source checkout, or from the
 release with its `PKGBUILD` and a prebuilt helper (see [Install](#install)
 and [Other ways to install](#other-ways-to-install)).
