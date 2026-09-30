@@ -247,7 +247,7 @@ Item {
             if (host.hovered && !line.hoverAt) line.hoverAt = now
             if (host.hovered && host.text !== "" && line.texts[host.text] === undefined)
                 line.texts[host.text] = now
-            var shared = ToolTip.toolTip
+            var shared = host.popup
             if (shared && shared.visible && shared.text !== ""
                     && line.shown[shared.text] === undefined)
                 line.shown[shared.text] = now
@@ -286,7 +286,7 @@ Item {
         interval: 5
         repeat: true
         onTriggered: {
-            var shared = ToolTip.toolTip
+            var shared = probeTip.popup
             var waited = Date.now() - root.probeStart
             if (shared && shared.visible && shared.text === "probe-late") {
                 running = false
@@ -414,10 +414,10 @@ Item {
                 break
             }
             case "tip": {
-                // The tooltip actually on screen: the shared instance every
-                // HoverTooltip shows through, and the chip's own host.
-                var shared = ToolTip.toolTip
+                // The tooltip actually on screen: the chip's own host and
+                // the popup it owns (each HoverTooltip has its own).
                 var host = chipTooltipHost()
+                var shared = host ? host.popup : null
                 log("tip " + JSON.stringify({
                     visible: shared ? shared.visible : null,
                     text: shared ? shared.text : null,

@@ -34,6 +34,9 @@ Item {
     // Whether this hover's (or hold's) wait has run out: the tooltip may
     // show at once from here until the pointer leaves or the hold ends.
     property bool opened: false
+    // The popup this host shows: the lab canary times what is on screen
+    // through it, since no shared attached ToolTip carries it any more.
+    readonly property alias popup: tip
 
     anchors.fill: parent
 
