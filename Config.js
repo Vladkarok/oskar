@@ -991,3 +991,22 @@ function serializeState(state) {
     }
     return JSON.stringify(out, null, 2) + "\n"
 }
+
+/// The private writer's next job: the queue's head whose path is healthy
+/// now. A path in `unhealthy` holds a file the panel could not parse (an
+/// external edit), and the README promises that file is preserved, so a
+/// write queued or retried before the file turned bad is dropped here
+/// rather than run; the queue carries on with the next path. Returns
+/// { next: entry or null, queue: what is left, dropped: paths skipped }.
+function nextPrivateWrite(queue, unhealthy) {
+    var bad = unhealthy || []
+    var rest = (queue || []).slice()
+    var dropped = []
+    while (rest.length > 0) {
+        var head = rest.shift()
+        if (bad.indexOf(head.path) === -1)
+            return { next: head, queue: rest, dropped: dropped }
+        dropped.push(head.path)
+    }
+    return { next: null, queue: rest, dropped: dropped }
+}

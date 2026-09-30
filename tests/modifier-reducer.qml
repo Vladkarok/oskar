@@ -654,6 +654,27 @@ QtObject {
             T.equal(out.state.caps, true)
         })
 
+        T.test("a search character spends every latch, keeps the lock, emits nothing", function () {
+            var state = Reducer.reduce(idle, { type: "doubleClick", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "ctrl" }).state
+            state = Reducer.reduce(state, { type: "click", modifier: "altgr" }).state
+            state = Reducer.reduce(state, { type: "capsClick" }).state
+            var out = Reducer.reduce(state, { type: "searchChar" })
+            T.deepEqual(out.lines, [])
+            T.equal(out.state.shift, "locked")
+            T.equal(out.state.ctrl, "idle")
+            T.equal(out.state.altgr, "idle")
+            T.equal(out.state.caps, true)
+        })
+
+        T.test("a search character spends a latched Shift before the next typed cap", function () {
+            var state = Reducer.reduce(idle, { type: "click", modifier: "shift" }).state
+            state = Reducer.reduce(state, { type: "searchChar" }).state
+            T.equal(state.shift, "idle")
+            var out = Reducer.reduce(state, { type: "press", position: "AC01", letter: true })
+            T.deepEqual(out.lines, ["down AC01"])
+        })
+
         T.test("caps lock does not shift a non-letter key", function () {
             var state = Reducer.reduce(idle, { type: "capsClick" }).state
             var out = Reducer.reduce(state, { type: "press", position: "AE01", letter: false })

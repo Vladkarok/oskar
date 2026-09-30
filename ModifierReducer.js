@@ -115,6 +115,7 @@ function unchanged(state) {
 ///   { type: "languageSwitch" }
 ///   { type: "releaseAll" }
 ///   { type: "paste",        ctrl, shift, position }
+///   { type: "searchChar" }
 ///
 /// `shift` on a press means the cap draws the position's shift level and must
 /// type that level — the symbols page. Like Caps Lock it is
@@ -160,6 +161,8 @@ function reduce(state, event) {
         return releaseAll(state)
     case "paste":
         return paste(state, event)
+    case "searchChar":
+        return searchChar(state)
     }
     return unchanged(state)
 }
@@ -549,10 +552,7 @@ function paste(state, event) {
     var position = String(event && event.position || "")
     if (!position || state.pending) return unchanged(state)
 
-    var next = copy(state)
-    for (var i = 0; i < ORDER.length; i++) {
-        if (next[ORDER[i]] === "latched") next[ORDER[i]] = "idle"
-    }
+    var next = spendLatches(state)
 
     var wantCtrl = event.ctrl === true
     var wantShift = event.shift === true
@@ -567,6 +567,25 @@ function paste(state, event) {
     if (wantCtrl) lines.push("up " + POSITIONS.ctrl)
     if (shiftLocked && !wantShift) lines.push("down " + POSITIONS.shift)
     return { state: next, lines: lines }
+}
+
+/// Every latched modifier back to idle; locks, Caps, Fn and a pending key
+/// untouched. Nothing is emitted: a latch is never held at the device.
+function spendLatches(state) {
+    var next = copy(state)
+    for (var i = 0; i < ORDER.length; i++) {
+        if (next[ORDER[i]] === "latched") next[ORDER[i]] = "idle"
+    }
+    return next
+}
+
+/// A character the emoji page's search took instead of the focused client.
+/// It is a non-modifier key press as far as the latch is concerned, so it
+/// spends every latch as a typed cap would; the helper was never told about
+/// the character, so no line goes out and the lock stays down. The caller
+/// reads the drawn character before this runs, so the latch still shapes it.
+function searchChar(state) {
+    return { state: spendLatches(state), lines: [] }
 }
 
 /// Lifts everything the device is holding for us and returns to idle. Used

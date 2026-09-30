@@ -179,12 +179,26 @@ Item {
             }
         }
         root.privateWriteInFlight = null
-        // The queue's HEAD runs next (FIFO).
-        if (root.privateWriteQueue.length > 0) {
-            var next = root.privateWriteQueue[0]
-            root.privateWriteQueue = root.privateWriteQueue.slice(1)
-            runPrivateWrite(next.path, next.payload, next.retried === true)
-        }
+        // The queue's HEAD runs next (FIFO), unless its file stopped
+        // parsing while the write waited: the stand-off guard holds for a
+        // queued or retried write exactly as for a fresh one.
+        var pick = ConfigFile.nextPrivateWrite(root.privateWriteQueue,
+            root.unhealthyPaths())
+        root.privateWriteQueue = pick.queue
+        for (var d = 0; d < pick.dropped.length; d++)
+            console.warn("[oskar] " + pick.dropped[d]
+                + " is not valid; its pending save is dropped and the file kept")
+        if (pick.next)
+            runPrivateWrite(pick.next.path, pick.next.payload,
+                pick.next.retried === true)
+    }
+
+    // The paths whose stand-off guard stands right now.
+    function unhealthyPaths() {
+        var paths = []
+        if (root.configError) paths.push(root.configPath)
+        if (root.stateError) paths.push(root.statePath)
+        return paths
     }
 
     // The write itself is Config.PRIVATE_WRITE_SCRIPT: through a symlink

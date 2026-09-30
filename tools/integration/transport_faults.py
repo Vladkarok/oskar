@@ -16,7 +16,8 @@ purpose, and for each fault asserts the recovery the decisions promise:
     plus a margin);
   - the fake saw a fresh `hello 7` on a new connection after every drop or
     rebuild, and a key tap after recovery reached the fake and was answered;
-  - no paste chord stays armed, and none outlives the 8 s chord guard;
+  - no paste chord stays armed, and none outlives the chord guard (its
+    interval read from PasteChords.qml);
   - the hosted shell logged no `keycap fallback` and no new QML
     WARN/ERROR naming our files (the canary's sweep; the panel's own
     `[oskar]` journal lines are product messages, not engine warnings).
@@ -50,20 +51,22 @@ LAB_HOSTNAME = "testprod"
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 MARK = "[tfleg] "
-CHORD_GUARD_S = 8.0
 MARGIN_S = 3.0
 
 
 def product_constant(path, pattern, what):
     with open(os.path.join(REPO, path), encoding="utf-8") as handle:
-        found = re.search(pattern, handle.read())
+        found = re.search(pattern, handle.read(), re.M)
     if not found:
         raise Failure(f"cannot read {what} from {path}")
     return int(found.group(1)) / 1000.0
 
 
-# The bound follows the product: the stale window SocketWatch judges by,
-# and the reconnect timer's fast interval.
+# The bounds follow the product: the chord guard's interval, the stale
+# window SocketWatch judges by, and the reconnect timer's fast interval.
+CHORD_GUARD_S = product_constant("PasteChords.qml",
+                                 r"id: chordAckGuard[\s\S]*?interval: (\d+)\s*$",
+                                 "the chord guard's interval")
 HELLO_STALE_S = product_constant("SocketWatch.js",
                                  r"var HELLO_STALE_MS = (\d+)",
                                  "HELLO_STALE_MS")

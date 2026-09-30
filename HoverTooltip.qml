@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import qs.Ui
 
 // Shared hover-only help for compact controls. The owning MouseArea remains
 // the accessibility authority; this is deliberately only visual chrome.
@@ -19,6 +19,13 @@ import QtQuick.Controls
 // tooltip opens with, and a text change while it shows updates it in place.
 // Every refresh is deferred to the end of the event, so a caller that
 // changes text and hover in one handler is judged by where both ended up.
+//
+// The text is always rendered as plain text: callers pass clipboard peeks
+// and other text the panel does not own, and AutoText would interpret
+// markup in it (a remote <img> is a network request). The popup is the
+// shell's PanelToolTip, this host's own instance rather than the window's
+// shared attached ToolTip: plain text and the theme's tooltip look come
+// with it, and nothing outside this file can undo either.
 Item {
     id: tooltipHost
     property bool hovered: false
@@ -29,8 +36,14 @@ Item {
     property bool opened: false
 
     anchors.fill: parent
-    // The popup's own delay stays zero: the wait is `opening`'s.
-    ToolTip.delay: 0
+
+    // The shell's own tooltip: its [tooltip] colours, its border, its
+    // font, and a plain-text content item — the same popup every Omarchy
+    // panel shows. Only the delay is ours (zero: the wait is `opening`'s).
+    PanelToolTip {
+        id: tip
+        delay: 0
+    }
 
     Timer {
         id: opening
@@ -45,9 +58,9 @@ Item {
     function refresh() {
         if (tooltipHost.text === "" || !(tooltipHost.hovered || tooltipHost.held)) {
             opening.stop()
-            ToolTip.hide()
+            tip.hide()
         } else if (tooltipHost.opened) {
-            ToolTip.show(tooltipHost.text, 4000)
+            tip.show(tooltipHost.text, 4000)
         } else if (!opening.running) {
             opening.start()
         }

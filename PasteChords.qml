@@ -196,11 +196,14 @@ Item {
 
     Timer {
         id: chordAckGuard
-        // Longer than the daemon's 5 s worst case: a guard that fired
-        // first would report failure while the daemon still delivered the
-        // chord late — pasting the next pick's clipboard, the A→B race the
-        // transaction exists to prevent.
-        interval: 8 * 1000
+        // Longer than the helper's worst case for a line queued behind a
+        // `share` on the same connection: the share's 6 s deadline plus
+        // the 5 s put-back bound, 11 s in all (SHARE_BOUND and
+        // PUT_BACK_BOUND in daemon/src/seat.rs; docs/orientation.md). A
+        // guard that fired first would report failure while the helper
+        // still delivered the chord late — pasting the next pick's
+        // clipboard, the A→B race the transaction exists to prevent.
+        interval: 12000
         repeat: false
         onTriggered: () => {
             if (root.chordAcks.chordDone) root.chordAckTimedOut()

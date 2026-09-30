@@ -1370,18 +1370,19 @@ Item {
         root.dwellDelayMs = effective.dwellDelayMs
         root.uiLanguage = effective.uiLanguage
         root.inputProfile = effective.inputProfile
-        // A follow-theme flip while the panel is on screen is immediate:
-        // stopping freezes the tokens at the look they then have, and
-        // re-enabling releases that snapshot so a later stop freezes the
-        // tokens as they are then — each stop holds its own moment, never a
-        // replay of an older look (Theme.release). The `opened` guard keeps
-        // any snapshot from being taken at load, before the shell has read
-        // the theme's files (Theme.qml owns that reasoning); onOpenedChanged
-        // covers the path where the panel opens already following-off.
-        if (root.opened) {
-            if (root.followTheme) tokens.release()
-            else tokens.freeze()
-        }
+        // A follow-theme flip is immediate: stopping freezes the tokens at
+        // the look they then have, and re-enabling releases that snapshot so
+        // a later stop freezes the tokens as they are then — each stop holds
+        // its own moment, never a replay of an older look (Theme.release).
+        // The release runs open or closed: a re-enable while the panel is
+        // hidden must still drop the snapshot, or the next open would find
+        // one held and freeze nothing new. Only the freeze waits for
+        // `opened`, so no snapshot is taken at load, before the shell has
+        // read the theme's files (Theme.qml owns that reasoning);
+        // onOpenedChanged covers the path where the panel opens already
+        // following-off.
+        if (root.followTheme) tokens.release()
+        else if (root.opened) tokens.freeze()
         if (soundChanged && root.sound) root.resolveSoundFile()
         // External mode and preset edits take the same placement path as GUI
         // changes, including clamping a newly enlarged floating card.

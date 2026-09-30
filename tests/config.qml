@@ -737,6 +737,28 @@ QtObject {
                 "an ASCII state file: bytes equal characters")
         })
 
+        T.test("a queued or retried write to a path that stands off is dropped", function () {
+            var queue = [
+                { path: "/c", payload: "{}\n", retried: true },
+                { path: "/s", payload: "[]\n" }
+            ]
+            var out = Config.nextPrivateWrite(queue, ["/c"])
+            T.equal(out.next.path, "/s")
+            T.deepEqual(out.queue, [])
+            T.deepEqual(out.dropped, ["/c"])
+            // Healthy: FIFO, nothing dropped, the rest stays queued.
+            out = Config.nextPrivateWrite(queue, [])
+            T.equal(out.next.path, "/c")
+            T.equal(out.next.retried, true)
+            T.deepEqual(out.queue, [queue[1]])
+            T.deepEqual(out.dropped, [])
+            // Every path standing off: nothing runs, the queue empties.
+            out = Config.nextPrivateWrite(queue, ["/s", "/c"])
+            T.equal(out.next, null)
+            T.deepEqual(out.queue, [])
+            T.deepEqual(out.dropped, ["/c", "/s"])
+        })
+
         T.test("the writer's temp name and its sweep pattern are one fixed, OSKar-only shape", function () {
             T.equal(Config.PRIVATE_TEMP_TEMPLATE, ".oskar-save.XXXXXXXXXX")
             T.equal(Config.PRIVATE_TEMP_PATTERN, ".oskar-save.??????????")

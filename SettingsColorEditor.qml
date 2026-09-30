@@ -62,6 +62,10 @@ Rectangle {
     }
 
     function pushFields(skipHex) {
+        // Every field is about to show workColor, which is always valid: a
+        // notice left from a rejected draft would block Apply on a draft
+        // that no longer exists.
+        editor.invalid = false
         editor.syncingFields = true
         if (!skipHex)
             hexInput.text = ConfigFile.toHex(editor.workColor).toLowerCase()
@@ -131,7 +135,10 @@ Rectangle {
         ConfigFile.fieldInsert(field, text)
     }
 
+    // An invalid field never reached workColor, so applying now would write
+    // the previous valid colour behind the notice: Apply waits for a valid draft.
     function applyDraft() {
+        if (editor.invalid) return
         var hex = ConfigFile.toHex(editor.workColor).toLowerCase()
         if (!hex) hex = hexInput.text
         var result = ConfigFile.commitHexDraft(hex, panel.configHealthy)
@@ -710,6 +717,7 @@ Rectangle {
                 tokens: editor.tokens
                 panel: editor.panel
                 enabled: editor.panel && editor.panel.configHealthy
+                    && !editor.invalid
                 accessName: UiStrings.tr("color.editor.confirm",
                     editor.panel && editor.panel.uiLang, [editor.labelText])
                 onConfirmed: editor.applyDraft()

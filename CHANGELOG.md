@@ -3,6 +3,26 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
+## 0.2.1
+
+### Fixed
+
+- The colour editor's check mark no longer applies while a hex or channel
+  value is invalid; it used to save the last valid colour and close.
+- A character typed into the emoji search now uses up a one-shot Shift,
+  Ctrl, Alt or Super, as a key typed into an app does. Before, the latch
+  stayed on and applied to the next key after the emoji page closed.
+- Clipboard text in the paste button's preview and in the emoji search is
+  shown as plain text, never read as formatting. Tooltips now use the
+  Omarchy theme's own tooltip look instead of Qt's default.
+- A save that was waiting when `config.json` or the state file became
+  invalid no longer overwrites that file; the file is kept as you left it.
+- Turning theme following back on in `config.json` while the keyboard is
+  hidden now takes effect: the next time following is turned off, the
+  keyboard keeps the look of that moment, not an older one.
+- A paste that waits behind a slow keymap share is no longer reported as
+  failed while it can still arrive.
+
 ## 0.2.0
 
 ### Changed

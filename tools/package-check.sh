@@ -24,6 +24,24 @@ if (( ${#files[@]} == 0 )); then
   exit 1
 fi
 
+# The list itself, not the Makefile's text: the PLUGIN_RUNTIME assignment
+# and its backslash continuations, comments stripped, one name per line.
+# A name that only appears in a comment or another rule is not shipped.
+mapfile -t runtime < <(awk '
+  !listing && /^PLUGIN_RUNTIME[[:space:]]*:?=/ { listing = 1; sub(/^[^=]*=/, "") }
+  listing {
+    more = /\\[[:space:]]*$/
+    sub(/#.*/, "")
+    sub(/\\[[:space:]]*$/, "")
+    n = split($0, words, /[[:space:]]+/)
+    for (i = 1; i <= n; i++) if (words[i] != "") print words[i]
+    if (!more) exit
+  }' "$root/Makefile")
+if (( ${#runtime[@]} == 0 )); then
+  echo "Packaging check failed — no PLUGIN_RUNTIME list found in the Makefile" >&2
+  exit 1
+fi
+
 missing=""
 for path in "${files[@]}"; do
   file="${path#"$root"/}"
@@ -31,7 +49,7 @@ for path in "${files[@]}"; do
   case "$file" in
     tests/*|tools/*) continue ;;
   esac
-  if ! grep -q "$(basename "$file")" "$root/Makefile"; then
+  if ! printf '%s\n' "${runtime[@]}" | grep -qxF -- "$(basename "$file")"; then
     missing+="$file"$'\n'
   fi
 done

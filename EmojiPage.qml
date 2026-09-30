@@ -395,6 +395,9 @@ Rectangle {
                         : (emojiRoot.searchArmed ? ""
                             : UiStrings.tr("emoji.searchPlaceholder",
                                 emojiRoot.uiLang))
+                    // The query can be pasted clipboard text: shown, never
+                    // interpreted as markup.
+                    textFormat: Text.PlainText
                     color: emojiRoot.query !== "" ? tokens.foreground : tokens.muted
                     font.family: tokens.fontFamily
                     font.pixelSize: tokens.fontBody

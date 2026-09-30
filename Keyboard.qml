@@ -1966,6 +1966,11 @@ Item {
             // must stay silent like any other cap that draws nothing.
             if (searchChar) {
                 root.keyPressed()
+                // The query took a key, so its latches are spent exactly
+                // as a typed cap spends them; the reducer emits no line
+                // for this, so the helper still hears nothing.
+                root.modifierState = Modifiers.reduce(root.modifierState,
+                    { type: "searchChar" }).state
                 root.searchInput("char", searchChar)
             }
             return
@@ -2077,6 +2082,10 @@ Item {
         if (root.searchMode) {
             if (capData.key === "BackSpace") {
                 root.keyPressed()
+                // A non-modifier key: it spends the latches as a character
+                // does, and the helper hears nothing.
+                root.modifierState = Modifiers.reduce(root.modifierState,
+                    { type: "searchChar" }).state
                 root.searchInput("backspace", "")
             } else if (capData.key === "Escape") {
                 root.searchInput("escape", "")
