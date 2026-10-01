@@ -61,7 +61,7 @@ are under [Other ways to install](#other-ways-to-install).
 | <img src="assets/screenshots/language-menu.png" width="480" alt="Language chooser with endonyms"> <br>**Languages named in their own language** — English, Українська, Italiano; picking one moves the whole seat | <img src="assets/screenshots/hold-column-ukrainian.png" width="480" alt="Hold column on a Ukrainian key"> <br>**Hold a key** — its extra levels stack into a column (Ukrainian н: ŷ) |
 | <img src="assets/screenshots/symbols-ukrainian.png" width="480" alt="Symbols page"> <br>**?123 symbols** — currency and punctuation on every layout | <img src="assets/screenshots/emoji-page.png" width="480" alt="Emoji page"> <br>**Emoji page** — categories, recents, the panel's own grid |
 | <img src="assets/screenshots/emoji-search.png" width="480" alt="Emoji search"> <br>**Emoji search** — type a query, pick from the matches | <img src="assets/screenshots/settings.png" width="480" alt="Settings popover"> <br>**Settings** — mode, size, interface language, input profile |
-| <img src="assets/screenshots/appearance-theme.png" width="480" alt="Appearance editor with a custom red theme"> <br>**Appearance** — radius and colours, applied live | |
+| <img src="assets/screenshots/appearance-theme.png" width="480" alt="Appearance editor with a custom navy-and-teal theme"> <br>**Appearance** — radius and colours, applied live | |
 
 ## Modes and configuration
 
