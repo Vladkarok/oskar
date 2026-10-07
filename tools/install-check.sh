@@ -62,6 +62,12 @@ done
 for stub in hyprctl jq wl-copy wl-paste; do printf '#!/bin/sh\nexit 0\n' > "$sandbox/bin/$stub"; done
 printf '#!/bin/sh\necho "\tlibxkbcommon.so.0 (libc6,x86-64) => /usr/lib/libxkbcommon.so.0"\n' > "$sandbox/bin/ldconfig"
 chmod +x "$sandbox"/bin/*
+# Stand-ins for a write that fails part-way: an ln that cannot link,
+# and an install that leaves a short file at its destination (a full disk).
+mkdir -p "$sandbox/failln" "$sandbox/shortinstall"
+printf '#!/bin/sh\necho "ln: Permission denied" >&2; exit 1\n' > "$sandbox/failln/ln"
+printf '#!/bin/sh\nfor a; do last="$a"; done\nprintf short > "$last"\necho "install: No space left on device" >&2; exit 1\n' > "$sandbox/shortinstall/install"
+chmod +x "$sandbox/failln/ln" "$sandbox/shortinstall/install"
 for tool in bash sh tar sed grep find install ln mkdir readlink dirname basename uname head mktemp rm cat cmp printf cut sort seq sleep timeout gzip tr mv date realpath pwd sha256sum chmod; do
   path=$(command -v "$tool" 2>/dev/null) && ln -s "$path" "$sandbox/toolbox/$tool"
 done
@@ -86,6 +92,7 @@ sbx() {
   env -i HOME="$home" XDG_RUNTIME_DIR="$sandbox/run" XDG_STATE_HOME="$home/.local/state" \
     XDG_CONFIG_HOME="$home/.config" PATH="$tpath" STUB_ACTIVE="${STUB_ACTIVE:-1}" \
     ${state_home_override:+XDG_STATE_HOME="$state_home_override"} \
+    ${config_home_override:+XDG_CONFIG_HOME="$config_home_override"} \
     STUB_FRAGMENT="${STUB_FRAGMENT:-auto}" STUB_SYSTEM_UNIT="${STUB_SYSTEM_UNIT:-}" "$@"
 }
 run() { sbx bash "${installer:-$root/install.sh}" "$@" >"$sandbox/out" 2>&1; echo $?; }
@@ -462,6 +469,85 @@ check "  and nothing was moved aside beside them" "$(command ls -d "$home"/.conf
 check "  systemctl never named it" "$(calls 'omarchy-osk')" 0
 check "  the shell calls were logged (the check below is not vacuous)" "$(grep -c 'omarchy plugin enable io.github.vladkarok.oskar' "$sandbox/omarchy.log")" 1
 check "  nor did the shell calls" "$(grep -c -E 'omarchy-osk|vladkarok\.osk( |$)' "$sandbox/omarchy.log")" 0
+
+# ---- setup refuses a real-directory registration before it changes anything ----
+reset; mkdir -p "$reg"; printf 'their checkout\n' > "$reg/README"
+check "setup with a real-directory registration that is not this checkout: dies" "$(oskar setup --prebuilt "$matching")" 1
+check "  it names the directory and says nothing was changed" "$(grep -c 'is a real directory' "$sandbox/out")$(grep -c 'nothing was changed' "$sandbox/out")" 11
+check "  install.sh never ran: nothing written" "$(written)" untouched
+check "  systemd was never called" "$(wc -l < "$sandbox/systemctl.log")" 0
+reset; run --prebuilt "$matching" >/dev/null; mkdir -p "$reg"; printf 'their checkout\n' > "$reg/README"
+before="$(what "$unit") $(what "$helper") $(what "$cli") $(sum "$record_file")"; : > "$sandbox/systemctl.log"
+check "setup over an install with a real-directory registration: dies" "$(oskar setup --prebuilt "$matching")" 1
+check "  the installed files and the record are unchanged" "$(what "$unit") $(what "$helper") $(what "$cli") $(sum "$record_file")" "$before"
+check "  systemd was never called" "$(wc -l < "$sandbox/systemctl.log")" 0
+
+# ---- nothing runs as root: it would build and install into root's home ----
+unshare_bin="$(command -v unshare 2>/dev/null || true)"
+if [[ -n "$unshare_bin" ]] && "$unshare_bin" -r true 2>/dev/null; then
+  asroot() { sbx "$unshare_bin" -r bash "$@" >"$sandbox/out" 2>&1; echo $?; }
+  reset
+  check "install.sh as root: refused, exit 1" "$(asroot "$root/install.sh" --prebuilt "$matching")" 1
+  check "  it names sudo" "$(grep -c 'not with sudo or as root' "$sandbox/out")" 1
+  check "  nothing written" "$(written)" untouched
+  check "  systemd was never called" "$(wc -l < "$sandbox/systemctl.log")" 0
+  reset; run --prebuilt "$matching" >/dev/null; mkdir -p "$(dirname "$reg")"; ln -s "$root" "$reg"
+  before="$(what "$unit") $(what "$helper") $(what "$cli") $(sum "$record_file") $(what "$reg")"
+  : > "$sandbox/systemctl.log"; : > "$sandbox/omarchy.log"
+  check "uninstall.sh as root: refused, exit 1, naming sudo" "$(asroot "$root/uninstall.sh")$(grep -c 'not with sudo or as root' "$sandbox/out")" 11
+  for verb in setup upgrade teardown start unlink-enablement "record write $unit" "record forget $unit" "record aside $unit replaced"; do
+    # shellcheck disable=SC2086
+    check "oskar ${verb% /*} as root: refused, exit 1, naming sudo" "$(asroot "$root/bin/oskar" $verb)$(grep -c 'not with sudo or as root' "$sandbox/out")" 11
+  done
+  check "  every file, the record and the registration are unchanged" "$(what "$unit") $(what "$helper") $(what "$cli") $(sum "$record_file") $(what "$reg")" "$before"
+  check "  neither systemd nor the shell was called" "$(wc -l < "$sandbox/systemctl.log")$(wc -l < "$sandbox/omarchy.log")" 00
+  check "oskar status as root still reports" "$(asroot "$root/bin/oskar" status)" 0
+else skip "the root refusals (no unprivileged user namespace for unshare -r)"; fi
+
+# ---- the destinations are checked before anything is written ----
+reset; mkdir -p "$home/.local"; ln -s "$sandbox/gone" "$home/.local/bin"
+check "~/.local/bin a dangling symlink: refused, exit 1" "$(run --prebuilt "$matching")" 1
+check "  it names it and says nothing was changed" "$(grep -c "$home/.local/bin" "$sandbox/out")$(grep -c 'nothing was changed' "$sandbox/out")" 11
+check "  nothing written" "$(written)" untouched
+if dir_modes_bind; then
+reset; mkdir -p "$home/.local/bin"; chmod 555 "$home/.local/bin"
+check "~/.local/bin read-only: refused, exit 1" "$(run --prebuilt "$matching")" 1
+chmod 755 "$home/.local/bin"
+check "  nothing written" "$(written)" untouched
+else skip "~/.local/bin read-only (directory modes do not bind this user)"; fi
+
+# ---- each file is recorded as it is written ----
+reset
+check "the command link fails after the helper and unit are written: exit non-zero" "$(tpath="$sandbox/bin:$sandbox/failln:$sandbox/toolbox" run --prebuilt "$matching" | grep -cv '^0$')" 1
+check "  the helper and the unit already written are recorded" "$(rec matches "$helper")$(rec matches "$unit")" 00
+check "  a rerun finishes without --force" "$(run --prebuilt "$matching")" 0
+check "  and moves nothing aside" "$(anyaside)" 0
+
+# ---- a helper write that fails never replaces the working helper ----
+reset; run --prebuilt "$matching" >/dev/null; hsum="$(sum "$helper")"
+check "the helper's write fails part-way (disk full): exit non-zero" "$(tpath="$sandbox/bin:$sandbox/shortinstall:$sandbox/toolbox" run --prebuilt "$matching" | grep -cv '^0$')" 1
+check "  the installed helper is unchanged and still recorded" "$(sum "$helper") $(rec matches "$helper")" "$hsum 0"
+check "  the unit is unchanged and still recorded" "$(cmp -s "$root/systemd/oskar.service" "$unit" && echo same) $(rec matches "$unit")" "same 0"
+check "  no temporary file is left beside them" "$(command ls -A "$(dirname "$helper")" | wc -l)$(command ls -A "$(dirname "$unit")" | grep -vc -e '^oskar.service$' -e '\.wants$')" 10
+
+# ---- the shell's XDG directories may differ from the session's ----
+reset; state_home_override="$home/.xdg/state" run --prebuilt "$matching" >/dev/null; : > "$sandbox/systemctl.log"
+check "install from a shell with its own XDG_STATE_HOME; Retry from the session without it" "$(oskar start)" 0
+check "  starts the unit" "$(calls '^systemctl --user start oskar.service$')" 1
+check "  the record is at ~/.local/state/oskar/install-record, not under the shell's XDG_STATE_HOME" "$(wc -l < "$record_file")$([[ -e "$home/.xdg/state/oskar/install-record" ]] && echo there || echo absent)" 3absent
+reset; run --prebuilt "$matching" >/dev/null; mkdir -p "$home/.xdg/state/oskar"; mv "$record_file" "$home/.xdg/state/oskar/install-record"
+check "a record an earlier version kept under XDG_STATE_HOME still proves the files" "$(state_home_override="$home/.xdg/state" oskar start)" 0
+check "  and the next install moves it to ~/.local/state without --force" "$(state_home_override="$home/.xdg/state" run --prebuilt "$matching")" 0
+check "  the old record is gone and nothing was moved aside" "$([[ -e "$home/.xdg/state/oskar/install-record" ]] && echo there || echo gone)$(wc -l < "$record_file")$(anyaside)" gone30
+reset; run --prebuilt "$matching" >/dev/null; foreign_enabled
+check "teardown from a shell with its own XDG_CONFIG_HOME" "$(config_home_override="$home/.xdg/config" oskar teardown)" 0
+check "  removes the enablement link systemd made under ~/.config" "$(link_is "$wants")" none
+check "  and says so" "$(grep -c -F "enablement link removed: $wants" "$sandbox/out")" 1
+check "  another program's link there survives" "$(link_is "$theirs_link")" "$home/.local/share/systemd/user/oskar.service"
+reset; run --prebuilt "$matching" >/dev/null; xwants="$home/.xdg/config/systemd/user/graphical-session.target.wants/oskar.service"
+mkdir -p "$(dirname "$xwants")"; ln -s "$unit" "$xwants"
+check "teardown also searches the caller's XDG_CONFIG_HOME" "$(config_home_override="$home/.xdg/config" oskar teardown)" 0
+check "  removing OSKar's links in both" "$(link_is "$wants") $(link_is "$xwants")" "none none"
 
 check "the whole run never asked systemctl to disable anything (it acts by name)" "$(grep -c 'disable' "$sandbox/systemctl.all.log")" 0
 

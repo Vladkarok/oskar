@@ -15,10 +15,20 @@
 # and unchanged since; anything else under those names is someone else's.
 # It is never overwritten: without consent the install stops and names it,
 # and `--force` moves it aside under a free dated name before writing.
-# Nothing outside the checkout is touched until the install record is
-# known usable and a helper is in hand, so a failed build, a missing
-# tarball or an unusable record leaves the home directory as it was.
+# Nothing outside the checkout is touched until the install record and
+# every destination directory are known writable and a helper is in
+# hand, so a failed build, a missing tarball, an unusable record or an
+# unwritable destination leaves the home directory as it was. Each file
+# is recorded as soon as it is written.
 set -euo pipefail
+
+# Root would build inside the user's checkout and install into root's
+# home and root's (absent) session, leaving root-owned files the user
+# cannot rebuild or remove.
+if ((EUID == 0)); then
+  echo "install.sh: run it as your own user, not with sudo or as root: it builds in this checkout and installs into your home and your user session. Nothing was changed." >&2
+  exit 1
+fi
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 binary="$HOME/.local/libexec/oskar-daemon"
@@ -49,6 +59,22 @@ if ! record usable; then
   echo "install.sh: the install record cannot be kept (reason above); nothing was changed" >&2
   exit 1
 fi
+# So must each destination's directory, or its nearest existing ancestor:
+# a write that fails half-way through step 4 would leave some files
+# written and others not.
+for path in "$binary" "$unit" "$cli"; do
+  dir="$(dirname "$path")"
+  probe="$dir"
+  while [[ ! -e "$probe" && ! -L "$probe" ]]; do probe="$(dirname "$probe")"; done
+  if [[ ! -d "$probe" || ! -w "$probe" || ! -x "$probe" ]]; then
+    if [[ "$probe" == "$dir" ]]; then
+      echo "install.sh: $dir is not a writable directory, so $path cannot be installed; nothing was changed" >&2
+    else
+      echo "install.sh: $probe is not a writable directory, so $dir cannot be created for $path; nothing was changed" >&2
+    fi
+    exit 1
+  fi
+done
 
 # ---- 1. the helper, obtained before anything outside the checkout moves ----
 if [[ -z "$prebuilt" ]]; then
@@ -160,25 +186,45 @@ for i in "${!moved_from[@]}"; do
   echo "install.sh: --force: ${moved_from[i]} did not match OSKar's install record; moved aside as ${moved_to[i]}" >&2
 done
 
-# ---- 4. the writes, then the record of what was written ----
+# ---- 4. the writes, each recorded as soon as it is in place ----
+# An interruption between two writes then leaves every file already
+# written recorded, and a rerun recognises them as OSKar's.
+remember() {
+  if ! record write "$1"; then
+    echo "install.sh: $1 is installed but the install record could not be written; a later install will need --force for it" >&2
+    exit 1
+  fi
+}
+# A file goes in through a temp file beside it and a rename, so a write
+# that fails part-way (a full disk) never replaces the working file.
+put() { # <source> <mode> <destination>
+  local tmp
+  mkdir -p "$(dirname "$3")"
+  tmp="$(mktemp "$(dirname "$3")/.$(basename "$3").XXXXXX")"
+  if ! install -m "$2" "$1" "$tmp" || ! mv -f -T -- "$tmp" "$3"; then
+    rm -f -- "$tmp"
+    echo "install.sh: could not write $3; what was there before is unchanged" >&2
+    exit 1
+  fi
+  remember "$3"
+}
 if [[ -n "$staged" ]]; then
-  install -Dm755 "$staged" "$binary"
+  put "$staged" 755 "$binary"
 fi
 # The unit and the lifecycle command come from this checkout either way:
 # they are the panel's, and the panel is what lives here.
-install -Dm644 "$here/systemd/oskar.service" "$unit"
+put "$here/systemd/oskar.service" 644 "$unit"
 
 # The lifecycle command: same script the package installs as
 # /usr/bin/oskar, exposed under the user's path. A symlink, so a
 # checkout stays its own source of truth while it is the registered
 # payload.
 mkdir -p "$(dirname "$cli")"
-ln -sfn "$here/bin/oskar" "$cli"
-
-if ! record write "$unit" "$binary" "$cli"; then
-  echo "install.sh: the files are installed but the install record could not be written; a later install will need --force for them" >&2
+if ! ln -sfn "$here/bin/oskar" "$cli"; then
+  echo "install.sh: could not link $cli; the helper and the unit are installed and recorded, so a rerun finishes the install" >&2
   exit 1
 fi
+remember "$cli"
 
 # ---- 5. systemd ----
 systemctl --user daemon-reload

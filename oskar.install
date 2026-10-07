@@ -22,11 +22,17 @@ EOF
 
 pre_remove() {
   cat <<'EOF'
-Removing oskar. Deactivate first so nothing dangles:
+Removing oskar; /usr/bin/oskar goes with it. If you activated this
+package with `oskar setup` and did not run `/usr/bin/oskar teardown`
+first, these stay in your home and are yours to remove:
 
-    oskar teardown
+  - ~/.config/omarchy/plugins/io.github.vladkarok.oskar, when it is a
+    symlink to /usr/share/oskar/plugin (then also:
+    omarchy plugin disable io.github.vladkarok.oskar)
+  - the oskar.service links to /usr/lib/systemd/user/oskar.service
+    under ~/.config/systemd/user/*.wants/
 
-(disable the unit and unlink the plugin registration before pacman
-removes the payload; config and state survive either way).
+A plugin-manager clone or a source checkout of OSKar is not affected;
+do not tear it down for this. Config and state survive either way.
 EOF
 }
