@@ -45,6 +45,25 @@ function groupOf(device) {
     return typeof index === "number" && index >= 0 ? index : 0
 }
 
+/// The keyboards the panel may read and switch: typed (no pseudo-device,
+/// no virtual keyboard) and positively identified by the helper.
+function readable(devices, safeNames) {
+    var all = Array.isArray(devices) ? devices : []
+    var names = Array.isArray(safeNames) ? safeNames : []
+    return all.filter(function (device) {
+        return device && isTyped(device.name) && isSafe(device.name, names)
+    })
+}
+
+/// Whether a seat has any keyboard `select` can read. Without one there is
+/// no group to follow and no device to switch, and the seat stays that way
+/// until a keyboard is plugged in or wakes (a keyboard sharing its device
+/// group with a touchpad never qualifies). Typing does not wait for it:
+/// the caller configures once from the defaults it holds.
+function hasReading(devices, safeNames) {
+    return readable(devices, safeNames).length > 0
+}
+
 /// The safe keyboards that share the reading device's layout list — the
 /// devices an absolute group index means the same thing on.
 function switchSetFor(reading, safe) {
@@ -163,9 +182,10 @@ function loneMover(previous, devices, safeNames, movedDevice) {
 /// lone mover is the only evidence left.
 ///
 /// `reading` is the device whose group, layout list and RMLVO the panel
-/// follows, or null when nothing can answer — at startup, before the helper's
-/// device snapshot has arrived, that is the honest answer and the caller must
-/// send no configure rather than guess a group.
+/// follows, or null when no keyboard is readable (hasReading). The caller
+/// then takes no group from the seat — guessing one off a pseudo-device
+/// would configure a group nobody types in — and the language button stays
+/// inert; the one configure typing needs comes from the held defaults.
 ///
 /// `reading` and `switchSet` come from the SAME set. That is the invariant
 /// this module exists to hold: a group read off a device the language button
@@ -176,9 +196,7 @@ function select(devices, namedDevice, safeNames, fallbackGroup, movedDevice, mot
     var named = String(namedDevice || "")
     var moved = String(movedDevice || "")
 
-    var safe = all.filter(function (device) {
-        return device && isTyped(device.name) && isSafe(device.name, names)
-    })
+    var safe = readable(all, names)
     if (safe.length === 0) {
         return { reading: null, typing: "", lone: "", movedAlone: "",
             switchSet: [], group: 0 }

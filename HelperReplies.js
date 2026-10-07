@@ -82,8 +82,9 @@
 //   quietAt { at }           call motionQuiet at this time on the panel's
 //                            clock: a lone-looking move awaits its quiet
 //   configureUnseated        configure from what the panel already holds:
-//                            the helper has no seat to read, and typing
-//                            needs one configure to open the gate
+//                            the helper has no seat to read, or the seat
+//                            has no readable keyboard, and typing needs
+//                            one configure to open the gate
 //   seatUnavailable          the helper answered `err no seat backend`:
 //                            empty the switch set, so the language button
 //                            draws disabled as well as acting inert
@@ -436,6 +437,15 @@ function seatReply(p, reply) {
             emit(p, { op: "seatFacts", devices: seat.devices,
                 kbFile: seat.kbFile, titles: seat.titles,
                 moved: String(motion.mover || ""), motion: judged.motion })
+            // A seat with no readable keyboard gives the ingest no group to
+            // configure, and may stay that way for good (a keyboard sharing
+            // its device group with a touchpad, a mouse-only desk). Typing
+            // still needs one configure to open the gate: from the held
+            // defaults, once per helper world, as without a seat backend.
+            // The ingest has already emptied the switch set, so the
+            // language button stays inert.
+            if (!Devices.hasReading(seat.devices, seat.safe) && unconfigured(p))
+                emit(p, { op: "configureUnseated" })
         } else {
             emit(p, { op: "warn", args: ["[oskar] unreadable seat reply"] })
         }
@@ -449,7 +459,7 @@ function seatReply(p, reply) {
         emit(p, { op: "warn", args: ["[oskar] the helper has no seat backend;"
             + " the language button stays inert (`oskar doctor` names the fix)"] })
         emit(p, { op: "seatUnavailable" })
-        if (p.state.session.acked === "" && p.state.session.queue.length === 0)
+        if (unconfigured(p))
             emit(p, { op: "configureUnseated" })
     } else if (reply.indexOf("err") === 0) {
         // A transient compositor failure: no reading this time. Never an
@@ -464,6 +474,13 @@ function seatReply(p, reply) {
     } else {
         set(p, "seatAsk", "idle")
     }
+}
+
+/// Whether this helper world has neither acknowledged nor been sent a
+/// configure: the only state in which the held-defaults configure may go
+/// out, so it never lands over one already made.
+function unconfigured(p) {
+    return p.state.session.acked === "" && p.state.session.queue.length === 0
 }
 
 /// The verdict of one `share` run: `ok` is shared AND read back by the

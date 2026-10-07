@@ -770,6 +770,50 @@ QtObject {
                 [{ op: "shareFinished", ok: false, reply: "err no seat backend" }])
         })
 
+        T.test("a seat with no positively identified keyboard still configures once", function () {
+            // A keyboard sharing its device group with a touchpad, a
+            // mouse-only desk, a Bluetooth keyboard asleep at start: the
+            // seat answers, but nothing in it may be read or switched.
+            // Typing still needs one configure to open the gate, from the
+            // defaults the panel holds — never from a pseudo-device's group.
+            var s = with_(initialState(), { socketReconnected: true })
+            s = panelSends(s, "hello " + Session.PROTOCOL_VERSION)
+            var seat = seatLine([kbd("Power Button", false, 0, "us"),
+                kbd("Type Cover Keyboard", true, 1, "us,ua"),
+                kbd("oskar virtual keyboard", false, 0, "us")], [])
+            var r = feed(s, ["hello " + Session.PROTOCOL_VERSION, "ok", "ok", seat])
+            T.equal(opsNamed(r.actions, "seatFacts").length, 1,
+                "the reading still reaches the ingest (titles, an empty switch set)")
+            T.equal(opsNamed(r.actions, "configureUnseated").length, 1,
+                "typing needs one configure")
+            var ops = r.actions.map(function (a) { return a.op })
+            T.equal(ops.indexOf("configureUnseated") > ops.indexOf("seatFacts"), true,
+                "after the ingest has emptied the switch set")
+            // Only pseudo-devices named safe is still no reading.
+            s = with_(initialState(), { socketReconnected: true })
+            s = panelSends(s, "hello " + Session.PROTOCOL_VERSION)
+            r = feed(s, ["hello " + Session.PROTOCOL_VERSION, "ok", "ok",
+                seatLine([kbd("power-button", true, 0, "us")], ["power-button"])])
+            T.equal(opsNamed(r.actions, "configureUnseated").length, 1)
+            // Once per helper world: a configure already acked or queued
+            // is never repeated over.
+            var ready = panelSends(with_(readyAt(3), { seatAsk: "asked" }), "seat")
+            r = feed(ready, [seatLine([kbd("Type Cover Keyboard", true, 0, "us")], [])])
+            T.equal(opsNamed(r.actions, "configureUnseated").length, 0, "acked")
+            var queued = with_(initialState(), { socketReconnected: true })
+            queued = panelSends(queued, "hello " + Session.PROTOCOL_VERSION)
+            queued = feed(queued, ["hello " + Session.PROTOCOL_VERSION, "ok", "ok"]).state
+            queued = sendConfigure(queued, configureLine("us", 0))
+            r = feed(queued, [seatLine([kbd("Type Cover Keyboard", true, 0, "us")], [])])
+            T.equal(opsNamed(r.actions, "configureUnseated").length, 0, "queued")
+            // A seat WITH a safe keyboard configures from its reading, as ever.
+            s = with_(initialState(), { socketReconnected: true })
+            s = panelSends(s, "hello " + Session.PROTOCOL_VERSION)
+            r = feed(s, ["hello " + Session.PROTOCOL_VERSION, "ok", "ok",
+                seatLine([kbd("kbd", true, 0, "us")], ["kbd"])])
+            T.equal(opsNamed(r.actions, "configureUnseated").length, 0)
+        })
+
         T.test("a share verdict is the run's, ok or the refusal it reports", function () {
             var sh = panelSends(readyAt(3), "share\t/run/user/1000/oskar/keymap.xkb")
             var ok = feed(sh, ["ok"])

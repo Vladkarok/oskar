@@ -867,6 +867,9 @@ Item {
         // not leave the language button aiming at a device that has gone
         // missing or was never safe to advance.
         switchKeyboards = picked.switchSet
+        // No readable keyboard: no group to follow. The configure typing
+        // needs comes from the held defaults (HelperReplies' seat reply
+        // emits configureUnseated once per helper world).
         if (!picked.reading) return
 
         var reading = picked.reading
@@ -1002,8 +1005,8 @@ Item {
         }
     }
 
-    /// The one configure a helper without a seat backend gets: the defaults
-    /// the panel holds, carrying the user's own keymap source when one is
+    /// The one configure a helper gets when it has no seat backend, or its
+    /// seat has no readable keyboard: the defaults the panel holds, carrying the user's own keymap source when one is
     /// known — the recovery seed runs first, exactly as at a reading's
     /// decision point.
     function configureUnseated() {
