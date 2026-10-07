@@ -1217,6 +1217,15 @@ QtObject {
             T.equal(Config.stepTarget(-3, -1, 1, 0, 24), null)
         })
 
+        // ---- the docked zone ----
+
+        T.test("only a mapped docked panel reserves a zone", function () {
+            T.equal(Config.reservesZone(true, "docked"), true)
+            T.equal(Config.reservesZone(true, "floating"), false)
+            T.equal(Config.reservesZone(false, "docked"), false)
+            T.equal(Config.reservesZone(false, "floating"), false)
+        })
+
         Qt.exit(T.report("configuration"))
     }
 }

@@ -482,7 +482,8 @@ back. This list is the contract: a change that is not here is a bug.
   applies to keyboards that have their own layout in a `device` section,
   so per-device keymaps are overridden.
 - **`general:gaps_out` (Hyprland, docked mode only).** When the docked
-  panel appears and when it closes, OSKar raises the first number of
+  panel appears, when it closes, and when the open panel switches between
+  docked and floating, OSKar raises the first number of
   `gaps_out` by one and writes your exact value back about 60 ms later
   (plus four `hyprctl` calls), so Hyprland moves already-tiled windows
   around the panel. Every write is checked by reading the value back.

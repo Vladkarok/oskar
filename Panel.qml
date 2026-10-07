@@ -1114,15 +1114,14 @@ Item {
         }
     }
 
-    // The map itself, once the output is chosen (or given up on): the
-    // relayout nudge follows the map, because the exclusive zone it
-    // reflows the tiled windows against registers only with a mapped
-    // surface — nudging before the map reflows against nothing.
+    // The map itself, once the output is chosen (or given up on). The
+    // relayout nudge follows the zone (zoneReserved below), which a
+    // docked panel gains here: the exclusive zone the tiled windows
+    // reflow against registers only with a mapped surface.
     function showPlaced() {
         placementFallback.stop()
         if (!root.opened || root.placed) return
         root.placed = true
-        root.nudgeHyprlandRelayout()
     }
     // A probe that never answers (hyprctl missing, a parse failure) must
     // not leave the panel summoned and unmapped: after this window the
@@ -1134,8 +1133,16 @@ Item {
         onTriggered: root.showPlaced()
     }
 
+    // Whether the mapped panel reserves its strip at the screen edge. The
+    // zone arriving and the zone leaving are equally lazy, and both happen
+    // on open, on close and on a mode switch while open (the header chip,
+    // the Mode row, an external edit): every change of this, either way,
+    // nudges.
+    readonly property bool zoneReserved: ConfigFile.reservesZone(
+        root.opened && root.placed, root.mode)
+    onZoneReservedChanged: root.nudgeHyprlandRelayout()
+
     function nudgeHyprlandRelayout() {
-        if (root.mode !== "docked") return
         if (root.relayoutBusy) {
             root.relayoutPending = true
             return
@@ -1558,9 +1565,6 @@ Item {
         settingsLayerHost.disarmResetAll()
         root.emojiOpen = false
         languageMenu.close()
-        // The relayout nudge is needed in both directions: the zone leaving
-        // is as lazy as the zone arriving.
-        root.nudgeHyprlandRelayout()
         // No clipboard text outlives the panel being open.
         root.endClipboardPeek()
         // Locked Shift is genuinely held down at the device, so closing the

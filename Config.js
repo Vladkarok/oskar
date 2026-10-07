@@ -816,6 +816,13 @@ function stepTarget(value, direction, step, minimum, maximum) {
     return next
 }
 
+// Whether the panel reserves a zone at the screen edge: mapped and docked.
+// Every change of this, either way, is a relayout the compositor may not
+// run on its own (the panel's relayout nudge).
+function reservesZone(mapped, mode) {
+    return mapped === true && mode === MODE_DOCKED
+}
+
 // Size-preset multipliers. Key radius is stored as a 0–24
 // proportion of a medium key; the drawn radius is stored × this scale so
 // 24 stays a circle at L and XL. Panel radius does not use this.
