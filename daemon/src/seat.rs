@@ -495,9 +495,10 @@ pub(crate) enum SeatError {
     NotAbsolute,
     /// The compositor accepted the change but reads back something else.
     NotApplied,
-    /// `share` as a whole — clear, set and every read-back — ran past its
-    /// deadline, which sits below the hold cap so a connection holding a
-    /// key is never stalled past the cap by a wedged compositor.
+    /// `share` as a whole — the gate wait, the capture, the change and
+    /// every read-back — ran past `SHARE_BOUND`. The bound does not keep a
+    /// held key under the hold cap; the worker the seat verbs run on does
+    /// (see the bounds below).
     TimedOut,
     /// The request would not fit the compositor's request buffer.
     TooLong,
