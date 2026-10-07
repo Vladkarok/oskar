@@ -88,6 +88,10 @@ untouched while the panel keeps the last valid runtime value.
 | `emoji_drag` | `true` \| `false` | `false` — the page opens centred and still; on, it grows a drag strip and its position is remembered |
 | `emoji_page_size` | `medium` \| `large` \| `x-large` | `medium` |
 | `super_mark` | `word` \| `omarchy` \| `windows` \| `macos` \| `penguin` | `word` |
+| `dwell_enabled` | `true` \| `false` | `false` |
+| `dwell_delay_ms` | whole milliseconds, 400–2000 | `800` |
+| `ui_language` | `auto` \| `en` \| `ru` \| `uk` | `auto` |
+| `input_profile` | `auto` \| `mouse` \| `touch` | `mouse` |
 | `key_radius` | whole-pixel integer ≥ 0, 0–24 relative to M | `8` |
 | `panel_radius` | whole-pixel integer ≥ 0 | `12` |
 | `key_background` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#303030` |
