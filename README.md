@@ -88,6 +88,10 @@ untouched while the panel keeps the last valid runtime value.
 | `emoji_drag` | `true` \| `false` | `false` — the page opens centred and still; on, it grows a drag strip and its position is remembered |
 | `emoji_page_size` | `medium` \| `large` \| `x-large` | `medium` |
 | `super_mark` | `word` \| `omarchy` \| `windows` \| `macos` \| `penguin` | `word` |
+| `dwell_enabled` | `true` \| `false` | `false` |
+| `dwell_delay_ms` | whole milliseconds, 400–2000 | `800` |
+| `ui_language` | `auto` \| `en` \| `ru` \| `uk` | `auto` |
+| `input_profile` | `auto` \| `mouse` \| `touch` | `mouse` |
 | `key_radius` | whole-pixel integer ≥ 0, 0–24 relative to M | `8` |
 | `panel_radius` | whole-pixel integer ≥ 0 | `12` |
 | `key_background` | hex colour (`#RGB`, `#RGBA`, `#RRGGBB`, `#AARRGGBB`) | `#303030` |
@@ -100,8 +104,11 @@ untouched while the panel keeps the last valid runtime value.
 `state.json` contains the floating placement as `center` — the card centre in
 output-local coordinates — or `null`, the emoji page's dragged position as
 `emoji_center` (written when `emoji_drag` is on; kept across setting flips),
-bounded emoji usage continuity, and the emoji skin-tone selection (state, not
-an override).
+bounded emoji usage continuity, the emoji skin-tone selection (state, not
+an override), and, while `follow_theme` is off, the theme as it was when
+following stopped (`theme_snapshot`), so the custom look survives a relogin,
+a shell restart or a plugin update. A `theme_snapshot` OSKar cannot read is
+ignored, never an error.
 Restores rederive
 the top-left from that centre, clamped only enough to keep the complete card
 on its output (the deterministic anchor of spec-v1.1 §4), so a saved
@@ -443,9 +450,12 @@ back. This list is the contract: a change that is not here is a bug.
   list before and after reading and discards the text if content is
   marked secret by a password manager (the `x-kde-passwordManagerHint`
   type) at either check; the chip then says "Hidden content" and still
-  pastes it. Only content offered with that type is recognised as secret,
-  and a secret that appears and is replaced again between the two checks
-  of a single read could be read.
+  pastes it into the focused app by the paste chord. OSKar's own fields
+  (the emoji search, a colour field) take text only: a click there with
+  hidden content or an image on the clipboard shows "Only text pastes
+  here" and reads nothing. Only content offered with that type is
+  recognised as secret, and a secret that appears and is replaced again
+  between the two checks of a single read could be read.
 - **The clipboard.** An emoji pick goes through the clipboard: the emoji
   replaces what the clipboard held, and a delivered pick leaves it there.
   A pick that fails puts back what was there before, as plain text, only
@@ -486,7 +496,8 @@ back. This list is the contract: a change that is not here is a bug.
   applies to keyboards that have their own layout in a `device` section,
   so per-device keymaps are overridden.
 - **`general:gaps_out` (Hyprland, docked mode only).** When the docked
-  panel appears and when it closes, OSKar raises the first number of
+  panel appears, when it closes, and when the open panel switches between
+  docked and floating, OSKar raises the first number of
   `gaps_out` by one and writes your exact value back about 60 ms later
   (plus four `hyprctl` calls), so Hyprland moves already-tiled windows
   around the panel. Every write is checked by reading the value back.

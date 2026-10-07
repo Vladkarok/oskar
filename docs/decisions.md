@@ -2677,6 +2677,19 @@ at the moment following stopped (Theme.qml's snapshot). The rule lives in
 `Config.overrideApplies`; `Theme.hasOverride`, the panel's reset chips and
 `Config.merge` all ask it.
 
+The frozen theme outlives the session: it is kept in `state.json` as
+`theme_snapshot`, written when the snapshot is taken and removed when
+following turns on, and a later session restores it before anything would
+freeze. Kept only in memory, a relogin, a shell restart or a plugin update
+froze the theme current then, and the look changed with following still
+off. A stop made while the panel is hidden freezes at the stop, not at the
+next open; only the first apply at load waits for the open, because the
+shell may not have read the theme's files yet. A `theme_snapshot` that
+does not parse is treated as absent rather than as a malformed state file:
+it is a copy of a theme, nothing only the user could restore, and the next
+freeze replaces it. One rule decides restore, freeze and release
+(`Config.themeHoldStep`).
+
 The card's border has its own switch, `panel_border`. Following the theme,
 it is shown exactly when Hyprland draws window borders
 (`general:border_size` above 0, read with `hyprctl getoption` on every open

@@ -18,15 +18,19 @@ import "Config.js" as ConfigFile
 // a binding that never reads `Color` cannot be re-evaluated when `Color`
 // changes, so an unpinned field simply stays as it was.
 //
-// The snapshot is taken when the panel is first shown rather than when the
-// plugin loads: the shell reads the theme's files asynchronously, and a
+// The snapshot is taken when following stops during a session, or at the
+// first open when the panel starts with following already off — never when
+// the plugin loads: the shell reads the theme's files asynchronously, and a
 // snapshot taken at load could catch the singletons' built-in defaults and
-// freeze the keyboard onto a theme nobody chose. Nothing is on screen before
-// the first open, so nothing visible ever changes as a result of taking it
-// there. While following-off the snapshot is held for as long as that state
-// lasts: re-enabling following releases it (release()), so a later flip to
-// following-off freezes the tokens as they are THEN — each stop holds the
-// moment it stopped at, never a replay of an older look.
+// freeze the keyboard onto a theme nobody chose. The panel keeps it in
+// state.json (Config.serializeThemeSnapshot), and a later session restores
+// it (restore()) before anything would freeze, so a relogin, a shell
+// restart or a plugin update does not move the custom look onto the theme
+// current then. While following-off the snapshot is held for as long as
+// that state lasts: re-enabling following releases it (release()), so a
+// later flip to following-off freezes the tokens as they are THEN — each
+// stop holds the moment it stopped at, never a replay of an older look.
+// The panel decides which of these runs (Config.themeHoldStep).
 //
 // While following, the theme answers every appearance field and a stored
 // override is dormant (Config.overrideApplies). With following off, fields
@@ -114,6 +118,16 @@ QtObject {
         }
     }
 
+    // Hold a snapshot saved in an earlier session (Config's file form,
+    // already validated by Config.parseThemeSnapshot): the theme as it was
+    // when following stopped, not as it is now. No-op while one is held.
+    function restore(saved) {
+        if (held || !saved) return
+        held = ConfigFile.heldThemeFrom(saved, function (r, g, b, a) {
+            return Qt.rgba(r, g, b, a)
+        })
+    }
+
     // Drop the held snapshot so the keyboard tracks the live tokens again.
     // Meaningless while already following (held is only read when frozen),
     // which is exactly when the panel calls it.
@@ -168,11 +182,14 @@ QtObject {
         ? Util.alpha(overrideAsColor("accentColor"), themeSelectedFill.a) : themeSelectedFill
 
     // Panel background (the card) and text: the override, else the token the
-    // keyboard has always drawn with.
+    // keyboard has always drawn with. A stored override is a validated hex
+    // string in any form Config.isColor accepts; it is read through
+    // Config.hexToRgb because Qt's colour parser has no #RGBA form.
     function overrideAsColor(name) {
         var raw = overrides[name]
-        if (typeof raw === "string") return Qt.color(raw)
-        return raw
+        if (typeof raw !== "string") return raw
+        var c = ConfigFile.hexToRgb(raw)
+        return c ? Qt.rgba(c.r, c.g, c.b, c.a) : raw
     }
 
     readonly property color panelBackground: hasOverride("panelBackground")
@@ -278,7 +295,7 @@ QtObject {
         : (Border.value("hyprland", "active-border")
             || Border.value("notifications", "border"))
     readonly property var cardBorderColorSpec: hasOverride("borderColor")
-        ? Border.flat(overrides.borderColor, 2)
+        ? Border.flat(overrideAsColor("borderColor"), 2)
         : borderToken !== "" ? (frozen ? held.cardBorderSpec
             : Border.hyprlandActiveSpec(theme.accent, 2))
         : Border.flat(shippedColor("borderColor"), 2)

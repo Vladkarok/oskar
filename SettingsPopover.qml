@@ -332,10 +332,13 @@ Rectangle {
         }
     }
 
-    // Radius and delay rows: a compact integer stepper. The ends refuse to
-    // step past themselves. One click, one override, one atomic write.
-    // `step` is the increment (radii step by one; the dwell delay steps by
-    // 100 ms). `writable` false keeps the value shown and takes no clicks.
+    // Radius and delay rows: a compact integer stepper. One click, one
+    // override, one atomic write. `step` is the increment (radii step by
+    // one; the dwell delay steps by 100 ms). A click moves toward the
+    // range and clamps at its ends (Config.stepTarget), so a hand-edited
+    // value outside the range or off the grid still steps; a button
+    // dims exactly when it has no move. `writable` false keeps the value
+    // shown and takes no clicks.
     component SettingsStepper: Item {
         id: stepper
         property int value: 0
@@ -347,9 +350,14 @@ Rectangle {
         width: stepRow.width
         height: tokens.space(24)
 
-        function bump(delta) {
-            var next = stepper.value + delta * stepper.step
-            if (next < stepper.minimum || next > stepper.maximum) return
+        function target(direction) {
+            return ConfigFile.stepTarget(stepper.value, direction, stepper.step,
+                stepper.minimum, stepper.maximum)
+        }
+
+        function bump(direction) {
+            var next = stepper.target(direction)
+            if (next === null) return
             stepper.stepped(next)
         }
 
@@ -360,7 +368,7 @@ Rectangle {
 
             StepButton {
                 text: "−"
-                canStep: stepper.value > stepper.minimum
+                canStep: stepper.target(-1) !== null
                 enabled: panel.configHealthy && stepper.writable
                 accessName: UiStrings.tr("access.decreaseValue", panel.uiLang)
                 tipText: UiStrings.tr("settings.decrease", panel.uiLang)
@@ -387,7 +395,7 @@ Rectangle {
 
             StepButton {
                 text: "+"
-                canStep: stepper.value < stepper.maximum
+                canStep: stepper.target(1) !== null
                 enabled: panel.configHealthy && stepper.writable
                 accessName: UiStrings.tr("access.increaseValue", panel.uiLang)
                 tipText: UiStrings.tr("settings.increase", panel.uiLang)

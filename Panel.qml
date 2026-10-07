@@ -55,6 +55,12 @@ Item {
     property var geometryState: ConfigFile.stateDefaults()
     property string configurationError: ""
     property string stateError: ""
+    // Whether config.json has been applied, and whether state.json has been
+    // read (or found missing or malformed): until then the shipped
+    // follow_theme and the empty state are not the user's word, and the
+    // Custom look's held theme is neither taken nor dropped (syncThemeHold).
+    property bool settingsKnown: false
+    property bool stateKnown: false
     // The per-path save-failure notice state (the list, its history and
     // the mark/landed transitions) lives in PrivateSaves below; the panel
     // keeps only the hint line's own derivation.
@@ -382,6 +388,7 @@ Item {
             emojiSkinTone: root.emojiSkinTone,
             layoutGroup: root.rememberedLayoutGroup,
             layoutDevice: root.rememberedLayoutDevice,
+            themeSnapshot: root.geometryState.themeSnapshot || null,
             // Another writer's keys, carried so a save does not drop them.
             unknown: root.geometryState.unknown || {}
         }
@@ -445,6 +452,12 @@ Item {
 
     function openCustomEditor(field, label) {
         if (!root.configHealthy) return
+        // A square clicked while the editor is open for another field: the
+        // close drops that field's draft, and the reopen syncs the editor
+        // to this field (its onVisibleChanged), so Apply writes only what
+        // was drafted for the field it names.
+        if (ConfigFile.customEditorClosesFirst(root.customEditorField, field))
+            root.closeCustomEditor()
         root.customEditorOldColor = root.colorForField(field)
         root.customEditorField = field
         root.customEditorLabel = label
@@ -723,9 +736,14 @@ Item {
         // search every key is typing into while it is open — takes the
         // paste itself; only a panel with no local input delivers the
         // chord to the focused client behind it.
+        // A local input takes text only (ClipboardPaste.localPasteAllowed):
+        // hidden content and images are refused visibly, before any read.
         var target = currentPasteTarget()
         if (target !== "external-client") {
-            root.startLocalClipboardRead(target)
+            if (ClipboardPaste.localPasteAllowed(root.chip.kind))
+                root.startLocalClipboardRead(target)
+            else
+                root.flashRefused(UiStrings.tr("hint.pasteTextOnly", root.uiLang))
             root.refreshClipboardPreview()
             return
         }
@@ -778,7 +796,7 @@ Item {
         restartProcessGroup(localClipboardRead)
     }
 
-    function finishLocalClipboardRead(seq, raw) {
+    function finishLocalClipboardRead(seq, raw, exitCode) {
         // The target is re-derived at arrival by the same determination
         // the click made; readExited refuses a mismatch for us.
         var result = ClipboardPaste.readExited(root.clipboardReadState, seq,
@@ -786,7 +804,14 @@ Item {
         root.clipboardReadState = result.state
         if (result.action !== "insert") return
         localClipboardReadWatchdog.stop()
-        insertLocalClipboardText(raw)
+        // The kind the click was allowed on can be stale by now: a read
+        // that gives no text is the same visible refusal.
+        var text = ClipboardPaste.localReadText(exitCode, raw)
+        if (text === null) {
+            root.flashRefused(UiStrings.tr("hint.pasteTextOnly", root.uiLang))
+            return
+        }
+        insertLocalClipboardText(text)
     }
 
     function markClipboardContentGone() {
@@ -887,12 +912,9 @@ Item {
     // target was verified against the same determination at arrival, so
     // reaching here means the target it served is the one now open. wl-paste
     // reads compositor CLIPBOARD — Quickshell.clipboardText is empty/stale
-    // in this stack and cannot be the insert path.
-    function insertLocalClipboardText(raw) {
-        var text = String(raw || "")
-        if (text.length && text.charAt(text.length - 1) === "\n")
-            text = text.slice(0, -1)
-        if (!text.length) return
+    // in this stack and cannot be the insert path. `text` is
+    // ClipboardPaste.localReadText's answer: non-empty text.
+    function insertLocalClipboardText(text) {
         if (root.hexEditing) {
             if (root.customEditorField !== "") settingsLayerHost.editorInsertHexText(text)
             else settingsLayerHost.popoverInsertHexText(text)
@@ -1114,15 +1136,14 @@ Item {
         }
     }
 
-    // The map itself, once the output is chosen (or given up on): the
-    // relayout nudge follows the map, because the exclusive zone it
-    // reflows the tiled windows against registers only with a mapped
-    // surface — nudging before the map reflows against nothing.
+    // The map itself, once the output is chosen (or given up on). The
+    // relayout nudge follows the zone (zoneReserved below), which a
+    // docked panel gains here: the exclusive zone the tiled windows
+    // reflow against registers only with a mapped surface.
     function showPlaced() {
         placementFallback.stop()
         if (!root.opened || root.placed) return
         root.placed = true
-        root.nudgeHyprlandRelayout()
     }
     // A probe that never answers (hyprctl missing, a parse failure) must
     // not leave the panel summoned and unmapped: after this window the
@@ -1134,8 +1155,16 @@ Item {
         onTriggered: root.showPlaced()
     }
 
+    // Whether the mapped panel reserves its strip at the screen edge. The
+    // zone arriving and the zone leaving are equally lazy, and both happen
+    // on open, on close and on a mode switch while open (the header chip,
+    // the Mode row, an external edit): every change of this, either way,
+    // nudges.
+    readonly property bool zoneReserved: ConfigFile.reservesZone(
+        root.opened && root.placed, root.mode)
+    onZoneReservedChanged: root.nudgeHyprlandRelayout()
+
     function nudgeHyprlandRelayout() {
-        if (root.mode !== "docked") return
         if (root.relayoutBusy) {
             root.relayoutPending = true
             return
@@ -1362,6 +1391,7 @@ Item {
         root.superMark = effective.superMark
         var soundChanged = root.sound !== effective.sound
         root.sound = effective.sound
+        var wasFollowing = root.followTheme
         root.followTheme = effective.followTheme
         root.emojiCloseAfterPick = effective.emojiCloseAfterPick
         root.emojiPageSize = effective.emojiPageSize
@@ -1370,19 +1400,15 @@ Item {
         root.dwellDelayMs = effective.dwellDelayMs
         root.uiLanguage = effective.uiLanguage
         root.inputProfile = effective.inputProfile
-        // A follow-theme flip is immediate: stopping freezes the tokens at
-        // the look they then have, and re-enabling releases that snapshot so
-        // a later stop freezes the tokens as they are then — each stop holds
-        // its own moment, never a replay of an older look (Theme.release).
-        // The release runs open or closed: a re-enable while the panel is
-        // hidden must still drop the snapshot, or the next open would find
-        // one held and freeze nothing new. Only the freeze waits for
-        // `opened`, so no snapshot is taken at load, before the shell has
-        // read the theme's files (Theme.qml owns that reasoning);
-        // onOpenedChanged covers the path where the panel opens already
-        // following-off.
-        if (root.followTheme) tokens.release()
-        else if (root.opened) tokens.freeze()
+        // A follow-theme flip is immediate, open or hidden: stopping
+        // freezes the tokens at the look they then have, and re-enabling
+        // releases that snapshot so a later stop freezes the tokens as they
+        // are then — each stop holds its own moment, never a replay of an
+        // older look. The first apply is load, not a stop: nothing is
+        // frozen before the shell has read the theme's files (Theme.qml).
+        var stopped = root.settingsKnown && wasFollowing && !root.followTheme
+        root.settingsKnown = true
+        root.syncThemeHold(stopped)
         if (soundChanged && root.sound) root.resolveSoundFile()
         // External mode and preset edits take the same placement path as GUI
         // changes, including clamping a newly enlarged floating card.
@@ -1404,10 +1430,46 @@ Item {
     function loadState(text) {
         var result = ConfigFile.reloadState(root.geometryState, text)
         root.stateError = result.error
-        if (result.error) return
+        root.stateKnown = true
+        if (result.error) {
+            root.syncThemeHold(false)
+            return
+        }
         root.geometryState = result.value
         root.floatingCenter = result.value.center
         root.applyFloatingPosition()
+        root.syncThemeHold(false)
+    }
+
+    // The Custom look's held theme follows one rule (Config.themeHoldStep)
+    // over the facts it depends on: the settings, the state file and the
+    // open. Run whenever one of them changes. A theme held in memory is
+    // kept in state.json too, so the next session restores it rather than
+    // freezing whatever theme is current then.
+    function syncThemeHold(stopped) {
+        var saved = root.geometryState.themeSnapshot || null
+        var step = ConfigFile.themeHoldStep({
+            settingsKnown: root.settingsKnown, follow: root.followTheme,
+            stopped: stopped === true, opened: root.opened,
+            held: tokens.held !== null, stateKnown: root.stateKnown,
+            saved: saved !== null
+        })
+        if (step === "release") {
+            tokens.release()
+            if (saved !== null) root.storeThemeSnapshot(null)
+        } else if (step === "restore") {
+            tokens.restore(saved)
+        } else if (step === "freeze" || step === "persist") {
+            if (step === "freeze") tokens.freeze()
+            // A snapshot the file cannot carry stays in memory only.
+            var file = ConfigFile.serializeThemeSnapshot(tokens.held)
+            if (file !== null) root.storeThemeSnapshot(file)
+        }
+    }
+
+    function storeThemeSnapshot(snapshot) {
+        root.geometryState = root.mergedGeometryState({ themeSnapshot: snapshot })
+        root.saveState()
     }
 
     // Missing files are a normal first run: defaults stand, no error.
@@ -1425,9 +1487,11 @@ Item {
 
     function missingState() {
         root.stateError = ""
+        root.stateKnown = true
         root.geometryState = ConfigFile.stateDefaults()
         root.floatingCenter = null
         root.applyFloatingPosition()
+        root.syncThemeHold(false)
     }
 
     // The apply-and-save tail every override write shares: publish the next
@@ -1529,11 +1593,11 @@ Item {
     onOpenedChanged: {
         if (root.opened) {
             // With `follow_theme: false` the tokens are held at the look of
-            // the moment that state began — a re-enable releases the held
-            // snapshot, so this freezes fresh values again (Theme.qml owns
-            // the why of here-not-at-load). freeze() no-ops while a snapshot
-            // is already held, and no-ops entirely while following.
-            if (!root.followTheme) tokens.freeze()
+            // the moment that state began: restored from state.json when an
+            // earlier session saved it, else frozen now if nothing has
+            // been taken yet (syncThemeHold; Theme.qml owns the why of
+            // here-not-at-load).
+            root.syncThemeHold(false)
             root.readHyprBorder()
             root.refreshClipboardPreview()
             root.placed = false
@@ -1558,9 +1622,6 @@ Item {
         settingsLayerHost.disarmResetAll()
         root.emojiOpen = false
         languageMenu.close()
-        // The relayout nudge is needed in both directions: the zone leaving
-        // is as lazy as the zone arriving.
-        root.nudgeHyprlandRelayout()
         // No clipboard text outlives the panel being open.
         root.endClipboardPeek()
         // Locked Shift is genuinely held down at the device, so closing the
@@ -1615,10 +1676,10 @@ Item {
         onStarted: didStart = true
         // The collector's stream lands before exited; the read machine
         // refuses an answer it no longer waits for.
-        onExited: {
+        onExited: function (exitCode) {
             var text = localClipboardRead.stdout.text
             root.freshCollector(localClipboardRead)
-            root.finishLocalClipboardRead(localClipboardRead.seq, text)
+            root.finishLocalClipboardRead(localClipboardRead.seq, text, exitCode)
             localClipboardRead.didStart = false
             localClipboardRead.retiring = false
             if (root.localReadQueuedTarget !== "") {

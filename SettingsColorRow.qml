@@ -119,7 +119,8 @@ Item {
         draftDirty = false
         invalid = false
         hexInput.text = String(result.value).toLowerCase()
-        currentHex = String(result.value).toLowerCase()
+        // The square paints the #AARRGGBB form: Qt cannot paint #RGBA.
+        currentHex = ConfigFile.toHex(ConfigFile.hexToRgb(result.value)).toLowerCase()
     }
 
     function revertDraft() {
