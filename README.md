@@ -288,15 +288,17 @@ One product, four languages, each with a job:
    frame is on the right monitor; a probe that never answers shows the
    panel where it was after a short fallback. The lab's summon-output leg
    pins it with a headless second output.
-6. **A panel click can switch off NumLock or Caps Lock in the focused
-   app.** The helper's virtual keyboard reports no lock state. On stock
-   Hyprland, when it becomes the seat's keyboard (a Shift click, a layout
-   follow), the focused app is told NumLock and Caps Lock are off while
-   the physical keyboard's lights stay on; the next physical lock press
-   puts it right. Reporting the physical keyboard's locks instead would
-   be worse: Hyprland keeps a virtual keyboard's last locks and adds them
-   to every window it focuses, so a lock you switched off would come back
-   on. The fix belongs in Hyprland's seat-keyboard handling.
+6. **NumLock or Caps Lock can switch off in the focused app.** The
+   helper's virtual keyboard reports no lock state. On stock Hyprland,
+   when it becomes the seat's keyboard (a Shift click, a layout follow,
+   or the keymap the helper sends when it starts or the layouts change),
+   the focused app is told NumLock and Caps Lock are off while the
+   physical keyboard's lights stay on; the next physical lock press puts
+   it right. Reporting the physical keyboard's locks instead would be
+   worse: Hyprland keeps a virtual keyboard's last locks and adds them to
+   every window it focuses, so a lock you switched off would come back
+   on (decisions §118). The fix belongs in Hyprland's seat-keyboard
+   handling.
 
 ## Troubleshooting
 

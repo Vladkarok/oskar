@@ -16,6 +16,7 @@ User-facing changes. The reasons behind them are in
 - A paste into a Wine or Proton window is no longer reported as failed because of an unrelated status reply, and a stalled share can no longer let a cancelled paste arrive late.
 - A seat with no keyboard the panel can read now opens typing from the default layout instead of staying closed.
 - The installer, `oskar setup --migrate-source` and `oskar teardown` refuse as root, refuse a clone registration before changing anything, and no longer leave the record out of step after a failed write.
+- `oskar setup --migrate-source` refuses before moving anything when another `oskar.service` (an `/etc` override, a runtime copy) would take the packaged unit's place.
 - `oskar` finds its own files when `XDG_STATE_HOME` or `XDG_CONFIG_HOME` is set only in the shell.
 
 ## 0.2.1

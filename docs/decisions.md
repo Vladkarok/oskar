@@ -2775,3 +2775,22 @@ reset chip (it would only duplicate the Omarchy theme segment).
 
 Known: the popover's width follows the chip groups' labels, so the
 auto-flipped "Auto+touch" notice or a longer translation widens it.
+
+## 118. The helper reports no lock state
+
+Every `zwp_virtual_keyboard_v1.modifiers` request the helper sends carries
+`locked = 0`. On stock Hyprland a virtual keyboard that sends modifiers can
+become the seat's keyboard, and the focused client is then told NumLock and
+Caps Lock are off while the physical keyboard has them on (README, known
+problem 6).
+
+Sending the seat's own lock mask instead was built and rejected (2026-10-07).
+Hyprland keeps each keyboard's last reported locks, and with
+`input:virtualkeyboard:share_states` at its default it ORs every enabled
+keyboard's locks into the mask it sends on each focus `enter`
+(`CSeatManager::setKeyboardFocus`). A virtual keyboard holding Lock would
+switch Caps Lock back on in every window focused after the user turned it
+off, until the helper's next modifiers request; the same after a keyboard
+removal, when `main` falls to whichever keyboard is last. A lock the helper
+leaves at 0 adds nothing to that mask, so 0 is the value that cannot turn a
+lock on. The fix belongs in Hyprland's seat-keyboard handling.

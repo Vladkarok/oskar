@@ -474,25 +474,25 @@ report_legacy_source() {
 }
 
 # The unit file systemd would resolve once the source install's user unit
-# is moved aside: any oskar.service in a user-unit directory that ranks
-# below ~/.config/systemd/user and above /usr/lib/systemd/user
-# (systemd.unit(5), user unit search path). Printed when found.
+# is moved aside: any oskar.service in the user manager's own unit path
+# (UnitPath, systemd.unit(5)) after ~/.config/systemd/user and before
+# /usr/lib/systemd/user. Printed when found.
 unit_shadowing_packaged() {
-  local dir rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" xdg
-  local -a dirs=()
-  IFS=: read -r -a xdg <<<"${XDG_CONFIG_DIRS:-/etc/xdg}"
-  for dir in "${xdg[@]}"; do [[ "$dir" == /* ]] && dirs+=("$dir/systemd/user"); done
-  dirs+=(/etc/systemd/user "$rt/systemd/user" /run/systemd/user
-         "${XDG_DATA_HOME:-$HOME/.local/share}/systemd/user")
-  IFS=: read -r -a xdg <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-  for dir in "${xdg[@]}"; do
-    [[ "$dir" == /* && "$dir" != /usr/share ]] && dirs+=("$dir/systemd/user")
-  done
-  dirs+=(/usr/local/lib/systemd/user)
-  for dir in "${dirs[@]}"; do
-    if [[ -e "$dir/$UNIT" || -L "$dir/$UNIT" ]]; then
-      printf '%s\n' "$dir/$UNIT"
-      return 0
+  local dir path past=0 user_dir="$HOME/.config/systemd/user"
+  path="$(systemctl --user show -p UnitPath --value 2>/dev/null || true)"
+  [[ -n "$path" ]] || path="/etc/systemd/user /run/systemd/user \
+$HOME/.local/share/systemd/user /usr/local/share/systemd/user \
+/usr/share/systemd/user /usr/local/lib/systemd/user /usr/lib/systemd/user"
+  for dir in $path; do
+    dir="${dir%/}"
+    if [[ "$dir" == "$user_dir" ]]; then past=1; continue; fi
+    [[ "$dir" == "${PACKAGED_UNIT%/*}" ]] && break
+    # Without the manager's path the fallback list starts below the user unit.
+    if ((past)) || [[ "$path" != *"$user_dir"* ]]; then
+      if [[ -e "$dir/$UNIT" || -L "$dir/$UNIT" ]]; then
+        printf '%s\n' "$dir/$UNIT"
+        return 0
+      fi
     fi
   done
   return 1
@@ -650,8 +650,8 @@ cmd_setup() {
       if ((migrate)); then
         local shadow
         if shadow="$(unit_shadowing_packaged)"; then
-          die "$shadow would replace the packaged unit once the source \
-install's unit is moved aside, so OSKar would not run; nothing was changed. \
+          die "$shadow would take the place of the packaged unit once the \
+source install is migrated, so OSKar would not run; nothing was changed. \
 Remove or rename it yourself, then rerun: oskar setup --migrate-source"
         fi
         migrate_source
