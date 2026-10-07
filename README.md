@@ -193,7 +193,7 @@ One product, four languages, each with a job:
   offscreen test cases — the repo's main regression net.
 - **Rust** (the `oskar-daemon` helper) — everything at the seat: it
   compiles and mirrors the XKB keymap, owns the virtual keyboard, and
-  speaks the versioned socket protocol. 95 unit tests.
+  speaks the versioned socket protocol. 86 unit tests.
 - **Python and one C file** (`tools/integration/`) — not part of the
   product: the lab harness that drives a real panel with real pointer
   events inside a throwaway VM, and a tiny Wayland client that spies on
@@ -288,6 +288,15 @@ One product, four languages, each with a job:
    frame is on the right monitor; a probe that never answers shows the
    panel where it was after a short fallback. The lab's summon-output leg
    pins it with a headless second output.
+6. **A panel click can switch off NumLock or Caps Lock in the focused
+   app.** The helper's virtual keyboard reports no lock state. On stock
+   Hyprland, when it becomes the seat's keyboard (a Shift click, a layout
+   follow), the focused app is told NumLock and Caps Lock are off while
+   the physical keyboard's lights stay on; the next physical lock press
+   puts it right. Reporting the physical keyboard's locks instead would
+   be worse: Hyprland keeps a virtual keyboard's last locks and adds them
+   to every window it focuses, so a lock you switched off would come back
+   on. The fix belongs in Hyprland's seat-keyboard handling.
 
 ## Troubleshooting
 

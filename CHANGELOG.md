@@ -7,7 +7,6 @@ User-facing changes. The reasons behind them are in
 
 ### Fixed
 
-- A Shift click, a layout switch or a helper restart no longer turns the focused app's NumLock or Caps Lock off. With physical Caps Lock on, the panel's Shift now gives lowercase letters, as a physical Shift does.
 - Switching between docked and floating while the panel is open now makes tiled windows reflow in both directions.
 - A paste-button click into the emoji search or a colour field now says "Only text pastes here" when the clipboard holds an image or a secret, and changes nothing.
 - A `#RGBA` hex colour, typed in the editor or set in `config.json`, now shows and saves as written instead of the previous colour.
