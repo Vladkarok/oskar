@@ -16,7 +16,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::json;
-use crate::seat::{EventSink, InputNodeWatch, Keyboard, SeatBackend, SeatError, SeatEvent};
+use crate::seat::{
+    seat_locks, EventSink, InputNodeWatch, Keyboard, Locks, SeatBackend, SeatError, SeatEvent,
+    LOCKS_BOUND,
+};
 
 // Every socket1 exchange — connect, write, read to EOF — finishes inside
 // IO_BOUND (seat.rs, where the bounds built on it are stated together),
@@ -211,6 +214,12 @@ impl Hyprland {
 impl SeatBackend for Hyprland {
     fn keyboards(&self) -> Result<Vec<Keyboard>, SeatError> {
         parse_devices(&self.request("j/devices")?)
+    }
+
+    fn locks(&self) -> Result<Locks, SeatError> {
+        seat_locks(&parse_devices(
+            &self.request_by("j/devices", Instant::now() + LOCKS_BOUND)?,
+        )?)
     }
 
     fn kb_file(&self) -> Result<String, SeatError> {
@@ -422,6 +431,13 @@ fn parse_devices(text: &str) -> Result<Vec<Keyboard>, SeatError> {
                 rules: text("rules"),
                 model: text("model"),
                 options: text("options"),
+                locks: match (
+                    entry.get("capsLock").and_then(json::Json::as_bool),
+                    entry.get("numLock").and_then(json::Json::as_bool),
+                ) {
+                    (Some(caps), Some(num)) => Some(Locks { caps, num }),
+                    _ => None,
+                },
             })
         })
         .collect()
@@ -585,6 +601,53 @@ mod tests {
             .map(|k| k.name.as_str())
             .collect();
         assert_eq!(current, ["hl-virtual-keyboard-fcitx5"]);
+    }
+
+    /// The seat's locks are the `main` keyboard's. In the capture the user
+    /// has NumLock on, and fcitx5's keyboard, which relays the physical
+    /// one, is `main`; the helper's own keyboard reads NumLock off, which is
+    /// what its locked-0 modifiers requests had told the client.
+    #[test]
+    fn the_seats_locks_are_the_main_keyboards() {
+        let keyboards = parse_devices(DEVICES_FIXTURE).expect("the fixture is a devices answer");
+        let own = keyboards
+            .iter()
+            .find(|k| k.name == "hl-virtual-keyboard-oskar-daemon")
+            .unwrap();
+        assert_eq!(own.locks, Some(Locks { caps: false, num: false }));
+        assert_eq!(seat_locks(&keyboards), Ok(Locks { caps: false, num: true }));
+
+        let caps_on = DEVICES_FIXTURE.replace(
+            "\"capsLock\": false,\n        \"numLock\": true,\n        \"main\": true",
+            "\"capsLock\": true,\n        \"numLock\": false,\n        \"main\": true",
+        );
+        assert_ne!(caps_on, DEVICES_FIXTURE, "the fixture's main entry is rewritten");
+        assert_eq!(
+            seat_locks(&parse_devices(&caps_on).unwrap()),
+            Ok(Locks { caps: true, num: false })
+        );
+    }
+
+    /// No `main` keyboard means none has reached a client: no lock is on.
+    /// A `main` keyboard without both lock facts is unreadable, never
+    /// "unlocked".
+    #[test]
+    fn a_seat_without_lock_facts_is_unreadable() {
+        let none_main = parse_devices(
+            "{\"keyboards\": [{\"name\": \"kbd\", \"capsLock\": true, \"numLock\": true, \
+             \"main\": false}]}",
+        )
+        .unwrap();
+        assert_eq!(seat_locks(&none_main), Ok(Locks::default()));
+        for main in [
+            "{\"keyboards\": [{\"name\": \"kbd\", \"main\": true}]}",
+            "{\"keyboards\": [{\"name\": \"kbd\", \"numLock\": true, \"main\": true}]}",
+            "{\"keyboards\": [{\"name\": \"kbd\", \"capsLock\": \"yes\", \"numLock\": true, \
+             \"main\": true}]}",
+        ] {
+            let keyboards = parse_devices(main).expect("the inventory itself reads");
+            assert_eq!(seat_locks(&keyboards), Err(SeatError::Unreadable), "{main}");
+        }
     }
 
     #[test]
@@ -1108,7 +1171,9 @@ mod tests {
     fn the_restore_bounds_fit_inside_each_other() {
         assert!(PUT_BACK_BOUND >= IO_BOUND * 2);
         assert!(SHUTDOWN_GATE_WAIT >= IO_BOUND + PUT_BACK_BOUND);
-        assert!(SHUTDOWN_GATE_WAIT + IO_BOUND + PUT_BACK_BOUND < crate::EXIT_WATCHDOG);
+        assert!(
+            LOCKS_BOUND + SHUTDOWN_GATE_WAIT + IO_BOUND + PUT_BACK_BOUND < crate::EXIT_WATCHDOG
+        );
         assert!(crate::EXIT_WATCHDOG < Duration::from_secs(90));
         let unit = include_str!("../../systemd/oskar.service");
         assert!(!unit.contains("TimeoutStopSec"), "a stop timeout in the unit must be checked here");

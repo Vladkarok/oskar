@@ -90,8 +90,9 @@ use crate::seat::{
 };
 
 /// How long the shutdown may take before the process leaves anyway: the
-/// key release's round-trip plus the kb_file restore's own bounds (14 s at
-/// most, see seat.rs), inside systemd's 90 s default stop timeout.
+/// key release (its lock reading and round-trip) plus the kb_file restore's
+/// own bounds (14.5 s at most, see seat.rs), inside systemd's 90 s default
+/// stop timeout.
 pub(crate) const EXIT_WATCHDOG: Duration = Duration::from_secs(20);
 use crate::server::{serve, Seat};
 use crate::state::{Shared, SharedRef, State};
@@ -141,11 +142,26 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
     let qh = queue.handle();
     connection.display().get_registry(&qh, ());
 
+    // The seat backend is optional by design: without one the seat verbs
+    // answer `err no seat backend` (`events` still answers `ok` and
+    // delivers nothing), and typing is untouched. Found before the
+    // keyboard exists, because its first keymap already sends a modifiers
+    // request and that request needs the seat's locks. Asking it costs
+    // nothing until a request goes out.
+    let hyprland = Hyprland::from_env().map(Arc::new);
+    if hyprland.is_none() {
+        eprintln!("no Hyprland instance in the environment; seat verbs are off");
+    }
+    let seat: Seat = hyprland
+        .clone()
+        .map(|hyprland| hyprland as Arc<dyn SeatBackend>);
+
     let shared: SharedRef = Arc::new(Mutex::new(Shared::default()));
     let mut state = State {
         seat: None,
         manager: None,
         shared: Arc::clone(&shared),
+        compositor: seat.clone(),
     };
 
     // Globals and seat capabilities are causally ordered but need not arrive
@@ -201,20 +217,10 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
     }
 
-    // The seat backend is optional by design: without one the seat verbs
-    // answer `err no seat backend`, no events flow, and typing is untouched.
-    let seat: Seat = match Hyprland::from_env() {
-        Some(hyprland) => {
-            let hyprland = Arc::new(hyprland);
-            let sink: Arc<dyn EventSink> = Arc::new(&SUBSCRIBERS);
-            Arc::clone(&hyprland).watch(sink);
-            Some(hyprland as Arc<dyn SeatBackend>)
-        }
-        None => {
-            eprintln!("no Hyprland instance in the environment; seat verbs are off");
-            None
-        }
-    };
+    if let Some(hyprland) = hyprland {
+        let sink: Arc<dyn EventSink> = Arc::new(&SUBSCRIBERS);
+        hyprland.watch(sink);
+    }
 
     let signal_shared = Arc::clone(&shared);
     let signal_connection = connection.clone();
@@ -253,7 +259,8 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         // The keys first: the restore below waits on the compositor, and
         // nothing may hold up the release. `release_everything` also closes
         // the command gate, which refuses the seat verbs from here on.
-        let lifted = release_everything(&signal_shared, &signal_connection);
+        let lifted =
+            release_everything(&signal_shared, &signal_connection, signal_seat.as_deref());
         if lifted.is_empty() {
             eprintln!("signal {received}; nothing was held");
         } else {

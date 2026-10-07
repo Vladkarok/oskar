@@ -6,7 +6,9 @@ use wayland_client::Connection;
 
 use crate::keymap::{compile_keymap_with, hash_bytes, read_kb_file_bounded};
 use crate::protocol::{caps_reply, keycap_facts_for_groups, Command, Key};
-use crate::seat::{persist_user_source, user_source_decision, OwnFiles, SourceDecision};
+use crate::seat::{
+    persist_user_source, user_source_decision, Locks, OwnFiles, SeatBackend, SourceDecision,
+};
 use crate::state::{stamp, Hold, Shared, SharedRef};
 
 /// How long a non-modifier code may stay held before the helper lifts it.
@@ -37,6 +39,41 @@ fn group_in_range(group: u32, installed_groups: usize) -> bool {
     installed_groups > 0 && (group as usize) < installed_groups
 }
 
+/// The seat's locks, read now for an operation about to send a modifiers
+/// request (see `Shared::locked_mask`). Called outside the typing lock:
+/// the read waits on the compositor. `None` without a seat backend or an
+/// answer.
+pub(crate) fn read_locks(seat: Option<&dyn SeatBackend>) -> Option<Locks> {
+    match seat?.locks() {
+        Ok(locks) => Some(locks),
+        Err(error) => {
+            eprintln!(
+                "could not read the seat's locks ({}); a modifiers request goes out with none",
+                error.reply()
+            );
+            None
+        }
+    }
+}
+
+/// Whether `command` would send a modifiers request: then it needs a lock
+/// reading of its own (`read_locks`). Asked under the typing lock and
+/// answered for the state seen then; a command that turns out to send one
+/// anyway (a keymap swapped in between) goes out with no reading.
+fn sends_modifiers(shared: &Shared, command: &Command) -> bool {
+    match command {
+        Command::Mods(_) | Command::Group(_) | Command::Configure(_) => true,
+        Command::Down(key) | Command::Up(key) => {
+            let code = match key {
+                Key::Code(code) => Some(*code),
+                Key::Name(name) => shared.codes.get(name).copied(),
+            };
+            code.is_some_and(|code| shared.modifier_masks.contains_key(&code))
+        }
+        Command::Tap(_) | Command::Caps { .. } => false,
+    }
+}
+
 /// Releases whatever a departing client left pressed and, when nothing is
 /// held any more, zeroes the modifier mask — so a dropped connection cannot
 /// strand the session with a stuck key, while a surviving connection's
@@ -44,7 +81,15 @@ fn group_in_range(group: u32, installed_groups: usize) -> bool {
 /// one lock acquisition: an emptiness check followed by a separate
 /// re-locked `mods` would admit another connection's claim in between and
 /// clear the mask out from under it.
-pub(crate) fn release_all(shared: &SharedRef, connection: &Connection, held: Vec<u32>, conn_id: u64) {
+pub(crate) fn release_all(
+    shared: &SharedRef,
+    connection: &Connection,
+    held: Vec<u32>,
+    conn_id: u64,
+    seat: Option<&dyn SeatBackend>,
+) {
+    // Only a connection that held something can send a modifiers request.
+    let locks = if held.is_empty() { None } else { read_locks(seat) };
     let mut shared = shared.lock().unwrap();
     let mut released_any = false;
     for code in held {
@@ -55,6 +100,7 @@ pub(crate) fn release_all(shared: &SharedRef, connection: &Connection, held: Vec
             Command::Up(Key::Code(code)),
             None,
             conn_id,
+            locks,
         );
         released_any |= before;
     }
@@ -62,7 +108,7 @@ pub(crate) fn release_all(shared: &SharedRef, connection: &Connection, held: Vec
     // lifted something: a manual `mods <mask>` carries no claim, and a
     // connection that held nothing must not wipe a survivor's mask.
     if released_any && shared.held.is_empty() {
-        apply_locked(&mut shared, connection, Command::Mods(0), None, conn_id);
+        apply_locked(&mut shared, connection, Command::Mods(0), None, conn_id, locks);
     }
 }
 
@@ -133,7 +179,11 @@ pub(crate) fn expire_stuck_keys(shared: &SharedRef, connection: &Connection) -> 
 ///
 /// Returns the codes it lifted, so the caller can say what happened rather
 /// than claim a release that had nothing to release.
-pub(crate) fn release_everything(shared_arc: &SharedRef, connection: &Connection) -> Vec<u32> {
+pub(crate) fn release_everything(
+    shared_arc: &SharedRef,
+    connection: &Connection,
+    seat: Option<&dyn SeatBackend>,
+) -> Vec<u32> {
     // Close the command gate under the lock used by every command. From
     // this instant a client thread can only receive `err shutting down`;
     // a command already under the lock completes or is refused, and
@@ -143,6 +193,9 @@ pub(crate) fn release_everything(shared_arc: &SharedRef, connection: &Connection
         let mut shared = shared_arc.lock().unwrap();
         shared.shutting_down = true;
     }
+    // Read with the gate already closed: no command can change the device
+    // between this reading and the release below.
+    let locks = read_locks(seat);
     let mut shared = shared_arc.lock().unwrap();
     let Some(keyboard) = shared.keyboard.clone() else {
         return Vec::new();
@@ -152,7 +205,7 @@ pub(crate) fn release_everything(shared_arc: &SharedRef, connection: &Connection
         shared.held.remove(code);
         keyboard.key(stamp(), *code, 0);
     }
-    keyboard.modifiers(0, 0, 0, shared.group);
+    keyboard.modifiers(0, 0, shared.locked_mask(locks), shared.group);
     // The lock is dropped before the round trip: it blocks on the compositor,
     // and holding `shared` across that would stall any client thread still
     // serving a line.
@@ -172,11 +225,16 @@ pub(crate) fn apply(
     command: Command,
     held: Option<&mut Vec<u32>>,
     conn_id: u64,
+    seat: Option<&dyn SeatBackend>,
 ) -> String {
+    // A command that sends a modifiers request reads the seat's locks
+    // first, outside the lock: the reading waits on the compositor.
+    let reads = sends_modifiers(&shared.lock().unwrap(), &command);
+    let locks = if reads { read_locks(seat) } else { None };
     // Every command runs under the lock; the lock is held only for bounded
     // work — compiles pay the churn budget at the gate.
     let mut guard = shared.lock().unwrap();
-    apply_locked(&mut guard, connection, command, held, conn_id)
+    apply_locked(&mut guard, connection, command, held, conn_id, locks)
 }
 
 fn apply_locked(
@@ -185,6 +243,7 @@ fn apply_locked(
     command: Command,
     held: Option<&mut Vec<u32>>,
     conn_id: u64,
+    locks: Option<Locks>,
 ) -> String {
     if shared.shutting_down {
         return "err shutting down".to_string();
@@ -268,7 +327,8 @@ fn apply_locked(
         if !group_in_range(config.group, group_ceiling) {
             return "err bad group".to_string();
         }
-        let installed = shared.install_config(config, kb_file_bytes.as_deref(), compiled.as_deref());
+        let installed =
+            shared.install_config(config, kb_file_bytes.as_deref(), compiled.as_deref(), locks);
         let _ = connection.flush();
         // The generation rides on the reply: it is what the
         // panel correlates its keycap facts against, and a same-keymap
@@ -374,7 +434,9 @@ fn apply_locked(
         },
         // The group rides along with every modifier update: dropping it would
         // silently reset the device to the first layout.
-        Command::Mods(mask) => keyboard.modifiers(mask, 0, 0, shared.group),
+        Command::Mods(mask) => {
+            keyboard.modifiers(mask, 0, shared.locked_mask(locks), shared.group)
+        }
         // A language switch mid-chord must not drop what is held, so the
         // group goes out alongside the mask the held keys imply rather than
         // alongside a zero.
@@ -384,7 +446,7 @@ fn apply_locked(
             }
             let keyboard = keyboard.clone();
             shared.group = group;
-            keyboard.modifiers(shared.modifier_mask(), 0, 0, group);
+            keyboard.modifiers(shared.modifier_mask(), 0, shared.locked_mask(locks), group);
         }
         // Facts, not keys: nothing is pressed, nothing is held, and the
         // answer is read out of the installed keymap's pre-resolved records.
@@ -407,7 +469,12 @@ fn apply_locked(
     // code goes down or comes up, and the tap in between lands under it.
     if let Some(code) = pressed.or(released) {
         if shared.modifier_masks.contains_key(&code) {
-            keyboard.modifiers(shared.modifier_mask(), 0, 0, shared.group);
+            keyboard.modifiers(
+                shared.modifier_mask(),
+                0,
+                shared.locked_mask(locks),
+                shared.group,
+            );
         }
     }
 
@@ -434,6 +501,300 @@ mod tests {
     use super::*;
     use crate::keymap::compile_keymap_with;
     use crate::protocol::parse;
+    use crate::seat::{EventSink, Keyboard, SeatError};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    /// A seat backend that answers only the lock reading, with whatever the
+    /// test sets, and counts how often it was asked.
+    struct FakeLocks {
+        reading: Mutex<Result<Locks, SeatError>>,
+        asked: AtomicUsize,
+        gate: Mutex<()>,
+    }
+
+    impl FakeLocks {
+        fn new(reading: Result<Locks, SeatError>) -> Self {
+            FakeLocks {
+                reading: Mutex::new(reading),
+                asked: AtomicUsize::new(0),
+                gate: Mutex::new(()),
+            }
+        }
+        fn set(&self, reading: Result<Locks, SeatError>) {
+            *self.reading.lock().unwrap() = reading;
+        }
+        fn asked(&self) -> usize {
+            self.asked.load(Ordering::SeqCst)
+        }
+    }
+
+    impl SeatBackend for FakeLocks {
+        fn keyboards(&self) -> Result<Vec<Keyboard>, SeatError> {
+            Err(SeatError::NoBackend)
+        }
+        fn locks(&self) -> Result<Locks, SeatError> {
+            self.asked.fetch_add(1, Ordering::SeqCst);
+            self.reading.lock().unwrap().clone()
+        }
+        fn kb_file(&self) -> Result<String, SeatError> {
+            Err(SeatError::NoBackend)
+        }
+        fn kb_file_by(&self, _deadline: Instant) -> Result<String, SeatError> {
+            Err(SeatError::NoBackend)
+        }
+        fn switch_group(&self, _device: &str, _group: u32) -> Result<(), SeatError> {
+            Err(SeatError::NoBackend)
+        }
+        fn write_kb_file(&self, _value: &str, _deadline: Instant) -> Result<(), SeatError> {
+            Err(SeatError::NoBackend)
+        }
+        fn confirm_kb_file(
+            &self,
+            _value: &str,
+            _deadline: Instant,
+            _stopping: &dyn Fn() -> bool,
+        ) -> Result<(), SeatError> {
+            Err(SeatError::NoBackend)
+        }
+        fn kb_file_gate(&self) -> &Mutex<()> {
+            &self.gate
+        }
+        fn watch(self: std::sync::Arc<Self>, _sink: std::sync::Arc<dyn EventSink>) {}
+    }
+
+    /// A ready virtual keyboard bound on an unconnected socket pair, whose
+    /// requests are read back off the other end. Its keymap state is set up
+    /// by hand rather than installed: an install publishes into the live
+    /// session's runtime directory.
+    struct Wire {
+        connection: Connection,
+        theirs: std::os::unix::net::UnixStream,
+        shared: SharedRef,
+        keyboard: u32,
+        /// The keymap text the state was built from.
+        text: String,
+        _queue: wayland_client::EventQueue<crate::state::State>,
+    }
+
+    impl Wire {
+        fn new(layouts: &str) -> Self {
+            use crate::keymap::{
+                lock_bits_for_keymap, modifier_masks_for_keymap, parse_keycodes, XkbConfig,
+            };
+            use wayland_client::protocol::wl_seat::WlSeat;
+            use wayland_client::Proxy;
+            use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
+
+            let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+            theirs.set_nonblocking(true).unwrap();
+            let connection = Connection::from_socket(ours).unwrap();
+            let queue = connection.new_event_queue::<crate::state::State>();
+            let qh = queue.handle();
+            let registry = connection.display().get_registry(&qh, ());
+            let seat: WlSeat = registry.bind(1, 7, &qh, ());
+            let manager: ZwpVirtualKeyboardManagerV1 = registry.bind(2, 1, &qh, ());
+            let keyboard = manager.create_virtual_keyboard(&seat, &qh, ());
+            let config = XkbConfig {
+                layouts: layouts.to_string(),
+                ..XkbConfig::default()
+            };
+            let text = compile_keymap_with(&config, None).expect("the fixture compiles");
+            let mut shared = Shared {
+                keyboard: Some(keyboard.clone()),
+                ready: true,
+                codes: parse_keycodes(&text),
+                lock_bits: lock_bits_for_keymap(&text),
+                caps_per_group: keycap_facts_for_groups(&text),
+                config: Some(config),
+                ..Shared::default()
+            };
+            shared.modifier_masks = modifier_masks_for_keymap(&text, &shared.codes);
+            let wire = Wire {
+                connection,
+                theirs,
+                shared: std::sync::Arc::new(Mutex::new(shared)),
+                keyboard: keyboard.id().protocol_id(),
+                text,
+                _queue: queue,
+            };
+            wire.modifiers();
+            wire
+        }
+
+        /// The bit the compositor's reading names, resolved by that name in
+        /// the keymap under test.
+        fn bit(&self, name: &str) -> u32 {
+            use xkbcommon::xkb;
+            let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let compiled = xkb::Keymap::new_from_string(
+                &context,
+                self.text.clone(),
+                xkb::KEYMAP_FORMAT_TEXT_V1,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("the fixture compiles");
+            1u32 << compiled.mod_get_index(name)
+        }
+
+        /// Every `modifiers` request (depressed, latched, locked, group) the
+        /// keyboard sent since the last call.
+        fn modifiers(&self) -> Vec<[u32; 4]> {
+            use std::io::Read;
+            let _ = self.connection.flush();
+            let mut bytes = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                match (&self.theirs).read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(error) => panic!("reading the wire: {error}"),
+                }
+            }
+            let word = |at: usize| u32::from_ne_bytes(bytes[at..at + 4].try_into().unwrap());
+            let mut found = Vec::new();
+            let mut at = 0;
+            while at + 8 <= bytes.len() {
+                let (object, header) = (word(at), word(at + 4));
+                let (size, opcode) = ((header >> 16) as usize, header & 0xffff);
+                // zwp_virtual_keyboard_v1.modifiers is request 2.
+                if object == self.keyboard && opcode == 2 {
+                    found.push([word(at + 8), word(at + 12), word(at + 16), word(at + 20)]);
+                }
+                at += size.max(8);
+            }
+            found
+        }
+
+        fn apply(&self, line: &str, held: &mut Vec<u32>, seat: Option<&dyn SeatBackend>) -> String {
+            apply(&self.shared, &self.connection, parse(line).unwrap(), Some(held), 1, seat)
+        }
+    }
+
+    const NUM: Locks = Locks {
+        caps: false,
+        num: true,
+    };
+    const BOTH: Locks = Locks {
+        caps: true,
+        num: true,
+    };
+
+    /// The compositor forwards a modifiers request's whole state to the
+    /// focused client, so every request carries the seat's locks as read
+    /// for it, at the bits the compositor's reading names: a panel Shift
+    /// click, its release, the hello's `mods 0` and a `group` must leave
+    /// the user's NumLock and Caps Lock where they were.
+    #[test]
+    fn every_modifiers_request_carries_the_seats_locks() {
+        let wire = Wire::new("us,ua");
+        let (lock, num) = (wire.bit("Lock"), wire.bit("Mod2"));
+        assert_ne!(lock, num);
+        let seat = FakeLocks::new(Ok(NUM));
+        let mut held = Vec::new();
+
+        assert_eq!(wire.apply("down LFSH", &mut held, Some(&seat)), "ok");
+        let shift = wire.modifiers();
+        assert_eq!(shift.len(), 1, "a Shift press re-asserts the mask once");
+        assert_ne!(shift[0][0], 0, "Shift is depressed");
+        assert_eq!(shift[0][2], num, "NumLock stays on under a panel Shift");
+
+        seat.set(Ok(BOTH));
+        assert_eq!(wire.apply("up LFSH", &mut held, Some(&seat)), "ok");
+        assert_eq!(wire.modifiers(), [[0, 0, lock | num, 0]]);
+        assert_eq!(wire.apply("mods 0", &mut held, Some(&seat)), "ok");
+        assert_eq!(wire.modifiers(), [[0, 0, lock | num, 0]]);
+        assert_eq!(wire.apply("group 1", &mut held, Some(&seat)), "ok");
+        assert_eq!(wire.modifiers(), [[0, 0, lock | num, 1]]);
+    }
+
+    /// A layout follow is a same-keymap configure: only the group moves, and
+    /// the request that moves it carries the locks.
+    #[test]
+    fn a_layout_follow_carries_the_seats_locks() {
+        let wire = Wire::new("us,ua");
+        let seat = FakeLocks::new(Ok(NUM));
+        let mut config = wire.shared.lock().unwrap().config.clone().unwrap();
+        config.group = 1;
+        let follow = Command::Configure(config.clone());
+        assert!(sends_modifiers(&wire.shared.lock().unwrap(), &follow));
+        let locks = read_locks(Some(&seat));
+        assert!(wire.shared.lock().unwrap().install_config(&config, None, None, locks));
+        assert_eq!(wire.modifiers(), [[0, 0, wire.bit("Mod2"), 1]]);
+    }
+
+    /// Every operation reads the locks for itself. A lock toggled on a
+    /// physical keyboard raises no compositor event, so a reading kept from
+    /// an earlier operation would put back a NumLock the user turned off.
+    #[test]
+    fn each_operation_reads_the_locks_afresh() {
+        let wire = Wire::new("us");
+        let num = wire.bit("Mod2");
+        let seat = FakeLocks::new(Ok(NUM));
+        let mut held = Vec::new();
+        wire.apply("down LFSH", &mut held, Some(&seat));
+        assert_eq!(wire.modifiers()[0][2], num);
+        // The user turns NumLock off on the physical keyboard.
+        seat.set(Ok(Locks::default()));
+        wire.apply("up LFSH", &mut held, Some(&seat));
+        assert_eq!(wire.modifiers(), [[0, 0, 0, 0]], "the old reading is not reused");
+        assert_eq!(seat.asked(), 2);
+    }
+
+    /// Without a reading of its own an operation sends no lock: never a
+    /// reading kept from an earlier operation, which could be stale either
+    /// way.
+    #[test]
+    fn without_a_fresh_reading_no_lock_is_sent() {
+        let wire = Wire::new("us");
+        let seat = FakeLocks::new(Ok(BOTH));
+        let mut held = Vec::new();
+        wire.apply("down LFSH", &mut held, Some(&seat));
+        assert_ne!(wire.modifiers()[0][2], 0);
+        seat.set(Err(SeatError::Unreachable));
+        wire.apply("up LFSH", &mut held, Some(&seat));
+        assert_eq!(wire.modifiers(), [[0, 0, 0, 0]]);
+        wire.apply("mods 0", &mut held, None);
+        assert_eq!(wire.modifiers(), [[0, 0, 0, 0]], "no seat backend, no lock");
+    }
+
+    /// Keys that send no modifiers request never wait on the compositor.
+    #[test]
+    fn plain_keys_do_not_ask_for_the_locks() {
+        let wire = Wire::new("us");
+        let seat = FakeLocks::new(Ok(NUM));
+        let mut held = Vec::new();
+        assert_eq!(wire.apply("tap AD01", &mut held, Some(&seat)), "ok");
+        assert_eq!(wire.apply("down AD01", &mut held, Some(&seat)), "ok");
+        assert_eq!(wire.apply("up AD01", &mut held, Some(&seat)), "ok");
+        assert_eq!(wire.apply("caps 0", &mut held, Some(&seat)).split('\t').next(), Some("caps"));
+        assert_eq!(seat.asked(), 0);
+        assert!(wire.modifiers().is_empty());
+    }
+
+    /// A departing client's release and the shutdown release are modifiers
+    /// requests too, and carry the locks read for them.
+    #[test]
+    fn the_releases_carry_the_seats_locks() {
+        let wire = Wire::new("us");
+        let num = wire.bit("Mod2");
+        let seat = FakeLocks::new(Ok(NUM));
+        let mut held = Vec::new();
+        wire.apply("down LFSH", &mut held, Some(&seat));
+        wire.modifiers();
+        release_all(&wire.shared, &wire.connection, held, 1, Some(&seat));
+        let released = wire.modifiers();
+        assert!(!released.is_empty());
+        assert!(released.iter().all(|request| request[2] == num), "{released:?}");
+        assert_eq!(released.last().unwrap()[0], 0);
+
+        // The shutdown release ends in a round trip; a compositor end that
+        // has hung up answers it at once with an error.
+        wire.theirs.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(release_everything(&wire.shared, &wire.connection, Some(&seat)).is_empty());
+        assert_eq!(wire.modifiers(), [[0, 0, num, 0]]);
+    }
 
     /// Shutdown closes the command gate before it releases anything, so the
     /// release is the last writer: every command after it — a keystroke
@@ -446,14 +807,14 @@ mod tests {
         let connection = Connection::from_socket(ours).unwrap();
         let shared: SharedRef = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
         assert_ne!(
-            apply(&shared, &connection, Command::Mods(0), None, 1),
+            apply(&shared, &connection, Command::Mods(0), None, 1, None),
             "err shutting down",
             "an open gate serves commands"
         );
-        assert!(release_everything(&shared, &connection).is_empty());
+        assert!(release_everything(&shared, &connection, None).is_empty());
         assert!(shared.lock().unwrap().shutting_down, "the release closes the gate");
         for command in [Command::Mods(0), Command::Group(0), parse("tap AD01").unwrap()] {
-            assert_eq!(apply(&shared, &connection, command, None, 1), "err shutting down");
+            assert_eq!(apply(&shared, &connection, command, None, 1, None), "err shutting down");
         }
     }
 
