@@ -9,12 +9,14 @@ this is the operating manual.
 
 - Historical snapshot (2026-09-02, names pre-rename): host checkout under
   `~/Projects/`, polygon green, plugin hot-reloading. The 2026-09-17
-  state: work happens in worktrees off `spec/v1.1-fixes`; the guest's
-  tree is `~/oskar` (rsync'd, not a clone); the lab runs the packaged
-  product (see the as-found note).
+  snapshot (dated; the `spec/v1.1-fixes` branch no longer exists, work is
+  on `master` and feature branches): the guest's tree is `~/oskar`
+  (rsync'd, not a clone); the lab runs the packaged product (see the
+  as-found note).
 - Polygon green: `tools/nested-session.sh tools/smoke-daemon.sh`.
-- Host: plugin installed and hot-reloading; user service **disabled** on
-  purpose until daily use proves it.
+- Host: plugin installed and hot-reloading; the user service is enabled
+  and daily-driven (the 2026-09-02 "disabled until daily use proves it"
+  is retired).
 
 ## Driving the VM
 
@@ -174,9 +176,12 @@ ssh omarchy-vm 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for d in $XDG_RUNTIME
 
 ## Still to do here
 
-1. Actual daily use — open the panel, click keys, work in it for a while.
-2. XWayland target: type into an XWayland window (xterm under XWAYLAND).
-3. fcitx5 running vs stopped, both ways.
+Dated 2026-09-17; items 1-3 have since been done (daily use, XWayland
+wine/Proton and the fcitx5 matrix: README and decisions §43-era notes).
+
+1. ~~Actual daily use~~ — done.
+2. ~~XWayland target~~ — done.
+3. ~~fcitx5 running vs stopped, both ways~~ — done.
 4. Longer hotplug storms while typing.
 
 ## Upstream queue

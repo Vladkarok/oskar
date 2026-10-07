@@ -46,9 +46,9 @@ var HELLO_STALE_MS = 5000
 ///   everything, a visible blink on every probe of an otherwise healthy
 ///   panel.
 /// state.probeHold — a paced paste or an armed chord owns the wire. No
-///   probe may interleave: ChordAcks poisons a chord on ANY non-ok reply
-///   popped inside its region, and even a pong is a non-ok reply. The
-///   tick waits for the next one.
+///   probe may interleave: the helper answers in order, so a probe's reply
+///   would queue behind the chord's lines and take a slot among the acks
+///   ChordAcks counts. The tick waits for the next one.
 ///
 /// Returns "hello" (write a hello and mark it outstanding), "ping" (the
 /// idle probe: write a ping the same way), "wait" (an outstanding probe is

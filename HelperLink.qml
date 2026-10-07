@@ -252,8 +252,8 @@ Item {
                 helloAgeMs: Date.now() - link.helloSentAt,
                 // The quiescent probe: healthy and settled asks with
                 // ping; a paced paste or an armed chord holds the wire
-                // (ChordAcks poisons a chord on any non-ok reply inside
-                // its region — a pong included).
+                // (a probe's reply would queue behind the chord's lines
+                // and take a slot among the acks ChordAcks counts).
                 idle: link.inputReady && link.sessionSettled,
                 probeHold: link.pastePacing || link.chordAwaitingAck
             })

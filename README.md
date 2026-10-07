@@ -35,7 +35,8 @@ button hands over the second command. `install.sh` builds the helper,
 installs it with its user unit and the `oskar` command, and starts it.
 
 To update: `omarchy plugin update io.github.vladkarok.oskar`, then rerun
-`install.sh`, or `oskar upgrade`, the same rerun (a panel newer than its
+`install.sh`, or `oskar upgrade`, which reruns it and then also restarts the
+helper and the Omarchy shell (a panel newer than its
 helper says it needs updating, and its Copy button hands over the command
 that reinstalls it). To remove everything but your settings:
 
@@ -67,10 +68,12 @@ are under [Other ways to install](#other-ways-to-install).
 
 The panel has two geometries. **Docked** (the default on first run) sits
 flush along the bottom edge at full width and reserves that space through
-the layer-shell exclusive zone, so windows move up while it is open and
-return when it closes — the way the Windows touch keyboard behaves. A
+the layer-shell exclusive zone, so windows opened while it is up avoid it. Windows
+already tiled when it opens are moved by a `gaps_out` nudge that Omarchy's Lua
+config refuses (see "What OSKar changes"), so on such a host they may keep
+their bottoms behind the strip at scale 2. A
 fullscreen window ignores exclusive zones and is overlaid instead. **Floating**
-reserves nothing and is dragged by its bar. Mode is chosen in Settings.
+reserves nothing and is dragged by its bar. Mode is chosen in Settings or with the header's mode chip.
 
 Maintained defaults ship in `Config.js`. Deliberate user choices are sparse in
 `$XDG_CONFIG_HOME/oskar/config.json`; floating geometry is separate in
@@ -182,15 +185,15 @@ hands yet.
 One product, four languages, each with a job:
 
 - **QML** (the Quickshell panel) — what the panel is and where it draws.
-- **JavaScript** (twenty-three pure modules beside the QML, plus three
+- **JavaScript** (twenty-four pure modules beside the QML, plus three
   generated emoji-data files) — every decision
   the panel makes: what each keycap types, which modifiers a
   hold-column pick needs, how the emoji search ranks, whether the panel
-  follows a layout-group change. Pure, stateless, and covered by 580
+  follows a layout-group change. Pure, stateless, and covered by 650
   offscreen test cases — the repo's main regression net.
 - **Rust** (the `oskar-daemon` helper) — everything at the seat: it
   compiles and mirrors the XKB keymap, owns the virtual keyboard, and
-  speaks the versioned socket protocol. 85 unit tests.
+  speaks the versioned socket protocol. 95 unit tests.
 - **Python and one C file** (`tools/integration/`) — not part of the
   product: the lab harness that drives a real panel with real pointer
   events inside a throwaway VM, and a tiny Wayland client that spies on
@@ -307,8 +310,8 @@ omarchy restart shell  # the running shell only picks up a newly registered
                        # plugin at restart (or log out and back in)
 ```
 
-After updating the checkout, rerun `./install.sh` (or `oskar upgrade`, the
-same rerun under one name): the panel and the helper share a protocol
+After updating the checkout, rerun `./install.sh` (or `oskar upgrade`, which
+reruns it and also restarts the helper and the Omarchy shell): the panel and the helper share a protocol
 version, and a panel updated without its helper says so rather than
 typing nothing.
 

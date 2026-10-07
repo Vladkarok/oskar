@@ -154,7 +154,8 @@ Preset changes preserve bottom-centre in docked mode. Floating mode preserves
 the card centre, clamped only enough to keep the complete card on its output;
 saved placement uses that deterministic anchor. Sizes are chosen from the
 direct M/L/XL chooser inside the settings popover (§5) — the header carries
-no size control and no Dock/Float control; mode lives only in Settings.
+no size control; mode is set in Settings and by the header's mode chip
+(decisions §56).
 Choosing the active preset moves nothing. Key radius is a 0–24 integer
 stored as a proportion of a medium key: 24 is fully rounded (a circle on a
 square cap) at every preset because the drawn radius scales with key

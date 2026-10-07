@@ -58,7 +58,7 @@ daemon's own sloppy writes.
   the peer; the same-user boundary is the actual wall.
 - **Clipboard preview rich text** — a text/plain payload with a
   remote image tag could make the preview issue a network request.
-  Fixed: `Text.PlainText`, always; `wl-copy` gains `--`; every
+  Fixed: `Text.PlainText`, always; `wl-copy` takes the text on stdin, never in argv; every
   `wl-paste` reader is stream-capped at 64 KiB so a malicious
   clipboard owner cannot balloon the shell's memory through the
   collector.

@@ -496,7 +496,7 @@ migrate_source() {
   elif [[ -e "$SOURCE_HELPER" || -L "$SOURCE_HELPER" ]]; then
     say "$SOURCE_HELPER left in place: it does not match OSKar's install record"
   fi
-  # The ~/.local/bin symlink shadows /usr/bin on default PATHs; left
+  # The ~/.local/bin symlink shadows /usr/bin when it precedes it on PATH; left
   # behind, the next bare `oskar setup` resolves to the source
   # copy and silently re-creates the source install just moved away.
   if record_matches "$CLI_LINK"; then
@@ -504,7 +504,7 @@ migrate_source() {
     record_update forget "$CLI_LINK"
     say "source lifecycle symlink removed from ~/.local/bin"
   elif [[ -e "$CLI_LINK" || -L "$CLI_LINK" ]]; then
-    warn "$CLI_LINK does not match OSKar's install record; left in place (it shadows /usr/bin/oskar on your PATH — call the \
+    warn "$CLI_LINK does not match OSKar's install record; left in place (it shadows /usr/bin/oskar if ~/.local/bin precedes /usr/bin on your PATH — call the \
 packaged one by its full path, or move that file yourself)"
   fi
   systemctl --user daemon-reload
@@ -963,7 +963,7 @@ command manages; try: oskar setup"
     fi
   fi
 
-  # ~/.local/bin shadows /usr/bin on default PATHs: a stale shadow is how
+  # ~/.local/bin shadows /usr/bin when it precedes it on PATH (Omarchy appends it, so a user PATH edit does that): a stale shadow is how
   # a bare `oskar setup` silently re-creates a migrated-away source
   # world. A DANGLING shadow is skipped by PATH lookup and is harmless,
   # so existence follows the link (-e, not -L).
@@ -971,11 +971,11 @@ command manages; try: oskar setup"
   points="$(realpath "$DOCTOR_SHADOW" 2>/dev/null || true)"
   if [[ "$MODE" == "packaged" && -e "$DOCTOR_SHADOW" ]] \
       && record_matches "$DOCTOR_SHADOW"; then
-    doc_fail "$shadow" "$DOCTOR_SHADOW shadows /usr/bin/oskar, so a \
+    doc_fail "$shadow" "$DOCTOR_SHADOW shadows /usr/bin/oskar wherever it precedes /usr/bin on PATH, so a \
 bare oskar manages the source world instead of the package; try: \
 oskar setup --migrate-source (it removes the shadow)"
   elif [[ "$MODE" == "packaged" && -e "$DOCTOR_SHADOW" ]]; then
-    doc_fail "$shadow" "$DOCTOR_SHADOW shadows /usr/bin/oskar, and it does \
+    doc_fail "$shadow" "$DOCTOR_SHADOW shadows /usr/bin/oskar wherever it precedes /usr/bin on PATH, and it does \
 not match OSKar's install record, so OSKar will not remove it; try: move it yourself, or call /usr/bin/oskar by its full path"
   elif [[ "$MODE" == "packaged" ]]; then
     doc_ok "$shadow" "none ($DOCTOR_SHADOW absent; /usr/bin/oskar answers)"

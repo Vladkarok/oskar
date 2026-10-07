@@ -30,7 +30,7 @@ switching for every client behind fcitx5 (decisions.md has the detail).
 |---|---|
 | `Panel.qml`, `BarWidget.qml` | the floating or docked window and the bar toggle; saves in `PrivateSaves.qml`, the emoji transaction in `EmojiDelivery.qml`, settings in `SettingsLayer.qml` |
 | `Keyboard.qml` | key grid, layout tracking, keycap pipeline; the reply dispatch in `HelperReplies.js` (pure), the socket client in `HelperLink.qml`, paste chords in `PasteChords.qml`, the hold menu in `HoldMenu.qml` |
-| `*.js` (twenty-three pure modules, plus three generated emoji-data files) | every decision the panel makes — rows and keysyms, modifiers, emoji search, config validation, device choice, settle windows; each has an offscreen suite under `tests/` |
+| `*.js` (twenty-four pure modules, plus three generated emoji-data files) | every decision the panel makes — rows and keysyms, modifiers, emoji search, config validation, device choice, settle windows; each has an offscreen suite under `tests/` |
 | `daemon/src/` | the Rust helper owning one `zwp_virtual_keyboard_v1`: `protocol.rs` (wire format), `server.rs` (socket, handshake), `events.rs` (the shared writer, pushed events), `apply.rs` (commands), `keymap.rs`, `seat.rs` (the `SeatBackend` trait), `hyprland.rs` (its Hyprland IPC implementation), `json.rs`, `state.rs`, `main.rs` |
 | `systemd/oskar.service` | user unit, tied to `graphical-session.target` |
 | `bin/oskar` | the lifecycle command: setup / upgrade / status / doctor / teardown |
@@ -66,9 +66,11 @@ layouts with `switch`, and shares the published keymap with `share`; it
 spawns nothing for devices, switches, hotplug or the share. `share` reads
 the compositor's `input:kb_file` first, sets it (clearing first only to
 re-read a republished file under the same name) and verifies it by reading
-it back, all inside one 6 s deadline; on any failure it puts the value it
-read back on a fresh 5 s bound of its own (11 s in all, below the 15 s hold
-cap; `daemon/src/seat.rs` states the bounds together). It will not take the
+it back, all inside one 6 s deadline; on any failure it puts back the recorded user source (when the
+compositor was already on the published keymap) or else the value it
+read, on a fresh 5 s bound of its own (11 s in all; the 15 s hold cap counts from the key press and does not
+cover it, so the seat-verb worker lifts held keys at the cap meanwhile;
+`daemon/src/seat.rs` states the bounds together). It will not take the
 compositor over from a relative `kb_file` it could not put back. The helper
 never checks the file itself — its `/tmp` is private — so the read-back is
 the verification. On its own shutdown the helper puts a `kb_file` that

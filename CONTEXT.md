@@ -49,8 +49,8 @@ is the upstream problem this project works around.
 
 **Current keyboard**:
 The keyboard the seat is presently on, which moves on every real key
-press. The only device whose group we trust when reading, and one of two
-we will accept when switching.
+press. The device whose group we read; a switch addresses every safe
+keyboard that shares its layout list.
 _Avoid_: main device, active keyboard, primary keyboard
 
 **Pseudo-device**:
@@ -108,7 +108,8 @@ cleared. Latched modifiers stack.
 _Avoid_: sticky, one-shot, armed
 
 **Locked**:
-A modifier double-clicked, held until clicked again.
+Shift double-clicked, held until clicked again; any other modifier
+returns to idle on a double click.
 _Avoid_: toggled, pinned, held
 
 **Semantic toggle**:
@@ -132,9 +133,8 @@ _Avoid_: clipboard history, clipboard synthesis, paste-as-input
 **Emoji page**:
 The panel's own overlay page of emoji tiles, opened from the `☺` cap and
 driven by the keyboard's own keys. It replaced the external-picker
-cooperation (tickets 09/10, decisions §24 — history); the configured
-external app remains launchable from a page chip, with no cooperation
-from us.
+cooperation (tickets 09/10, decisions §24 — history); there is no
+external picker and no chip that launches one.
 _Avoid_: picker session, picker window, the picker
 
 **Pick**:

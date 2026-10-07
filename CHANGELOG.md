@@ -3,6 +3,22 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
+## Unreleased
+
+### Fixed
+
+- A Shift click, a layout switch or a helper restart no longer turns the focused app's NumLock or Caps Lock off. With physical Caps Lock on, the panel's Shift now gives lowercase letters, as a physical Shift does.
+- Switching between docked and floating while the panel is open now makes tiled windows reflow in both directions.
+- A paste-button click into the emoji search or a colour field now says "Only text pastes here" when the clipboard holds an image or a secret, and changes nothing.
+- A `#RGBA` hex colour, typed in the editor or set in `config.json`, now shows and saves as written instead of the previous colour.
+- Clicking a second colour square closes the first one's unsaved draft before it opens, so Apply writes the colour you meant.
+- The Custom look's frozen theme survives a shell restart, relogin or plugin update, so the first open still shows the look you froze.
+- The settings steppers now move to the end of their range or the next step instead of dimming and doing nothing.
+- A paste into a Wine or Proton window is no longer reported as failed because of an unrelated status reply, and a stalled share can no longer let a cancelled paste arrive late.
+- A seat with no keyboard the panel can read now opens typing from the default layout instead of staying closed.
+- The installer, `oskar setup --migrate-source` and `oskar teardown` refuse as root, refuse a clone registration before changing anything, and no longer leave the record out of step after a failed write.
+- `oskar` finds its own files when `XDG_STATE_HOME` or `XDG_CONFIG_HOME` is set only in the shell.
+
 ## 0.2.1
 
 ### Fixed

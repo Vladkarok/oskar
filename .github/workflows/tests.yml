@@ -1,5 +1,5 @@
 # The regression wall's host layers on every push (ticket 43's CI half):
-# the 21 offscreen JS suites, qmllint's fatal class, the packaging
+# the 27 offscreen JS suites, qmllint's fatal class, the packaging
 # file-set gate, and the daemon's tests under clippy. The
 # live lab layers (canary, restart-settle, QMP clicks) stay local —
 # they need the disposable VM.
@@ -35,7 +35,7 @@ jobs:
       # The battery runs as an ordinary user, the way OSKar is installed:
       # root ignores directory modes, and the install check's read-only
       # cases would be skipped.
-      - name: Host battery (16 suites + qml gates)
+      - name: Host battery (27 suites + qml gates)
         run: |
           useradd --create-home ci
           chown -R ci: .

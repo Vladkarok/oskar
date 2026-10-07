@@ -961,7 +961,8 @@ off a device the button does not move is a group the keyboard will not be
 typing in. With nothing positively identified yet — the window before the
 helper's device snapshot arrives — there is no answer at all and no configure
 is sent, rather than a group guessed off whatever the compositor happened to
-list first.
+list first. Once a seat reply shows no readable keyboard at all, the panel
+configures once from the defaults it holds, so typing is not left closed.
 
 **And the seat is kept in one group.** A group-toggle key moves the one device
 it arrives on — measured: `Caps_Lock` under `grp:caps_toggle` moved
@@ -2332,7 +2333,9 @@ the private repo; the durable rules they produced are these.
 
 - Every command sent occupies one `ChordAcks` slot and every reply pops
   the oldest. A chord's verdict is its own final line's ack, poisoned by
-  any `err` inside its region.
+  an `err` answering one of the chord's own key lines (down, up, tap)
+  inside its region; facts, `pong` and other non-key replies there do not
+  poison it.
 - A handoff completes when the counterpart answers, not when the write
   returns. Residual: an ack means the compositor has the events, not that
   the client consumed the paste; only a paste-confirmed protocol reply
