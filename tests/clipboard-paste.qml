@@ -4,6 +4,32 @@ import "../ModifierReducer.js" as Modifiers
 import "harness.js" as T
 
 QtObject {
+    // A reader script's secret discipline, as exact clauses: the hint is
+    // named first, the full check (list the types, match the hint as a
+    // whole line, exit with the secret code) runs once before the read and
+    // once after it, and the payload is printed only after the second.
+    // Substrings are not enough: a check whose `grep` or `exit` is gone
+    // still mentions `--list-types`.
+    function secretChecksAround(script, readClause) {
+        var hint = "h=x-kde-passwordmanagerhint; "
+        var check = "wl-paste --list-types 2>/dev/null | grep -qix \"$h\" && exit "
+            + ClipboardPaste.READ_SECRET_EXIT + "; "
+        T.equal(script.indexOf(hint), 0, "the hint is named first: " + script)
+        var first = script.indexOf(check)
+        var second = first >= 0 ? script.indexOf(check, first + check.length) : -1
+        var third = second >= 0 ? script.indexOf(check, second + check.length) : -1
+        var read = script.indexOf(readClause)
+        T.equal(first >= 0 && second >= 0 && third === -1, true,
+            "exactly two full secret checks: " + script)
+        T.equal(script.split("--list-types").length - 1, 2,
+            "no type listing outside the checks: " + script)
+        T.equal(read > first && read < second, true,
+            "one check before the read, one after: " + script)
+        T.equal(script.indexOf(readClause, read + 1), -1, "one read: " + script)
+        T.equal(script.indexOf("printf %s") > second, true,
+            "the payload is printed only after the second check: " + script)
+    }
+
     Component.onCompleted: {
         T.test("a paste with the emoji page open targets its search, not the client (R2)", function () {
             // The page owns the panel's input while it is open — every key
@@ -711,14 +737,8 @@ QtObject {
         })
 
         T.test("every payload read lists the types before and after reading", function () {
-            var script = ClipboardPaste.READ_SCRIPT
-            var first = script.indexOf("--list-types")
-            var read = script.indexOf("--no-newline")
-            var last = script.lastIndexOf("--list-types")
-            T.equal(first >= 0 && read > first && last > read, true, script)
-            T.equal(script.indexOf("x-kde-passwordmanagerhint") >= 0, true)
             T.equal(ClipboardPaste.READ_SECRET_EXIT, 3)
-            T.equal(script.indexOf("exit 3") >= 0, true)
+            secretChecksAround(ClipboardPaste.READ_SCRIPT, "wl-paste --no-newline")
         })
 
         T.test("the pick's snapshot is one read at the pick, and only of plain text", function () {
@@ -852,8 +872,7 @@ QtObject {
         T.test("the count read never carries the payload", function () {
             var script = ClipboardPaste.COUNT_SCRIPT
             T.equal(script.indexOf("wc -mc") >= 0, true)
-            T.equal(script.indexOf("--list-types") < script.indexOf("--no-newline")
-                && script.lastIndexOf("--list-types") > script.indexOf("--no-newline"), true)
+            secretChecksAround(script, "wl-paste --no-newline")
         })
 
         Qt.exit(T.report("clipboard-paste"))
