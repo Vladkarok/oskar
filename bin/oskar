@@ -473,6 +473,31 @@ report_legacy_source() {
   ((found))
 }
 
+# The unit file systemd would resolve once the source install's user unit
+# is moved aside: any oskar.service in a user-unit directory that ranks
+# below ~/.config/systemd/user and above /usr/lib/systemd/user
+# (systemd.unit(5), user unit search path). Printed when found.
+unit_shadowing_packaged() {
+  local dir rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" xdg
+  local -a dirs=()
+  IFS=: read -r -a xdg <<<"${XDG_CONFIG_DIRS:-/etc/xdg}"
+  for dir in "${xdg[@]}"; do [[ "$dir" == /* ]] && dirs+=("$dir/systemd/user"); done
+  dirs+=(/etc/systemd/user "$rt/systemd/user" /run/systemd/user
+         "${XDG_DATA_HOME:-$HOME/.local/share}/systemd/user")
+  IFS=: read -r -a xdg <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  for dir in "${xdg[@]}"; do
+    [[ "$dir" == /* && "$dir" != /usr/share ]] && dirs+=("$dir/systemd/user")
+  done
+  dirs+=(/usr/local/lib/systemd/user)
+  for dir in "${dirs[@]}"; do
+    if [[ -e "$dir/$UNIT" || -L "$dir/$UNIT" ]]; then
+      printf '%s\n' "$dir/$UNIT"
+      return 0
+    fi
+  done
+  return 1
+}
+
 migrate_source() {
   # Acts only on what the record proves OSKar's; anything else under
   # these names is left exactly where it is.
@@ -623,6 +648,12 @@ cmd_setup() {
     foreign_user_unit && die "$(foreign_unit_msg)"
     if report_legacy_source; then
       if ((migrate)); then
+        local shadow
+        if shadow="$(unit_shadowing_packaged)"; then
+          die "$shadow would replace the packaged unit once the source \
+install's unit is moved aside, so OSKar would not run; nothing was changed. \
+Remove or rename it yourself, then rerun: oskar setup --migrate-source"
+        fi
         migrate_source
       else
         die "a source install overrides the packaged unit; rerun with \
