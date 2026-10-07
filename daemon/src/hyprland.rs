@@ -1171,7 +1171,9 @@ mod tests {
     fn the_restore_bounds_fit_inside_each_other() {
         assert!(PUT_BACK_BOUND >= IO_BOUND * 2);
         assert!(SHUTDOWN_GATE_WAIT >= IO_BOUND + PUT_BACK_BOUND);
-        assert!(SHUTDOWN_GATE_WAIT + IO_BOUND + PUT_BACK_BOUND < crate::EXIT_WATCHDOG);
+        assert!(
+            LOCKS_BOUND + SHUTDOWN_GATE_WAIT + IO_BOUND + PUT_BACK_BOUND < crate::EXIT_WATCHDOG
+        );
         assert!(crate::EXIT_WATCHDOG < Duration::from_secs(90));
         let unit = include_str!("../../systemd/oskar.service");
         assert!(!unit.contains("TimeoutStopSec"), "a stop timeout in the unit must be checked here");
