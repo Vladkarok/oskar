@@ -438,42 +438,6 @@ pub(crate) struct Keyboard {
     pub(crate) rules: String,
     pub(crate) model: String,
     pub(crate) options: String,
-    /// The device's own lock modifiers, `None` when the answer did not
-    /// carry both.
-    pub(crate) locks: Option<Locks>,
-}
-
-/// Which lock modifiers a keyboard has locked, in the compositor's own
-/// terms: Hyprland reports `capsLock` and `numLock` as the device's locked
-/// mask holding the modifiers named `Lock` and `Mod2`
-/// (`XKB_MOD_NAME_CAPS`, `XKB_MOD_NAME_NUM`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct Locks {
-    pub(crate) caps: bool,
-    pub(crate) num: bool,
-}
-
-/// The locks the seat's focused client was last told, read from one
-/// inventory: those of the `main` keyboard.
-///
-/// Every modifiers request the helper sends carries a locked mask, and the
-/// compositor forwards it to the focused client as the whole lock state
-/// (the virtual keyboard becomes the seat keyboard, and its state is what
-/// the client receives). The `main` keyboard is the device whose state
-/// the compositor last forwarded — it becomes `main` exactly when its
-/// modifiers or keys go out — so repeating its locks changes nothing the
-/// client believes, whichever device that is: a physical keyboard, an
-/// input method's virtual one, or this helper's own after its last
-/// request. No keyboard is `main` before any has spoken, and then no lock
-/// has reached a client either.
-///
-/// A `main` keyboard whose lock facts are missing is unreadable, never
-/// "unlocked": guessing off would turn the user's NumLock off.
-pub(crate) fn seat_locks(keyboards: &[Keyboard]) -> Result<Locks, SeatError> {
-    match keyboards.iter().find(|keyboard| keyboard.main) {
-        None => Ok(Locks::default()),
-        Some(keyboard) => keyboard.locks.ok_or(SeatError::Unreadable),
-    }
 }
 
 /// Why a seat request has no answer. Each maps to exactly one reply line.
@@ -577,12 +541,6 @@ pub(crate) trait EventSink: Send + Sync {
 /// a wedged compositor stalls the asking connection, never a keystroke.
 pub(crate) trait SeatBackend: Send + Sync {
     fn keyboards(&self) -> Result<Vec<Keyboard>, SeatError>;
-    /// The seat's locks (`seat_locks`), read fresh from the compositor
-    /// inside `LOCKS_BOUND`. Asked on the typing path, before the typing
-    /// lock, by every command that sends a modifiers request.
-    fn locks(&self) -> Result<Locks, SeatError> {
-        seat_locks(&self.keyboards()?)
-    }
     /// The compositor's `kb_file` setting, empty when unset.
     fn kb_file(&self) -> Result<String, SeatError>;
     /// `kb_file`, answered by `deadline`.
@@ -651,11 +609,6 @@ pub(crate) const IO_BOUND: Duration = Duration::from_secs(2);
 pub(crate) const SHARE_BOUND: Duration = Duration::from_secs(6);
 pub(crate) const PUT_BACK_BOUND: Duration = Duration::from_secs(5);
 pub(crate) const SHUTDOWN_GATE_WAIT: Duration = Duration::from_secs(7);
-/// The lock reading a modifiers request waits for. It runs on the asking
-/// connection's thread outside the typing lock, so it delays only that
-/// connection's command and its hold-cap check, by at most this much. A
-/// compositor that answers takes about a millisecond.
-pub(crate) const LOCKS_BOUND: Duration = Duration::from_millis(500);
 
 /// Puts `value` back as the compositor's `kb_file`, verified, inside its
 /// own `PUT_BACK_BOUND` from now. No clear first: the value differs from
@@ -1351,7 +1304,6 @@ mod tests {
                 rules: "evdev".into(),
                 model: "pc105".into(),
                 options: "grp:alt_shift_toggle".into(),
-                locks: None,
             },
             Keyboard {
                 name: "odd\"name\nwith\tbreaks".into(),

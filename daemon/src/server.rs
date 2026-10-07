@@ -392,14 +392,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection, 
                     }
                 }
                 None => match parse(line) {
-                    Some(command) => apply(
-                        &shared,
-                        &connection,
-                        command,
-                        Some(&mut held),
-                        conn_id,
-                        seat.as_deref(),
-                    ),
+                    Some(command) => apply(&shared, &connection, command, Some(&mut held), conn_id),
                     None => "err unknown command".to_string(),
                 },
             };
@@ -424,7 +417,7 @@ fn handle_client(stream: UnixStream, shared: SharedRef, connection: Connection, 
     }
 
     SUBSCRIBERS.unsubscribe(conn_id);
-    release_all(&shared, &connection, held, conn_id, seat.as_deref());
+    release_all(&shared, &connection, held, conn_id);
 }
 
 /// A seat verb as work a worker thread can run: everything it needs is

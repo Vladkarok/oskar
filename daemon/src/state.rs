@@ -12,11 +12,11 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 };
 
 use crate::keymap::{
-    compile_keymap_with, hash_bytes, lock_bits_for_keymap, modifier_masks_for_keymap,
-    parse_keycodes, upload_keymap, LockBits, XkbConfig,
+    compile_keymap_with, hash_bytes, modifier_masks_for_keymap, parse_keycodes, upload_keymap,
+    XkbConfig,
 };
 use crate::protocol::keycap_facts_for_groups;
-use crate::seat::{publish_keymap, Locks, SeatBackend};
+use crate::seat::publish_keymap;
 
 pub(crate) fn stamp() -> u32 {
     static COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -52,9 +52,6 @@ pub(crate) struct Shared {
     /// RALT is Alt_R in us and ISO_Level3_Shift in ua — so the active group
     /// picks the entry (see `modifier_mask`).
     pub(crate) modifier_masks: std::collections::HashMap<u32, Vec<u32>>,
-    /// Where the seat's Caps Lock and NumLock sit in the installed keymap's
-    /// masks (see `locked_mask`).
-    pub(crate) lock_bits: LockBits,
     /// The generation stamped on every keycap-facts reply: the number of
     /// keymap installs this process has performed. A same-keymap reconfigure
     /// keeps it (the installed keymap did not change), a changed one bumps it.
@@ -104,29 +101,6 @@ impl Shared {
             .fold(0, |mask, bit| mask | bit)
     }
 
-    /// The locked mask a modifiers request carries.
-    ///
-    /// The compositor hands the request's whole state to the focused
-    /// client, locks included, so whatever goes here replaces the client's
-    /// Caps Lock and NumLock. `locks` is the seat's reading taken by the
-    /// same operation, just before it (`read_locks`), never one kept from
-    /// an earlier operation: a lock toggled on a physical keyboard raises
-    /// no compositor event, so a kept reading goes stale unseen, and
-    /// repeating a stale lock would turn back on a NumLock the user turned
-    /// off.
-    ///
-    /// Without a reading (no seat backend, or the compositor did not
-    /// answer inside `LOCKS_BOUND`) the mask is empty. That is the only
-    /// value known without asking, it is what a compositor without a seat
-    /// backend has always been sent, and it can switch a lock off but
-    /// never on; a kept reading could do either.
-    ///
-    /// The panel's own Caps lock is not a lock here: it wraps Shift around
-    /// each letter it types, so it reaches the device as a held Shift.
-    pub(crate) fn locked_mask(&self, locks: Option<Locks>) -> u32 {
-        locks.map_or(0, |locks| self.lock_bits.mask(locks))
-    }
-
     /// Compiles `layouts` and installs the result. Held by the caller's lock so
     /// a keystroke can never observe a half-swapped keymap.
     pub(crate) fn install_config(
@@ -134,7 +108,6 @@ impl Shared {
         config: &XkbConfig,
         kb_file_bytes: Option<&[u8]>,
         precompiled: Option<&str>,
-        locks: Option<Locks>,
     ) -> bool {
         // Same fields and, for a kb_file, the same bytes behind them. The
         // bytes arrive from the caller so one read both validates the group
@@ -157,12 +130,7 @@ impl Shared {
             if self.group != config.group {
                 self.group = config.group;
                 if let Some(keyboard) = self.keyboard.as_ref() {
-                    keyboard.modifiers(
-                        self.modifier_mask(),
-                        0,
-                        self.locked_mask(locks),
-                        self.group,
-                    );
+                    keyboard.modifiers(self.modifier_mask(), 0, 0, self.group);
                 }
                 // Logged because the failure this catches is invisible from
                 // both ends: the panel believes it asked, the compositor
@@ -193,18 +161,16 @@ impl Shared {
             for (code, _) in self.held.drain() {
                 keyboard.key(stamp(), code, 0);
             }
-            keyboard.modifiers(0, 0, self.locked_mask(locks), self.group);
+            keyboard.modifiers(0, 0, 0, self.group);
         }
         if let Err(error) = upload_keymap(keyboard, &text) {
             eprintln!("cannot upload requested keymap: {error}");
             return false;
         }
 
-        // A new keymap resets the device's group and locks, so re-assert
-        // both, with the lock bits of the keymap now installed.
+        // A new keymap resets the device's group, so re-assert it.
         self.group = config.group;
-        self.lock_bits = lock_bits_for_keymap(&text);
-        keyboard.modifiers(0, 0, self.locked_mask(locks), self.group);
+        keyboard.modifiers(0, 0, 0, self.group);
         self.kb_file_mark = mark;
         self.codes = parse_keycodes(&text);
         self.modifier_masks = modifier_masks_for_keymap(&text, &self.codes);
@@ -234,9 +200,6 @@ pub(crate) struct State {
     pub(crate) seat: Option<wl_seat::WlSeat>,
     pub(crate) manager: Option<ZwpVirtualKeyboardManagerV1>,
     pub(crate) shared: SharedRef,
-    /// The compositor seat backend, asked for the seat's locks when the
-    /// keyboard's first keymap goes in.
-    pub(crate) compositor: Option<Arc<dyn SeatBackend>>,
 }
 
 impl State {
@@ -244,15 +207,12 @@ impl State {
         let (Some(manager), Some(seat)) = (self.manager.as_ref(), self.seat.as_ref()) else {
             return;
         };
-        if self.shared.lock().unwrap().keyboard.is_some() {
+        let mut shared = self.shared.lock().unwrap();
+        if shared.keyboard.is_some() {
             return;
         }
-        // Read before the typing lock, like every lock reading. Only this
-        // dispatch thread creates the keyboard, so it is still absent below.
-        let locks = crate::apply::read_locks(self.compositor.as_deref());
-        let mut shared = self.shared.lock().unwrap();
         shared.keyboard = Some(manager.create_virtual_keyboard(seat, qh, ()));
-        shared.install_config(&XkbConfig::default(), None, None, locks);
+        shared.install_config(&XkbConfig::default(), None, None);
     }
 }
 

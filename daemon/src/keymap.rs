@@ -863,50 +863,6 @@ pub(crate) fn modifier_masks_for_keymap(
     masks
 }
 
-/// Where a lock reading lands in an installed keymap's modifier masks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct LockBits {
-    caps: u32,
-    num: u32,
-}
-
-impl LockBits {
-    /// The locked mask that repeats `locks` in this keymap.
-    pub(crate) fn mask(&self, locks: crate::seat::Locks) -> u32 {
-        (if locks.caps { self.caps } else { 0 }) | (if locks.num { self.num } else { 0 })
-    }
-}
-
-/// The bits of the modifiers the compositor's lock reading names, resolved
-/// by those same names in `keymap`: `Lock` for `capsLock`, `Mod2` for
-/// `numLock` (`XKB_MOD_NAME_CAPS`, `XKB_MOD_NAME_NUM`, which Hyprland asks
-/// its own keymaps for). A name the keymap lacks contributes no bit.
-pub(crate) fn lock_bits_for_keymap(keymap: &str) -> LockBits {
-    use xkbcommon::xkb;
-
-    let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    let Some(compiled) = xkb::Keymap::new_from_string(
-        &context,
-        keymap.to_string(),
-        xkb::KEYMAP_FORMAT_TEXT_V1,
-        xkb::KEYMAP_COMPILE_NO_FLAGS,
-    ) else {
-        return LockBits::default();
-    };
-    let bit = |name: &str| {
-        let index = compiled.mod_get_index(name);
-        if index == xkb::MOD_INVALID || index >= 32 {
-            0
-        } else {
-            1u32 << index
-        }
-    };
-    LockBits {
-        caps: bit(xkb::MOD_NAME_CAPS),
-        num: bit(xkb::MOD_NAME_NUM),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1490,47 +1446,6 @@ mod tests {
         assert_eq!(masks.get(&codes["AD01"]), None);
         // Plain `us` puts RALT on Mod1, alongside LALT.
         assert_eq!(first(&codes["RALT"]), Some(&0b1000));
-    }
-
-    /// The lock bits are resolved by name, and in a stock keymap they are
-    /// exactly what the Caps Lock and Num Lock keys lock.
-    #[test]
-    fn lock_bits_are_what_the_lock_keys_lock() {
-        use crate::seat::Locks;
-        use xkbcommon::xkb;
-        for layouts in ["us", "us,ua", "de,fr"] {
-            let config = XkbConfig {
-                layouts: layouts.to_string(),
-                ..XkbConfig::default()
-            };
-            let text = compile_keymap(&config).expect("the fixture compiles");
-            let codes = parse_keycodes(&text);
-            let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-            let compiled = xkb::Keymap::new_from_string(
-                &context,
-                text.clone(),
-                xkb::KEYMAP_FORMAT_TEXT_V1,
-                xkb::KEYMAP_COMPILE_NO_FLAGS,
-            )
-            .unwrap();
-            let locks_from = |name: &str| {
-                let mut state = xkb::State::new(&compiled);
-                let key = xkb::Keycode::from(codes[name] + 8);
-                state.update_key(key, xkb::KeyDirection::Down);
-                state.update_key(key, xkb::KeyDirection::Up);
-                state.serialize_mods(xkb::STATE_MODS_LOCKED)
-            };
-            let bits = lock_bits_for_keymap(&text);
-            let caps = Locks { caps: true, num: false };
-            let num = Locks { caps: false, num: true };
-            assert_eq!(bits.mask(caps), locks_from("CAPS"), "{layouts}");
-            assert_eq!(bits.mask(num), locks_from("NMLK"), "{layouts}");
-            assert_eq!(bits.mask(Locks { caps: true, num: true }), bits.mask(caps) | bits.mask(num));
-            assert_eq!(bits.mask(Locks::default()), 0);
-            assert_ne!(bits.mask(caps), 0);
-            assert_ne!(bits.mask(num), 0);
-        }
-        assert_eq!(lock_bits_for_keymap("not a keymap"), LockBits::default());
     }
 
     #[test]
