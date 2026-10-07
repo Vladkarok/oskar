@@ -312,6 +312,12 @@ run `makepkg -si`, then `oskar setup` and `omarchy restart shell`. The
 package installs files only; `oskar setup` activates them. An AUR package
 follows when AUR account registration reopens.
 
+To remove the package, run `/usr/bin/oskar teardown` first, and only
+while the package is the active install (not a plugin-manager clone or a
+source checkout), then `sudo pacman -R oskar`. The note pacman prints
+during removal comes too late for this: `/usr/bin/oskar` goes with the
+package.
+
 ### Without a Rust toolchain
 
 Each release also carries `oskar-daemon-<version>-x86_64.tar.gz` (the
@@ -355,19 +361,17 @@ The panel can be toggled from a keybinding too:
 omarchy-shell shell toggle io.github.vladkarok.oskar
 ```
 
-`oskar setup` is idempotent and also owns `status` and `teardown`
-(full removal: registration, plugin enable, unit, state). For reference,
-the manual equivalent of `install.sh`:
+`oskar setup` is idempotent and also owns `status` and `teardown`.
+`teardown` deactivates: it disables the plugin in Omarchy, stops OSKar's
+unit and removes its enablement links, and unlinks the registration when
+it points at OSKar's payload. It deletes no file: config, state, the
+installed files and the install record stay (`uninstall.sh` removes a
+source install's files).
 
-```sh
-cd daemon && cargo build --release
-install -Dm755 target/release/oskar-daemon ~/.local/libexec/oskar-daemon
-install -Dm644 ../systemd/oskar.service ~/.config/systemd/user/oskar.service
-systemctl --user daemon-reload
-systemctl --user enable oskar.service
-systemctl --user --quiet is-active graphical-session.target \
-  && systemctl --user restart oskar.service
-```
+`install.sh` has no hand-typed equivalent. Files installed by hand are
+missing from the install record, so `oskar`, the panel's Retry and
+`uninstall.sh` leave them alone until `./install.sh --force` adopts them
+once.
 
 The panel alone can be enabled with `omarchy plugin enable io.github.vladkarok.oskar`.
 
