@@ -313,27 +313,71 @@ QtObject {
                 ["chordAcks", "seatAsk", "seatMotion"])
         })
 
-        T.test("a pong popped inside a chord region poisons the chord", function () {
-            function chordAfter(state, pingInsideRegion) {
+        T.test("only an err of the chord's own key lines poisons its region", function () {
+            // A paced chord spans ~140 ms, and a layout event, a hotplug
+            // or the settle re-read can put `seat`, `configure` or `caps`
+            // traffic inside its region. Their replies are facts, not the
+            // chord failing: the client got the paste.
+            function chordWith(state, before, inside) {
                 var acks = state.chordAcks
-                if (!pingInsideRegion) acks = ChordAcks.sent(acks, "ping")
+                for (var b = 0; b < before.length; b++) acks = ChordAcks.sent(acks, before[b])
                 acks = ChordAcks.chordStart(acks)
-                if (pingInsideRegion) acks = ChordAcks.sent(acks, "ping")
                 acks = ChordAcks.sent(acks, "down LCTL")
-                acks = ChordAcks.sent(acks, "tap AB04")
+                for (var i = 0; i < inside.length; i++) acks = ChordAcks.sent(acks, inside[i])
+                acks = ChordAcks.sent(acks, "down AB04")
+                acks = ChordAcks.sent(acks, "up AB04")
                 acks = ChordAcks.sent(acks, "up LCTL")
-                return with_(state, { chordAcks: ChordAcks.chordArmed(acks, function () {}) })
+                return with_(state, { chordAcks: ChordAcks.chordArmed(acks, function () {}),
+                    seatAsk: "asked" })
             }
-            var inside = feed(chordAfter(readyAt(3), true), ["pong", "ok", "ok", "ok"])
-            var verdict = opsNamed(inside.actions, "chordVerdict")
-            T.equal(verdict.length, 1)
-            T.equal(verdict[0].success, false, "a non-ok inside the region poisons")
-            T.equal(inside.state.inputReady, true, "pong itself is not drift")
-            T.equal(opsNamed(inside.actions, "warn").length, 0)
-            var before = feed(chordAfter(readyAt(3), false), ["pong", "ok", "ok", "ok"])
-            verdict = opsNamed(before.actions, "chordVerdict")
-            T.equal(verdict.length, 1)
-            T.equal(verdict[0].success, true, "pre-chord traffic is not the chord's")
+            function verdictOf(r) {
+                var v = opsNamed(r.actions, "chordVerdict")
+                T.equal(v.length, 1, "one verdict")
+                return v.length === 1 ? v[0].success : null
+            }
+            // A seat asked before the chord answers inside it, and a
+            // configure and caps sent inside it answer with their facts.
+            var s = chordWith(readyAt(3), ["seat"], [configureLine("us", 0), "caps 0"])
+            var r = feed(s, ["ok", seatLine([kbd("kbd", true, 0, "us")], ["kbd"]),
+                "configured\t3", capsLine(3, 0), "ok", "ok", "ok"])
+            T.equal(verdictOf(r), true, "facts inside the region do not poison")
+            // A pong and a seat refusal inside the region are not the chord's either.
+            s = chordWith(readyAt(3), [], ["ping", "seat"])
+            r = feed(s, ["ok", "pong", "err seat unreachable", "ok", "ok", "ok"])
+            T.equal(verdictOf(r), true, "a non-key reply inside the region does not poison")
+            // An err answering one of the chord's own key lines does.
+            s = chordWith(readyAt(3), [], [])
+            r = feed(s, ["ok", "err unknown key", "ok", "ok"])
+            T.equal(verdictOf(r), false, "the chord's own err poisons")
+            // A key err from before the chord is not the chord's.
+            s = chordWith(readyAt(3), ["down AB05"], [])
+            r = feed(s, ["err unknown key", "ok", "ok", "ok", "ok"])
+            T.equal(verdictOf(r), true, "pre-chord errs do not count")
+        })
+
+        T.test("every reply ahead of an armed chord's final line is lane progress", function () {
+            // The chord guard measures the helper's silence: a share, a
+            // seat or a switch answered ahead of the chord restarts it.
+            var s = readyAt(3)
+            var acks = ChordAcks.sent(s.chordAcks, "share\t/run/user/1000/oskar/keymap.xkb")
+            acks = ChordAcks.sent(acks, "seat")
+            acks = ChordAcks.chordStart(acks)
+            acks = ChordAcks.sent(acks, "down LCTL")
+            acks = ChordAcks.sent(acks, "up LCTL")
+            s = with_(s, { chordAcks: ChordAcks.chordArmed(acks, function () {}),
+                seatAsk: "asked" })
+            var lines = ["ok", seatLine([kbd("kbd", true, 0, "us")], ["kbd"]), "ok", "ok"]
+            var progress = []
+            for (var i = 0; i < lines.length; i++) {
+                var step = Replies.pop(s, lines[i])
+                progress.push(opsNamed(step.actions, "chordProgress").length)
+                s = step.state
+                allActions = allActions.concat(step.actions)
+            }
+            T.deepEqual(progress, [1, 1, 1, 0], "the final line's ack is the verdict, not progress")
+            // Nothing armed: a reply is no chord's progress.
+            var idle = Replies.pop(panelSends(readyAt(3), "seat"), "ok")
+            T.equal(opsNamed(idle.actions, "chordProgress").length, 0)
         })
 
         T.test("the verdict is the first action, ahead of the route", function () {
@@ -726,6 +770,50 @@ QtObject {
                 [{ op: "shareFinished", ok: false, reply: "err no seat backend" }])
         })
 
+        T.test("a seat with no positively identified keyboard still configures once", function () {
+            // A keyboard sharing its device group with a touchpad, a
+            // mouse-only desk, a Bluetooth keyboard asleep at start: the
+            // seat answers, but nothing in it may be read or switched.
+            // Typing still needs one configure to open the gate, from the
+            // defaults the panel holds — never from a pseudo-device's group.
+            var s = with_(initialState(), { socketReconnected: true })
+            s = panelSends(s, "hello " + Session.PROTOCOL_VERSION)
+            var seat = seatLine([kbd("Power Button", false, 0, "us"),
+                kbd("Type Cover Keyboard", true, 1, "us,ua"),
+                kbd("oskar virtual keyboard", false, 0, "us")], [])
+            var r = feed(s, ["hello " + Session.PROTOCOL_VERSION, "ok", "ok", seat])
+            T.equal(opsNamed(r.actions, "seatFacts").length, 1,
+                "the reading still reaches the ingest (titles, an empty switch set)")
+            T.equal(opsNamed(r.actions, "configureUnseated").length, 1,
+                "typing needs one configure")
+            var ops = r.actions.map(function (a) { return a.op })
+            T.equal(ops.indexOf("configureUnseated") > ops.indexOf("seatFacts"), true,
+                "after the ingest has emptied the switch set")
+            // Only pseudo-devices named safe is still no reading.
+            s = with_(initialState(), { socketReconnected: true })
+            s = panelSends(s, "hello " + Session.PROTOCOL_VERSION)
+            r = feed(s, ["hello " + Session.PROTOCOL_VERSION, "ok", "ok",
+                seatLine([kbd("power-button", true, 0, "us")], ["power-button"])])
+            T.equal(opsNamed(r.actions, "configureUnseated").length, 1)
+            // Once per helper world: a configure already acked or queued
+            // is never repeated over.
+            var ready = panelSends(with_(readyAt(3), { seatAsk: "asked" }), "seat")
+            r = feed(ready, [seatLine([kbd("Type Cover Keyboard", true, 0, "us")], [])])
+            T.equal(opsNamed(r.actions, "configureUnseated").length, 0, "acked")
+            var queued = with_(initialState(), { socketReconnected: true })
+            queued = panelSends(queued, "hello " + Session.PROTOCOL_VERSION)
+            queued = feed(queued, ["hello " + Session.PROTOCOL_VERSION, "ok", "ok"]).state
+            queued = sendConfigure(queued, configureLine("us", 0))
+            r = feed(queued, [seatLine([kbd("Type Cover Keyboard", true, 0, "us")], [])])
+            T.equal(opsNamed(r.actions, "configureUnseated").length, 0, "queued")
+            // A seat WITH a safe keyboard configures from its reading, as ever.
+            s = with_(initialState(), { socketReconnected: true })
+            s = panelSends(s, "hello " + Session.PROTOCOL_VERSION)
+            r = feed(s, ["hello " + Session.PROTOCOL_VERSION, "ok", "ok",
+                seatLine([kbd("kbd", true, 0, "us")], ["kbd"])])
+            T.equal(opsNamed(r.actions, "configureUnseated").length, 0)
+        })
+
         T.test("a share verdict is the run's, ok or the refusal it reports", function () {
             var sh = panelSends(readyAt(3), "share\t/run/user/1000/oskar/keymap.xkb")
             var ok = feed(sh, ["ok"])
@@ -828,7 +916,7 @@ QtObject {
 
         T.test("every action the suite saw is one the executor knows", function () {
             var known = ["set", "session", "modifiers", "settleGuardConnected",
-                "gateFromSession", "gateOpenIfReady", "send", "chordVerdict", "chordTimedOut",
+                "gateFromSession", "gateOpenIfReady", "send", "chordVerdict", "chordProgress", "chordTimedOut",
                 "groupConfirmed", "seatFacts", "quietAt", "configureUnseated", "seatUnavailable",
                 "shareKeymap",
                 "shareFinished", "log", "warn", "error"]

@@ -63,6 +63,22 @@ QtObject {
             T.equal(picked.switchSet.indexOf("ideapad-extra-buttons"), -1)
         })
 
+        T.test("a seat with no readable keyboard has no reading, and says so", function () {
+            // Every keyboard dropped by the helper (a touchpad in the same
+            // device group, a mouse-only desk): pseudo-devices on group 1
+            // must not become the reading, and hasReading is the same
+            // question select answers.
+            var none = Devices.select(zoo(0, "power-button"), "", [])
+            T.equal(none.reading, null)
+            T.deepEqual(none.switchSet, [])
+            T.equal(Devices.hasReading(zoo(0, "power-button"), []), false)
+            // A pseudo-device named safe is still not typed.
+            T.equal(Devices.hasReading(zoo(0, ""), ["power-button", "video-bus"]), false)
+            T.equal(Devices.select(zoo(0, ""), "", ["power-button"]).reading, null)
+            T.equal(Devices.hasReading(zoo(0, ""), safeNames), true)
+            T.equal(Devices.hasReading(null, null), false)
+        })
+
         T.test("a switch to the second group is read back as the second group", function () {
             var picked = Devices.select(zoo(1, ""), "", safeNames)
             T.equal(picked.reading.active_layout_index, 1)

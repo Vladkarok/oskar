@@ -867,6 +867,9 @@ Item {
         // not leave the language button aiming at a device that has gone
         // missing or was never safe to advance.
         switchKeyboards = picked.switchSet
+        // No readable keyboard: no group to follow. The configure typing
+        // needs comes from the held defaults (HelperReplies' seat reply
+        // emits configureUnseated once per helper world).
         if (!picked.reading) return
 
         var reading = picked.reading
@@ -1002,8 +1005,8 @@ Item {
         }
     }
 
-    /// The one configure a helper without a seat backend gets: the defaults
-    /// the panel holds, carrying the user's own keymap source when one is
+    /// The one configure a helper gets when it has no seat backend, or its
+    /// seat has no readable keyboard: the defaults the panel holds, carrying the user's own keymap source when one is
     /// known — the recovery seed runs first, exactly as at a reading's
     /// decision point.
     function configureUnseated() {
@@ -1222,6 +1225,11 @@ Item {
         applyEvent: (event, sink) => root.applyModifierEvent(event, sink)
         inputReady: root.inputReady
         modifierState: root.modifierState
+        // A chord guard that expires tears the connection down: the
+        // helper fails its next reply write and drops the chord lines
+        // still queued, so a cancelled chord can never paste late. The
+        // rebuild's connectionLost settles the wait as cancelled.
+        abandonLink: () => helperLink.rebuild()
     }
 
     // The panel's frozen surface, forwarded to the machinery's new home
@@ -1537,6 +1545,9 @@ Item {
                 break
             case "chordVerdict":
                 pasteChords.chordAckCompleted(a.done, a.success)
+                break
+            case "chordProgress":
+                pasteChords.chordLaneAdvanced()
                 break
             case "chordTimedOut":
                 pasteChords.chordAckTimedOut()

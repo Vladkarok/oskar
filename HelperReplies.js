@@ -66,6 +66,10 @@
 //                            occupies its ChordAcks slot
 //   chordVerdict { done, success }   the armed chord's own final line was
 //                            answered (PasteChords.chordAckCompleted)
+//   chordProgress            a command queued ahead of the armed chord's
+//                            final line was answered: the helper is moving
+//                            through the lane, and the chord guard measures
+//                            silence from here (PasteChords.chordLaneAdvanced)
 //   chordTimedOut            the armed chord's wait ends failed
 //                            (PasteChords.chordAckTimedOut: the ledger's
 //                            chordSettled plus done(false))
@@ -78,8 +82,9 @@
 //   quietAt { at }           call motionQuiet at this time on the panel's
 //                            clock: a lone-looking move awaits its quiet
 //   configureUnseated        configure from what the panel already holds:
-//                            the helper has no seat to read, and typing
-//                            needs one configure to open the gate
+//                            the helper has no seat to read, or the seat
+//                            has no readable keyboard, and typing needs
+//                            one configure to open the gate
 //   seatUnavailable          the helper answered `err no seat backend`:
 //                            empty the switch set, so the language button
 //                            draws disabled as well as acting inert
@@ -193,8 +198,9 @@ function capsRequestLine(group, positions) {
 /// pushed event is an ANSWER — ok, err, fact or generation, the helper
 /// answers in order — so it pops the oldest command's slot. The chord's
 /// verdict rides on the pop of its own final line, success only when the
-/// reply is a bare `ok`; otherwise an err would leave the slot occupied
-/// forever and fail every later chord. Returns the trimmed reply and the verb the pop settled:
+/// reply is a bare `ok` and none of the chord's key lines erred
+/// (ChordAcks.replyReceived); every reply spends its slot, or an err would
+/// leave the slot occupied forever and fail every later chord. Returns the trimmed reply and the verb the pop settled:
 /// the FIFO is the only honest witness of which command a
 /// content-ambiguous err answers (`err bad group` serves three verbs).
 function pop(state, line) {
@@ -204,10 +210,12 @@ function pop(state, line) {
     // chord. Popping it would shift every later reply onto the wrong slot.
     if (isEvent(line))
         return { state: p.state, actions: p.actions, reply: reply, verb: "" }
-    var ack = ChordAcks.replyReceived(p.state.chordAcks, reply === "ok")
+    var ack = ChordAcks.replyReceived(p.state.chordAcks, reply)
     set(p, "chordAcks", ack.state)
     if (ack.done)
         emit(p, { op: "chordVerdict", done: ack.done, success: ack.success })
+    else if (ack.progress)
+        emit(p, { op: "chordProgress" })
     return {
         state: p.state,
         actions: p.actions,
@@ -429,6 +437,15 @@ function seatReply(p, reply) {
             emit(p, { op: "seatFacts", devices: seat.devices,
                 kbFile: seat.kbFile, titles: seat.titles,
                 moved: String(motion.mover || ""), motion: judged.motion })
+            // A seat with no readable keyboard gives the ingest no group to
+            // configure, and may stay that way for good (a keyboard sharing
+            // its device group with a touchpad, a mouse-only desk). Typing
+            // still needs one configure to open the gate: from the held
+            // defaults, once per helper world, as without a seat backend.
+            // The ingest has already emptied the switch set, so the
+            // language button stays inert.
+            if (!Devices.hasReading(seat.devices, seat.safe) && unconfigured(p))
+                emit(p, { op: "configureUnseated" })
         } else {
             emit(p, { op: "warn", args: ["[oskar] unreadable seat reply"] })
         }
@@ -442,7 +459,7 @@ function seatReply(p, reply) {
         emit(p, { op: "warn", args: ["[oskar] the helper has no seat backend;"
             + " the language button stays inert (`oskar doctor` names the fix)"] })
         emit(p, { op: "seatUnavailable" })
-        if (p.state.session.acked === "" && p.state.session.queue.length === 0)
+        if (unconfigured(p))
             emit(p, { op: "configureUnseated" })
     } else if (reply.indexOf("err") === 0) {
         // A transient compositor failure: no reading this time. Never an
@@ -457,6 +474,13 @@ function seatReply(p, reply) {
     } else {
         set(p, "seatAsk", "idle")
     }
+}
+
+/// Whether this helper world has neither acknowledged nor been sent a
+/// configure: the only state in which the held-defaults configure may go
+/// out, so it never lands over one already made.
+function unconfigured(p) {
+    return p.state.session.acked === "" && p.state.session.queue.length === 0
 }
 
 /// The verdict of one `share` run: `ok` is shared AND read back by the
