@@ -3,7 +3,7 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
-## Unreleased
+## 0.2.2
 
 ### Fixed
 
