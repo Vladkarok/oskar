@@ -355,6 +355,31 @@ QtObject {
             T.equal(verdictOf(r), true, "pre-chord errs do not count")
         })
 
+        T.test("every reply ahead of an armed chord's final line is lane progress", function () {
+            // The chord guard measures the helper's silence: a share, a
+            // seat or a switch answered ahead of the chord restarts it.
+            var s = readyAt(3)
+            var acks = ChordAcks.sent(s.chordAcks, "share\t/run/user/1000/oskar/keymap.xkb")
+            acks = ChordAcks.sent(acks, "seat")
+            acks = ChordAcks.chordStart(acks)
+            acks = ChordAcks.sent(acks, "down LCTL")
+            acks = ChordAcks.sent(acks, "up LCTL")
+            s = with_(s, { chordAcks: ChordAcks.chordArmed(acks, function () {}),
+                seatAsk: "asked" })
+            var lines = ["ok", seatLine([kbd("kbd", true, 0, "us")], ["kbd"]), "ok", "ok"]
+            var progress = []
+            for (var i = 0; i < lines.length; i++) {
+                var step = Replies.pop(s, lines[i])
+                progress.push(opsNamed(step.actions, "chordProgress").length)
+                s = step.state
+                allActions = allActions.concat(step.actions)
+            }
+            T.deepEqual(progress, [1, 1, 1, 0], "the final line's ack is the verdict, not progress")
+            // Nothing armed: a reply is no chord's progress.
+            var idle = Replies.pop(panelSends(readyAt(3), "seat"), "ok")
+            T.equal(opsNamed(idle.actions, "chordProgress").length, 0)
+        })
+
         T.test("the verdict is the first action, ahead of the route", function () {
             // The executor runs pop before route so the completion
             // callback sees the world before the reply's own effects.
@@ -847,7 +872,7 @@ QtObject {
 
         T.test("every action the suite saw is one the executor knows", function () {
             var known = ["set", "session", "modifiers", "settleGuardConnected",
-                "gateFromSession", "gateOpenIfReady", "send", "chordVerdict", "chordTimedOut",
+                "gateFromSession", "gateOpenIfReady", "send", "chordVerdict", "chordProgress", "chordTimedOut",
                 "groupConfirmed", "seatFacts", "quietAt", "configureUnseated", "seatUnavailable",
                 "shareKeymap",
                 "shareFinished", "log", "warn", "error"]

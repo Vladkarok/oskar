@@ -67,6 +67,13 @@ Item {
     // lines planned around against the live state, and the locks are
     // captured at dispatch entry.
     property var modifierState: null
+    // The guard's window of helper silence (see chordAckGuard).
+    property int chordGuardMs: 12000
+    // () => void: drop the helper connection (HelperLink.rebuild). Its
+    // connectionLost settles the armed chord as cancelled; the helper,
+    // blocked or not, fails its next reply write and never runs the chord
+    // lines still queued behind it.
+    property var abandonLink: null
 
     /// Current-content paste: an exact chord through the reducer, never a
     /// held cap and never mixed with latched Ctrl/Alt/Super. `wmClass`
@@ -184,8 +191,29 @@ Item {
         if (done) done(success)
     }
 
-    // The guard timeout, or a connection that cannot answer: the wait
-    // ends failed, and the queue keeps draining on its own.
+    // A command queued ahead of the chord's final line was answered: the
+    // helper is moving through the lane, so the guard measures its silence
+    // from here.
+    function chordLaneAdvanced() {
+        if (root.chordAcks && root.chordAcks.chordDone) chordAckGuard.restart()
+    }
+
+    // The guard expired: the helper went silent past every bound it
+    // declares while the chord still waited. Settling alone would report
+    // the chord cancelled while its lines stay queued in the helper, which
+    // would type them late into whatever the clipboard then holds (the
+    // restored text, or the next pick). So the link goes first: the
+    // rebuild's connectionLost settles the wait as cancelled, and the
+    // helper drops what it had not run yet. Settling here is the fallback
+    // for a keyboard that wired no link.
+    function chordAckGuardExpired() {
+        if (!root.chordAcks || !root.chordAcks.chordDone) return
+        if (root.abandonLink) root.abandonLink()
+        if (root.chordAcks.chordDone) root.chordAckTimedOut()
+    }
+
+    // A connection that cannot answer, or the guard's own fallback: the
+    // wait ends failed.
     function chordAckTimedOut() {
         var done = root.chordAcks.chordDone
         root.setChordAcks(ChordAcks.chordSettled(root.chordAcks))
@@ -196,18 +224,19 @@ Item {
 
     Timer {
         id: chordAckGuard
-        // Longer than the helper's worst case for a line queued behind a
-        // `share` on the same connection: the share's 6 s deadline plus
-        // the 5 s put-back bound, 11 s in all (SHARE_BOUND and
-        // PUT_BACK_BOUND in daemon/src/seat.rs; docs/orientation.md). A
-        // guard that fired first would report failure while the helper
-        // still delivered the chord late — pasting the next pick's
-        // clipboard, the A→B race the transaction exists to prevent.
-        interval: 12000
+        // The helper's silence, not the chord's age: armed when the
+        // chord's final line is written and restarted on every reply to a
+        // command queued ahead of it (chordLaneAdvanced), because a share,
+        // a seat reading and switches can sit in the same in-order lane
+        // and together outlast any fixed window. Longer than the slowest
+        // single command the helper bounds, a `share` at its 6 s deadline
+        // plus the 5 s put-back (SHARE_BOUND and PUT_BACK_BOUND in
+        // daemon/src/seat.rs), so an expiry means the helper is past its
+        // own bounds. An expiry tears the link down rather than only
+        // reporting failure (chordAckGuardExpired).
+        interval: root.chordGuardMs
         repeat: false
-        onTriggered: () => {
-            if (root.chordAcks.chordDone) root.chordAckTimedOut()
-        }
+        onTriggered: () => root.chordAckGuardExpired()
     }
 
     // A paced chord that cannot continue: lift what its sent prefix

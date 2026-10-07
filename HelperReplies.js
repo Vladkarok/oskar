@@ -66,6 +66,10 @@
 //                            occupies its ChordAcks slot
 //   chordVerdict { done, success }   the armed chord's own final line was
 //                            answered (PasteChords.chordAckCompleted)
+//   chordProgress            a command queued ahead of the armed chord's
+//                            final line was answered: the helper is moving
+//                            through the lane, and the chord guard measures
+//                            silence from here (PasteChords.chordLaneAdvanced)
 //   chordTimedOut            the armed chord's wait ends failed
 //                            (PasteChords.chordAckTimedOut: the ledger's
 //                            chordSettled plus done(false))
@@ -209,6 +213,8 @@ function pop(state, line) {
     set(p, "chordAcks", ack.state)
     if (ack.done)
         emit(p, { op: "chordVerdict", done: ack.done, success: ack.success })
+    else if (ack.progress)
+        emit(p, { op: "chordProgress" })
     return {
         state: p.state,
         actions: p.actions,

@@ -106,10 +106,11 @@ var KEY_VERBS = ["down", "up", "tap"]
 // reply is `ok` AND none of the chord's key lines failed. `verb` names
 // the command this reply settled — the dispatcher's only honest way to
 // tell an err that answers a configure from one that answers a caps
-// pre-fetch.
+// pre-fetch. `progress` says the helper answered a command queued ahead
+// of the armed chord's final line: the lane the chord waits in moved.
 function replyReceived(state, reply) {
     if (state.queue.length === 0)
-        return { state: state, done: null, verb: null }
+        return { state: state, done: null, verb: null, progress: false }
     var text = String(reply === undefined || reply === null ? "" : reply)
     var ok = text === "ok"
     var queue = state.queue.slice(1)
@@ -126,14 +127,16 @@ function replyReceived(state, reply) {
             state: { queue: queue, chordDone: state.chordDone,
                 chordFrom: chordFrom, chordError: chordError },
             done: null,
-            verb: popped.verb
+            verb: popped.verb,
+            progress: !!state.chordDone
         }
     return {
         state: { queue: queue, chordDone: null,
             chordFrom: chordFrom, chordError: chordError },
         done: state.chordDone,
         success: ok && chordError === false,
-        verb: popped.verb
+        verb: popped.verb,
+        progress: false
     }
 }
 

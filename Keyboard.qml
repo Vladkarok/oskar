@@ -1222,6 +1222,11 @@ Item {
         applyEvent: (event, sink) => root.applyModifierEvent(event, sink)
         inputReady: root.inputReady
         modifierState: root.modifierState
+        // A chord guard that expires tears the connection down: the
+        // helper fails its next reply write and drops the chord lines
+        // still queued, so a cancelled chord can never paste late. The
+        // rebuild's connectionLost settles the wait as cancelled.
+        abandonLink: () => helperLink.rebuild()
     }
 
     // The panel's frozen surface, forwarded to the machinery's new home
@@ -1537,6 +1542,9 @@ Item {
                 break
             case "chordVerdict":
                 pasteChords.chordAckCompleted(a.done, a.success)
+                break
+            case "chordProgress":
+                pasteChords.chordLaneAdvanced()
                 break
             case "chordTimedOut":
                 pasteChords.chordAckTimedOut()
