@@ -65,7 +65,7 @@ def product_constant(path, pattern, what):
 # The bounds follow the product: the chord guard's interval, the stale
 # window SocketWatch judges by, and the reconnect timer's fast interval.
 CHORD_GUARD_S = product_constant("PasteChords.qml",
-                                 r"id: chordAckGuard[\s\S]*?interval: (\d+)\s*$",
+                                 r"property int chordGuardMs: (\d+)",
                                  "the chord guard's interval")
 HELLO_STALE_S = product_constant("SocketWatch.js",
                                  r"var HELLO_STALE_MS = (\d+)",
@@ -706,15 +706,13 @@ def run_cases(leg):
         raise Failure(f"the chord stayed armed past the guard: {disarmed}")
     leg.ok(f"the chord guard failed the slow chord after {took:.1f}s and "
            f"disarmed it")
-    since = fake.fault("delay 0")
-    # The late replies still arrive (and pop their slots) after the guard;
-    # whatever the watchdog makes of the slow peer meanwhile, the panel
-    # must end ready.
-    late = wait_for(lambda: fake.first(
-        lambda r: r[2] == ">" and r[3] == "ok", armed[1] + CHORD_GUARD_S),
-        delay_ms / 1000 + 5, "the late chord replies to go out")
-    leg.ok(f"the late chord replies went out {late[0] - armed[1]:.1f}s after "
-           f"the chord armed")
+    fake.fault("delay 0")
+    # An expired guard drops the link, so the slow peer's late replies land
+    # on a closed connection and its queued chord can never run; the panel
+    # comes back on a fresh connection.
+    conn = leg.fresh_hello(armed[1] + CHORD_GUARD_S - 0.5)
+    leg.ok(f"the expired guard dropped the link; connection {conn} said "
+           f"hello afresh")
     wait_for(lambda: host.state()["ready"] is True, BOUND_S + delay_ms / 1000,
              "the panel to be ready after the slow replies")
     leg.tap_reaches()
