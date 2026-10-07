@@ -168,11 +168,14 @@ QtObject {
         ? Util.alpha(overrideAsColor("accentColor"), themeSelectedFill.a) : themeSelectedFill
 
     // Panel background (the card) and text: the override, else the token the
-    // keyboard has always drawn with.
+    // keyboard has always drawn with. A stored override is a validated hex
+    // string in any form Config.isColor accepts; it is read through
+    // Config.hexToRgb because Qt's colour parser has no #RGBA form.
     function overrideAsColor(name) {
         var raw = overrides[name]
-        if (typeof raw === "string") return Qt.color(raw)
-        return raw
+        if (typeof raw !== "string") return raw
+        var c = ConfigFile.hexToRgb(raw)
+        return c ? Qt.rgba(c.r, c.g, c.b, c.a) : raw
     }
 
     readonly property color panelBackground: hasOverride("panelBackground")
@@ -278,7 +281,7 @@ QtObject {
         : (Border.value("hyprland", "active-border")
             || Border.value("notifications", "border"))
     readonly property var cardBorderColorSpec: hasOverride("borderColor")
-        ? Border.flat(overrides.borderColor, 2)
+        ? Border.flat(overrideAsColor("borderColor"), 2)
         : borderToken !== "" ? (frozen ? held.cardBorderSpec
             : Border.hyprlandActiveSpec(theme.accent, 2))
         : Border.flat(shippedColor("borderColor"), 2)

@@ -394,13 +394,13 @@ Rectangle {
                         onTextEdited: {
                             if (editor.syncingFields) return
                             editor.markDraftDirty()
-                            var result = ConfigFile.normalizeHexDraft(hexInput.text)
-                            if (!result.ok) {
+                            var c = ConfigFile.hexDraftChannels(hexInput.text)
+                            if (!c) {
                                 editor.invalid = true
                                 return
                             }
                             editor.invalid = false
-                            editor.syncFromColor(Qt.color(result.value))
+                            editor.syncFromColor(Qt.rgba(c.r, c.g, c.b, c.a))
                             editor.pushFields(true)
                         }
                         onActiveFocusChanged: {

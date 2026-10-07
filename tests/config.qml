@@ -1191,6 +1191,26 @@ QtObject {
             T.equal(clipped.text, "#34c")
         })
 
+        // ---- the colour editor's hex draft ----
+
+        T.test("every hex form the validator accepts reaches the draft as channels", function () {
+            // #RGBA is valid in config.json (isColor) and has no Qt.color
+            // form: the draft must still carry it, alpha included, or Apply
+            // writes the colour the editor held before.
+            var rgba = Config.hexDraftChannels("#f008")
+            T.equal(rgba !== null, true, "#RGBA parses")
+            if (rgba) T.equal(Config.toHex(rgba).toLowerCase(), "#88ff0000")
+            T.equal(Config.toHex(Config.hexDraftChannels("f008")).toLowerCase(), "#88ff0000")
+            T.equal(Config.toHex(Config.hexDraftChannels(" #abc ")).toLowerCase(), "#aabbcc")
+            T.equal(Config.toHex(Config.hexDraftChannels("#A55555")).toLowerCase(), "#a55555")
+            T.equal(Config.toHex(Config.hexDraftChannels("#80123456")).toLowerCase(), "#80123456")
+            T.equal(Config.hexDraftChannels("#ab"), null)
+            T.equal(Config.hexDraftChannels("#12345"), null)
+            T.equal(Config.hexDraftChannels("red"), null)
+            T.equal(Config.hexDraftChannels(""), null)
+            T.equal(Config.hexDraftChannels(null), null)
+        })
+
         T.test("a second colour square retargets the editor only through a close", function () {
             // A draft belongs to the field it was made for: an editor open
             // for another field closes (discarding the draft) before it

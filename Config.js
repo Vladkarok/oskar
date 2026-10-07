@@ -664,6 +664,15 @@ function normalizeHexDraft(text) {
     return { ok: isColor(candidate), value: candidate }
 }
 
+// The channels a typed or pasted hex draft stands for, or null when the
+// draft is not a colour. Every form isColor accepts parses here, #RGBA
+// included: Qt's colour parser has no #RGBA form (Qt.color throws on it),
+// so the editor builds its draft from these channels, never from Qt.color.
+function hexDraftChannels(text) {
+    var result = normalizeHexDraft(text)
+    return result.ok ? hexToRgb(result.value) : null
+}
+
 // Whether opening the custom editor for `field` must first close the one
 // open for `openField`. A draft belongs to the field it was made for, so
 // a retarget discards it rather than carrying it to another field's Apply.
