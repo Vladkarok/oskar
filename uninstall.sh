@@ -20,6 +20,13 @@
 # is deleted), all or nothing.
 set -euo pipefail
 
+# Root's HOME and session are not the user's: run as root, this would
+# act on root's files and leave the user's install as it is.
+if ((EUID == 0)); then
+  echo "uninstall.sh: run it as your own user, not with sudo or as root: it removes files from your home and switches off your user session's service. Nothing was changed." >&2
+  exit 1
+fi
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 reg="$HOME/.config/omarchy/plugins/io.github.vladkarok.oskar"
 unit="$HOME/.config/systemd/user/oskar.service"
