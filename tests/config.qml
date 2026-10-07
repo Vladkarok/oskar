@@ -1191,6 +1191,32 @@ QtObject {
             T.equal(clipped.text, "#34c")
         })
 
+        // ---- the settings steppers ----
+
+        T.test("a stepper click moves toward its range, clamped, never away from it", function () {
+            // Inside the range and on the grid: one step.
+            T.equal(Config.stepTarget(12, 1, 1, 0, 32), 13)
+            T.equal(Config.stepTarget(12, -1, 1, 0, 32), 11)
+            T.equal(Config.stepTarget(800, 1, 100, 400, 2000), 900)
+            // At the ends: no move in that direction.
+            T.equal(Config.stepTarget(32, 1, 1, 0, 32), null)
+            T.equal(Config.stepTarget(0, -1, 1, 0, 32), null)
+            T.equal(Config.stepTarget(2000, 1, 100, 400, 2000), null)
+            T.equal(Config.stepTarget(400, -1, 100, 400, 2000), null)
+            // A hand-edited value above the stepper's range: '−' lands on
+            // the maximum, '+' cannot move it further away.
+            T.equal(Config.stepTarget(40, -1, 1, 0, 32), 32)
+            T.equal(Config.stepTarget(40, 1, 1, 0, 32), null)
+            T.equal(Config.stepTarget(30, -1, 1, 0, 24), 24)
+            // Off the step grid: the step that would overshoot clamps.
+            T.equal(Config.stepTarget(450, -1, 100, 400, 2000), 400)
+            T.equal(Config.stepTarget(1950, 1, 100, 400, 2000), 2000)
+            T.equal(Config.stepTarget(450, 1, 100, 400, 2000), 550)
+            // Below the range: '+' lands on the minimum.
+            T.equal(Config.stepTarget(-3, 1, 1, 0, 24), 0)
+            T.equal(Config.stepTarget(-3, -1, 1, 0, 24), null)
+        })
+
         Qt.exit(T.report("configuration"))
     }
 }

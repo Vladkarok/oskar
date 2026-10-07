@@ -805,6 +805,17 @@ function mixRgb(base, target, amount) {
     }
 }
 
+// A settings stepper's click: the value one `step` in `direction` (+1 or
+// -1), clamped into [minimum, maximum], or null when no move that way is
+// possible. A hand-edited value outside the range or off the step grid
+// (the validator allows both) still moves toward the range: the button
+// that looks live always does something, and never moves away from it.
+function stepTarget(value, direction, step, minimum, maximum) {
+    var next = Math.min(maximum, Math.max(minimum, value + direction * step))
+    if (direction > 0 ? next <= value : next >= value) return null
+    return next
+}
+
 // Size-preset multipliers. Key radius is stored as a 0–24
 // proportion of a medium key; the drawn radius is stored × this scale so
 // 24 stays a circle at L and XL. Panel radius does not use this.
