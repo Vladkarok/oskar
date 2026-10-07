@@ -445,6 +445,12 @@ Item {
 
     function openCustomEditor(field, label) {
         if (!root.configHealthy) return
+        // A square clicked while the editor is open for another field: the
+        // close drops that field's draft, and the reopen syncs the editor
+        // to this field (its onVisibleChanged), so Apply writes only what
+        // was drafted for the field it names.
+        if (ConfigFile.customEditorClosesFirst(root.customEditorField, field))
+            root.closeCustomEditor()
         root.customEditorOldColor = root.colorForField(field)
         root.customEditorField = field
         root.customEditorLabel = label

@@ -1191,6 +1191,15 @@ QtObject {
             T.equal(clipped.text, "#34c")
         })
 
+        T.test("a second colour square retargets the editor only through a close", function () {
+            // A draft belongs to the field it was made for: an editor open
+            // for another field closes (discarding the draft) before it
+            // reopens, so Apply can never write one field's draft to another.
+            T.equal(Config.customEditorClosesFirst("", "accentColor"), false)
+            T.equal(Config.customEditorClosesFirst("keyBackground", "accentColor"), true)
+            T.equal(Config.customEditorClosesFirst("accentColor", "accentColor"), false)
+        })
+
         // ---- the settings steppers ----
 
         T.test("a stepper click moves toward its range, clamped, never away from it", function () {

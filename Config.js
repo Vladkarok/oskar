@@ -664,6 +664,13 @@ function normalizeHexDraft(text) {
     return { ok: isColor(candidate), value: candidate }
 }
 
+// Whether opening the custom editor for `field` must first close the one
+// open for `openField`. A draft belongs to the field it was made for, so
+// a retarget discards it rather than carrying it to another field's Apply.
+function customEditorClosesFirst(openField, field) {
+    return openField !== "" && openField !== field
+}
+
 // Enter and Apply share this decision so a keypress cannot bypass the
 // malformed-file guard the buttons carry. `reject` leaves the field
 // editable with an error; `hold` keeps a valid draft uncommitted;
