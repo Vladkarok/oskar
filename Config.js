@@ -117,14 +117,200 @@ function maintainerDefaults() {
 
 function stateDefaults() {
     return { center: null, emojiCenter: null, emojiUsage: [],
-        emojiSkinTone: "", layoutGroup: 0, layoutDevice: "", unknown: {} }
+        emojiSkinTone: "", layoutGroup: 0, layoutDevice: "", themeSnapshot: null,
+        unknown: {} }
 }
 
 // The state file's own key names. Every other key is someone else's — a
 // newer OSKar's, another writer's — and rides through a save verbatim
 // under `unknown`, the way config.json's unknown fields do.
 var STATE_FILE_KEYS = ["center", "emoji_center", "emoji_usage", "emoji_skin_tone",
-    "layout_group", "layout_device"]
+    "layout_group", "layout_device", "theme_snapshot"]
+
+// ---- the Custom look's held theme ----
+//
+// With following off, the fields the user has not set keep the theme as it
+// was when following stopped (Theme.qml holds that snapshot). The snapshot
+// is kept in state.json as `theme_snapshot` so it outlives the shell: a
+// relogin, a shell restart or a plugin update restores it instead of
+// freezing whatever theme is current then. Its file form, with every
+// colour as #RRGGBB / #AARRGGBB (toHex), every size and alpha a finite
+// number, the font family and the border token as strings:
+var THEME_SNAPSHOT_COLORS = ["foreground", "background", "accent", "urgent",
+    "muted", "popupsBackground", "selectedAccentFill"]
+var THEME_SNAPSHOT_NUMBERS = ["normalBorderWidth", "focusBorderWidth",
+    "normalFillAlpha", "hoverFillAlpha", "pressedFillAlpha", "fontBody",
+    "fontBodySmall", "spacingSm", "spacingMd", "spacingLg", "popupPadding",
+    "spacingScale"]
+var THEME_SNAPSHOT_STRINGS = ["fontFamily", "cardBorderToken"]
+// cornerRadius: a number, or null when the theme did not answer it.
+// hyprBorderShown: true, false, or null while unknown.
+// cardBorderSpec: { color, widths: [top, right, bottom, left], gradient:
+// [colours], angle, enabled } — the shell's border spec, flattened.
+
+function finiteNumber(value) {
+    return typeof value === "number" && isFinite(value)
+}
+
+// A held colour (a QML colour, {r,g,b,a}, or a shell colour string) in its
+// file form, or null when it is none of those.
+function snapshotColor(value) {
+    if (typeof value === "string") {
+        var s = value.trim().toLowerCase()
+        if (s === "transparent") return "#00000000"
+        var channels = hexToRgb(s)
+        return isColor(s) && channels ? toHex(channels).toLowerCase() : null
+    }
+    var c = colorChannels(value)
+    return c ? toHex(c).toLowerCase() : null
+}
+
+// Theme.qml's held snapshot in its file form, or null when any field is
+// not one the file can carry (a token the shell did not answer): such a
+// snapshot is held for the session only, never persisted wrong.
+function serializeThemeSnapshot(held) {
+    if (!held || typeof held !== "object") return null
+    var out = {}
+    var i
+    for (i = 0; i < THEME_SNAPSHOT_COLORS.length; i++) {
+        var hex = snapshotColor(held[THEME_SNAPSHOT_COLORS[i]])
+        if (hex === null) return null
+        out[THEME_SNAPSHOT_COLORS[i]] = hex
+    }
+    for (i = 0; i < THEME_SNAPSHOT_NUMBERS.length; i++) {
+        if (!finiteNumber(held[THEME_SNAPSHOT_NUMBERS[i]])) return null
+        out[THEME_SNAPSHOT_NUMBERS[i]] = held[THEME_SNAPSHOT_NUMBERS[i]]
+    }
+    for (i = 0; i < THEME_SNAPSHOT_STRINGS.length; i++) {
+        if (typeof held[THEME_SNAPSHOT_STRINGS[i]] !== "string") return null
+        out[THEME_SNAPSHOT_STRINGS[i]] = held[THEME_SNAPSHOT_STRINGS[i]]
+    }
+    if (held.cornerRadius === undefined || held.cornerRadius === null) out.cornerRadius = null
+    else if (finiteNumber(held.cornerRadius)) out.cornerRadius = held.cornerRadius
+    else return null
+    if (held.hyprBorderShown !== true && held.hyprBorderShown !== false
+            && held.hyprBorderShown !== null && held.hyprBorderShown !== undefined)
+        return null
+    out.hyprBorderShown = held.hyprBorderShown === undefined ? null : held.hyprBorderShown
+    var spec = held.cardBorderSpec
+    if (!spec || typeof spec !== "object" || !spec.widths || !spec.gradient) return null
+    var color = snapshotColor(spec.color)
+    var widths = [spec.widths.top, spec.widths.right, spec.widths.bottom, spec.widths.left]
+    var stops = spec.gradient.colors
+    if (color === null || !Array.isArray(stops)) return null
+    var gradient = []
+    for (i = 0; i < stops.length; i++) {
+        var stop = snapshotColor(stops[i])
+        if (stop === null) return null
+        gradient.push(stop)
+    }
+    var border = { color: color, widths: widths, gradient: gradient,
+        angle: spec.gradient.angle, enabled: spec.gradient.enabled }
+    if (parseSnapshotBorder(border) === null) return null
+    out.cardBorderSpec = border
+    return out
+}
+
+function parseSnapshotBorder(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null
+    if (!isColor(value.color) || !Array.isArray(value.widths) || value.widths.length !== 4
+            || !Array.isArray(value.gradient) || !finiteNumber(value.angle)
+            || typeof value.enabled !== "boolean")
+        return null
+    for (var i = 0; i < 4; i++)
+        if (!finiteNumber(value.widths[i]) || value.widths[i] < 0) return null
+    for (var g = 0; g < value.gradient.length; g++)
+        if (!isColor(value.gradient[g])) return null
+    return { color: value.color, widths: value.widths.slice(), gradient: value.gradient.slice(),
+        angle: value.angle, enabled: value.enabled }
+}
+
+// The file's `theme_snapshot` validated, or null for anything malformed:
+// a snapshot OSKar cannot read is treated as absent (the next freeze
+// replaces it), never as a malformed state file — it is a cache of the
+// theme, not something only the user could restore.
+function parseThemeSnapshot(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null
+    var out = {}
+    var i
+    for (i = 0; i < THEME_SNAPSHOT_COLORS.length; i++) {
+        if (!isColor(value[THEME_SNAPSHOT_COLORS[i]])) return null
+        out[THEME_SNAPSHOT_COLORS[i]] = value[THEME_SNAPSHOT_COLORS[i]]
+    }
+    for (i = 0; i < THEME_SNAPSHOT_NUMBERS.length; i++) {
+        if (!finiteNumber(value[THEME_SNAPSHOT_NUMBERS[i]])) return null
+        out[THEME_SNAPSHOT_NUMBERS[i]] = value[THEME_SNAPSHOT_NUMBERS[i]]
+    }
+    for (i = 0; i < THEME_SNAPSHOT_STRINGS.length; i++) {
+        if (typeof value[THEME_SNAPSHOT_STRINGS[i]] !== "string") return null
+        out[THEME_SNAPSHOT_STRINGS[i]] = value[THEME_SNAPSHOT_STRINGS[i]]
+    }
+    if (value.cornerRadius !== null && !finiteNumber(value.cornerRadius)) return null
+    out.cornerRadius = value.cornerRadius
+    if (value.hyprBorderShown !== true && value.hyprBorderShown !== false
+            && value.hyprBorderShown !== null)
+        return null
+    out.hyprBorderShown = value.hyprBorderShown
+    out.cardBorderSpec = parseSnapshotBorder(value.cardBorderSpec)
+    if (out.cardBorderSpec === null) return null
+    return out
+}
+
+// The held snapshot Theme.qml reads, rebuilt from its file form (already
+// parsed by parseThemeSnapshot): the same fields freeze() takes, colours
+// built by `rgba(r, g, b, a)` (Qt.rgba in the panel), an unanswered corner
+// radius undefined again, the border spec in the shell's shape.
+function heldThemeFrom(saved, rgba) {
+    function color(hex) {
+        var c = hexToRgb(hex)
+        return rgba(c.r, c.g, c.b, c.a)
+    }
+    var held = {}
+    var i
+    for (i = 0; i < THEME_SNAPSHOT_COLORS.length; i++)
+        held[THEME_SNAPSHOT_COLORS[i]] = color(saved[THEME_SNAPSHOT_COLORS[i]])
+    for (i = 0; i < THEME_SNAPSHOT_NUMBERS.length; i++)
+        held[THEME_SNAPSHOT_NUMBERS[i]] = saved[THEME_SNAPSHOT_NUMBERS[i]]
+    for (i = 0; i < THEME_SNAPSHOT_STRINGS.length; i++)
+        held[THEME_SNAPSHOT_STRINGS[i]] = saved[THEME_SNAPSHOT_STRINGS[i]]
+    held.cornerRadius = saved.cornerRadius === null ? undefined : saved.cornerRadius
+    held.hyprBorderShown = saved.hyprBorderShown
+    var border = saved.cardBorderSpec
+    var stops = []
+    for (i = 0; i < border.gradient.length; i++) stops.push(color(border.gradient[i]))
+    held.cardBorderSpec = {
+        color: color(border.color),
+        widths: { top: border.widths[0], right: border.widths[1],
+            bottom: border.widths[2], left: border.widths[3] },
+        gradient: { colors: stops, angle: border.angle, enabled: border.enabled }
+    }
+    return held
+}
+
+// What the held theme does on a change of any fact it depends on — the
+// settings applied, the state file read, the panel opened. One of:
+//   "keep"     nothing to do
+//   "release"  following: drop the held theme, in memory and in the file
+//   "restore"  hold the saved theme (taken in an earlier session)
+//   "freeze"   hold the theme as it is now, and save it
+//   "persist"  the file lost the held theme: save it again
+// Facts: settingsKnown (config.json has been applied; until then the
+// shipped "follow" is not the user's word), follow, stopped (following
+// went from on to off in this apply, after load), opened, held (a snapshot
+// is held in memory), stateKnown (state.json has been read or found
+// missing or malformed), saved (state.json carries a readable snapshot).
+// A freeze waits for the open or for a stop made after load: at load the
+// shell may not have read the theme's files yet (Theme.qml). A restore
+// waits for nothing but the state file, and comes before any freeze.
+function themeHoldStep(facts) {
+    if (!facts.settingsKnown) return "keep"
+    if (facts.follow) return facts.held || facts.saved ? "release" : "keep"
+    if (!facts.stateKnown) return "keep"
+    if (facts.held) return facts.saved ? "keep" : "persist"
+    if (facts.saved) return "restore"
+    if (facts.opened || facts.stopped) return "freeze"
+    return "keep"
+}
 
 function owns(object, key) {
     return Object.prototype.hasOwnProperty.call(object, key)
@@ -483,6 +669,10 @@ function parseState(text) {
             return { value: null, error: "Invalid value for layout_device" }
         state.layoutDevice = parsed.value.layout_device
     }
+    // The held theme: unlike the fields above, a malformed one is absent
+    // rather than an error (parseThemeSnapshot says why).
+    if (owns(parsed.value, "theme_snapshot"))
+        state.themeSnapshot = parseThemeSnapshot(parsed.value.theme_snapshot)
     return { value: state, error: "" }
 }
 
@@ -1019,6 +1209,10 @@ function serializeState(state) {
         layout_device: typeof state.layoutDevice === "string"
             ? state.layoutDevice : ""
     }
+    // Present only while a theme is held: a following panel's file stays
+    // as it always was.
+    var snapshot = parseThemeSnapshot(state.themeSnapshot)
+    if (snapshot !== null) out.theme_snapshot = snapshot
     var unknown = state.unknown && typeof state.unknown === "object" ? state.unknown : {}
     for (var key in unknown) {
         if (owns(unknown, key) && !owns(out, key)) storeUnknown(out, key, unknown[key])

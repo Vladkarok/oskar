@@ -45,7 +45,8 @@ QtObject {
             })
             T.deepEqual(Config.stateDefaults(), {
                 center: null, emojiCenter: null, emojiUsage: [],
-                emojiSkinTone: "", layoutGroup: 0, layoutDevice: "", unknown: {}
+                emojiSkinTone: "", layoutGroup: 0, layoutDevice: "", themeSnapshot: null,
+                unknown: {}
             })
         })
 
@@ -707,7 +708,7 @@ QtObject {
             T.deepEqual(first.value, {
                 center: { x: 12, y: 34 }, emojiCenter: null,
                 emojiUsage: [], emojiSkinTone: "",
-                layoutGroup: 0, layoutDevice: "", unknown: {}
+                layoutGroup: 0, layoutDevice: "", themeSnapshot: null, unknown: {}
             })
             var malformed = Config.reloadState(first.value, '{"center":{"x":12}}')
             T.equal(malformed.value, first.value)
@@ -720,7 +721,7 @@ QtObject {
             var legacy = Config.reloadState(Config.stateDefaults(), '{"position":{"x":12,"y":34}}')
             T.deepEqual(legacy.value, {
                 center: null, emojiCenter: null, emojiUsage: [],
-                emojiSkinTone: "", layoutGroup: 0, layoutDevice: "",
+                emojiSkinTone: "", layoutGroup: 0, layoutDevice: "", themeSnapshot: null,
                 unknown: { position: { x: 12, y: 34 } }
             })
             T.equal(legacy.error, "")
@@ -1253,6 +1254,155 @@ QtObject {
             T.equal(Config.reservesZone(true, "floating"), false)
             T.equal(Config.reservesZone(false, "docked"), false)
             T.equal(Config.reservesZone(false, "floating"), false)
+        })
+
+        // ---- the Custom look's held theme ----
+
+        function heldTheme() {
+            function rgba(r, g, b, a) { return { r: r, g: g, b: b, a: a } }
+            return {
+                foreground: rgba(1, 1, 1, 1),
+                background: rgba(0, 0, 0, 1),
+                accent: rgba(0, 0, 1, 1),
+                urgent: rgba(1, 0, 0, 1),
+                muted: rgba(0.4, 0.4, 0.4, 1),
+                popupsBackground: rgba(0.2, 0.2, 0.2, 1),
+                selectedAccentFill: rgba(0, 0, 1, 0.2),
+                cornerRadius: 6,
+                normalBorderWidth: 1,
+                focusBorderWidth: 2,
+                normalFillAlpha: 0.08,
+                hoverFillAlpha: 0.12,
+                pressedFillAlpha: 0.24,
+                fontFamily: "JetBrainsMono Nerd Font",
+                fontBody: 14,
+                fontBodySmall: 12,
+                spacingSm: 4,
+                spacingMd: 8,
+                spacingLg: 12,
+                popupPadding: 10,
+                spacingScale: 1.5,
+                cardBorderSpec: {
+                    color: rgba(0, 0, 1, 1),
+                    widths: { top: 2, right: 2, bottom: 2, left: 2 },
+                    gradient: { colors: [rgba(0, 0, 1, 1), "#ff00ff00"], angle: 45, enabled: true }
+                },
+                cardBorderToken: "rgba(33ccffee) rgba(00ff99ee) 45deg",
+                hyprBorderShown: true
+            }
+        }
+
+        T.test("the held theme round-trips through the state file", function () {
+            var saved = Config.serializeThemeSnapshot(heldTheme())
+            T.equal(saved !== null, true, "a complete snapshot serializes")
+            if (!saved) return
+            T.equal(saved.foreground, "#ffffff")
+            T.equal(saved.selectedAccentFill, "#330000ff")
+            T.deepEqual(saved.cardBorderSpec, {
+                color: "#0000ff", widths: [2, 2, 2, 2],
+                gradient: ["#0000ff", "#00ff00"], angle: 45, enabled: true
+            })
+            var state = Config.stateDefaults()
+            state.themeSnapshot = saved
+            var text = Config.serializeState(state)
+            T.deepEqual(JSON.parse(text).theme_snapshot, saved)
+            var back = Config.reloadState(Config.stateDefaults(), text)
+            T.equal(back.error, "")
+            T.deepEqual(back.value.themeSnapshot, saved)
+            T.deepEqual(back.value.unknown, {})
+            // No held theme: the key stays out of the file.
+            T.equal(Config.serializeState(Config.stateDefaults()).indexOf("theme_snapshot"), -1)
+            // An unanswered corner radius and an unknown border answer
+            // persist as such.
+            var sparse = heldTheme()
+            sparse.cornerRadius = undefined
+            sparse.hyprBorderShown = null
+            var sparseSaved = Config.serializeThemeSnapshot(sparse)
+            T.equal(sparseSaved.cornerRadius, null)
+            T.equal(sparseSaved.hyprBorderShown, null)
+            T.deepEqual(Config.parseThemeSnapshot(JSON.parse(JSON.stringify(sparseSaved))),
+                sparseSaved)
+            // The restored snapshot is the one freeze() took: rebuilt and
+            // written again, it is the same file form.
+            function rgba(r, g, b, a) { return { r: r, g: g, b: b, a: a } }
+            var restored = Config.heldThemeFrom(back.value.themeSnapshot, rgba)
+            T.deepEqual(Config.serializeThemeSnapshot(restored), saved)
+            T.deepEqual(restored.cardBorderSpec.widths, { top: 2, right: 2, bottom: 2, left: 2 })
+            T.equal(restored.fontFamily, "JetBrainsMono Nerd Font")
+            T.equal(Config.heldThemeFrom(sparseSaved, rgba).cornerRadius, undefined)
+        })
+
+        T.test("a malformed held theme in the state file reads as absent", function () {
+            var saved = Config.serializeThemeSnapshot(heldTheme())
+            function withChange(key, value) {
+                var copy = JSON.parse(JSON.stringify(saved))
+                if (value === undefined) delete copy[key]
+                else copy[key] = value
+                return copy
+            }
+            var bad = [
+                "not an object", [], null,
+                withChange("foreground", "red"),
+                withChange("accent"),
+                withChange("fontBody", "14"),
+                withChange("spacingScale", Infinity),
+                withChange("fontFamily", 3),
+                withChange("hyprBorderShown", "yes"),
+                withChange("cardBorderSpec", { color: "#fff", widths: [1, 2], gradient: [],
+                    angle: 0, enabled: false }),
+                withChange("cardBorderSpec", { color: "#fff", widths: [1, 1, 1, 1],
+                    gradient: ["blue"], angle: 0, enabled: true })
+            ]
+            for (var i = 0; i < bad.length; i++) {
+                T.equal(Config.parseThemeSnapshot(bad[i]), null, "bad snapshot " + i)
+                var text = JSON.stringify({ center: { x: 1, y: 2 }, theme_snapshot: bad[i] })
+                var parsed = Config.reloadState(Config.stateDefaults(), text)
+                T.equal(parsed.error, "", "a bad snapshot does not make the file malformed " + i)
+                T.equal(parsed.value.themeSnapshot, null)
+                T.deepEqual(parsed.value.center, { x: 1, y: 2 })
+                T.equal(Config.owns(parsed.value.unknown, "theme_snapshot"), false)
+            }
+            // A held theme that cannot be written (a token the shell did not
+            // answer) is not persisted rather than persisted wrong.
+            var unanswered = heldTheme()
+            unanswered.fontBody = undefined
+            T.equal(Config.serializeThemeSnapshot(unanswered), null)
+            T.equal(Config.serializeThemeSnapshot(null), null)
+        })
+
+        T.test("the held theme is restored, frozen or released by one rule", function () {
+            function step(changes) {
+                var facts = { settingsKnown: true, follow: false, stopped: false,
+                    opened: false, held: false, stateKnown: true, saved: false }
+                for (var key in changes) facts[key] = changes[key]
+                return Config.themeHoldStep(facts)
+            }
+            // Before config.json is read, the shipped "follow" is not the
+            // user's word: nothing is taken or dropped.
+            T.equal(step({ settingsKnown: false, follow: true, held: true, saved: true }), "keep")
+            T.equal(step({ settingsKnown: false, opened: true }), "keep")
+            // Following drops the held theme, in memory and on disk.
+            T.equal(step({ follow: true, held: true }), "release")
+            T.equal(step({ follow: true, saved: true }), "release")
+            T.equal(step({ follow: true }), "keep")
+            // Following off, nothing held yet: a saved theme comes back
+            // before anything would freeze, opened or not.
+            T.equal(step({ saved: true }), "restore")
+            T.equal(step({ saved: true, opened: true }), "restore")
+            T.equal(step({ saved: true, stopped: true }), "restore")
+            // ...but only once the state file has been read.
+            T.equal(step({ stateKnown: false, opened: true }), "keep")
+            T.equal(step({ stateKnown: false, stopped: true }), "keep")
+            // Nothing saved: the open freezes, and so does a stop made after
+            // load while hidden (the moment following stopped).
+            T.equal(step({ opened: true }), "freeze")
+            T.equal(step({ stopped: true }), "freeze")
+            T.equal(step({}), "keep")
+            // Held in memory: kept, and written back if the file lost it.
+            T.equal(step({ held: true, saved: true }), "keep")
+            T.equal(step({ held: true, opened: true, saved: true }), "keep")
+            T.equal(step({ held: true }), "persist")
+            T.equal(step({ held: true, stateKnown: false }), "keep")
         })
 
         Qt.exit(T.report("configuration"))

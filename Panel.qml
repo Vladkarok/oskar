@@ -55,6 +55,12 @@ Item {
     property var geometryState: ConfigFile.stateDefaults()
     property string configurationError: ""
     property string stateError: ""
+    // Whether config.json has been applied, and whether state.json has been
+    // read (or found missing or malformed): until then the shipped
+    // follow_theme and the empty state are not the user's word, and the
+    // Custom look's held theme is neither taken nor dropped (syncThemeHold).
+    property bool settingsKnown: false
+    property bool stateKnown: false
     // The per-path save-failure notice state (the list, its history and
     // the mark/landed transitions) lives in PrivateSaves below; the panel
     // keeps only the hint line's own derivation.
@@ -382,6 +388,7 @@ Item {
             emojiSkinTone: root.emojiSkinTone,
             layoutGroup: root.rememberedLayoutGroup,
             layoutDevice: root.rememberedLayoutDevice,
+            themeSnapshot: root.geometryState.themeSnapshot || null,
             // Another writer's keys, carried so a save does not drop them.
             unknown: root.geometryState.unknown || {}
         }
@@ -1384,6 +1391,7 @@ Item {
         root.superMark = effective.superMark
         var soundChanged = root.sound !== effective.sound
         root.sound = effective.sound
+        var wasFollowing = root.followTheme
         root.followTheme = effective.followTheme
         root.emojiCloseAfterPick = effective.emojiCloseAfterPick
         root.emojiPageSize = effective.emojiPageSize
@@ -1392,19 +1400,15 @@ Item {
         root.dwellDelayMs = effective.dwellDelayMs
         root.uiLanguage = effective.uiLanguage
         root.inputProfile = effective.inputProfile
-        // A follow-theme flip is immediate: stopping freezes the tokens at
-        // the look they then have, and re-enabling releases that snapshot so
-        // a later stop freezes the tokens as they are then — each stop holds
-        // its own moment, never a replay of an older look (Theme.release).
-        // The release runs open or closed: a re-enable while the panel is
-        // hidden must still drop the snapshot, or the next open would find
-        // one held and freeze nothing new. Only the freeze waits for
-        // `opened`, so no snapshot is taken at load, before the shell has
-        // read the theme's files (Theme.qml owns that reasoning);
-        // onOpenedChanged covers the path where the panel opens already
-        // following-off.
-        if (root.followTheme) tokens.release()
-        else if (root.opened) tokens.freeze()
+        // A follow-theme flip is immediate, open or hidden: stopping
+        // freezes the tokens at the look they then have, and re-enabling
+        // releases that snapshot so a later stop freezes the tokens as they
+        // are then — each stop holds its own moment, never a replay of an
+        // older look. The first apply is load, not a stop: nothing is
+        // frozen before the shell has read the theme's files (Theme.qml).
+        var stopped = root.settingsKnown && wasFollowing && !root.followTheme
+        root.settingsKnown = true
+        root.syncThemeHold(stopped)
         if (soundChanged && root.sound) root.resolveSoundFile()
         // External mode and preset edits take the same placement path as GUI
         // changes, including clamping a newly enlarged floating card.
@@ -1426,10 +1430,46 @@ Item {
     function loadState(text) {
         var result = ConfigFile.reloadState(root.geometryState, text)
         root.stateError = result.error
-        if (result.error) return
+        root.stateKnown = true
+        if (result.error) {
+            root.syncThemeHold(false)
+            return
+        }
         root.geometryState = result.value
         root.floatingCenter = result.value.center
         root.applyFloatingPosition()
+        root.syncThemeHold(false)
+    }
+
+    // The Custom look's held theme follows one rule (Config.themeHoldStep)
+    // over the facts it depends on: the settings, the state file and the
+    // open. Run whenever one of them changes. A theme held in memory is
+    // kept in state.json too, so the next session restores it rather than
+    // freezing whatever theme is current then.
+    function syncThemeHold(stopped) {
+        var saved = root.geometryState.themeSnapshot || null
+        var step = ConfigFile.themeHoldStep({
+            settingsKnown: root.settingsKnown, follow: root.followTheme,
+            stopped: stopped === true, opened: root.opened,
+            held: tokens.held !== null, stateKnown: root.stateKnown,
+            saved: saved !== null
+        })
+        if (step === "release") {
+            tokens.release()
+            if (saved !== null) root.storeThemeSnapshot(null)
+        } else if (step === "restore") {
+            tokens.restore(saved)
+        } else if (step === "freeze" || step === "persist") {
+            if (step === "freeze") tokens.freeze()
+            // A snapshot the file cannot carry stays in memory only.
+            var file = ConfigFile.serializeThemeSnapshot(tokens.held)
+            if (file !== null) root.storeThemeSnapshot(file)
+        }
+    }
+
+    function storeThemeSnapshot(snapshot) {
+        root.geometryState = root.mergedGeometryState({ themeSnapshot: snapshot })
+        root.saveState()
     }
 
     // Missing files are a normal first run: defaults stand, no error.
@@ -1447,9 +1487,11 @@ Item {
 
     function missingState() {
         root.stateError = ""
+        root.stateKnown = true
         root.geometryState = ConfigFile.stateDefaults()
         root.floatingCenter = null
         root.applyFloatingPosition()
+        root.syncThemeHold(false)
     }
 
     // The apply-and-save tail every override write shares: publish the next
@@ -1551,11 +1593,11 @@ Item {
     onOpenedChanged: {
         if (root.opened) {
             // With `follow_theme: false` the tokens are held at the look of
-            // the moment that state began — a re-enable releases the held
-            // snapshot, so this freezes fresh values again (Theme.qml owns
-            // the why of here-not-at-load). freeze() no-ops while a snapshot
-            // is already held, and no-ops entirely while following.
-            if (!root.followTheme) tokens.freeze()
+            // the moment that state began: restored from state.json when an
+            // earlier session saved it, else frozen now if nothing has
+            // been taken yet (syncThemeHold; Theme.qml owns the why of
+            // here-not-at-load).
+            root.syncThemeHold(false)
             root.readHyprBorder()
             root.refreshClipboardPreview()
             root.placed = false
