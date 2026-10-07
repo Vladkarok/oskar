@@ -90,9 +90,8 @@ use crate::seat::{
 };
 
 /// How long the shutdown may take before the process leaves anyway: the
-/// key release (its lock reading and round-trip) plus the kb_file restore's
-/// own bounds (14.5 s at most, see seat.rs), inside systemd's 90 s default
-/// stop timeout.
+/// key release's round-trip plus the kb_file restore's own bounds (14 s at
+/// most, see seat.rs), inside systemd's 90 s default stop timeout.
 pub(crate) const EXIT_WATCHDOG: Duration = Duration::from_secs(20);
 use crate::server::{serve, Seat};
 use crate::state::{Shared, SharedRef, State};

@@ -639,12 +639,11 @@ fn gate_by(gate: &Mutex<()>, deadline: Instant) -> Option<std::sync::MutexGuard<
 //   outlast it — so the seat verbs run on a worker while the connection
 //   keeps lifting keys as the cap comes due (server.rs,
 //   wait_serving_holds).
-// - At shutdown the key release first reads the seat's locks (LOCKS_BOUND).
-//   Then the restore waits for the gate at most SHUTDOWN_GATE_WAIT:
+// - At shutdown the restore waits for the gate at most SHUTDOWN_GATE_WAIT:
 //   a share in flight sees the stop at its next step boundary (at most one
 //   request, IO_BOUND) and then runs its own put-back (PUT_BACK_BOUND).
 //   The restore itself then reads the setting (IO_BOUND) and puts it back
-//   (PUT_BACK_BOUND): 14.5 s in all, inside the 20 s exit watchdog
+//   (PUT_BACK_BOUND): 14 s in all, inside the 20 s exit watchdog
 //   (main.rs) and systemd's 90 s default stop timeout (the unit sets no
 //   TimeoutStopSec). A compositor that answers takes milliseconds; the
 //   bounds only matter for one that does not.
