@@ -12,12 +12,18 @@
 // spend the slot.
 //
 // `chordStart` marks where the chord's region begins (the queue's length
-// at dispatch entry), and every err popped inside the region poisons the
-// verdict — otherwise a chord whose Insert presses ERRed on a keymap
-// without that key would still report success, since only its LAST line's
-// ok was ever looked at. Pre-chord traffic is not the chord's business and
-// does not count; an interleaved command after dispatch lands in the
-// region and its err poisons — conservative, never falsely successful.
+// at dispatch entry), and an err answering one of the chord's own key
+// lines inside the region poisons the verdict — otherwise a chord whose
+// Insert presses ERRed on a keymap without that key would still report
+// success, since only its LAST line's ok was ever looked at. Pre-chord
+// traffic is not the chord's business and does not count. Nor is any
+// other command interleaved after dispatch: a paced chord spans several
+// ticks, and the `seat`, `configure`, `caps` or `ping` sent meanwhile is
+// answered by a fact (or a seat refusal) that says nothing about the
+// keys. Only key verbs move keys, and while a chord is in flight the
+// input gate lets no other key line out, so every key slot in the
+// region is the chord's own (or its abort's compensating release, which
+// fails the chord anyway).
 //
 // The chord's final line is marked when the chord arms — and arming
 // first strips every earlier marker, because a marker left by a timed-out
@@ -89,24 +95,30 @@ function chordArmed(state, done) {
     }
 }
 
-// One reply line arrived. `ok` says the popped command succeeded; any
-// other reply — an err, a fact, whatever — says it did not get the one
-// answer success means. Inside the chord's region a non-ok poisons the
-// verdict. `done` is the armed chord's callback when the popped slot was
-// its final line, with `success` true only when that reply is `ok` AND
-// nothing in the region failed. `verb` names the command this reply
-// settled — the dispatcher's only honest way to tell an err that
-// answers a configure from one that answers a caps pre-fetch.
-function replyReceived(state, ok) {
+// The verbs that move keys: the chord's own lines are these, and only an
+// err answering one of them inside the region is the chord failing.
+var KEY_VERBS = ["down", "up", "tap"]
+
+// One reply line arrived, as its trimmed text. `ok` says the popped
+// command succeeded; an `err …` popped from a key slot inside the chord's
+// region poisons the verdict. `done` is the armed chord's callback when
+// the popped slot was its final line, with `success` true only when that
+// reply is `ok` AND none of the chord's key lines failed. `verb` names
+// the command this reply settled — the dispatcher's only honest way to
+// tell an err that answers a configure from one that answers a caps
+// pre-fetch.
+function replyReceived(state, reply) {
     if (state.queue.length === 0)
         return { state: state, done: null, verb: null }
+    var text = String(reply === undefined || reply === null ? "" : reply)
+    var ok = text === "ok"
     var queue = state.queue.slice(1)
     var popped = state.queue[0]
     var chordFrom = state.chordFrom
     var chordError = state.chordError
     if (chordFrom > 0) {
         chordFrom -= 1
-    } else if (ok !== true) {
+    } else if (text.indexOf("err") === 0 && KEY_VERBS.indexOf(popped.verb) !== -1) {
         chordError = true
     }
     if (!popped.chordFinal)
@@ -120,7 +132,7 @@ function replyReceived(state, ok) {
         state: { queue: queue, chordDone: null,
             chordFrom: chordFrom, chordError: chordError },
         done: state.chordDone,
-        success: ok === true && chordError === false,
+        success: ok && chordError === false,
         verb: popped.verb
     }
 }

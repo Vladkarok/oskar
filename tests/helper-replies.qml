@@ -313,27 +313,46 @@ QtObject {
                 ["chordAcks", "seatAsk", "seatMotion"])
         })
 
-        T.test("a pong popped inside a chord region poisons the chord", function () {
-            function chordAfter(state, pingInsideRegion) {
+        T.test("only an err of the chord's own key lines poisons its region", function () {
+            // A paced chord spans ~140 ms, and a layout event, a hotplug
+            // or the settle re-read can put `seat`, `configure` or `caps`
+            // traffic inside its region. Their replies are facts, not the
+            // chord failing: the client got the paste.
+            function chordWith(state, before, inside) {
                 var acks = state.chordAcks
-                if (!pingInsideRegion) acks = ChordAcks.sent(acks, "ping")
+                for (var b = 0; b < before.length; b++) acks = ChordAcks.sent(acks, before[b])
                 acks = ChordAcks.chordStart(acks)
-                if (pingInsideRegion) acks = ChordAcks.sent(acks, "ping")
                 acks = ChordAcks.sent(acks, "down LCTL")
-                acks = ChordAcks.sent(acks, "tap AB04")
+                for (var i = 0; i < inside.length; i++) acks = ChordAcks.sent(acks, inside[i])
+                acks = ChordAcks.sent(acks, "down AB04")
+                acks = ChordAcks.sent(acks, "up AB04")
                 acks = ChordAcks.sent(acks, "up LCTL")
-                return with_(state, { chordAcks: ChordAcks.chordArmed(acks, function () {}) })
+                return with_(state, { chordAcks: ChordAcks.chordArmed(acks, function () {}),
+                    seatAsk: "asked" })
             }
-            var inside = feed(chordAfter(readyAt(3), true), ["pong", "ok", "ok", "ok"])
-            var verdict = opsNamed(inside.actions, "chordVerdict")
-            T.equal(verdict.length, 1)
-            T.equal(verdict[0].success, false, "a non-ok inside the region poisons")
-            T.equal(inside.state.inputReady, true, "pong itself is not drift")
-            T.equal(opsNamed(inside.actions, "warn").length, 0)
-            var before = feed(chordAfter(readyAt(3), false), ["pong", "ok", "ok", "ok"])
-            verdict = opsNamed(before.actions, "chordVerdict")
-            T.equal(verdict.length, 1)
-            T.equal(verdict[0].success, true, "pre-chord traffic is not the chord's")
+            function verdictOf(r) {
+                var v = opsNamed(r.actions, "chordVerdict")
+                T.equal(v.length, 1, "one verdict")
+                return v.length === 1 ? v[0].success : null
+            }
+            // A seat asked before the chord answers inside it, and a
+            // configure and caps sent inside it answer with their facts.
+            var s = chordWith(readyAt(3), ["seat"], [configureLine("us", 0), "caps 0"])
+            var r = feed(s, ["ok", seatLine([kbd("kbd", true, 0, "us")], ["kbd"]),
+                "configured\t3", capsLine(3, 0), "ok", "ok", "ok"])
+            T.equal(verdictOf(r), true, "facts inside the region do not poison")
+            // A pong and a seat refusal inside the region are not the chord's either.
+            s = chordWith(readyAt(3), [], ["ping", "seat"])
+            r = feed(s, ["ok", "pong", "err seat unreachable", "ok", "ok", "ok"])
+            T.equal(verdictOf(r), true, "a non-key reply inside the region does not poison")
+            // An err answering one of the chord's own key lines does.
+            s = chordWith(readyAt(3), [], [])
+            r = feed(s, ["ok", "err unknown key", "ok", "ok"])
+            T.equal(verdictOf(r), false, "the chord's own err poisons")
+            // A key err from before the chord is not the chord's.
+            s = chordWith(readyAt(3), ["down AB05"], [])
+            r = feed(s, ["err unknown key", "ok", "ok", "ok", "ok"])
+            T.equal(verdictOf(r), true, "pre-chord errs do not count")
         })
 
         T.test("the verdict is the first action, ahead of the route", function () {

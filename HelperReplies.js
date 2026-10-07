@@ -193,8 +193,9 @@ function capsRequestLine(group, positions) {
 /// pushed event is an ANSWER — ok, err, fact or generation, the helper
 /// answers in order — so it pops the oldest command's slot. The chord's
 /// verdict rides on the pop of its own final line, success only when the
-/// reply is a bare `ok`; otherwise an err would leave the slot occupied
-/// forever and fail every later chord. Returns the trimmed reply and the verb the pop settled:
+/// reply is a bare `ok` and none of the chord's key lines erred
+/// (ChordAcks.replyReceived); every reply spends its slot, or an err would
+/// leave the slot occupied forever and fail every later chord. Returns the trimmed reply and the verb the pop settled:
 /// the FIFO is the only honest witness of which command a
 /// content-ambiguous err answers (`err bad group` serves three verbs).
 function pop(state, line) {
@@ -204,7 +205,7 @@ function pop(state, line) {
     // chord. Popping it would shift every later reply onto the wrong slot.
     if (isEvent(line))
         return { state: p.state, actions: p.actions, reply: reply, verb: "" }
-    var ack = ChordAcks.replyReceived(p.state.chordAcks, reply === "ok")
+    var ack = ChordAcks.replyReceived(p.state.chordAcks, reply)
     set(p, "chordAcks", ack.state)
     if (ack.done)
         emit(p, { op: "chordVerdict", done: ack.done, success: ack.success })
