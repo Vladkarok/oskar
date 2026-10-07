@@ -74,6 +74,14 @@ var STRINGS = {
         ru: "Вставка не началась — попробуйте ещё раз через мгновение",
         uk: "Вставка не почалася — спробуйте ще за мить"
     },
+    // A paste into the panel's own field (the emoji search, a colour
+    // field) when the clipboard holds no readable text: an image, or
+    // content a password manager marked secret.
+    "hint.pasteTextOnly": {
+        en: "Only text pastes here",
+        ru: "Сюда вставляется только текст",
+        uk: "Сюди вставляється лише текст"
+    },
     "hint.langMenuBlocked": {
         en: "Close the open page first — then switch language",
         ru: "Сначала закройте открытую страницу — потом смените язык",

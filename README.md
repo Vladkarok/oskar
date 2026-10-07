@@ -439,9 +439,12 @@ back. This list is the contract: a change that is not here is a bug.
   list before and after reading and discards the text if content is
   marked secret by a password manager (the `x-kde-passwordManagerHint`
   type) at either check; the chip then says "Hidden content" and still
-  pastes it. Only content offered with that type is recognised as secret,
-  and a secret that appears and is replaced again between the two checks
-  of a single read could be read.
+  pastes it into the focused app by the paste chord. OSKar's own fields
+  (the emoji search, a colour field) take text only: a click there with
+  hidden content or an image on the clipboard shows "Only text pastes
+  here" and reads nothing. Only content offered with that type is
+  recognised as secret, and a secret that appears and is replaced again
+  between the two checks of a single read could be read.
 - **The clipboard.** An emoji pick goes through the clipboard: the emoji
   replaces what the clipboard held, and a delivered pick leaves it there.
   A pick that fails puts back what was there before, as plain text, only

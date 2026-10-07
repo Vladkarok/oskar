@@ -729,9 +729,14 @@ Item {
         // search every key is typing into while it is open — takes the
         // paste itself; only a panel with no local input delivers the
         // chord to the focused client behind it.
+        // A local input takes text only (ClipboardPaste.localPasteAllowed):
+        // hidden content and images are refused visibly, before any read.
         var target = currentPasteTarget()
         if (target !== "external-client") {
-            root.startLocalClipboardRead(target)
+            if (ClipboardPaste.localPasteAllowed(root.chip.kind))
+                root.startLocalClipboardRead(target)
+            else
+                root.flashRefused(UiStrings.tr("hint.pasteTextOnly", root.uiLang))
             root.refreshClipboardPreview()
             return
         }
@@ -784,7 +789,7 @@ Item {
         restartProcessGroup(localClipboardRead)
     }
 
-    function finishLocalClipboardRead(seq, raw) {
+    function finishLocalClipboardRead(seq, raw, exitCode) {
         // The target is re-derived at arrival by the same determination
         // the click made; readExited refuses a mismatch for us.
         var result = ClipboardPaste.readExited(root.clipboardReadState, seq,
@@ -792,7 +797,14 @@ Item {
         root.clipboardReadState = result.state
         if (result.action !== "insert") return
         localClipboardReadWatchdog.stop()
-        insertLocalClipboardText(raw)
+        // The kind the click was allowed on can be stale by now: a read
+        // that gives no text is the same visible refusal.
+        var text = ClipboardPaste.localReadText(exitCode, raw)
+        if (text === null) {
+            root.flashRefused(UiStrings.tr("hint.pasteTextOnly", root.uiLang))
+            return
+        }
+        insertLocalClipboardText(text)
     }
 
     function markClipboardContentGone() {
@@ -893,12 +905,9 @@ Item {
     // target was verified against the same determination at arrival, so
     // reaching here means the target it served is the one now open. wl-paste
     // reads compositor CLIPBOARD — Quickshell.clipboardText is empty/stale
-    // in this stack and cannot be the insert path.
-    function insertLocalClipboardText(raw) {
-        var text = String(raw || "")
-        if (text.length && text.charAt(text.length - 1) === "\n")
-            text = text.slice(0, -1)
-        if (!text.length) return
+    // in this stack and cannot be the insert path. `text` is
+    // ClipboardPaste.localReadText's answer: non-empty text.
+    function insertLocalClipboardText(text) {
         if (root.hexEditing) {
             if (root.customEditorField !== "") settingsLayerHost.editorInsertHexText(text)
             else settingsLayerHost.popoverInsertHexText(text)
@@ -1625,10 +1634,10 @@ Item {
         onStarted: didStart = true
         // The collector's stream lands before exited; the read machine
         // refuses an answer it no longer waits for.
-        onExited: {
+        onExited: function (exitCode) {
             var text = localClipboardRead.stdout.text
             root.freshCollector(localClipboardRead)
-            root.finishLocalClipboardRead(localClipboardRead.seq, text)
+            root.finishLocalClipboardRead(localClipboardRead.seq, text, exitCode)
             localClipboardRead.didStart = false
             localClipboardRead.retiring = false
             if (root.localReadQueuedTarget !== "") {

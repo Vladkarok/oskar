@@ -64,6 +64,31 @@ function readExited(state, seq, target) {
     return { state: next, action: "insert" }
 }
 
+// A panel-local input takes text and nothing else, decided from the chip's
+// type listing before anything is read. Content a password manager marked
+// secret (kind "hidden") is pasted by the chord only, never read into the
+// panel; an image or any other offer without text has none to give. The
+// panel shows a refusal (hint.pasteTextOnly), never a click that does
+// nothing.
+function localPasteAllowed(kind) {
+    return kind === "text"
+}
+
+// What a finished local read inserts: the text without the one trailing
+// newline a copy carries, or null when there is nothing to insert — a
+// secret that landed mid-read (exit 3), a failed read, no text offer (the
+// reader asks for text, so an image-only clipboard reads empty), or bytes
+// that are not text. The panel shows a null as the same refusal: the
+// listing the click was allowed on can be stale by the time the read runs.
+function localReadText(exitCode, raw) {
+    if (exitCode !== 0 || raw === null || raw === undefined) return null
+    var text = String(raw)
+    if (text.length && text.charAt(text.length - 1) === "\n")
+        text = text.slice(0, -1)
+    if (!text.length || text.indexOf("\u0000") >= 0) return null
+    return text
+}
+
 function readTimedOut(state, seq, target) {
     if (!state.pending || seq !== state.seq)
         return { state: state, action: "ignore" }
@@ -239,11 +264,14 @@ function snapshotFromRead(exitCode, text) {
 // types before AND after reading: content a password manager marks secret
 // (x-kde-passwordManagerHint) is not read at all, and a secret that
 // landed during the read is discarded unprinted. Exit 3 means secret. The
-// stream is capped (a malicious owner cannot balloon the shell's memory),
-// and it runs under setsid so a watchdog can kill the whole group.
+// payload is asked for as text (`--type text`): without a type wl-paste
+// serves an image-only offer's bytes, and every reader here wants text, so
+// such a clipboard reads empty instead. The stream is capped (a malicious
+// owner cannot balloon the shell's memory), and it runs under setsid so a
+// watchdog can kill the whole group.
 var READ_SCRIPT = "h=x-kde-passwordmanagerhint; "
     + "wl-paste --list-types 2>/dev/null | grep -qix \"$h\" && exit 3; "
-    + "data=$(wl-paste --no-newline 2>/dev/null | head -c 65536; printf .); "
+    + "data=$(wl-paste --no-newline --type text 2>/dev/null | head -c 65536; printf .); "
     + "wl-paste --list-types 2>/dev/null | grep -qix \"$h\" && exit 3; "
     + "printf %s \"${data%.}\""
 var READ_SECRET_EXIT = 3
@@ -421,7 +449,9 @@ function txnCancel(state) {
 // pointer rests on the chip (mouse) or a touch holds it — and dropped the
 // moment the peek ends, the panel closes or the clipboard changes. Content
 // a password manager marked secret (kind "hidden") is never read, peek or
-// not. Clicking pastes whatever the kind: the chord needs no text.
+// not. A click into a client pastes whatever the kind (the chord needs no
+// text); a click into a panel-local input takes text only
+// (localPasteAllowed).
 //
 // State: { kind, count, capped, countSeq, peek, peeking, peekSeq }. Steps
 // return { state, action, seq? }; action "count" / "read" asks the host
@@ -451,11 +481,13 @@ function chipTypes(state, kind) {
 }
 
 // The count read: types checked before and after like every read, the
-// payload streamed through `wc` so only "<characters> <bytes>" comes out.
-// One byte past the cap tells a capped clipboard from one exactly at it.
+// payload streamed through `wc` so only "<characters> <bytes>" comes out,
+// asked for as text exactly as READ_SCRIPT asks, so the count is of what a
+// read would give. One byte past the cap tells a capped clipboard from one
+// exactly at it.
 var COUNT_SCRIPT = "h=x-kde-passwordmanagerhint; "
     + "wl-paste --list-types 2>/dev/null | grep -qix \"$h\" && exit 3; "
-    + "n=$(wl-paste --no-newline 2>/dev/null | head -c 65537 | LC_ALL=C.UTF-8 wc -mc); "
+    + "n=$(wl-paste --no-newline --type text 2>/dev/null | head -c 65537 | LC_ALL=C.UTF-8 wc -mc); "
     + "wl-paste --list-types 2>/dev/null | grep -qix \"$h\" && exit 3; "
     + "printf %s \"$n\""
 
