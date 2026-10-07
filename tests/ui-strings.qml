@@ -204,15 +204,63 @@ QtObject {
         // The settings card's and the colour surfaces' ids are chrome only
         // those files draw: an id no swept file names as a literal is dead
         // table data, and the label-width probe would keep measuring it.
+        // The dependency banner's ids are named only by Panel.qml's
+        // ternaries, so they ride the same check.
         function checkSettingsIdsUsed() {
-            T.test("every settings and colour id is named by a swept file", function () {
+            T.test("every settings, colour and banner id is named by a swept file", function () {
                 for (var id in UiStrings.STRINGS) {
-                    if (!/^(settings|color|access)\./.test(id)) continue
+                    if (!/^(settings|color|access|banner)\./.test(id)) continue
                     if (allSources.indexOf('"' + id + '"') === -1)
                         T.fail(id + " is in the table but no swept file names it")
                 }
             })
         }
+
+        // The ids named in the FIRST argument of each UiStrings.tr( call:
+        // a plain literal, and each literal a ternary picks
+        // (`tr(busy ? "a.b" : "a.c", lang)`); a literal the condition
+        // compares against (`mode === "docked" ?`) is not an id. The
+        // argument ends at the first comma or closing bracket outside
+        // brackets and strings.
+        function trIdLiterals(source) {
+            var ids = []
+            var marker = /UiStrings\.tr\(/g
+            var found
+            while ((found = marker.exec(source)) !== null) {
+                var depth = 0
+                for (var i = marker.lastIndex; i < source.length; i++) {
+                    var c = source.charAt(i)
+                    if (c === '"' || c === "'") {
+                        var end = source.indexOf(c, i + 1)
+                        if (end < 0) break
+                        var before = source.slice(marker.lastIndex, i).replace(/\s+$/, "")
+                        var lead = before.charAt(before.length - 1)
+                        if (c === '"' && depth === 0
+                                && (before === "" || lead === "?" || lead === ":"))
+                            ids.push(source.slice(i + 1, end))
+                        i = end
+                    } else if (c === "(" || c === "[" || c === "{") {
+                        depth += 1
+                    } else if (c === ")" || c === "]" || c === "}") {
+                        if (depth === 0) break
+                        depth -= 1
+                    } else if (c === "," && depth === 0) {
+                        break
+                    }
+                }
+            }
+            return ids
+        }
+
+        T.test("the call-site sweep reads ids a ternary picks", function () {
+            T.deepEqual(trIdLiterals('UiStrings.tr("a.b", lang)'), ["a.b"])
+            T.deepEqual(trIdLiterals('UiStrings.tr(x.running\n    ? "a.c" : "a.d",\n    lang, ["e"])'),
+                ["a.c", "a.d"])
+            T.deepEqual(trIdLiterals('UiStrings.tr(m === "docked" ? "a.e" : "a.f", lang)'),
+                ["a.e", "a.f"])
+            T.deepEqual(trIdLiterals('UiStrings.tr(f("z"), lang)'), [])
+            T.deepEqual(trIdLiterals('UiStrings.tr(id, lang, ["not.an.id"])'), [])
+        })
 
         function sweepNext() {
             if (index >= files.length) {
@@ -230,20 +278,20 @@ QtObject {
                 T.test("every tr call site in " + name + " resolves", function () {
                     T.equal(xhr.status === 200 && source.length > 0, true,
                         name + " did not load")
-                    var pattern = /UiStrings\.tr\(\s*"([^"]+)"/g
+                    var ids = trIdLiterals(source)
                     var seen = {}
-                    var match
-                    while ((match = pattern.exec(source)) !== null) {
-                        if (seen[match[1]]) continue
-                        seen[match[1]] = true
+                    for (var i = 0; i < ids.length; i++) {
+                        var id = ids[i]
+                        if (seen[id]) continue
+                        seen[id] = true
                         for (var l = 0; l < UiStrings.LANGUAGES.length; l++) {
                             var lang = UiStrings.LANGUAGES[l]
                             try {
-                                var text = UiStrings.tr(match[1], lang)
+                                var text = UiStrings.tr(id, lang)
                                 if (typeof text !== "string" || text === "")
-                                    T.fail(match[1] + "/" + lang + " is empty")
+                                    T.fail(id + "/" + lang + " is empty")
                             } catch (error) {
-                                T.fail(match[1] + " does not resolve in "
+                                T.fail(id + " does not resolve in "
                                     + lang + ": " + error)
                             }
                         }
