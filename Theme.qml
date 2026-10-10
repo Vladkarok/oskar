@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import "Config.js" as ConfigFile
 
 // The panel's one reader of Omarchy's shared style tokens.
@@ -90,12 +91,12 @@ QtObject {
     function freeze() {
         if (held) return
         held = {
-            foreground: Color.foreground,
-            background: Color.background,
-            accent: Color.accent,
-            urgent: Color.urgent,
-            muted: Color.muted,
-            popupsBackground: Color.popups.background,
+            foreground: Commons.Color.foreground,
+            background: Commons.Color.background,
+            accent: Commons.Color.accent,
+            urgent: Commons.Color.urgent,
+            muted: Commons.Color.muted,
+            popupsBackground: Commons.Color.popups.background,
             selectedAccentFill: Style.selectedAccentFill,
             cornerRadius: Style.cornerRadius,
             normalBorderWidth: Style.normalBorderWidth,
@@ -111,7 +112,7 @@ QtObject {
             spacingLg: Style.spacing.lg,
             popupPadding: Style.spacing.popupPadding,
             spacingScale: Style.spacing.scale,
-            cardBorderSpec: Border.hyprlandActiveSpec(Color.accent, 2),
+            cardBorderSpec: Border.hyprlandActiveSpec(Commons.Color.accent, 2),
             cardBorderToken: Border.value("hyprland", "active-border")
                 || Border.value("notifications", "border"),
             hyprBorderShown: hyprBorderShown
@@ -137,20 +138,20 @@ QtObject {
 
     // The theme's own answers, never an override: what the custom look's
     // unset fields keep, and what the resolved properties below fall back to.
-    readonly property color themeForeground: frozen ? held.foreground : Color.foreground
-    readonly property color themeMuted: frozen ? held.muted : Color.muted
-    readonly property color themePopupsBackground: frozen ? held.popupsBackground : Color.popups.background
+    readonly property color themeForeground: frozen ? held.foreground : Commons.Color.foreground
+    readonly property color themeMuted: frozen ? held.muted : Commons.Color.muted
+    readonly property color themePopupsBackground: frozen ? held.popupsBackground : Commons.Color.popups.background
     // Everything drawn on the card reads these two, so a custom text colour
     // reaches the header chips, the hold menu and the hover mixes along with
     // the glyphs: text that followed the theme on a custom panel could
     // vanish into it.
     readonly property color foreground: textColor
-    readonly property color background: frozen ? held.background : Color.background
+    readonly property color background: frozen ? held.background : Commons.Color.background
     // Theme-derived accent, ignoring a user accentColor override. Colour-row
     // suggestions stay recommendations from the Omarchy theme; pinning an
     // accent must not replace that suggestion with itself.
-    readonly property color themeAccent: colorAnswered(frozen ? held.accent : Color.accent)
-        ? (frozen ? held.accent : Color.accent)
+    readonly property color themeAccent: colorAnswered(frozen ? held.accent : Commons.Color.accent)
+        ? (frozen ? held.accent : Commons.Color.accent)
         : shippedColor("accentColor")
     // The accent and the latched "selected" tint are one override field:
     // an explicit accent wins for
@@ -161,7 +162,7 @@ QtObject {
     readonly property color accent: hasOverride("accentColor")
         ? overrideAsColor("accentColor")
         : themeAccent
-    readonly property color urgent: frozen ? held.urgent : Color.urgent
+    readonly property color urgent: frozen ? held.urgent : Commons.Color.urgent
     // Secondary text: the theme's muted, or with a custom text colour that
     // colour stepped toward the panel — "dim" has to stay readable on the
     // panel the user chose.
