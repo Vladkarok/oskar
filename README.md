@@ -467,7 +467,9 @@ back. This list is the contract: a change that is not here is a bug.
   pastes it into the focused app by the paste chord. OSKar's own fields
   (the emoji search, a colour field) take text only: a click there with
   hidden content or an image on the clipboard shows "Only text pastes
-  here" and reads nothing. Only content offered with that type is
+  here" and reads nothing. Ctrl+V and Shift+Insert in a colour field are
+  the same click, and a middle click there pastes nothing: Qt's own paste
+  would read the offer unbounded. Only content offered with that type is
   recognised as secret, and a secret that appears and is replaced again
   between the two checks of a single read could be read.
 - **The clipboard.** An emoji pick goes through the clipboard: the emoji

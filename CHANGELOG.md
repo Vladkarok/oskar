@@ -3,6 +3,12 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
+## 0.2.4
+
+### Fixed
+
+- Ctrl+V and Shift+Insert in a colour field now paste through the paste chip's bounded clipboard read, the same way a click on the chip does; Qt's own paste took the whole clipboard offer before trimming it, so a misbehaving clipboard owner could stall the shell. A middle click on a colour field no longer pastes the primary selection.
+
 ## 0.2.3
 
 ### Fixed

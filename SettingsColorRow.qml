@@ -317,6 +317,18 @@ Item {
                         colorRow.revertDraft()
                         hexInput.focus = false
                     }
+                    // Qt's own paste (Ctrl+V, Shift+Insert) buffers the whole
+                    // clipboard offer before maximumLength applies, so an
+                    // unbounded owner could stall the shell: the chord takes
+                    // the paste chip's bounded read instead (decisions §119).
+                    Keys.onPressed: function (event) {
+                        if (!event.matches(StandardKey.Paste)) return
+                        event.accepted = true
+                        panel.pasteCurrentContent()
+                    }
+                    // Middle click would paste the primary selection the same
+                    // unbounded way; it is swallowed here.
+                    MouseArea { anchors.fill: parent; acceptedButtons: Qt.MiddleButton }
                 }
             }
 

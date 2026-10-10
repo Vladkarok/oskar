@@ -2794,3 +2794,32 @@ off, until the helper's next modifiers request; the same after a keyboard
 removal, when `main` falls to whichever keyboard is last. A lock the helper
 leaves at 0 adds nothing to that mask, so 0 is the value that cannot turn a
 lock on. The fix belongs in Hyprland's seat-keyboard handling.
+
+## 119. A colour field's paste chord is the paste chip
+
+The five colour inputs (the popover's hex field, the editor's hex field and
+its three channel fields) are Qt text items, and a Qt text item answers
+Ctrl+V and Shift+Insert itself: it asks the compositor for the whole
+clipboard offer, buffers it, and only then cuts it to `maximumLength`. On
+Wayland a middle click does the same with the primary selection. An owner
+that keeps streaming, or never finishes, holds the shell's main thread for
+as long as it likes; every other read OSKar makes goes through
+`ClipboardPaste.READ_SCRIPT`, which caps the bytes and runs under a
+watchdog, and this was the one way around it (marketplace review of
+v0.2.3, 2026-10-10).
+
+Each of those fields now accepts `StandardKey.Paste` in `Keys.onPressed`
+and calls `pasteCurrentContent()`, the paste chip's own action. The chord
+therefore gets exactly what a chip click gets: the bounded read, text
+only, the secret-hint checks before and after, the target re-derived at
+arrival, and the chip's visible refusals while an emoji pick owns the
+clipboard. A middle click on a colour field is swallowed by a MouseArea
+that accepts only that button: the primary selection has no bounded
+reader and no chip, and pasting it there was never a documented path.
+
+Rejected: a bounded `paste()` replacement on the text item (Qt reads the
+offer before any QML sees it); reading `Quickshell.clipboardText` (empty
+or stale in this stack, §44); disabling paste in the fields outright (the
+chip's path already exists, so the chord can simply be it). The emoji
+search needs nothing: it is not a Qt text item (§91's page draws its own
+caret) and every key already goes through `pasteIntoSearch`.

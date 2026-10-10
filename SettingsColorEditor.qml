@@ -410,6 +410,19 @@ Rectangle {
                             } else editor.endField(editor.fieldName + ":hex")
                         }
                         Keys.onEscapePressed: hexInput.focus = false
+                        // Qt's own paste (Ctrl+V, Shift+Insert) buffers the
+                        // whole clipboard offer before maximumLength applies,
+                        // so an unbounded owner could stall the shell: the
+                        // chord takes the paste chip's bounded read instead,
+                        // and middle click (the primary selection, read the
+                        // same way) is swallowed (decisions §119). The three
+                        // channel fields below do the same.
+                        Keys.onPressed: function (event) {
+                            if (!event.matches(StandardKey.Paste)) return
+                            event.accepted = true
+                            panel.pasteCurrentContent()
+                        }
+                        MouseArea { anchors.fill: parent; acceptedButtons: Qt.MiddleButton }
                     }
                 }
 
@@ -552,6 +565,12 @@ Rectangle {
                                 else editor.endField(editor.fieldName + ":c1")
                             }
                             Keys.onEscapePressed: c1Input.focus = false
+                            Keys.onPressed: function (event) {
+                                if (!event.matches(StandardKey.Paste)) return
+                                event.accepted = true
+                                panel.pasteCurrentContent()
+                            }
+                            MouseArea { anchors.fill: parent; acceptedButtons: Qt.MiddleButton }
                         }
                     }
                     Text {
@@ -595,6 +614,12 @@ Rectangle {
                                 else editor.endField(editor.fieldName + ":c2")
                             }
                             Keys.onEscapePressed: c2Input.focus = false
+                            Keys.onPressed: function (event) {
+                                if (!event.matches(StandardKey.Paste)) return
+                                event.accepted = true
+                                panel.pasteCurrentContent()
+                            }
+                            MouseArea { anchors.fill: parent; acceptedButtons: Qt.MiddleButton }
                         }
                     }
                     Text {
@@ -638,6 +663,12 @@ Rectangle {
                                 else editor.endField(editor.fieldName + ":c3")
                             }
                             Keys.onEscapePressed: c3Input.focus = false
+                            Keys.onPressed: function (event) {
+                                if (!event.matches(StandardKey.Paste)) return
+                                event.accepted = true
+                                panel.pasteCurrentContent()
+                            }
+                            MouseArea { anchors.fill: parent; acceptedButtons: Qt.MiddleButton }
                         }
                     }
                     Text {
