@@ -3,6 +3,12 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
+## 0.2.3
+
+### Fixed
+
+- The theme reads the shell palette as `Commons.Color`. qt6-declarative 6.12 ships a QtQuick `Color` type that shadows the Omarchy shell's palette singleton, so every palette colour resolved to undefined and the shell log said "Unable to assign [undefined] to QColor". Same fix as Omarchy's own plugins (basecamp/omarchy#14553).
+
 ## 0.2.2
 
 ### Fixed
