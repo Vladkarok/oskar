@@ -1189,6 +1189,79 @@ function fieldSelectAll(field) {
     if (field && field.selectAll) field.selectAll()
 }
 
+// A character before or after `pos` in `text`, as one step: a non-BMP
+// character is two UTF-16 units and must not be split.
+function stepBack(text, pos) {
+    if (pos >= 2) {
+        var lo = text.charCodeAt(pos - 1), hi = text.charCodeAt(pos - 2)
+        if (lo >= 0xDC00 && lo <= 0xDFFF && hi >= 0xD800 && hi <= 0xDBFF) return pos - 2
+    }
+    return pos > 0 ? pos - 1 : 0
+}
+
+function stepForward(text, pos) {
+    if (pos + 2 <= text.length) {
+        var hi = text.charCodeAt(pos), lo = text.charCodeAt(pos + 1)
+        if (hi >= 0xD800 && hi <= 0xDBFF && lo >= 0xDC00 && lo <= 0xDFFF) return pos + 2
+    }
+    return pos < text.length ? pos + 1 : text.length
+}
+
+// A colour field is read-only to Qt (decisions §120), so typing comes
+// through here. The key's printable text replaces the selection or lands
+// at the cursor within maximumLength; Backspace and Delete remove the
+// selection or one character, with Ctrl to the start or the end; Cut
+// (Ctrl+X, Shift+Delete) copies the selection, then removes it.
+// Navigation, selection and copy stay Qt's.
+//
+// The result is ONE assignment of the field's text. A remove followed by
+// an insert fires the field's handlers twice, and the editor's channel
+// handler rewrites every channel field in between: typing 2 over the
+// selected 1 of "100" gave "2", not "200". The caller emits textEdited
+// once when `changed`, as Qt did for a key. `handled` says the key was an
+// editing key and is the field's whether or not it changed anything (a
+// Backspace at the start is still the field's, not the popover's).
+function fieldKeyEdit(field, event) {
+    var none = { handled: false, changed: false }
+    if (!field || !event) return none
+    var mods = event.modifiers
+    var ctrl = (mods & Qt.ControlModifier) !== 0
+    var shift = (mods & Qt.ShiftModifier) !== 0
+    var other = (mods & (Qt.AltModifier | Qt.MetaModifier)) !== 0
+    var before = String(field.text), len = before.length
+    var cursor = field.cursorPosition
+    var selStart = field.selectionStart, selEnd = field.selectionEnd
+    var selected = selStart >= 0 && selEnd > selStart
+    var start, end, put = ""
+    var cut = !other && ((ctrl && !shift && event.key === Qt.Key_X)
+        || (shift && !ctrl && event.key === Qt.Key_Delete))
+    if (cut) {
+        if (!selected) return { handled: true, changed: false }
+        if (field.copy) field.copy()
+        start = selStart; end = selEnd
+    } else if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete) {
+        if (other) return none
+        var back = event.key === Qt.Key_Backspace
+        if (selected) { start = selStart; end = selEnd }
+        else if (back) { start = ctrl ? 0 : stepBack(before, cursor); end = cursor }
+        else { start = cursor; end = ctrl ? len : stepForward(before, cursor) }
+    } else {
+        var text = event.text
+        if (!text || ctrl || other) return none
+        var code = text.charCodeAt(0)
+        if (code < 32 || code === 127) return none
+        if (selected) { start = selStart; end = selEnd } else { start = cursor; end = cursor }
+        var max = field.maximumLength > 0 ? field.maximumLength : -1
+        var room = max > 0 ? max - (len - (end - start)) : text.length
+        put = room > 0 ? text.slice(0, room) : ""
+    }
+    var after = before.slice(0, start) + put + before.slice(end)
+    if (after === before) return { handled: true, changed: false }
+    field.text = after
+    field.cursorPosition = start + put.length
+    return { handled: true, changed: true }
+}
+
 // The known fields come from the runtime object, validated; unknown keys
 // ride verbatim from `unknown` and never shadow a known one. A runtime
 // field that is not in the file form (a preference, say) has no path out.

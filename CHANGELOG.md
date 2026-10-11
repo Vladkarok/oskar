@@ -3,6 +3,12 @@
 User-facing changes. The reasons behind them are in
 [docs/decisions.md](docs/decisions.md).
 
+## 0.2.5
+
+### Fixed
+
+- A colour field no longer reads the clipboard when the clipboard changes. A Qt text field that can be edited reads the whole clipboard offer on every change to keep its paste state current, and the settings fields exist for as long as the keyboard is loaded, so a misbehaving clipboard owner could stall the shell at any time; the five colour fields are now read-only to Qt and take typing through OSKar's own handler, with the same behaviour for typing, Backspace, Delete, Cut, selection and copy. Undo in those fields goes with Qt's editing.
+
 ## 0.2.4
 
 ### Fixed

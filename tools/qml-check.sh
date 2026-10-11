@@ -34,6 +34,21 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
+# The colour fields are read-only to Qt (decisions §120): a Qt text item
+# that can be edited reads the whole clipboard offer on every clipboard
+# change. Every TextInput or TextField declared in the two colour-field
+# files must say so; one without it reopens that read. Checked before
+# the qmllint lookup: this needs no types.
+for f in SettingsColorRow.qml SettingsColorEditor.qml; do
+  declared=$(grep -cE '^\s*(TextInput|TextField) \{' "$root/$f" || true)
+  readonly_count=$(grep -cE '^\s*readOnly: true$' "$root/$f" || true)
+  if (( declared == 0 || declared != readonly_count )); then
+    echo "qml check failed — $f declares $declared Qt text item(s) but $readonly_count are 'readOnly: true' (decisions §120)" >&2
+    exit 1
+  fi
+done
+echo "qml check: every colour-field text item is read-only to Qt"
+
 qmllint=""
 for candidate in /usr/lib/qt6/bin/qmllint "$(command -v qmllint || true)"; do
   [[ -n "$candidate" && -x "$candidate" ]] || continue

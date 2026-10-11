@@ -2823,3 +2823,57 @@ or stale in this stack, §44); disabling paste in the fields outright (the
 chip's path already exists, so the chord can simply be it). The emoji
 search needs nothing: it is not a Qt text item (§91's page draws its own
 caret) and every key already goes through `pasteIntoSearch`.
+
+## 120. A colour field is read-only to Qt
+
+§119 closed the paste chord, and the reviewer of v0.2.4 (marketplace
+#10931, 2026-10-10) pointed at the read that needs no key at all. A Qt
+text item that can be edited subscribes to the clipboard's `dataChanged`
+and answers it by asking for the clipboard's text, synchronously, to keep
+its `canPaste` property current (`QQuickTextInput::q_canPasteChanged`,
+Qt 6.12). The Wayland receiver reads the offer to EOF with no size or
+time limit. Measured on Qt 6.12.0: a window with one writable `TextInput`
+grew by 193 MB the moment another process put 200 MB on the clipboard;
+the same window with `readOnly: true` grew by nothing. OSKar is
+`keepLoaded` and the settings layer is built with the overlay, not on
+demand, so nine field instances (five declarations: the popover's five
+rows, the editor's four fields) made that read on every clipboard change
+for as long as OSKar was loaded, settings open or not.
+
+`readOnly` is the one switch Qt offers: `q_canPasteChanged`, `paste()`
+and the middle-click insert all check it first, and programmatic
+`insert()` and `remove()` do not, so the field still edits. Typing is
+therefore OSKar's: `Keys.onPressed` hands the key to
+`ConfigFile.fieldKeyEdit`, which makes the edit as one assignment of the
+item's text (the key's text over the selection or
+at the cursor, within `maximumLength`; Backspace and Delete; Ctrl with
+them to the start or the end, the one word a colour field holds; Cut as
+copy then remove), after which the field emits `textEdited` once by
+hand, as Qt did for a key. One assignment, not the chip's remove-then-
+insert: each step fires the handlers, and the editor's channel handler
+rewrites every channel field in between, so typing 2 over the selected
+1 of "100" gave "2". The chip's `fieldInsert` keeps its two steps: it
+selects all first, so its intermediate text is empty and parses as
+nothing. Navigation, selection, Ctrl+A and Ctrl+C stay Qt's, which a
+read-only item still provides. Gone with Qt's editing: undo and redo
+(gated on `readOnly`, and flipping `readOnly` off to get them back runs
+`q_canPasteChanged`, the read itself), dead keys and the input method (a
+hex or decimal field needs neither). The paste chord keeps §119's route
+to the chip. The middle-click MouseArea of §119 is gone: a read-only item
+refuses the middle-click insert itself, and a middle click now only
+places the cursor. Qt paints no cursor in a read-only item and does not
+raise `cursorVisible` on focus, so each field binds `cursorVisible` to
+its focus and draws the emoji search's caret as its `cursorDelegate`
+(solid: Qt blinks no cursor in a read-only item).
+
+Checked on real Qt text items, not only the suite's mock:
+`tests/quick/colour-field-typing.qml` runs under `qmltestrunner`
+(offscreen) with a channel-style normaliser on `textEdited`, and
+`tools/qml-check.sh` refuses a `TextInput` or `TextField` in the two
+colour-field files that is not `readOnly: true`.
+
+Rejected: replacing the five fields with the emoji page's hand-drawn
+field (§91) — that one carries a query, not a caret the user places; a
+rewrite for a property Qt already has a switch for. Keeping the fields
+writable and clearing the clipboard on open (destroys the user's
+clipboard for a settings visit).

@@ -1190,6 +1190,118 @@ QtObject {
             clipped.maximumLength = 4
             Config.fieldInsert(clipped, "#34cf2b")
             T.equal(clipped.text, "#34c")
+
+        })
+
+        T.test("a read-only colour field's typing is one assignment per key", function () {
+            // decisions §120: the key's text lands, Backspace, Delete and
+            // Cut edit, everything else stays Qt's. The field is a mock
+            // whose text setter counts writes and, like the editor's
+            // channel handler, normalises what it is given: "00" becomes
+            // "0" — so a remove-then-insert would corrupt the result.
+            function key(k, text, modifiers) {
+                return { key: k, text: text || "", modifiers: modifiers || 0 }
+            }
+            function mock(initial) {
+                var m = {
+                    _text: initial, writes: 0, copies: 0,
+                    cursorPosition: initial.length,
+                    selectionStart: 0, selectionEnd: 0, maximumLength: 9,
+                    get length() { return this._text.length },
+                    get text() { return this._text },
+                    set text(v) {
+                        this.writes += 1
+                        this._text = v === "00" ? "0" : v
+                        this.cursorPosition = this._text.length
+                        this.selectionStart = this.selectionEnd = this.cursorPosition
+                    },
+                    copy: function () { this.copies += 1 },
+                    select: function (s, e) {
+                        this.selectionStart = s; this.selectionEnd = e; this.cursorPosition = e
+                    }
+                }
+                return m
+            }
+            var edited = { handled: true, changed: true }
+            var same = { handled: true, changed: false }
+            var qts = { handled: false, changed: false }
+
+            var typed = mock("#12")
+            T.deepEqual(Config.fieldKeyEdit(typed, key(Qt.Key_A, "a")), edited)
+            T.equal(typed.text, "#12a")
+            T.equal(typed.cursorPosition, 4)
+            T.deepEqual(Config.fieldKeyEdit(typed, key(Qt.Key_Backspace, "\b")), edited)
+            T.equal(typed.text, "#12")
+            typed.cursorPosition = 0
+            T.deepEqual(Config.fieldKeyEdit(typed, key(Qt.Key_Backspace, "\b")), same)
+            T.deepEqual(Config.fieldKeyEdit(typed, key(Qt.Key_Delete, "")), edited)
+            T.equal(typed.text, "12")
+            T.equal(typed.cursorPosition, 0)
+
+            // Over a selection: one write, so the normaliser sees the result only.
+            var channel = mock("100")
+            channel.select(0, 1)
+            T.deepEqual(Config.fieldKeyEdit(channel, key(Qt.Key_2, "2")), edited)
+            T.equal(channel.text, "200")
+            T.equal(channel.writes, 1)
+            T.equal(channel.cursorPosition, 1)
+            channel.select(0, 3)
+            T.deepEqual(Config.fieldKeyEdit(channel, key(Qt.Key_Backspace, "\b")), edited)
+            T.equal(channel.text, "")
+
+            // Cut copies first, then removes; without a selection it does nothing.
+            var cut = mock("#abcdef")
+            cut.select(1, 3)
+            T.deepEqual(Config.fieldKeyEdit(cut, key(Qt.Key_X, "\u0018", Qt.ControlModifier)), edited)
+            T.equal(cut.text, "#cdef")
+            T.equal(cut.copies, 1)
+            cut.select(1, 2)
+            T.deepEqual(Config.fieldKeyEdit(cut, key(Qt.Key_Delete, "", Qt.ShiftModifier)), edited)
+            T.equal(cut.text, "#def")
+            T.equal(cut.copies, 2)
+            T.deepEqual(Config.fieldKeyEdit(cut, key(Qt.Key_X, "\u0018", Qt.ControlModifier)), same)
+            T.equal(cut.copies, 2)
+
+            // Ctrl+Backspace / Ctrl+Delete: to the start or the end.
+            var word = mock("#abcdef")
+            word.cursorPosition = 3
+            T.deepEqual(Config.fieldKeyEdit(word, key(Qt.Key_Delete, "", Qt.ControlModifier)), edited)
+            T.equal(word.text, "#ab")
+            word.cursorPosition = 2
+            T.deepEqual(Config.fieldKeyEdit(word, key(Qt.Key_Backspace, "\b", Qt.ControlModifier)), edited)
+            T.equal(word.text, "b")
+
+            // A non-BMP character is one step.
+            var pair = mock("a😀b")
+            pair.cursorPosition = 3
+            T.deepEqual(Config.fieldKeyEdit(pair, key(Qt.Key_Backspace, "\b")), edited)
+            T.equal(pair.text, "ab")
+
+            // Not the field's: navigation, Ctrl/Alt chords, control characters.
+            var rest = mock("f")
+            T.deepEqual(Config.fieldKeyEdit(rest, key(Qt.Key_Left, "")), qts)
+            T.deepEqual(Config.fieldKeyEdit(rest, key(Qt.Key_C, "\u0003", Qt.ControlModifier)), qts)
+            T.deepEqual(Config.fieldKeyEdit(rest, key(Qt.Key_A, "a", Qt.AltModifier)), qts)
+            T.deepEqual(Config.fieldKeyEdit(rest, key(Qt.Key_Return, "\r")), qts)
+            T.deepEqual(Config.fieldKeyEdit(rest, key(Qt.Key_Tab, "\t")), qts)
+            T.deepEqual(Config.fieldKeyEdit(rest, key(Qt.Key_Backspace, "\b", Qt.AltModifier)), qts)
+            T.equal(rest.text, "f")
+            T.equal(rest.writes, 0)
+            // Shift and the keypad are ordinary typing.
+            T.deepEqual(Config.fieldKeyEdit(rest, key(Qt.Key_F, "F", Qt.ShiftModifier)), edited)
+            T.deepEqual(Config.fieldKeyEdit(rest, key(Qt.Key_7, "7", Qt.KeypadModifier)), edited)
+            T.equal(rest.text, "fF7")
+
+            // maximumLength: a full field takes nothing; a selection makes room.
+            var full = mock("#12345678")
+            T.deepEqual(Config.fieldKeyEdit(full, key(Qt.Key_A, "a")), same)
+            T.equal(full.writes, 0)
+            full.select(8, 9)
+            T.deepEqual(Config.fieldKeyEdit(full, key(Qt.Key_A, "a")), edited)
+            T.equal(full.text, "#1234567a")
+            full.select(0, 9)
+            T.deepEqual(Config.fieldKeyEdit(full, key(Qt.Key_Z, "zzzzzzzzzzzz")), edited)
+            T.equal(full.text, "zzzzzzzzz")
         })
 
         // ---- the colour editor's hex draft ----

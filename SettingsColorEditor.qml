@@ -410,19 +410,34 @@ Rectangle {
                             } else editor.endField(editor.fieldName + ":hex")
                         }
                         Keys.onEscapePressed: hexInput.focus = false
-                        // Qt's own paste (Ctrl+V, Shift+Insert) buffers the
-                        // whole clipboard offer before maximumLength applies,
-                        // so an unbounded owner could stall the shell: the
-                        // chord takes the paste chip's bounded read instead,
-                        // and middle click (the primary selection, read the
-                        // same way) is swallowed (decisions §119). The three
-                        // channel fields below do the same.
-                        Keys.onPressed: function (event) {
-                            if (!event.matches(StandardKey.Paste)) return
-                            event.accepted = true
-                            panel.pasteCurrentContent()
+                        // Read-only to Qt: a Qt text item that can be edited
+                        // reads the whole clipboard offer on every clipboard
+                        // change (and on its own paste), unbounded, so an
+                        // owner that keeps streaming stalls the shell. Typing
+                        // comes through ConfigFile.fieldKeyEdit and the paste
+                        // chord through the paste chip's bounded read
+                        // (decisions §119, §120). The three channel fields
+                        // below do the same.
+                        readOnly: true
+                        // Qt paints no cursor in a read-only field and does
+                        // not show one on focus: the caret is the emoji
+                        // search's.
+                        cursorVisible: activeFocus
+                        cursorDelegate: Rectangle {
+                            width: 2; radius: 1; color: tokens.accent
+                            visible: parent.activeFocus
                         }
-                        MouseArea { anchors.fill: parent; acceptedButtons: Qt.MiddleButton }
+                        Keys.onPressed: function (event) {
+                            if (event.matches(StandardKey.Paste)) {
+                                event.accepted = true
+                                panel.pasteCurrentContent()
+                                return
+                            }
+                            var edit = ConfigFile.fieldKeyEdit(hexInput, event)
+                            if (!edit.handled) return
+                            event.accepted = true
+                            if (edit.changed) hexInput.textEdited()
+                        }
                     }
                 }
 
@@ -565,12 +580,23 @@ Rectangle {
                                 else editor.endField(editor.fieldName + ":c1")
                             }
                             Keys.onEscapePressed: c1Input.focus = false
-                            Keys.onPressed: function (event) {
-                                if (!event.matches(StandardKey.Paste)) return
-                                event.accepted = true
-                                panel.pasteCurrentContent()
+                            readOnly: true
+                            cursorVisible: activeFocus
+                            cursorDelegate: Rectangle {
+                                width: 2; radius: 1; color: tokens.accent
+                                visible: parent.activeFocus
                             }
-                            MouseArea { anchors.fill: parent; acceptedButtons: Qt.MiddleButton }
+                            Keys.onPressed: function (event) {
+                                if (event.matches(StandardKey.Paste)) {
+                                    event.accepted = true
+                                    panel.pasteCurrentContent()
+                                    return
+                                }
+                                var edit = ConfigFile.fieldKeyEdit(c1Input, event)
+                                if (!edit.handled) return
+                                event.accepted = true
+                                if (edit.changed) c1Input.textEdited()
+                            }
                         }
                     }
                     Text {
@@ -614,12 +640,23 @@ Rectangle {
                                 else editor.endField(editor.fieldName + ":c2")
                             }
                             Keys.onEscapePressed: c2Input.focus = false
-                            Keys.onPressed: function (event) {
-                                if (!event.matches(StandardKey.Paste)) return
-                                event.accepted = true
-                                panel.pasteCurrentContent()
+                            readOnly: true
+                            cursorVisible: activeFocus
+                            cursorDelegate: Rectangle {
+                                width: 2; radius: 1; color: tokens.accent
+                                visible: parent.activeFocus
                             }
-                            MouseArea { anchors.fill: parent; acceptedButtons: Qt.MiddleButton }
+                            Keys.onPressed: function (event) {
+                                if (event.matches(StandardKey.Paste)) {
+                                    event.accepted = true
+                                    panel.pasteCurrentContent()
+                                    return
+                                }
+                                var edit = ConfigFile.fieldKeyEdit(c2Input, event)
+                                if (!edit.handled) return
+                                event.accepted = true
+                                if (edit.changed) c2Input.textEdited()
+                            }
                         }
                     }
                     Text {
@@ -663,12 +700,23 @@ Rectangle {
                                 else editor.endField(editor.fieldName + ":c3")
                             }
                             Keys.onEscapePressed: c3Input.focus = false
-                            Keys.onPressed: function (event) {
-                                if (!event.matches(StandardKey.Paste)) return
-                                event.accepted = true
-                                panel.pasteCurrentContent()
+                            readOnly: true
+                            cursorVisible: activeFocus
+                            cursorDelegate: Rectangle {
+                                width: 2; radius: 1; color: tokens.accent
+                                visible: parent.activeFocus
                             }
-                            MouseArea { anchors.fill: parent; acceptedButtons: Qt.MiddleButton }
+                            Keys.onPressed: function (event) {
+                                if (event.matches(StandardKey.Paste)) {
+                                    event.accepted = true
+                                    panel.pasteCurrentContent()
+                                    return
+                                }
+                                var edit = ConfigFile.fieldKeyEdit(c3Input, event)
+                                if (!edit.handled) return
+                                event.accepted = true
+                                if (edit.changed) c3Input.textEdited()
+                            }
                         }
                     }
                     Text {

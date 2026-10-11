@@ -37,6 +37,23 @@ for suite in "$root"/tests/*.qml; do
   "$qml" "$suite" || status=1
 done
 
+# The colour fields' typing on real Qt text items (decisions §120): the
+# suites drive a mock, this drives TextInput and TextField under Qt Quick
+# Test, offscreen. qmltestrunner ships with qt6-declarative.
+qmltestrunner=""
+for candidate in /usr/lib/qt6/bin/qmltestrunner "$(command -v qmltestrunner || true)"; do
+  [[ -n "$candidate" && -x "$candidate" ]] || continue
+  qmltestrunner="$candidate"
+  break
+done
+if [[ -n "$qmltestrunner" ]]; then
+  echo "== colour-field typing (Qt Quick Test)"
+  "$qmltestrunner" -input "$root/tests/quick/colour-field-typing.qml" || status=1
+else
+  echo "qmltestrunner not found; skipping the colour-field typing test (install qt6-declarative)" >&2
+  status=1
+fi
+
 echo "== qml static check"
 "$root/tools/qml-check.sh" || status=1
 
