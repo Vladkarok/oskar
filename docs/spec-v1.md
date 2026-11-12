@@ -268,7 +268,7 @@ measures the tree against the upstream snapshot `e3771b6` and reads
 **zero shared substantive lines** (2026-09-12), gated on exit code. For
 the history of that measurement — the baseline it started from, the
 forced-idiom rules it counts fairly, and the licence consequence — see
-[decisions §14](decisions.md#14-the-shell-layer-gets-reimplemented-and-only-then-does-the-licence-change).
+[decisions §14](decisions.md).
 | `KeyboardLayout.js` | 115 / 279 |
 
 `Keyboard.qml` was first recorded here by hand as 341. The measuring

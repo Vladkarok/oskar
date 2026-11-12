@@ -2,7 +2,7 @@
 
 Updated 2026-09-17 (the ticket-59 rename round; see the as-found note at
 the end). Why the VM exists and what it cannot do is in
-[decisions.md §12](decisions.md#12-testing-ladder-and-what-each-rung-cannot-see);
+[decisions.md §12](decisions.md);
 this is the operating manual.
 
 ## Repo state
