@@ -70,6 +70,10 @@ echo "== packaging file-set check"
 echo "== disclosure map check"
 "$root/tools/disclosure-map-check.sh" || status=1
 
+# Every `decisions §N` citation must still name an entry in docs/decisions.md.
+echo "== decisions citation check"
+"$root/tools/decisions-check.sh" || status=1
+
 echo "== install script check"
 "$root/tools/install-check.sh" || status=1
 
