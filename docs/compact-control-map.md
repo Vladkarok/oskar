@@ -1,5 +1,10 @@
 # Compact control map — the accepted five-row packing
 
+> **Historical design, not the code.** The pair caps planned here never
+> shipped: `&123` is one direct punctuation page (decisions §30). The
+> four-row compact letters page is dropped, not deferred (decisions §28,
+> owner, 2026-11-12). Where this file and the code disagree, the code wins.
+
 Written 2026-09-06 as a four-row proposal; rewritten 2026-09-07 after the
 owner's accepted map (ticket 11 Comments). This is the design deliverable
 ticket 12 implements. It is not a shorter keyboard. Baseline: installed
@@ -11,7 +16,7 @@ by this ticket; measured against the five Windows reference screenshots in
 
 **This release keeps today's five-row letters page as the maintained
 default.** No persisted arrangement setting. A four-row compact arrangement
-is future work, not this release.
+was later dropped (2026-11-12).
 
 The owner's accepted map (2026-09-07):
 
@@ -33,8 +38,8 @@ The owner's accepted map (2026-09-07):
   (the owner's `us` group is not).
 
 Height saving this release: **zero**. The four-row prototype in
-`.scratch/next-iteration/evidence/11/` remains on disk as the future
-option's measurements; it is not the accepted map.
+`.scratch/next-iteration/evidence/11/` holds the dropped option's
+measurements; it is not the accepted map.
 
 ## 2. Pair-slot capacity (the recount)
 
@@ -219,8 +224,7 @@ change those numbers. Docked reservation stays the current visible
 height (decisions §21).
 
 The four-row prototype saved exactly one row pitch (45 / 53.8 / 65.55)
-and is recorded in evidence/11 as the future compact option, not as a
-this-release claim.
+and is recorded in evidence/11 as the dropped compact option.
 
 ## 5. What ticket 12 must implement from this map
 
@@ -251,7 +255,7 @@ this-release four-row requirement.
 ## 6. Closed by the owner's 2026-09-07 map
 
 - Digits: dedicated row, ordinary click = digit. Merged caps rejected.
-- Four-row compact: future, not this release. Height saving zero.
+- Four-row compact: dropped (2026-11-12). Height saving zero.
 - `esc` and `↑` stay on `&123`. No Del/⌫ narrowing.
 - Fn auto-revert: not needed (Fn still hides only the digit row).
 - `fr`/`gb`/`de`: no overflow page; 16/19/21 all fit in 23.

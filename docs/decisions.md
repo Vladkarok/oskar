@@ -1,5 +1,10 @@
 # Why the design looks like this
 
+**Entries state what the code does as of the commit that last changed this
+file. When the code and an entry disagree, the code wins: fix or delete the
+entry in the same change.** `tools/decisions-check.sh` fails when a
+citation names an entry that no longer exists.
+
 One line per decision: the rule, then the reason. Section numbers stay
 fixed because code, tests and docs cite them as `decisions §N`. The long
 form, with the measurements and every rejected variant, is in git:
@@ -7,21 +12,29 @@ form, with the measurements and every rejected variant, is in git:
 §92–§102 and §104 were review journals, kept in the private repo; their
 lasting rules are §107.
 
-## Open: needs the owner
+## Open
 
-- **§120 sunset.** Hand the colour fields back to Qt once Omarchy's Qt has
-  the QTBUG-149610 fix: qt6-declarative 6.12.1 or later, or Arch's 6.12
-  package with bcbfae6761 cherry-picked. On 2026-11-12 the host had
-  6.12.0-4. Whether -4 carries the fix was not checked. Before reverting,
-  run the 200 MB clipboard measurement against a writable `TextInput`.
-- **§20 patch.** `patches/omarchy-shell-style-live-rounding.patch` looks
-  obsolete: the stock `Commons/Style.qml` in omarchy-dev 4.0.0.r7822 now
-  refreshes on `configreloaded` by itself (checked 2026-11-12, file
-  unmodified). Delete the patch and its README entry, or keep it?
-- **§118 upstream.** The lock-state bug belongs to Hyprland's seat-keyboard
-  handling. Whether and how to report it is open.
-- **§28 four rows.** A four-row compact letters page was deferred as
-  future work. Still wanted, or drop it?
+- **§120 sunset: keep waiting.** On 2026-11-12 the host had
+  qt6-declarative 6.12.0-4, and Arch's PKGBUILD at pkgrel 4 cherry-picks
+  8c23f65e, 7214a320 and 88a046d8 but not the QTBUG-149610 fix
+  (bcbfae6761). The workaround stays until the host has 6.12.1 or later,
+  or a 6.12.0 pkgrel whose PKGBUILD picks bcbfae6761. Check:
+
+  ```
+  pacman -Q qt6-declarative
+  curl -fsS https://gitlab.archlinux.org/archlinux/packaging/packages/qt6-declarative/-/raw/main/PKGBUILD \
+    | grep -nE '^pkgver|^pkgrel|bcbfae6761'
+  ```
+
+  Before reverting, run the 200 MB clipboard measurement against a writable
+  `TextInput`.
+
+## Known limitations
+
+- **§118 lock state.** The helper reports no lock state, so the focused app
+  can see NumLock and Caps Lock off while the physical lights stay on
+  (README known problem 6). The cause is Hyprland's seat-keyboard handling;
+  it will not be reported upstream.
 
 ## Decisions
 
@@ -35,14 +48,19 @@ lasting rules are §107.
   panel sends and never subscribes to `wl_keyboard.keymap`. Mirroring the
   seat once caused 56,547 keymap rebuilds in five minutes and froze the
   desktop. All layouts are groups of one keymap, a switch is `group n`, and
-  an identical `configure` must not recompile (the smoke test counts
-  compiles). The most important rule in the project.
-- **§4 The compositor owns the layout.** The panel follows `activelayout` and
-  `configreloaded`; its button only asks Hyprland to switch.
+  an identical `configure` must not recompile: it keeps the generation
+  (`apply.rs` `same_keymap`; the nested suite asserts it, and
+  `tools/nested-session.sh` fails on more than 120 compositor rebuilds).
+  The most important rule in the project.
+- **§4 The compositor owns the layout.** The panel follows Hyprland's
+  `activelayout` and `configreloaded`, which the helper reads and pushes as
+  `events` (§109); its button only asks Hyprland to switch.
 - **§5 Device tiers.** Hyprland keeps a layout per device, including power
-  buttons, mice and IME keyboards. Read from filtered `main`, then the last
-  named device, then progress; switch only positively identified keyboards;
-  with no evidence the button greys out.
+  buttons, mice and IME keyboards. Only keyboards the helper positively
+  identified, minus pseudo-devices, are read or switched
+  (`LayoutDevices.readable`). The reading is the safe keyboard holding
+  `main`, then the named anchor (§115), then the remembered group, then the
+  safe set's majority. With no safe keyboard the button greys out.
 - **§6 One language everywhere.** The owner's reason for the project: switch
   the identified set, then mirror the group to the helper's device, which
   starts at group 0.
@@ -51,8 +69,8 @@ lasting rules are §107.
   disconnect releases only its own claims. This is what prevents a stuck
   Ctrl after a shell restart.
 - **§8 Readiness handshake.** `hello <version>` answers only once the device
-  has a keymap, so a keyboard that would drop every key never looks ready,
-  and a panel/helper version mismatch shows up.
+  has a keymap (`err not ready` before), so a keyboard that would drop every
+  key never looks ready, and a panel/helper version mismatch shows up.
 - **§9 systemd user unit.** `PartOf=graphical-session.target`, exit on
   Wayland failure instead of reconnecting, socket under
   `RuntimeDirectory=`, caps `CPUQuota=10%`, `MemoryMax=64M`, `TasksMax=20`.
@@ -63,17 +81,17 @@ lasting rules are §107.
   `Socket` lives in a Loader and is rebuilt when a hello goes unanswered for
   5 s; the rebuild also clears what the disconnect path would
   (`SocketWatch.rebuildResets`).
-- **§11 Superseded by §23.** Caps once came from `xkbcli` + awk; a missing
-  parenthesis left them on the US table for days. The lesson stays: a
-  correct layout label is no evidence that the caps are correct.
+- **§11 Superseded by §23.** Caps come from the helper's keymap facts; a
+  position the facts do not answer is logged as a keycap miss
+  (`KeyboardLayout.reportMisses`), because a correct layout label is no
+  evidence that the caps are correct.
 - **§12 Testing ladder.** cargo tests; a nested Hyprland that fails on too
   many keymap rebuilds but cannot see what an app receives; the VM lab with
   a real Omarchy and a mixed set of input devices; real hardware for
   sleep/wake (QEMU will not do S3).
-- **§14 Licence by reimplementation.** The shell layer was rewritten from
-  spec-v1, not renamed, until no line was shared with upstream `e3771b6`;
-  only then did the copyright become sole. The provenance gate was retired
-  on 2026-09-20 once it started flagging coincidental boilerplate.
+- **§14 Licence history.** The shell layer was rewritten from spec-v1 until
+  it shared no line with upstream `e3771b6`; the provenance gate that
+  checked this was retired on 2026-09-20. Nothing in the code depends on it.
 - **§15 Startup evidence from udev.** A keyboard counts only with a physical
   bus and path, `ID_INPUT_KEYBOARD=1`, typing positions, and a libinput
   group shared with no pointer device (this rejects gaming mice). Missing
@@ -89,46 +107,55 @@ lasting rules are §107.
   space: a camelCase alias gets the same validation, unknown keys ride
   verbatim, and keys like `__proto__` are dropped.
 - **§19 Supervised helper, visible state.** systemd restarts the helper; the
-  panel shows socket and handshake state and disables only input caps. Retry
-  may start the unit; a version mismatch shows the update command. No
-  status poll beyond the repair timer.
-- **§20 Theme tokens come from Omarchy's Style.** OSKar adds no second
-  reader of Hyprland rounding (see Open).
+  panel shows socket and handshake state and disables only input caps.
+  Retry runs `oskar start`, which starts the unit only when it is OSKar's; a
+  version mismatch offers "Copy install command" (`oskar setup`, or the
+  checkout's `install.sh`). No status poll beyond the repair timer.
+- **§20 Theme tokens come from Omarchy's Style.** `Theme.qml` reads
+  `Style.*`; OSKar adds no second reader of Hyprland rounding. The stock
+  `Commons/Style.qml` re-reads on `configreloaded`, so a rounding change
+  reaches a running panel.
 - **§21 Docking reserves space only.** The exclusive zone is guaranteed; how
   a client scrolls inside the smaller window is the client's business. No
   per-app hacks; floating mode is the escape hatch.
 - **§22 One grid.** Every row is 15.5 units on a shared pitch, a half-unit
   lattice with the Windows touch keyboard's stagger; 12.5 units sit left of
-  both ↑ and ↓. A build guard reports any row that misses 15.5. The page key
-  sits bottom right and Del ends row two (owner-vetoable).
+  both ↑ and ↓. `Keyboard.qml` logs an error for any row that misses 15.5
+  or leaves the lattice. The page key sits bottom right and Del ends row
+  two.
 - **§23 Caps come from the helper's keymap.** The `caps` reply carries the
   install generation, and the panel accepts facts only for the generation it
-  acknowledged. Typing stays off while facts are missing; it never falls
-  back to a built-in table.
-- **§24 Superseded.** External picker coordination (Emote, the shell
-  overlay) is gone; emoji are an in-panel page (§37, §91, §103).
+  acknowledged. While facts are missing, typing stays off and the built-in
+  table draws only as a gated placeholder.
+- **§24 Superseded.** Emoji are the panel's own page (§37, §91, §103);
+  OSKar coordinates with no external picker.
 - **§25 Cursor hiding has one owner.** `CursorPolicy.js` serializes probe,
   override and restore of `cursor:hide_on_key_press`, tags each answer with
   its generation, restores only what it applied (after a verify read), and
   keeps the restore obligation when a write's outcome is unknown.
-- **§26 The paste chip pastes what the user copied.** It never writes or
-  previews the clipboard. Terminals get Ctrl+Shift+V, others Shift+Insert,
-  and an unknown class gets the CLIPBOARD chord, never PRIMARY.
+- **§26 The paste chip never writes the clipboard.** It shows the
+  clipboard's kind and size (the text only during a peek) and hides when
+  the clipboard is empty. A panel-local input (colour field, emoji search)
+  takes the paste through a bounded read; otherwise the helper sends a
+  CLIPBOARD chord, never PRIMARY: Ctrl+V to Wine/Proton, Ctrl+Shift+V to
+  terminals and to an empty class, Shift+Insert to anything else
+  (`ModifierReducer.pasteChordForClass`).
 - **§27 Omarchy mark mechanism (choice moved to §38).** U+E900 from the
   omarchy font, drawn only if `/usr/share/fonts/omarchy/omarchy.ttf` exists;
   Qt's family checks miss this font, so the file is the gate.
 - **§28 Five rows.** The owner chose a dedicated digit row over a shorter
-  keyboard (2026-09-07). The pair-cap plan was replaced by §30; four-row
-  compact is deferred (see Open).
+  keyboard (2026-09-07). The pair-cap plan was replaced by §30. The
+  four-row compact letters page is dropped (owner, 2026-11-12).
 - **§29 Settings on a second overlay.** A full-screen overlay with the
   keyboard band cut out of its input region, so keys still type and other
   clicks dismiss; placed in the centre of the leftover space. Colour fields
   take a brief Exclusive focus, then OnDemand, on that overlay, never on the
   keyboard surface.
-- **§30 `&123` is one Windows-style page.** Shift shows its second half.
-  Every character comes from the helper's reserved block (§33), so the page
-  never borrows a `us` group. The terminal paste chord uses V (AB04); AB06
-  is N, a new window in kitty and ghostty.
+- **§30 `&123` is one direct punctuation page.** The top row carries
+  `! @ # …` and Shift gives the digits on the same caps; every other ASCII
+  mark has its own cap. Every character comes from the helper's reserved
+  block (§33), so the page never borrows a `us` group. The terminal paste
+  chord uses V (AB04); AB06 is N, a new window in kitty, ghostty and agterm.
 - **§31 Caps facts belong to the install, not to a group.** All groups are
   fetched once per generation, so a language switch picks from memory
   without dimming the board. Typing waits only for a configure that drains
@@ -145,9 +172,11 @@ lasting rules are §107.
   Cost: hosted positions consume LevelThree and LevelFive; some layouts host
   fewer slots (`de(neo)` two).
 - **§34 What the panel reads is what the button moves.** One filter picks
-  both. A split seat converges to the keyboard that typed, by majority, not
-  by the highest index. The logic is in `LayoutDevices.js` with tests, not
-  in a jq string.
+  both (`LayoutDevices.select` returns the reading and the switch set from
+  the same safe set). A diverged seat follows the keyboard that moved by
+  itself (§59, §115); without that evidence the remembered group, then the
+  majority (lowest index on a tie) answers. The logic is in
+  `LayoutDevices.js` with tests, not in a jq string.
 - **§35 One keymap on the seat, the extended one.** The helper publishes
   `$XDG_RUNTIME_DIR/oskar/keymap.xkb` and points `input:kb_file` at it, at
   runtime only. Two keymaps swapped on every focus change and reset clients'
@@ -165,18 +194,19 @@ lasting rules are §107.
   windows, macos, penguin. The other marks are drawn vectors, no vendored
   art; Tux keeps the supplied SVG's geometry in fixed black and white. An
   unknown value or a missing font falls back to the word.
-- **§39 Superseded by §91.** Typed emoji through a transient keymap. Lesson:
-  XWayland translates queued keys against the live keymap, so the restore
-  must not share a flush with the taps.
-- **§40 Superseded by §91.** Chromium cuts an astral key character to 16
-  bits, which is why a Ctrl+Shift+U route existed.
-- **§41 The paste chip always sends the chord.** No liveness probe (owner,
-  2026-09-11).
-- **§42 Superseded by §91.** The clipboard was an opt-in mode. What carried
-  over: verify the publication before the chord, and on success replace the
-  clipboard rather than restore it.
-- **§43 Sole copyright.** Since 2026-09-12; the README no longer tells the
-  history (§14).
+- **§39 Superseded by §91.** No emoji goes through a keymap; a pick
+  installs nothing.
+- **§40 Superseded by §91.** No Ctrl+Shift+U or other typed emoji route
+  exists.
+- **§41 No liveness probe before the chord.** When the paste goes to an
+  external client, the chip sends the chord unconditionally (owner,
+  2026-09-11): a dead clipboard owner pasting nothing is Wayland's
+  behaviour.
+- **§42 Superseded by §91.** The clipboard is the only emoji route, not an
+  option: the publication is verified before the chord, and a delivered pick
+  leaves the emoji on the clipboard.
+- **§43 Sole copyright.** Since 2026-09-12 (`LICENSE`); the README does not
+  tell the history (§14).
 - **§44 One pick owns clipboard and chord.** Later picks queue in order;
   usage and close-after-pick fire only on real completion; an aborted chord
   releases what it pressed; a pick carries the client class it was clicked
@@ -215,8 +245,9 @@ lasting rules are §107.
   caps and chrome never dwell; hold-menu entries do.
 - **§55 UI words live in `UiStrings.js`.** en/ru/uk. The language follows the
   active layout (ua → uk, ru → ru, anything else → en) unless `ui_language`
-  pins it. An unknown id throws, and the suite checks every call site.
-  Keymap text and diagnostics are data, not translated.
+  pins one the seat has a layout for. An unknown id throws, and the suite
+  checks every call site. Keymap text and diagnostics are data, not
+  translated.
 - **§56 The mode chip is in the header.** Owner, 2026-09-15: he switches
   docked/floating more than expected.
 - **§57 Input profile.** auto/mouse/touch in `InputProfile.js`; the default
@@ -225,21 +256,21 @@ lasting rules are §107.
   panel's life. Touch types on release, cancels on slide-off, never dwells,
   and gets larger invisible hit areas.
 - **§58 Name.** `oskar` for everything machine-facing, OSKar for people.
-  `OSK_*` test variables stay; `OMARCHY_OSK_*` became `OSKAR_*`. The
-  old-name migration was later deleted (§112).
+  `OSK_*` test variables stay; runtime variables are `OSKAR_*`. There is no
+  old-name migration (§112).
 - **§59 The mover breaks a split.** When the keyboard that moved is the
   anchor, its group answers; keyboards that never type get no vote against
   it.
 - **§60 Layouts are named in their own language.** Endonyms in
-  `LanguageControl.js` (~45 codes), falling back to the base.lst title, then
+  `LanguageControl.js` (46 codes), falling back to the base.lst title, then
   the code.
 - **§91 Every emoji pick goes through the clipboard.** Publish, verify, paste
-  chord. Typed delivery and client detection were deleted (−3032 lines, the
-  owner's call): no list can enumerate every client. Cost: each pick
-  replaces the clipboard.
-- **§103 Draggable emoji page.** Behind `emoji_drag` (default off: the old
-  centring, unchanged). One `DragLine` component for both bars; the centre
-  is saved as `emoji_center`.
+  chord. Typed delivery and client detection were deleted (the owner's
+  call): no list can enumerate every client. Cost: each pick replaces the
+  clipboard.
+- **§103 Draggable emoji page.** Behind `emoji_drag` (default off: the page
+  stays centred). One `DragLine` component for the card's and the page's
+  bars; the page's centre is saved as `emoji_center`.
 - **§105–§106 Split by moves.** Keyboard.qml and Panel.qml lost HelperLink,
   PasteChords, PrivateSaves, EmojiDelivery, SettingsLayer and HoldMenu, each
   a checked pure move. Split further only when a feature asks for it.
@@ -287,8 +318,9 @@ lasting rules are §107.
   `~/.local/state/oskar/install-record` holds the sha256 or link text of the
   unit, the helper and `~/.local/bin/oskar`; anything else is left alone,
   and `--force` moves it aside, never deletes. systemctl acts only on the
-  recorded unit, and `systemctl disable` is never used. The old-name
-  migration was deleted: nobody else ever had the old name.
+  recorded unit or the oskar package's own, and `systemctl disable` is
+  never used. There is no old-name migration: nobody else ever had the old
+  name.
 - **§113 Who changes it restores it, and it is listed.** The helper puts
   `input:kb_file` back (on SIGTERM too); a failed pick restores the previous
   clipboard text. README "What OSKar changes on your system" is the
@@ -303,7 +335,7 @@ lasting rules are §107.
   500 ms, and it is the only identified keyboard that changed. Needed
   because fcitx5 and the helper hold `main`. Inside the settle window such a
   move is followed when it is the keyboard the panel already reads and no
-  click was made (0.1.2). Limits: README known problem 3.
+  click was made. Limits: README known problem 3.
 - **§116 Follow theme means all of it.** On, the theme answers all eight
   appearance fields and overrides lie dormant; editing a field turns
   following off. The frozen theme is saved as `theme_snapshot`.
@@ -313,9 +345,10 @@ lasting rules are §107.
   sections, Look: Omarchy theme | Custom, reset only where it changes
   something. Its chrome always uses the Omarchy theme, so a bad custom
   colour cannot hide the controls that undo it.
-- **§118 The helper reports no lock state.** It always sends `locked = 0`.
-  Sending real locks makes Hyprland turn Caps Lock back on in each window it
-  focuses (README known problem 6).
+- **§118 The helper reports no lock state.** It always sends `locked = 0`
+  (`apply.rs`, every `modifiers` call). Sending real locks makes Hyprland
+  turn Caps Lock back on in each window it focuses. Known limitation, not
+  reported upstream (see above).
 - **§119 A colour field's paste chord is the paste chip.** Qt's own paste
   reads the whole offer before trimming it; the chip's read is bounded. This
   stays after the Qt fix.
@@ -324,7 +357,7 @@ lasting rules are §107.
   a 200 MB offer; QTBUG-149610, Qt 6.10.3–6.12.0, fixed in 6.12.1). Typing
   goes through `ConfigFile.fieldKeyEdit`, one text assignment per key; undo,
   redo, dead keys and the IME are lost. Guarded by `tools/qml-check.sh` and
-  `tests/quick/colour-field-typing.qml`. Revert (see Open): remove
+  `tests/quick/colour-field-typing.qml`. Revert once Open says so: remove
   `readOnly`, the cursor delegates, the `fieldKeyEdit` branch, the guard and
   that test; keep §119's paste branch and restore its middle-click
   MouseArea; re-check typing 2 over the selected 1 of "100" gives "200".

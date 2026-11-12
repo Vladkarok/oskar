@@ -35,7 +35,7 @@ the reasons; this file records required behaviour.
   are not copied.
 - Ordinary pages remain five rows this release. The main page keeps a
   dedicated digit row; an ordinary click on a digit cap types that digit.
-  A four-row compact arrangement is not a v1.1 requirement
+  A four-row compact arrangement was dropped on 2026-11-12
   ([compact-control-map.md](compact-control-map.md); decisions §28).
   (2026-09-07, ticket 11)
 - Row widths follow the owner-supplied Windows reference, measured from a
@@ -352,6 +352,7 @@ VM latency makes that evidence invalid.
 
 Licence ticket 12, arbitrary Unicode insertion, custom sounds and volume,
 font/spacing/opacity controls, app-specific docked scrolling workarounds,
-backward-compatible OSK config migration, and a four-row compact arrangement
-(merged digit caps, one-row height cut) are not part of v1.1.
+and backward-compatible OSK config migration are not part of v1.1. A
+four-row compact arrangement (merged digit caps, one-row height cut) is
+dropped (decisions §28).
 (2026-09-07, ticket 11)

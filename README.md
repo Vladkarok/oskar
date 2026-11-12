@@ -274,8 +274,7 @@ One product, four languages, each with a job:
 
    The root cause is upstream: layout state lives per device (including
    power buttons and gaming mice), and nothing announces a change of the
-   seat's current keyboard. An upstream discussion with Sway's
-   keyboard-group semantics as prior art is planned.
+   seat's current keyboard.
 4. ~~**Held keys are tracked per connection**~~ **Closed.** The device is
    shared, so held keys carry per-connection claims: the press belongs to the
    first claim, the release to the last, a release from a connection that
@@ -297,8 +296,8 @@ One product, four languages, each with a job:
    it right. Reporting the physical keyboard's locks instead would be
    worse: Hyprland keeps a virtual keyboard's last locks and adds them to
    every window it focuses, so a lock you switched off would come back
-   on (decisions §118). The fix belongs in Hyprland's seat-keyboard
-   handling.
+   on (decisions §118). The cause is Hyprland's seat-keyboard handling;
+   this stays a known limitation.
 
 ## Troubleshooting
 
