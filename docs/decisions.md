@@ -23,7 +23,7 @@ lasting rules are §107.
   ```
   pacman -Q qt6-declarative
   curl -fsS https://gitlab.archlinux.org/archlinux/packaging/packages/qt6-declarative/-/raw/main/PKGBUILD \
-    | grep -nE '^pkgver|^pkgrel|bcbfae6761'
+    | grep -nE '^_pkgver|^pkgrel|bcbfae6761'
   ```
 
   Before reverting, run the 200 MB clipboard measurement against a writable
@@ -59,8 +59,8 @@ lasting rules are §107.
   buttons, mice and IME keyboards. Only keyboards the helper positively
   identified, minus pseudo-devices, are read or switched
   (`LayoutDevices.readable`). The reading is the safe keyboard holding
-  `main`, then the named anchor (§115), then the remembered group, then the
-  safe set's majority. With no safe keyboard the button greys out.
+  `main`, then the named anchor (§115), then the safe set's majority; on a
+  diverged seat the remembered group is tried before the majority. With no safe keyboard the button greys out.
 - **§6 One language everywhere.** The owner's reason for the project: switch
   the identified set, then mirror the group to the helper's device, which
   starts at group 0.
@@ -245,7 +245,7 @@ lasting rules are §107.
   caps and chrome never dwell; hold-menu entries do.
 - **§55 UI words live in `UiStrings.js`.** en/ru/uk. The language follows the
   active layout (ua → uk, ru → ru, anything else → en) unless `ui_language`
-  pins one the seat has a layout for. An unknown id throws, and the suite
+  pins one the seat has a layout for (English is always offered). An unknown id throws, and the suite
   checks every call site. Keymap text and diagnostics are data, not
   translated.
 - **§56 The mode chip is in the header.** Owner, 2026-09-15: he switches
@@ -346,7 +346,7 @@ lasting rules are §107.
   something. Its chrome always uses the Omarchy theme, so a bad custom
   colour cannot hide the controls that undo it.
 - **§118 The helper reports no lock state.** It always sends `locked = 0`
-  (`apply.rs`, every `modifiers` call). Sending real locks makes Hyprland
+  (every `keyboard.modifiers` call in `apply.rs` and `state.rs`). Sending real locks makes Hyprland
   turn Caps Lock back on in each window it focuses. Known limitation, not
   reported upstream (see above).
 - **§119 A colour field's paste chord is the paste chip.** Qt's own paste
