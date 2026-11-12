@@ -328,8 +328,9 @@ The OSK continues to consume theme values through its single Theme facade.
 Live updates of shared Omarchy theme tokens, including Hyprland rounding,
 belong to Omarchy's shared Style provider. The OSK must not add a second
 Hyprland/style reader. Local radius and colour overrides apply immediately.
-Until the shared cross-repository change lands, a shell restart is an honest
-known limitation for externally changed Hyprland rounding.
+Omarchy's stock `Commons/Style.qml` re-reads its tokens on Hyprland's
+`configreloaded`, so an externally changed rounding reaches a running
+panel without a shell restart.
 
 ## 8. Regression and evidence
 
